@@ -573,11 +573,13 @@ SIL compiler replay and parser. Inventory, source ownership, UI mappings,
 lifecycle binding and cross-module dispatch resolution are reconstructed from
 the current revision. Whole-revision hits retain their existing behavior.
 
-Module keys include ordered source/generated inputs, compiler arguments, the
+Module keys include ordered source/generated inputs and their resolved paths, compiler arguments, the
 transitive project import closure, imported Swift/Clang inputs, compiler and
 bundled plugin bytes, analyzer/schema/settings/toolchain/SDK identity and
 `--cache-context`. Known root aliases and supported header-map destination
-paths are normalized; source bytes are never rewritten.
+paths are normalized; source bytes are never rewritten. Swift symlink metadata
+is retained, so retargeting a source link invalidates affected fragments even
+when the destination bytes match; SIL source locations can still change.
 Non-Swift repository files invalidate all fragments conservatively, including
 mapping files that could also be compiler or script inputs. Module availability probes also track the queried project-module inputs and the
 complete project-module name inventory; unrecognized probes invalidate more broadly.

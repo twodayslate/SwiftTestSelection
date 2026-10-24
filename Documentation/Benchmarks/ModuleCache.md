@@ -13,7 +13,14 @@ selected identifiers, `-only-testing:` arguments, explanations and fallbacks
 after method edits, additions, deletions, moves, shared API changes, policy
 changes, external-context changes, stacked heads and unavailable bases.
 Separate tests cover generated inputs, compiler settings, headers, external
-modules, availability probes, corruption and mutation during extraction.
+modules, availability probes, corruption and mutation during extraction. A real
+compiler regression retargets a Swift symlink between byte-identical files and
+compares the invalidated cache result with fresh extraction; generated-source
+symlinks outside the repository manifest are checked separately.
+
+The measurements below precede the schema-3 fix that includes resolved source
+paths and Swift symlink metadata. That fix was validated by debug/release
+regressions; these large-consumer timings were not rerun for it.
 
 An independently built three-module Xcode fixture reused all three fragments
 after moving both its source and DerivedData directories. Its complete function

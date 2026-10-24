@@ -327,3 +327,22 @@ private struct ModuleCacheFixture {
     try Data("public func core(_ changedAPI: Int) {}".utf8).write(to: fixture.source.appendingPathComponent("Core.swift"))
     #expect(try fixture.identities()["Other"] == before["Other"])
 }
+
+@Test func moduleCacheTracksGeneratedSourceSymlinkTargets() throws {
+    let fixture = try ModuleCacheFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let first = fixture.derived.appendingPathComponent("First.swift")
+    let second = fixture.derived.appendingPathComponent("Second.swift")
+    let alias = fixture.derived.appendingPathComponent("Generated.swift")
+    for file in [first, second] { try Data("func generated() {}".utf8).write(to: file) }
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: first)
+    try Data(alias.path.utf8).write(to: fixture.derived.appendingPathComponent("Tests.SwiftFileList"))
+    let before = try fixture.identities()
+    try FileManager.default.removeItem(at: alias)
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: second)
+    let after = try fixture.identities()
+    // Derived inputs are outside the repository manifest. Equal bytes still
+    // require a miss when the SIL source-region path changes.
+    #expect(before["Tests"] != after["Tests"])
+    for module in ["Core", "App", "Other"] { #expect(before[module] == after[module]) }
+}

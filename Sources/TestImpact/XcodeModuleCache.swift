@@ -57,7 +57,7 @@ final class XcodeModuleCache {
         self.cache = cache
         var context = identity
         context.removeValue(forKey: "revision")
-        context["schema"] = "xcode-module-fragment-2"
+        context["schema"] = "xcode-module-fragment-3"
         self.context = context
         self.source = source
         self.derived = derived
@@ -133,7 +133,8 @@ final class XcodeModuleCache {
         // Recompute policy separately, but conservatively invalidate these inputs.
         var sharedInputs: [String: String] = [:]
         let files = try ArtifactFiles.manifest(at: source)
-        for (path, digest) in files where !path.hasSuffix(".swift") {
+        // A Swift symlink can change source-region ownership with identical bytes.
+        for (path, digest) in files where !path.hasSuffix(".swift") || digest.hasPrefix("symlink:") {
             sharedInputs[path] = digest
         }
         var localKeys: [String: String] = [:]
@@ -159,6 +160,12 @@ final class XcodeModuleCache {
                 inputs["compilerWorkingDirectory"] = normalized(directory.path)
             }
             inputs["orderedSources"] = XcodeGraphCache.digest(try JSONEncoder().encode(sources.map(normalized)))
+            // Match SILParser's path resolution, including generated inputs outside
+            // the repository manifest. Root relocation is still normalized.
+            let resolvedSources = sources.map {
+                normalized(URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path)
+            }
+            inputs["resolvedSources"] = XcodeGraphCache.digest(try JSONEncoder().encode(resolvedSources))
             for path in sources {
                 inputs[normalized(path)] = try hash(path)
                 let text = try String(contentsOfFile: path, encoding: .utf8)
