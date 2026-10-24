@@ -273,14 +273,14 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                 let data = options.format == "dot" ? Data(graph.dot().utf8) : try encoder.encode(graph)
                 try write(data, to: options.output)
             } else {
-                let headGraph = try options.headGraph.map { try JSONDecoder().decode(XcodeTestGraph.self, from: Data(contentsOf: URL(fileURLWithPath: $0))) }
+                let headGraph = try options.headGraph.map { try XcodeAnalysis.executionGraph(at: URL(fileURLWithPath: $0)) }
                 let temporaryRetention = options.run && options.head != nil && headGraph == nil && options.retainedBuild == nil
                     ? FileManager.default.temporaryDirectory.appendingPathComponent("swift-impact-execution-" + UUID().uuidString) : nil
                 defer { if let temporaryRetention { try? FileManager.default.removeItem(at: temporaryRetention) } }
                 let retained = options.retainedBuild.map { URL(fileURLWithPath: $0) } ?? temporaryRetention
                 let report: ImpactReport
                 if let headGraph, let basePath = options.baseGraph {
-                    let baseGraph = try JSONDecoder().decode(XcodeTestGraph.self, from: Data(contentsOf: URL(fileURLWithPath: basePath)))
+                    let baseGraph = try XcodeAnalysis.executionGraph(at: URL(fileURLWithPath: basePath))
                     report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase,
                         fullSuite: options.fullSuite, baseGraph: baseGraph, headGraph: headGraph)
                 } else {

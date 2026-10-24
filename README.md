@@ -553,3 +553,9 @@ and executes one unit and one UI method from the saved head. It rejects a wrong
 revision, missing report, and altered products and verifies that empty selections
 execute nothing. ChainOfCustody integration and its full CI performance acceptance
 remain tracked in [ChainOfCustody #298](https://github.com/twodayslate/ChainOfCustody/issues/298).
+
+Run `python3 Scripts/xcode_saved_graph_cli_test.py --tool .build/release/swift-test-impact`
+to check that saved-graph selection, with and without `--run`, rejects incomplete
+or checksum-mismatched retained bundles on either side of the comparison. It also
+checks that manual captures and completed bundles remain selectable without
+products. This regression invokes no real Xcode commands or test bodies.
