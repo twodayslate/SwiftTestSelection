@@ -115,9 +115,14 @@ public struct DependencyGraph: Codable, Sendable {
 enum Pattern {
     static func groups(_ expression: String, in text: String) -> [String]? {
         guard let regex = try? NSRegularExpression(pattern: expression),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else {
+              let result = groups(regex, in: text) else {
             return nil
         }
+        return result
+    }
+
+    static func groups(_ regex: NSRegularExpression, in text: String) -> [String]? {
+        guard let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return nil }
         return (1..<match.numberOfRanges).map { index in
             Range(match.range(at: index), in: text).map { String(text[$0]) } ?? ""
         }

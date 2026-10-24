@@ -29,8 +29,13 @@ enum XcodeCompilerGraph {
                 progress("Extracting Xcode SIL dependencies: \(module)…")
                 let output = derived.appendingPathComponent("impact-\(UUID().uuidString).sil")
                 let args = arguments(Array(invocation.dropFirst())) + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-o", output.path]
+                let compilation = AnalysisMeasurement()
                 _ = try CommandRunner.run(compiler, args, at: directory)
-                let parsed = SILParser.parse(try String(contentsOf: output, encoding: .utf8), module: module, sourceRoot: sourceRoot)
+                progress(compilation.report("Compiled \(module)"))
+                let parsing = AnalysisMeasurement()
+                let parsed = try SILParser.parse(file: output, module: module, sourceRoot: sourceRoot)
+                let bytes = (try? output.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                progress(parsing.report("Parsed \(module) (\(bytes) SIL bytes, \(parsed.functions.count) functions)"))
                 if parsed.functions.isEmpty { throw ImpactError("No SIL functions for \(module)") }
                 for (symbol, node) in parsed.functions {
                     let isDefinition = node.regions.contains { ownership[module]?.contains($0.path) == true }
@@ -64,6 +69,20 @@ enum XcodeCompilerGraph {
             result.merge(file.inheritance) { Array(Set($0 + $1)) }
         }
         let projectTypes = Set(sources.values.flatMap { $0.units.filter { $0.kind == "type" }.map(\.scope) })
+        // Index the exact prefixes used by the conservative dispatch matcher.
+        // Re-scanning every function for every unresolved declaration is quadratic
+        // on large XCTest targets. Store only prefixes present in declarations.
+        let declarations = Set(graph.functions.values.flatMap(\.dynamicDeclarations))
+        var implementations: [String: Set<String>] = [:]
+        for node in graph.functions.values where !node.regions.isEmpty {
+            for index in node.name.indices {
+                let character = node.name[index]
+                if character == "." || character == "(" {
+                    let prefix = String(node.name[..<index])
+                    if declarations.contains(prefix) { implementations[prefix, default: []].insert(node.id) }
+                }
+            }
+        }
         for symbol in graph.functions.keys {
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
                 let type = declaration.components(separatedBy: ".").first ?? declaration
@@ -71,9 +90,7 @@ enum XcodeCompilerGraph {
                     // Objective-C entry points (including XCTest initializers)
                     // may have no Swift vtable slot. Include all matching
                     // compiled implementations rather than dropping the edge.
-                    let candidates = graph.functions.values.filter { node in
-                        !node.regions.isEmpty && (node.name.hasPrefix(declaration + "(") || node.name.hasPrefix(declaration + "."))
-                    }.map(\.id)
+                    let candidates = implementations[declaration] ?? []
                     if !candidates.isEmpty {
                         graph.functions[symbol]!.dependencies.formUnion(candidates)
                         graph.functions[symbol]!.resolvedDynamicDeclarations.insert(declaration)

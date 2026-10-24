@@ -213,7 +213,10 @@ public struct XcodeAnalysis {
             if let module = modules[target.name] { result[module, default: []].formUnion(target.sourceFiles) }
         }
         var dependencies = XcodeCompilerGraph.extract(log: build.text, sourceRoot: sourceRoot, directory: directory, derived: derived, progress: progress, ownership: ownership)
+        progress("Binding compiler dependencies to \(tests.count) enumerated tests…")
+        let binding = AnalysisMeasurement()
         XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: sources, graph: &dependencies)
+        progress(binding.report("Bound Xcode test dependencies"))
         for target in targets where !target.sourceFiles.isEmpty {
             if let module = modules[target.name], !dependencies.functions.values.contains(where: { $0.module == module && !$0.regions.isEmpty }) {
                 dependencies.diagnostics.append("No compiled functions for target \(target.name)")

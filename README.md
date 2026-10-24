@@ -264,6 +264,23 @@ python3 Scripts/xcode_integration_test.py \
 
 This script copies `Fixtures/XcodeUITests` into a temporary repository with spaces in its path. A single plan contains seven UI tests in one target and two unit tests. It checks method additions/edits/deletions, helpers, setup, inheritance, mapped production dependencies, trivia, pure moves, fallback diagnostics, explicit heads, merge-base comparisons, and workspace discovery. A selected method actually runs while another method in the same target deliberately fails. Explicit-head execution is checked with an invalid dirty worktree. A healthy full-plan run verifies all nine tests. The package tests also model selecting one method from a 393-test target. Use `--keep-work` to retain integration artifacts and result bundles.
 
+The SIL parser also has an optimized large-input regression benchmark:
+
+```sh
+python3 Scripts/benchmark_sil.py --output /tmp/sil-benchmark.json
+```
+
+It checks peak RSS and physical footprint, memory growth, and regex compilation
+counts as input grows. Xcode extraction reports elapsed time and analyzer memory
+for every module. See [SIL performance measurements](Documentation/SILPerformance.md)
+for the investigation, budgets, and release measurement procedure.
+
+The real ChainOfCustody combined-plan graph now completes, but its one-method
+precision check still selects all 1,969 tests. Imported-symbol attribution changes
+and conservative runtime fallbacks remain blockers to using that project as a
+selective CI gate; the performance report documents these findings separately
+from the passing synthetic acceptance tests.
+
 ## Next work
 
 - Cache graphs by source/build identity.

@@ -47,7 +47,7 @@ public struct PackageAnalyzer {
             arguments += ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-module-name", command.moduleName, "-I", command.importPath]
             arguments += command.sources + ["-o", output.path]
             _ = try CommandRunner.run(command.executable, arguments, at: packagePath)
-            let parsed = SILParser.parse(try String(contentsOf: output, encoding: .utf8), module: command.moduleName, sourceRoot: sourceRoot)
+            let parsed = try SILParser.parse(file: output, module: command.moduleName, sourceRoot: sourceRoot)
             if parsed.functions.isEmpty {
                 graph.diagnostics.append("No SIL functions could be read for \(command.moduleName).")
             }
