@@ -229,6 +229,7 @@ extension XcodeAnalysis {
             let workspace: URL
             if keepBuild, let retained {
                 workspace = try RetainedXcodeBuild.create(at: retained, cache: configuration.directory)
+                progress("Retaining head build at \(workspace.path); incomplete bundles after cancellation require explicit cleanup.")
             } else { workspace = cache.work }
             let source = workspace.appendingPathComponent("source")
             let derived = workspace.appendingPathComponent("DerivedData")
