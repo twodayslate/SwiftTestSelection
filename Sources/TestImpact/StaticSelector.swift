@@ -24,6 +24,8 @@ public struct ImpactReport: Codable, Sendable {
     public var headRevision: String?
     /// Binds cached Xcode selections to the exact captured head graph.
     public var buildArtifactID: String?
+    /// Caller-owned retained head graph; products outlive selection/cache eviction.
+    public var buildArtifactPath: String?
     public var analysisEvents: [XcodeAnalysisEvent]?
     public var comparisonMode: String?
     public var onlyTestingArguments: [String]?

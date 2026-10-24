@@ -57,10 +57,13 @@ public struct XcodeAnalysis {
         return try analyze(options, sourceRoot: root)
     }
 
-    public func select(base: String, head: String? = nil, mergeBase: Bool = false, fullSuite: Bool = false, cache: XcodeAnalysisCache? = nil) throws -> ImpactReport {
-        if let cache {
+    public func select(base: String, head: String? = nil, mergeBase: Bool = false, fullSuite: Bool = false, cache: XcodeAnalysisCache? = nil, retainingBuildAt: URL? = nil) throws -> ImpactReport {
+        if cache != nil || retainingBuildAt != nil {
             guard let head else { throw ImpactError("--analysis-cache requires an explicit --head revision; worktree analysis is never cached.") }
-            return try selectCached(base: base, head: head, mergeBase: mergeBase, fullSuite: fullSuite, cache: cache)
+            let scratch = cache == nil ? try temporaryDirectory() : nil
+            defer { if let scratch { try? FileManager.default.removeItem(at: scratch) } }
+            let cache = cache ?? XcodeAnalysisCache(directory: scratch!, context: "uncached-" + UUID().uuidString, maximumBytes: 1)
+            return try selectCached(base: base, head: head, mergeBase: mergeBase, fullSuite: fullSuite, cache: cache, retainingBuildAt: retainingBuildAt)
         }
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         guard options.path.path.hasPrefix(root.path + "/") else { throw ImpactError("Xcode container must be inside the Git repository.") }
@@ -102,6 +105,10 @@ public struct XcodeAnalysis {
     }
 
     public func run(_ report: ImpactReport) throws -> Int32 {
+        if let path = report.buildArtifactPath {
+            let graph = try RetainedXcodeBuild.load(from: URL(fileURLWithPath: path))
+            return try run(report, using: graph)
+        }
         guard !report.selectedTests.isEmpty else {
             progress("No selected tests; no Xcode test command was executed.")
             return 0

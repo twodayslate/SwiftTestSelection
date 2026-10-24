@@ -1,0 +1,115 @@
+{
+  "toolchain": "Xcode 26.6\nBuild version 17F113",
+  "destination": "platform=iOS Simulator,id=69344568-3BA8-4370-AA9F-C36B3E6FC01C",
+  "base": "d7a18fdb3de22c7bdeddb6adb7993581ec4ceb5f",
+  "head": "8a08e079c53975d86ed6a0ef826cebafac297af6",
+  "analysisSeconds": 71.83166912499999,
+  "executionSeconds": 13.95477270900001,
+  "headBuildCount": 1,
+  "totalBuildCount": 2,
+  "selectedTests": [
+    "CheckoutUITests/SharingUITests/testShareSheet()",
+    "UnitTests/ProductionTests/testSharing()"
+  ],
+  "events": [
+    {
+      "detail": "",
+      "phase": "buildSettings",
+      "revision": "8a08e079c53975d86ed6a0ef826cebafac297af6",
+      "seconds": 1.1253539323806763
+    },
+    {
+      "detail": "",
+      "phase": "graphLoad",
+      "revision": "8a08e079c53975d86ed6a0ef826cebafac297af6",
+      "seconds": 0.0001239776611328125
+    },
+    {
+      "detail": "miss: incompatible or absent entry; fresh build required",
+      "phase": "cache",
+      "revision": "8a08e079c53975d86ed6a0ef826cebafac297af6",
+      "seconds": 0
+    },
+    {
+      "detail": "",
+      "phase": "build",
+      "revision": "8a08e079c53975d86ed6a0ef826cebafac297af6",
+      "seconds": 7.980097055435181
+    },
+    {
+      "detail": "fresh analysis",
+      "phase": "enumeration",
+      "revision": "8a08e079c53975d86ed6a0ef826cebafac297af6",
+      "seconds": 6.2483789920806885
+    },
+    {
+      "detail": "fresh analysis",
+      "phase": "extraction",
+      "revision": "8a08e079c53975d86ed6a0ef826cebafac297af6",
+      "seconds": 11.099588990211487
+    },
+    {
+      "detail": "",
+      "phase": "graphPublish",
+      "revision": "8a08e079c53975d86ed6a0ef826cebafac297af6",
+      "seconds": 0.004015088081359863
+    },
+    {
+      "detail": "",
+      "phase": "retainBuild",
+      "revision": "8a08e079c53975d86ed6a0ef826cebafac297af6",
+      "seconds": 0.07732498645782471
+    },
+    {
+      "detail": "",
+      "phase": "buildSettings",
+      "revision": "d7a18fdb3de22c7bdeddb6adb7993581ec4ceb5f",
+      "seconds": 2.5895559787750244
+    },
+    {
+      "detail": "",
+      "phase": "graphLoad",
+      "revision": "d7a18fdb3de22c7bdeddb6adb7993581ec4ceb5f",
+      "seconds": 0.00018703937530517578
+    },
+    {
+      "detail": "miss: incompatible or absent entry; fresh build required",
+      "phase": "cache",
+      "revision": "d7a18fdb3de22c7bdeddb6adb7993581ec4ceb5f",
+      "seconds": 0
+    },
+    {
+      "detail": "",
+      "phase": "build",
+      "revision": "d7a18fdb3de22c7bdeddb6adb7993581ec4ceb5f",
+      "seconds": 8.88416302204132
+    },
+    {
+      "detail": "fresh analysis",
+      "phase": "enumeration",
+      "revision": "d7a18fdb3de22c7bdeddb6adb7993581ec4ceb5f",
+      "seconds": 9.03197193145752
+    },
+    {
+      "detail": "fresh analysis",
+      "phase": "extraction",
+      "revision": "d7a18fdb3de22c7bdeddb6adb7993581ec4ceb5f",
+      "seconds": 21.41600501537323
+    },
+    {
+      "detail": "",
+      "phase": "graphPublish",
+      "revision": "d7a18fdb3de22c7bdeddb6adb7993581ec4ceb5f",
+      "seconds": 0.004419922828674316
+    },
+    {
+      "detail": "",
+      "phase": "selection",
+      "revision": "8a08e079c53975d86ed6a0ef826cebafac297af6",
+      "seconds": 0.0012470483779907227
+    }
+  ],
+  "automaticRunVerified": true,
+  "analyzerSHA256": "a76481db7905458b4662ba3cc03c3731adcc7acefdd2e3e37cf53fc536b673f3",
+  "hardware": "Apple M5"
+}

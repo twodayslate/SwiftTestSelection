@@ -492,3 +492,75 @@ Run `python3 Scripts/xcode_cli_path_test.py --tool .build/release/swift-test-imp
 to check executable fingerprinting for absolute, relative, PATH/symlink, and
 launcher-supplied names. This CLI regression uses mocked Xcode commands and
 does not build an app or execute tests.
+
+### Keep the analyzed head build for execution
+
+```sh
+swift-test-impact select --project App.xcodeproj --scheme App \
+  --destination 'platform=iOS Simulator,id=SIMULATOR_UUID' --test-plan AllTests \
+  --base origin/main --head HEAD --merge-base \
+  --retain-build /absolute/path/to/new-head-bundle \
+  --format json --output impact.json
+
+swift-test-impact run --project App.xcodeproj --scheme App \
+  --destination 'platform=iOS Simulator,id=SIMULATOR_UUID' --test-plan AllTests \
+  --report impact.json --head-graph /absolute/path/to/new-head-bundle/head-graph.json
+```
+
+The head is built once for analysis and execution. Selection exits with a
+caller-owned bundle containing `source/`, `DerivedData/` (including the complete
+`Build/Products` tree and `.xctestrun`), `build.log`, `build-settings.json`,
+`head-graph.json`, and `complete.json`. The report's `buildArtifactPath` and
+`buildArtifactID` identify that exact head. Completion is published last; existing
+or partially created bundle directories are rejected. Use a distinct path per
+job. Keep the bundle until execution has finished, then explicitly remove it.
+Cancellation can leave an incomplete bundle, which must be removed explicitly.
+Cache eviction never removes these caller-owned products.
+
+`--retain-build` can accompany the analysis cache options. On a warm head graph,
+analysis is reused and products are built once for this execution. Cold heads
+build once and capture their analysis from that build. Base products remain
+disposable and are never handed to the runner. Retention without an analysis
+cache uses a disposable uncached analysis directory. `select --head REV --run`
+automatically retains its head build for that invocation and removes it afterward;
+use an explicit `--retain-build` to preserve it after execution too. Worktree
+selection without an explicit head retains the existing execution behavior.
+
+Saved `run` checks the report/head identity, build context and toolchain, known
+exact test identifiers, and the entire products manifest before issuing
+`test-without-building`. Missing or changed products fail explicitly. Empty
+selections issue no Xcode command. To relocate products, copy the **whole**
+`Build/Products` directory intact and pass `--test-products NEW_PRODUCTS_PATH`.
+Moving the complete bundle without that override fails because the recorded
+product path no longer exists. Source exports should remain available until
+execution completes for tests that access source-relative fixtures.
+
+For existing CI runners, replace `run` with `verify-build` using the same options.
+It returns JSON containing the validated `xctestrun`, head/artifact identity,
+`shouldRun`, `selectedTests`, and exact `onlyTestingArguments`, without executing
+tests. Skip execution when `shouldRun` is false. Otherwise pass that `.xctestrun`
+and the selected identifiers to your existing `test-without-building` invocation;
+keep its worker limits, snapshot serialization, skip policy, logs, xcresults, and
+requested-versus-executed verification. Do not issue another build. Repeat
+verification immediately before each execution group, and do not modify products
+between verification and execution. The bundle completion metadata also records
+the analysis input identity (repository/revision, analyzer, toolchain/SDK,
+build-settings hash, and external-input digest).
+
+```sh
+python3 Scripts/xcode_retained_build_integration_test.py \
+  --destination 'platform=iOS Simulator,id=SIMULATOR_UUID' \
+  --output retained-build-measurements.json
+```
+
+The smoke test counts build commands, exits selection, removes its graph cache,
+and executes one unit and one UI method from the saved head. It rejects a wrong
+revision, missing report, and altered products and verifies that empty selections
+execute nothing. ChainOfCustody integration and its full CI performance acceptance
+remain tracked in [ChainOfCustody #298](https://github.com/twodayslate/ChainOfCustody/issues/298).
+
+Run `python3 Scripts/xcode_saved_graph_cli_test.py --tool .build/release/swift-test-impact`
+to check that saved-graph selection, with and without `--run`, rejects incomplete
+or checksum-mismatched retained bundles on either side of the comparison. It also
+checks that manual captures and completed bundles remain selectable without
+products. This regression invokes no real Xcode commands or test bodies.
