@@ -23,3 +23,15 @@ Reproduce with the commands in the repository README. The separate
 [ChainOfCustody adoption gate](https://github.com/twodayslate/ChainOfCustody/issues/298)
 still requires representative real PRs, repeated cold/warm runs, total CI execution
 costs, and coverage-equivalent comparisons before rollout.
+
+## Retained build execution
+
+`retained-build.json` records the companion release smoke check from
+`Scripts/xcode_retained_build_integration_test.py`. It selects an edited unit
+method and an edited UI method, builds the head once, exits selection, removes
+the graph cache, and executes exactly those two methods from the retained build.
+It also checks warm graph reuse with one new product build, wrong-revision and
+modified-product rejection, empty selections, and automatic `select --head --run`
+cleanup. Its timings describe this fixture only. The committed runtime-compatibility
+regression additionally rejects saved graph pairs from different simulator runtime
+inventories; this is covered by unit tests rather than changing installed runtimes.
