@@ -100,56 +100,86 @@ enum XcodeCompilerGraph {
                 }
             }
         }
+        // Preserve every matching symbol, including thunks and duplicate names.
+        var entries: [String: [String: Set<String>]] = [:]
+        var hooks: [String: [String: Set<String>]] = [:]
+        let hookPrefixes = ["setUp(", "setUpWithError(", "tearDown(", "tearDownWithError(",
+                            "init(", "__allocating_init(", "deinit", "__deallocating_deinit"]
+        for node in graph.functions.values where !node.regions.isEmpty {
+            entries[node.module, default: [:]][node.name, default: []].insert(node.id)
+            let variablePrefix = "variable initialization expression of "
+            let variable = node.name.hasPrefix(variablePrefix)
+            let name = variable ? String(node.name.dropFirst(variablePrefix.count)) :
+                node.name.hasPrefix("static ") ? String(node.name.dropFirst(7)) : node.name
+            // Every dotted prefix is considered, preserving nested-type and
+            // variable-initializer prefix semantics of the original matcher.
+            for dot in name.indices where name[dot] == "." {
+                let suffix = name[name.index(after: dot)...]
+                if variable || hookPrefixes.contains(where: { suffix.hasPrefix($0) }) {
+                    hooks[node.module, default: [:]][String(name[..<dot]), default: []].insert(node.id)
+                }
+            }
+        }
+        struct ClassBinding {
+            var classes: [String: Set<String>]
+            var hooks: Set<String>
+            var diagnostics: [String]
+        }
+        var bindings: [String: ClassBinding] = [:]
         for test in tests {
             let parts = test.split(separator: "/").map(String.init)
             if parts.count == 2, let module = modules[parts[0]], parts[1].hasSuffix(")") {
-                graph.tests[test] = Set(graph.functions.values.filter { $0.module == module && $0.name == parts[1] && !$0.regions.isEmpty }.map(\.id))
+                graph.tests[test] = entries[module]?[parts[1]] ?? []
                 continue
             }
             guard parts.count == 3, let module = modules[parts[0]] else {
                 graph.tests[test] = []
                 continue
             }
-            var classes: [String: Set<String>] = [module: [parts[1]]]
-            var visited = Set<String>()
-            var queue = [module + "." + parts[1]]
-            while let key = queue.popLast() {
-                guard visited.insert(key).inserted else { continue }
-                let definingModule = String(key.prefix { $0 != "." })
-                for parent in inheritance[key] ?? [] {
-                    if ["XCTestCase", "XCTest.XCTestCase", "NSObject", "Foundation.NSObject"].contains(parent) { continue }
-                    let local = definingModule + "." + parent
-                    let candidates = inheritance[local] != nil ? [local] : inheritance.keys.filter { $0 == parent || $0.hasSuffix("." + parent) }
-                    if candidates.isEmpty {
-                        graph.testDiagnostics[test, default: []].append("Cannot resolve inherited lifecycle/fixture type: " + parent)
-                    }
-                    for candidate in candidates {
-                        let parentModule = String(candidate.prefix { $0 != "." })
-                        let parentClass = String(candidate.dropFirst(parentModule.count + 1))
-                        classes[parentModule, default: []].insert(parentClass)
-                        queue.append(candidate)
+            let classKey = module + "." + parts[1]
+            let binding: ClassBinding
+            if let cached = bindings[classKey] { binding = cached }
+            else {
+                var classes: [String: Set<String>] = [module: [parts[1]]]
+                var diagnostics: [String] = []
+                var visited = Set<String>()
+                var queue = [classKey]
+                while let key = queue.popLast() {
+                    guard visited.insert(key).inserted else { continue }
+                    let definingModule = String(key.prefix { $0 != "." })
+                    for parent in inheritance[key] ?? [] {
+                        if ["XCTestCase", "XCTest.XCTestCase", "NSObject", "Foundation.NSObject"].contains(parent) { continue }
+                        let local = definingModule + "." + parent
+                        let candidates = inheritance[local] != nil ? [local] : inheritance.keys.filter { $0 == parent || $0.hasSuffix("." + parent) }
+                        if candidates.isEmpty {
+                            diagnostics.append("Cannot resolve inherited lifecycle/fixture type: " + parent)
+                        }
+                        for candidate in candidates {
+                            let parentModule = String(candidate.prefix { $0 != "." })
+                            let parentClass = String(candidate.dropFirst(parentModule.count + 1))
+                            classes[parentModule, default: []].insert(parentClass)
+                            queue.append(candidate)
+                        }
                     }
                 }
+                var roots = Set<String>()
+                for (owner, names) in classes {
+                    for name in names { roots.formUnion(hooks[owner]?[name] ?? []) }
+                }
+                binding = ClassBinding(classes: classes, hooks: roots, diagnostics: diagnostics)
+                bindings[classKey] = binding
+            }
+            if !binding.diagnostics.isEmpty {
+                graph.testDiagnostics[test, default: []].append(contentsOf: binding.diagnostics)
             }
             let method = parts[2].contains("(") ? parts[2] : parts[2] + "()"
-            let entries = graph.functions.values.filter { node in
-                !node.regions.isEmpty && (classes[node.module] ?? []).contains { node.name == $0 + "." + method }
+            var roots = Set<String>()
+            for (owner, names) in binding.classes {
+                for name in names { roots.formUnion(entries[owner]?[name + "." + method] ?? []) }
             }
-            graph.tests[test] = Set(entries.map(\.id))
-            // Hooks and initializers are roots of this class and its ancestors,
-            // not of every test in the module. Ordinary inherited helpers are
-            // reached through SIL references and dispatch tables.
-            if !entries.isEmpty {
-                let hooks = graph.functions.values.filter { node in
-                    guard !node.regions.isEmpty else { return false }
-                    return (classes[node.module] ?? []).contains { cls in
-                        ["setUp(", "setUpWithError(", "tearDown(", "tearDownWithError(", "init(", "__allocating_init(", "deinit", "__deallocating_deinit"].contains {
-                            node.name == cls + "." + $0 || node.name.hasPrefix(cls + "." + $0) || node.name.hasPrefix("static " + cls + "." + $0)
-                        } || node.name.hasPrefix("variable initialization expression of " + cls + ".")
-                    }
-                }
-                graph.tests[test]!.formUnion(hooks.map(\.id))
-            }
+            // Hooks belong only to tests with a known entry, as before.
+            if !roots.isEmpty { roots.formUnion(binding.hooks) }
+            graph.tests[test] = roots
         }
     }
 }
