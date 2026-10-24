@@ -15,11 +15,14 @@ import Testing
     try Data("void sdk(void);".utf8).write(to: header)
     try Data("public func sdk()".utf8).write(to: interface)
     try Data("plugin binary".utf8).write(to: plugin)
-    func inventory(_ directory: String, option: String = "-DVERSION=1") throws -> XcodeDependencyInputs.Inventory {
+    func inventory(_ directory: String, option: String = "-DVERSION=1", reverseEdges: Bool = false, additionalEdge: Bool = false) throws -> XcodeDependencyInputs.Inventory {
         let pcm = directory + "/SDK-" + directory.count.description + ".pcm"
         let swift = directory + "/SDK-" + directory.count.description + ".swiftmodule"
+        var edges = [["swift": "SDK"], ["swift": "Core"]]
+        if additionalEdge { edges.append(["clang": "SDK"]) }
+        if reverseEdges { edges.reverse() }
         let records: [[String: Any]] = [
-            ["swift": "Tests"], ["modulePath": "Tests.swiftmodule", "sourceFiles": [],
+            ["swift": "Tests"], ["modulePath": "Tests.swiftmodule", "sourceFiles": [], "directDependencies": edges,
                 "details": ["swift": ["commandLine": [], "contextHash": directory]]],
             ["swiftPrebuiltExternal": "Core"], ["modulePath": directory + "/Core.swiftmodule",
                 "details": ["swiftPrebuiltExternal": ["compiledModulePath": directory + "/Core.swiftmodule"]]],
@@ -37,6 +40,8 @@ import Testing
     }
     let base = try inventory("/one")
     #expect(base.digest == (try inventory("/different/build/root")).digest)
+    #expect(base.digest == (try inventory("/one", reverseEdges: true)).digest)
+    #expect(base.digest != (try inventory("/one", additionalEdge: true)).digest)
     #expect(base.projectImports == ["Core"])
     #expect(base.modules == ["swift:Tests", "swift:Core", "swift:SDK", "clang:SDK"])
     #expect(base.digest != (try inventory("/one", option: "-DVERSION=2")).digest)

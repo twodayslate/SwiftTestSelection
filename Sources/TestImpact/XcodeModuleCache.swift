@@ -14,6 +14,8 @@ final class XcodeModuleCache {
     private let derived: URL
     private let workspace: URL
     private let directory: URL
+    private let pathRoots: [(String, String)]
+    var inspectIdentityInputs: ((String, [String: String]) -> Void)?
     private var identities: [String: [String: String]] = [:]
     private var pending: [(URL, [String: String])] = []
 
@@ -61,6 +63,18 @@ final class XcodeModuleCache {
         self.derived = derived
         self.workspace = workspace
         self.directory = directory ?? source
+        // Xcode's package paths can use /private/tmp while callers use /tmp.
+        // Resolve only known roots, once; never rewrite arbitrary source text.
+        self.pathRoots = [(source, "<SOURCE>"), (derived, "<DERIVED>"), (workspace, "<WORK>")].flatMap { root, token in
+            var paths = Set([root.standardizedFileURL.path, root.standardizedFileURL.resolvingSymlinksInPath().path])
+            // Foundation deliberately preserves /tmp on Darwin, even when
+            // resolving symlinks. POSIX realpath supplies the actual alias.
+            if let resolved = realpath(root.path, nil) {
+                paths.insert(String(cString: resolved))
+                free(resolved)
+            }
+            return paths.sorted().map { ($0, token) }
+        }
     }
 
     private func normalized(_ path: String) -> String {
@@ -68,7 +82,7 @@ final class XcodeModuleCache {
         for prefix in ["", "@", "-I", "-F", "-L"] {
             let value = String(path.dropFirst(prefix.count))
             guard path.hasPrefix(prefix) else { continue }
-            for (root, token) in [(source.path, "<SOURCE>"), (derived.path, "<DERIVED>"), (workspace.path, "<WORK>")] {
+            for (root, token) in pathRoots {
                 if value == root || value.hasPrefix(root + "/") {
                     return prefix + token + value.dropFirst(root.count)
                 }
@@ -103,7 +117,13 @@ final class XcodeModuleCache {
         var fileHashes: [String: String] = [:]
         func hash(_ path: String) throws -> String {
             if let found = fileHashes[path] { return found }
-            let value = try ArtifactFiles.digest(URL(fileURLWithPath: path))
+            let value: String
+            if path.hasSuffix(".hmap"),
+               let digest = try XcodeHeaderMap.digest(Data(contentsOf: URL(fileURLWithPath: path)), normalize: normalized) {
+                value = digest
+            } else {
+                value = try ArtifactFiles.digest(URL(fileURLWithPath: path))
+            }
             fileHashes[path] = value
             return value
         }
@@ -242,6 +262,7 @@ final class XcodeModuleCache {
             inputs["arguments"] = XcodeGraphCache.digest(try encoder.encode(arguments.map(normalized)))
             let sortedImports = try importMetadata.map { try XcodeGraphCache.key($0) }.sorted()
             inputs["imports"] = XcodeGraphCache.digest(try encoder.encode(sortedImports))
+            inspectIdentityInputs?(module, inputs)
             localKeys[module] = try XcodeGraphCache.key(inputs)
         }
         let availableModuleInputs = try XcodeGraphCache.key(localKeys)

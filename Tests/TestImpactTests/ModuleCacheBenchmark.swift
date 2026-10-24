@@ -5,6 +5,8 @@ import Foundation
 import Testing
 @testable import TestImpact
 
+private final class ModuleCacheBenchmarkImage: NSObject {}
+
 /// Opt-in release module-cache probe/benchmark. JSON string fields: root,
 /// derived, workspace, log, cache, output, revision, context; optional reference.
 /// mode=identities performs input validation only. Default extracts dependencies.
@@ -20,10 +22,21 @@ import Testing
     let cache = try XcodeGraphCache(.init(directory: try url("cache"), context: try #require(config["context"])), progress: progress)
     let root = try url("root")
     let log = try String(contentsOf: url("log"), encoding: .utf8)
+    // SwiftPM loads these tests into a generic helper executable. Hash the image
+    // containing TestImpact, not that unchanged helper, when benchmarking reuse.
+    let implementation = try #require(Bundle(for: ModuleCacheBenchmarkImage.self).executableURL)
     let identity = ["revision": try #require(config["revision"]), "externalInputs": try #require(config["context"]),
-                    "analyzerExecutable": try ArtifactFiles.digest(XcodeGraphCache.analyzerExecutable()),
+                    "analyzerExecutable": try ArtifactFiles.digest(implementation),
                     "toolchain": try ArtifactFiles.toolchain(at: root)]
     let fragments = XcodeModuleCache(cache: cache, identity: identity, source: root, derived: try url("derived"), workspace: try url("workspace"))
+    if let directory = config["inspectInputs"] {
+        let output = URL(fileURLWithPath: directory)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        fragments.inspectIdentityInputs = { name, inputs in
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
+            try? encoder.encode(inputs).write(to: output.appendingPathComponent(name + ".json"))
+        }
+    }
     let start = Date()
     fragments.prepare(log: log)
     var keys: [String: String] = [:]

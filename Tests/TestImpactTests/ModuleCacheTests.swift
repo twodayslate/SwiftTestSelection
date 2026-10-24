@@ -60,6 +60,26 @@ private struct ModuleCacheFixture {
     for module in base.keys { #expect(base[module] != moved[module]) }
 }
 
+@Test func moduleCacheRecognizesKnownRootSymlinkAliases() throws {
+    let fixture = try ModuleCacheFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let base = try fixture.identities()
+    let alias = fixture.root.appendingPathComponent("alias")
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: fixture.root)
+    let moved = XcodeModuleCache(cache: fixture.cache, identity: fixture.context,
+        source: alias.appendingPathComponent("source"), derived: alias.appendingPathComponent("derived"), workspace: alias)
+    moved.prepare(log: fixture.log)
+    for module in base.keys { #expect(moved.identity(for: module) == base[module]) }
+    // Foundation can hide /private/tmp even after resolving symlinks. Exercise
+    // physical paths in compiler file lists against the original known roots.
+    let aliasedList = fixture.derived.appendingPathComponent("Core.SwiftFileList")
+    let originalPath = fixture.source.appendingPathComponent("Core.swift").path
+    let physical = try #require(realpath(originalPath, nil))
+    defer { free(physical) }
+    try Data(String(cString: physical).utf8).write(to: aliasedList)
+    #expect(try fixture.identities() == base)
+}
+
 @Test func moduleCacheInvalidatesCompilerDependencyClosureAcrossRevisions() throws {
     var fixture = try ModuleCacheFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }

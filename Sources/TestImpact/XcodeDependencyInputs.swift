@@ -70,7 +70,18 @@ enum XcodeDependencyInputs {
             if let dictionary = value as? [String: Any] {
                 // Context hashes encode output location; full compiler options,
                 // imported modules and raw input bytes below replace that hash.
-                return try dictionary.filter { $0.key != "contextHash" }.mapValues(canonical)
+                var result: [String: Any] = [:]
+                for (key, value) in dictionary where key != "contextHash" {
+                    let mapped = try canonical(value)
+                    if key == "directDependencies", let dependencies = mapped as? [[String: Any]] {
+                        // Scanner graph edges are a set; overlay discovery order
+                        // varies between equivalent builds. Keep argv/source order.
+                        result[key] = try dependencies.map { dependency in
+                            (String(decoding: try JSONSerialization.data(withJSONObject: dependency, options: [.sortedKeys]), as: UTF8.self), dependency)
+                        }.sorted { $0.0 < $1.0 }.map { $0.1 }
+                    } else { result[key] = mapped }
+                }
+                return result
             }
             return value
         }
