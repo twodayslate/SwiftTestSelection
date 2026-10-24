@@ -188,6 +188,9 @@ final class XcodeModuleCache {
             }
             var importMetadata: [[String: String]] = []
             for dependency in dependencies {
+                guard Set(dependency.keys).isSubset(of: ["moduleName", "modulePath", "isFramework", "clangModulePath", "clangModuleMapPath", "isBridgingHeaderDependency"]) else {
+                    throw ImpactError("Unsupported explicit import input fields for \(module)")
+                }
                 guard let name = dependency["moduleName"] as? String else { throw ImpactError("Unknown import metadata for \(module)") }
                 var metadata: [String: String] = [:]
                 for (key, value) in dependency {

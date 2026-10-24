@@ -24,7 +24,7 @@ import Testing
             ["swiftPrebuiltExternal": "Core"], ["modulePath": directory + "/Core.swiftmodule",
                 "details": ["swiftPrebuiltExternal": ["compiledModulePath": directory + "/Core.swiftmodule"]]],
             ["clang": "SDK"], ["modulePath": pcm, "sourceFiles": [header.path],
-                "details": ["clang": ["commandLine": ["-emit-pcm", "-o", pcm, option], "contextHash": directory]]],
+                "details": ["clang": ["moduleMapPath": header.path, "commandLine": ["-emit-pcm", "-o", pcm, option], "contextHash": directory]]],
             ["swift": "SDK"], ["modulePath": swift, "sourceFiles": [],
                 "details": ["swift": ["moduleInterfacePath": interface.path,
                     "commandLine": ["-o", swift, "-fmodule-file=SDK=" + pcm], "contextHash": directory,
@@ -55,5 +55,9 @@ import Testing
     #expect(throws: ImpactError.self) {
         try XcodeDependencyInputs.fingerprint(Data(#"{"mainModuleName":"Tests","modules":[]}"#.utf8),
             projectModules: [], normalize: { $0 }, hash: { $0 })
+    }
+    #expect(throws: ImpactError.self) {
+        let future = #"{"mainModuleName":"Tests","modules":[{"swift":"Tests"},{"modulePath":"Tests.swiftmodule","futureResourceInputs":["/unknown/input"],"details":{"swift":{"commandLine":[]}}}]}"#
+        try XcodeDependencyInputs.fingerprint(Data(future.utf8), projectModules: [], normalize: { $0 }, hash: { $0 })
     }
 }

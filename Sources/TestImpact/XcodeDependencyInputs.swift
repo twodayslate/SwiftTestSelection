@@ -33,6 +33,9 @@ enum XcodeDependencyInputs {
               let main = document["mainModuleName"] as? String,
               let modules = document["modules"] as? [[String: Any]], !modules.isEmpty,
               modules.count.isMultiple(of: 2) else { throw ImpactError("Unsupported dependency scan inventory") }
+        guard Set(document.keys).isSubset(of: ["mainModuleName", "modules"]) else {
+            throw ImpactError("Unknown dependency scan fields")
+        }
         var outputs: [String: String] = [:]
         var names = Set<String>()
         var imports = Set<String>()
@@ -76,8 +79,15 @@ enum XcodeDependencyInputs {
             inputs[normalize(path)] = try hash(path)
         }
         for (kind, name, module) in entries {
+            let recordFields: Set<String> = ["details", "directDependencies", "imports", "libraryLevel", "linkLibraries", "modulePath", "optionalImports", "sourceFiles"]
+            let detailFields: Set<String> = ["commandLine", "compiledModuleCandidates", "compiledModulePath", "contextHash", "isFramework", "macroDependencies", "moduleInterfacePath", "moduleMapPath", "sourceImportedDependencies", "swiftOverlayDependencies", "userModuleVersion"]
+            guard Set(module.keys).isSubset(of: recordFields) else { throw ImpactError("Unknown dependency module input fields") }
             guard let details = module["details"] as? [String: [String: Any]],
-                  let detail = details[kind] else { throw ImpactError("Missing dependency scan details") }
+                  details.count == 1, let detail = details[kind],
+                  Set(detail.keys).isSubset(of: detailFields) else { throw ImpactError("Missing or unsupported dependency scan details") }
+            if let sources = module["sourceFiles"], !(sources is [String]) { throw ImpactError("Unsupported source input inventory") }
+            if let plugins = detail["macroDependencies"], !(plugins is [[String: Any]]) { throw ImpactError("Unsupported macro input inventory") }
+            if let candidates = detail["compiledModuleCandidates"], !(candidates is [String]) { throw ImpactError("Unsupported prebuilt candidate inventory") }
             let sources = module["sourceFiles"] as? [String] ?? []
             if kind == "clang", sources.isEmpty { throw ImpactError("Missing Clang input files") }
             for path in sources {
@@ -97,9 +107,19 @@ enum XcodeDependencyInputs {
                 try input(path)
                 for candidate in detail["compiledModuleCandidates"] as? [String] ?? [] { try input(candidate) }
             }
-            if let map = detail["moduleMapPath"] as? String { try input(map) }
+            if kind == "clang" {
+                guard let map = detail["moduleMapPath"] as? String else { throw ImpactError("Missing Clang module map input") }
+                try input(map)
+            }
             for plugin in detail["macroDependencies"] as? [[String: Any]] ?? [] {
+                guard Set(plugin.keys).isSubset(of: ["moduleName", "libraryPath", "executablePath"]) else {
+                    throw ImpactError("Unknown macro resource inputs")
+                }
+                guard ["libraryPath", "executablePath"].contains(where: { !(plugin[$0] as? String ?? "").isEmpty }) else {
+                    throw ImpactError("Missing macro binary input")
+                }
                 for key in ["libraryPath", "executablePath"] {
+                    if let path = plugin[key], !(path is String) { throw ImpactError("Unsupported macro binary input") }
                     if let path = plugin[key] as? String, !path.isEmpty { try input(path) }
                 }
             }
