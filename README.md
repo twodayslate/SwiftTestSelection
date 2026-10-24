@@ -576,7 +576,8 @@ the current revision. Whole-revision hits retain their existing behavior.
 Module keys include ordered source/generated inputs, compiler arguments, the
 transitive project import closure, imported Swift/Clang inputs, compiler and
 bundled plugin bytes, analyzer/schema/settings/toolchain/SDK identity and
-`--cache-context`. Paths are normalized; source bytes are never rewritten.
+`--cache-context`. Known root aliases and supported header-map destination
+paths are normalized; source bytes are never rewritten.
 Non-Swift repository files invalidate all fragments conservatively, including
 mapping files that could also be compiler or script inputs. Module availability probes also track the queried project-module inputs and the
 complete project-module name inventory; unrecognized probes invalidate more broadly.
@@ -605,3 +606,6 @@ or publishing fragments. Newly extracted fragments are staged on disk until
 that final validation; changed inputs produce an explicit conservative
 extraction diagnostic. Progress reports per-module hits, misses/bypasses,
 validation timing, and avoided compiler/parser work.
+
+Release measurements, fresh-extraction parity checks and reproduction commands
+are in [the module cache benchmark](Documentation/Benchmarks/ModuleCache.md).
