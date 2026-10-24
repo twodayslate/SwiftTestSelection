@@ -31,6 +31,15 @@ Cache hits validate settings/toolchain and reuse graphs without build or enumera
 External input context must cover environment/scripts/local dependencies outside Git.
 The default disk limit is 5 GiB. New revisions rebuild; worktrees are not cached.
 
+Retain the analyzed head for execution after selection exits:
+  select <Xcode options> --base REV --head REV --retain-build NEW_DIRECTORY
+  run <Xcode options> --report impact.json --head-graph NEW_DIRECTORY/head-graph.json
+  verify-build <Xcode options> --report impact.json --head-graph FILE
+Retained directories are caller-owned; remove them explicitly after execution.
+verify-build emits the validated xctestrun path for custom runners. Empty selections
+must be skipped by those runners. --test-products relocates an intact products tree.
+select --head REV --run automatically reuses its head build, then cleans it up.
+
 Existing Xcode builds:
   graph <Xcode options> --derived-data PATH --build-log FILE --build-settings FILE
         --xctestrun FILE --revision REVISION --output head-graph.json
@@ -77,13 +86,15 @@ private struct Options {
     var baseGraph: String?
     var headGraph: String?
     var testProducts: String?
+    var retainedBuild: String?
+    var reportPath: String?
     var cachePath: String?
     var cacheContext: String?
     var cacheMaxBytes: Int64 = 5 * 1_024 * 1_024 * 1_024
 
     init(_ arguments: [String]) throws {
-        guard let first = arguments.first, ["graph", "select"].contains(first) else {
-            throw ImpactError("Expected 'graph' or 'select'. Use --help for usage.")
+        guard let first = arguments.first, ["graph", "select", "run", "verify-build"].contains(first) else {
+            throw ImpactError("Expected 'graph', 'select', 'run' or 'verify-build'. Use --help for usage.")
         }
         command = first
         format = first == "graph" ? "json" : "text"
@@ -108,12 +119,14 @@ private struct Options {
             if flag == "--run" { run = true; continue }
             if flag == "--merge-base" { mergeBase = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
-            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes"].contains(flag), index < arguments.count else {
+            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--retain-build", "--report"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
             let value = arguments[index]
             index += 1
             switch flag {
+            case "--retain-build": retainedBuild = value
+            case "--report": reportPath = value
             case "--analysis-cache": cachePath = value
             case "--cache-context": cacheContext = value
             case "--cache-max-bytes":
@@ -156,12 +169,25 @@ private struct Options {
             buildInputs = XcodeBuildInputs(derivedData: URL(fileURLWithPath: derivedData!), buildLog: URL(fileURLWithPath: buildLog!),
                 buildSettings: URL(fileURLWithPath: buildSettings!), xctestrun: URL(fileURLWithPath: xctestrun!), revision: revision!)
         }
-        if baseGraph != nil || headGraph != nil {
+        let savedExecution = command == "run" || command == "verify-build"
+        if savedExecution {
+            guard reportPath != nil, headGraph != nil, project != nil || workspace != nil,
+                  baseGraph == nil, base == nil, head == nil, !mergeBase, !fullSuite, !run,
+                  retainedBuild == nil, captureCount == 0 else {
+                throw ImpactError("run/verify-build require Xcode options, --report and --head-graph; comparison/build options are not accepted.")
+            }
+        } else if reportPath != nil { throw ImpactError("--report is only valid with run or verify-build.") }
+        if retainedBuild != nil {
+            guard command == "select", head != nil, project != nil || workspace != nil, headGraph == nil, baseGraph == nil else {
+                throw ImpactError("--retain-build requires Xcode select with an explicit --head and no saved graph inputs.")
+            }
+        }
+        if !savedExecution && (baseGraph != nil || headGraph != nil) {
             guard command == "select", baseGraph != nil, headGraph != nil, project != nil || workspace != nil else {
                 throw ImpactError("Cached selection requires Xcode select mode and both --base-graph and --head-graph.")
             }
         }
-        if testProducts != nil && (baseGraph == nil || !run) {
+        if testProducts != nil && !savedExecution && (baseGraph == nil || !run) {
             throw ImpactError("--test-products requires cached selection with --run.")
         }
         if command == "select" && base == nil { throw ImpactError("select requires --base REVISION.") }
@@ -232,20 +258,34 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         if let xcode = options.xcode {
             let analysis = XcodeAnalysis(options: xcode, progress: log)
-            if options.command == "graph" {
+            if options.command == "run" || options.command == "verify-build" {
+                let report = try JSONDecoder().decode(ImpactReport.self, from: Data(contentsOf: URL(fileURLWithPath: options.reportPath!)))
+                let graph = try XcodeAnalysis.executionGraph(at: URL(fileURLWithPath: options.headGraph!))
+                let products = options.testProducts.map { URL(fileURLWithPath: $0) }
+                if options.command == "run" { exit(try analysis.run(report, using: graph, productsDirectory: products)) }
+                let testRun = try analysis.verifyBuild(report, using: graph, productsDirectory: products)
+                try write(try JSONSerialization.data(withJSONObject: ["xctestrun": testRun.path,
+                    "headRevision": report.headRevision!, "buildArtifactID": report.buildArtifactID!,
+                    "shouldRun": !report.selectedTests.isEmpty, "selectedTests": report.selectedTests,
+                    "onlyTestingArguments": report.selectedTests.map { "-only-testing:" + $0 }], options: [.prettyPrinted, .sortedKeys]), to: options.output)
+            } else if options.command == "graph" {
                 let graph = try options.buildInputs.map { try analysis.graph(from: $0) } ?? analysis.graph()
                 let data = options.format == "dot" ? Data(graph.dot().utf8) : try encoder.encode(graph)
                 try write(data, to: options.output)
             } else {
-                let headGraph = try options.headGraph.map { try JSONDecoder().decode(XcodeTestGraph.self, from: Data(contentsOf: URL(fileURLWithPath: $0))) }
+                let headGraph = try options.headGraph.map { try XcodeAnalysis.executionGraph(at: URL(fileURLWithPath: $0)) }
+                let temporaryRetention = options.run && options.head != nil && headGraph == nil && options.retainedBuild == nil
+                    ? FileManager.default.temporaryDirectory.appendingPathComponent("swift-impact-execution-" + UUID().uuidString) : nil
+                defer { if let temporaryRetention { try? FileManager.default.removeItem(at: temporaryRetention) } }
+                let retained = options.retainedBuild.map { URL(fileURLWithPath: $0) } ?? temporaryRetention
                 let report: ImpactReport
                 if let headGraph, let basePath = options.baseGraph {
-                    let baseGraph = try JSONDecoder().decode(XcodeTestGraph.self, from: Data(contentsOf: URL(fileURLWithPath: basePath)))
+                    let baseGraph = try XcodeAnalysis.executionGraph(at: URL(fileURLWithPath: basePath))
                     report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase,
                         fullSuite: options.fullSuite, baseGraph: baseGraph, headGraph: headGraph)
                 } else {
                     report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite,
-                        cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) })
+                        cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) }, retainingBuildAt: retained)
                 }
                 let data = options.format == "json" ? try encoder.encode(report) : Data(render(report).utf8)
                 try write(data, to: options.output)
@@ -253,7 +293,11 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                     if let headGraph {
                         exit(try analysis.run(report, using: headGraph, productsDirectory: options.testProducts.map { URL(fileURLWithPath: $0) }))
                     }
-                    exit(try analysis.run(report))
+                    let status = try analysis.run(report)
+                    // exit() does not execute Swift defers. Release only the
+                    // automatically owned bundle before terminating the CLI.
+                    if let temporaryRetention { try FileManager.default.removeItem(at: temporaryRetention) }
+                    exit(status)
                 }
             }
         } else if options.command == "graph" {

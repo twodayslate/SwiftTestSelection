@@ -215,7 +215,7 @@ final class XcodeGraphCache {
 }
 
 extension XcodeAnalysis {
-    func selectCached(base: String, head: String, mergeBase: Bool, fullSuite: Bool, cache configuration: XcodeAnalysisCache) throws -> ImpactReport {
+    func selectCached(base: String, head: String, mergeBase: Bool, fullSuite: Bool, cache configuration: XcodeAnalysisCache, retainingBuildAt retained: URL? = nil) throws -> ImpactReport {
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         let context = try artifactContext(root: root)
         let comparison = try RevisionComparison(base: base, head: head, mergeBase: mergeBase, root: root)
@@ -239,10 +239,16 @@ extension XcodeAnalysis {
         let origin = try CommandRunner.run("git", ["remote", "get-url", "origin"], at: root, allowFailure: true)
         let repository = origin.status == 0 ? origin.text : try CommandRunner.run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], at: root).text
         let runtimes = options.destination.contains("Simulator") ? try CommandRunner.run("xcrun", ["simctl", "list", "runtimes", "-j"], at: root).stdout : Data()
-        func graph(_ revision: String) throws -> XcodeTestGraph {
+        var retainedGraphPath: String?
+        func graph(_ revision: String, keepBuild: Bool = false) throws -> XcodeTestGraph {
             try cache.resetWork()
-            let source = cache.work.appendingPathComponent("source")
-            let derived = cache.work.appendingPathComponent("DerivedData")
+            let workspace: URL
+            if keepBuild, let retained {
+                workspace = try RetainedXcodeBuild.create(at: retained, cache: configuration.directory)
+                progress("Retaining head build at \(workspace.path); incomplete bundles after cancellation require explicit cleanup.")
+            } else { workspace = cache.work }
+            let source = workspace.appendingPathComponent("source")
+            let derived = workspace.appendingPathComponent("DerivedData")
             try GitChanges.export(base: revision, from: root, into: source)
             var options = self.options; options.path = source.appendingPathComponent(context["path"]!)
             // Resolve settings/packages before lookup. No build, enumeration, or
@@ -253,7 +259,7 @@ extension XcodeAnalysis {
             }
             let decoded = try JSONDecoder().decode([XcodeBuildSettings].self, from: settings)
             guard !decoded.isEmpty else { throw ImpactError("Cannot cache empty build settings.") }
-            let normalized = String(decoding: try XcodeGraphCache.canonicalInventory(settings), as: UTF8.self).replacingOccurrences(of: cache.work.path, with: "<CACHE-WORK>")
+            let normalized = String(decoding: try XcodeGraphCache.canonicalInventory(settings), as: UTF8.self).replacingOccurrences(of: workspace.path, with: "<CACHE-WORK>")
             var identity = context
             identity["schema"] = "xcode-analysis-cache-1/graph-2"
             identity["repository"] = XcodeGraphCache.digest(Data(repository.utf8))
@@ -266,7 +272,8 @@ extension XcodeAnalysis {
             identity["externalInputs"] = configuration.context
             let found = try timed("graphLoad", revision: revision) { try cache.load(identity) }
             events.append(.init(phase: "cache", revision: revision, seconds: 0, detail: found == nil ? "miss: incompatible or absent entry; fresh build required" : "hit: no build, enumeration or extraction"))
-            if let found { return found }
+            if let found, !keepBuild { return found }
+            if found != nil { progress("Reusing head analysis; building its executable products once for retention.") }
             let build = try timed("build", revision: revision) {
                 try CommandRunner.run("xcodebuild", args, at: options.path.deletingLastPathComponent())
             }
@@ -274,11 +281,22 @@ extension XcodeAnalysis {
             measured.measurement = { phase, seconds in
                 events.append(.init(phase: phase, revision: revision, seconds: seconds, detail: "fresh analysis"))
             }
-            let result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: build.text, settingsData: settings)
-            try timed("graphPublish", revision: revision) { try cache.store(result, identity: identity) }
+            var result: XcodeTestGraph
+            if let found { result = found }
+            else {
+                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: build.text, settingsData: settings)
+                try timed("graphPublish", revision: revision) { try cache.store(result, identity: identity) }
+            }
+            if keepBuild {
+                retainedGraphPath = try timed("retainBuild", revision: revision) {
+                    try RetainedXcodeBuild.publish(graph: &result, revision: revision, context: context,
+                        toolchain: toolchain, workspace: workspace, settings: settings, log: build.text,
+                        inputIdentity: identity)
+                }.path
+            }
             return result
         }
-        let current = try graph(comparison.head!)
+        let current = try graph(comparison.head!, keepBuild: retained != nil)
         var previous: XcodeTestGraph?
         var fallbacks: [String] = []
         if comparison.base == comparison.head { previous = current }
@@ -290,6 +308,8 @@ extension XcodeAnalysis {
             XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base, additionalFallbacks: fallbacks)
         }
         report.headRevision = comparison.head; report.comparisonMode = comparison.mode
+        report.buildArtifactID = current.buildArtifact?.id
+        report.buildArtifactPath = retainedGraphPath
         if fullSuite {
             report.selectedTests = current.tests.sorted()
             report.onlyTestingArguments = report.selectedTests.map { "-only-testing:" + $0 }

@@ -124,12 +124,13 @@ private func capturedGraph(_ text: String, revision: String, context: [String: S
     #expect(try analysis.run(empty, using: new) == 0)
     #expect(try analysis.select(base: head, fullSuite: true, baseGraph: new, headGraph: new).selectedTests == new.tests)
     #expect(throws: ImpactError.self) { try analysis.select(base: head, baseGraph: old, headGraph: new) }
-    for variation in ["legacy", "schema", "toolchain", "scheme", "sdk", "revision"] {
+    for variation in ["legacy", "schema", "toolchain", "runtimes", "scheme", "sdk", "revision"] {
         var bad = new
         switch variation {
         case "legacy": bad.buildArtifact = nil
         case "schema": bad.buildArtifact!.schemaVersion = 42
         case "toolchain": bad.buildArtifact!.toolchain = "different"
+        case "runtimes": bad.buildArtifact!.simulatorRuntimes = "different"
         case "scheme": bad.buildArtifact!.context["scheme"] = "Other"
         case "sdk": bad.buildArtifact!.context["sdkAndArchitecture"] = "other SDK"
         default: bad.buildArtifact!.revision = base
