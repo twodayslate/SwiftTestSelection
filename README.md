@@ -564,3 +564,34 @@ to check that saved-graph selection, with and without `--run`, rejects incomplet
 or checksum-mismatched retained bundles on either side of the comparison. It also
 checks that manual captures and completed bundles remain selectable without
 products. This regression invokes no real Xcode commands or test bodies.
+
+### Reusing module fragments on a changed revision
+
+`--analysis-cache` also reuses compatible parsed module fragments after a new
+revision's normal build and test discovery. A fragment hit skips that module's
+SIL compiler replay and parser. Inventory, source ownership, UI mappings,
+lifecycle binding and cross-module dispatch resolution are reconstructed from
+the current revision. Whole-revision hits retain their existing behavior.
+
+Module keys include ordered source/generated inputs, compiler arguments, the
+transitive project import closure, imported Swift/Clang artifacts, compiler and
+bundled plugin bytes, analyzer/schema/settings/toolchain/SDK identity and
+`--cache-context`. Paths are normalized; source bytes are never rewritten.
+Non-Swift repository files invalidate all fragments conservatively, including
+mapping files that could also be compiler or script inputs. Module availability probes also track the queried project-module inputs and the
+complete project-module name inventory; unrecognized probes invalidate more broadly.
+
+The initial implementation requires an unambiguous explicit SwiftDriver import
+map next to each file list. Missing metadata, custom compiler plugins without a
+complete resource-input contract, unsupported responses, and ambiguous target or
+architecture invocations bypass fragment caching. External context must cover
+external dependency/module availability and other compiler-visible inputs not
+represented by Git, settings or the import inventory. Never reuse a context
+value after those inputs change.
+
+Fragments use the existing exclusive cache lock, checksummed atomic publication,
+corruption recovery and shared disk budget. They contain no test inventory or
+execution products. Source/import identities are checked again before accepting
+or publishing a fragment; changed inputs produce an explicit conservative
+extraction diagnostic. Progress reports per-module hits, misses/bypasses,
+validation timing, and avoided compiler/parser work.

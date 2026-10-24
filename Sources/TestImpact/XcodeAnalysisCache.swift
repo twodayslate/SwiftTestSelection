@@ -151,21 +151,33 @@ final class XcodeGraphCache {
     }
 
     func load(_ identity: [String: String]) throws -> XcodeTestGraph? {
+        try load(identity, as: XcodeTestGraph.self) { graph in
+            guard graph.schemaVersion == 2, graph.analysisKind == "xcode-sil-and-ui-mappings", graph.dependencies != nil,
+                  !graph.tests.isEmpty, graph.buildArtifact == nil else { throw ImpactError("unsupported or incomplete graph") }
+        }
+    }
+
+    func loadModule(_ identity: [String: String]) throws -> SILModule? {
+        try load(identity, as: SILModule.self) { module in
+            guard !module.functions.isEmpty else { throw ImpactError("empty module fragment") }
+        }
+    }
+
+    private func load<T: Decodable>(_ identity: [String: String], as type: T.Type, validate: (T) throws -> Void) throws -> T? {
         let key = try Self.key(identity)
         let entry = options.directory.appendingPathComponent(key)
         guard fm.fileExists(atPath: entry.path) else {
-            progress("Cache miss \(key.prefix(12)): no entry matching revision, analyzer, toolchain, settings and input context")
+            progress("Cache miss \(key.prefix(12)): no entry matching analyzer, toolchain, settings and input identity")
             return nil
         }
         do {
             let manifest = try JSONDecoder().decode(Entry.self, from: Data(contentsOf: entry.appendingPathComponent("manifest.json")))
             let data = try Data(contentsOf: entry.appendingPathComponent("graph.json"))
             guard manifest.identity == identity, manifest.digest == Self.digest(data) else { throw ImpactError("identity/checksum mismatch") }
-            let graph = try JSONDecoder().decode(XcodeTestGraph.self, from: data)
-            guard graph.schemaVersion == 2, graph.analysisKind == "xcode-sil-and-ui-mappings", graph.dependencies != nil,
-                  !graph.tests.isEmpty, graph.buildArtifact == nil else { throw ImpactError("unsupported or incomplete graph") }
+            let graph = try JSONDecoder().decode(type, from: data)
+            try validate(graph)
             try fm.setAttributes([.modificationDate: Date()], ofItemAtPath: entry.path)
-            progress("Cache hit \(key.prefix(12)): validated graph, source snapshots and complete test inventory")
+            progress("Cache hit \(key.prefix(12)): validated identity and payload checksum")
             return graph
         } catch {
             progress("Cache invalidated \(key.prefix(12)): \(error); rebuilding")
@@ -178,6 +190,15 @@ final class XcodeGraphCache {
         guard graph.dependencies != nil, !graph.tests.isEmpty, graph.buildArtifact == nil else {
             throw ImpactError("Refusing to cache an empty graph or execution products.")
         }
+        try publish(graph, identity: identity)
+    }
+
+    func storeModule(_ module: SILModule, identity: [String: String]) throws {
+        guard !module.functions.isEmpty else { throw ImpactError("Refusing to cache an empty module fragment.") }
+        try publish(module, identity: identity)
+    }
+
+    private func publish<T: Encodable>(_ graph: T, identity: [String: String]) throws {
         let destination = options.directory.appendingPathComponent(try Self.key(identity))
         let stage = options.directory.appendingPathComponent("stage-" + UUID().uuidString)
         try fm.createDirectory(at: stage, withIntermediateDirectories: true)
@@ -284,7 +305,7 @@ extension XcodeAnalysis {
             var result: XcodeTestGraph
             if let found { result = found }
             else {
-                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: build.text, settingsData: settings)
+                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: build.text, settingsData: settings, moduleCache: XcodeModuleCache(cache: cache, identity: identity, source: source, derived: derived, workspace: workspace))
                 try timed("graphPublish", revision: revision) { try cache.store(result, identity: identity) }
             }
             if keepBuild {

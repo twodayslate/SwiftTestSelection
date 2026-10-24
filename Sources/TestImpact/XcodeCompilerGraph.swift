@@ -5,8 +5,9 @@ import Foundation
 
 enum XcodeCompilerGraph {
     static func extract(log: String, sourceRoot: URL, directory: URL, derived: URL,
-                        progress: (String) -> Void, ownership: [String: Set<String>] = [:]) -> DependencyGraph {
+                        progress: (String) -> Void, ownership: [String: Set<String>] = [:], moduleCache: XcodeModuleCache? = nil) -> DependencyGraph {
         var graph = DependencyGraph()
+        moduleCache?.prepare(log: log)
         var seen: [String: [String]] = [:]
         var definingSymbols = Set<String>()
         var dispatch: [String: Set<String>] = [:]
@@ -27,16 +28,39 @@ enum XcodeCompilerGraph {
                 }
                 seen[module] = invocation
                 progress("Extracting Xcode SIL dependencies: \(module)…")
-                let output = derived.appendingPathComponent("impact-\(UUID().uuidString).sil")
-                let args = arguments(Array(invocation.dropFirst())) + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-o", output.path]
-                let compilation = AnalysisMeasurement()
-                _ = try CommandRunner.run(compiler, args, at: directory)
-                progress(compilation.report("Compiled \(module)"))
-                let parsing = AnalysisMeasurement()
-                let parsed = try SILParser.parse(file: output, module: module, sourceRoot: sourceRoot)
-                let bytes = (try? output.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                progress(parsing.report("Parsed \(module) (\(bytes) SIL bytes, \(parsed.functions.count) functions)"))
-                if parsed.functions.isEmpty { throw ImpactError("No SIL functions for \(module)") }
+                let identity = moduleCache?.identity(for: module)
+                let lookup = Date()
+                var cached: SILModule?
+                if let identity {
+                    do { cached = try moduleCache?.cache.loadModule(identity) }
+                    catch { progress("Module cache bypass \(module): \(error)") }
+                }
+                let parsed: SILModule
+                if let cached {
+                    if let identity { try moduleCache?.validateUnchanged(identity, module: module, log: log) }
+                    progress(String(format: "Module cache %@: hit: compatible compiler inputs; skipped compiler and parser (%.3f s)", module, Date().timeIntervalSince(lookup)))
+                    parsed = cached
+                } else {
+                    if moduleCache != nil {
+                        progress(String(format: "Module cache %@: %@ (%.3f s)", module, identity == nil ? "bypass: unsupported input identity" : "miss: absent, incompatible or corrupt inputs", Date().timeIntervalSince(lookup)))
+                    }
+                    let output = derived.appendingPathComponent("impact-\(UUID().uuidString).sil")
+                    defer { try? FileManager.default.removeItem(at: output) }
+                    let args = arguments(Array(invocation.dropFirst())) + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-o", output.path]
+                    let compilation = AnalysisMeasurement()
+                    _ = try CommandRunner.run(compiler, args, at: directory)
+                    progress(compilation.report("Compiled \(module)"))
+                    let parsing = AnalysisMeasurement()
+                    parsed = try SILParser.parse(file: output, module: module, sourceRoot: sourceRoot)
+                    let bytes = (try? output.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                    progress(parsing.report("Parsed \(module) (\(bytes) SIL bytes, \(parsed.functions.count) functions)"))
+                    if parsed.functions.isEmpty { throw ImpactError("No SIL functions for \(module)") }
+                    if let identity {
+                        try moduleCache?.validateUnchanged(identity, module: module, log: log)
+                        do { try moduleCache?.cache.storeModule(parsed, identity: identity) }
+                        catch { progress("Module cache publication bypass \(module): \(error)") }
+                    }
+                }
                 for (symbol, node) in parsed.functions {
                     let isDefinition = node.regions.contains { ownership[module]?.contains($0.path) == true }
                     if isDefinition || !definingSymbols.contains(symbol) && (graph.functions[symbol] == nil || !node.regions.isEmpty && graph.functions[symbol]!.regions.isEmpty) {

@@ -3,7 +3,7 @@
 
 import Foundation
 
-public struct SILModule: Sendable {
+public struct SILModule: Codable, Sendable {
     public var functions: [String: FunctionNode]
     public var dispatchTargets: [String: Set<String>]
 }

@@ -1,0 +1,222 @@
+// SPDX-FileCopyrightText: 2026 Zachary Gorak
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import Foundation
+import SwiftParser
+import SwiftSyntax
+
+/// Parsed compiler fragments only: no inventory, policy, dispatch resolution or
+/// executable products. Shares the enclosing revision cache's lock and budget.
+final class XcodeModuleCache {
+    let cache: XcodeGraphCache
+    private let context: [String: String]
+    private let source: URL
+    private let derived: URL
+    private let workspace: URL
+    private var identities: [String: [String: String]] = [:]
+
+    init(cache: XcodeGraphCache, identity: [String: String], source: URL, derived: URL, workspace: URL) {
+        self.cache = cache
+        var context = identity
+        context.removeValue(forKey: "revision")
+        context["schema"] = "xcode-module-fragment-1"
+        self.context = context
+        self.source = source
+        self.derived = derived
+        self.workspace = workspace
+    }
+
+    private func normalized(_ path: String) -> String {
+        // Normalize path arguments, never source contents or arbitrary flag text.
+        for prefix in ["", "@", "-I", "-F", "-L"] {
+            let value = String(path.dropFirst(prefix.count))
+            guard path.hasPrefix(prefix) else { continue }
+            for (root, token) in [(source.path, "<SOURCE>"), (derived.path, "<DERIVED>"), (workspace.path, "<WORK>")] {
+                if value == root || value.hasPrefix(root + "/") {
+                    return prefix + token + value.dropFirst(root.count)
+                }
+            }
+        }
+        return path
+    }
+
+    /// Unsupported or ambiguous metadata bypasses reuse; extraction still runs.
+    func prepare(log: String) {
+        identities = [:]
+        let start = Date()
+        do { identities = try makeIdentities(log: log) }
+        catch { cache.progress("Module cache bypass: \(error)") }
+        cache.progress(String(format: "Module cache input validation: %.2f s (%d reusable identities)", Date().timeIntervalSince(start), identities.count))
+    }
+
+    func identity(for module: String) -> [String: String]? { identities[module] }
+
+    func validateUnchanged(_ identity: [String: String], module: String, log: String) throws {
+        let start = Date()
+        defer { cache.progress(String(format: "Module cache input recheck %@: %.3f s", module, Date().timeIntervalSince(start))) }
+        guard try makeIdentities(log: log)[module] == identity else {
+            throw ImpactError("Compiler inputs changed while extracting \(module); fragment was not published")
+        }
+    }
+
+    private func makeIdentities(log: String) throws -> [String: [String: String]] {
+        var invocations: [String: [String]] = [:]
+        for line in log.components(separatedBy: .newlines) {
+            guard let marker = line.range(of: "builtin-SwiftDriver -- ") else { continue }
+            let arguments = try XcodeSourceFileList.parse(String(line[marker.upperBound...]))
+            guard let index = arguments.firstIndex(of: "-module-name"), index + 1 < arguments.count else { throw ImpactError("Missing module name") }
+            let module = arguments[index + 1]
+            if let previous = invocations[module], previous != arguments { throw ImpactError("Ambiguous invocations for \(module)") }
+            invocations[module] = arguments
+        }
+        guard !invocations.isEmpty else { throw ImpactError("No compiler inventory") }
+        var fileHashes: [String: String] = [:]
+        func hash(_ path: String) throws -> String {
+            if let found = fileHashes[path] { return found }
+            let value = try ArtifactFiles.digest(URL(fileURLWithPath: path))
+            fileHashes[path] = value
+            return value
+        }
+        // Header/module-map/build-script/configuration changes can affect implicit
+        // compiler inputs. Include all repository non-Swift files conservatively.
+        // Even policy files may be consumed by a custom build script or macro.
+        // Recompute policy separately, but conservatively invalidate these inputs.
+        var sharedInputs: [String: String] = [:]
+        let files = try ArtifactFiles.manifest(at: source)
+        for (path, digest) in files where !path.hasSuffix(".swift") {
+            sharedInputs[path] = digest
+        }
+        var localKeys: [String: String] = [:]
+        var imports: [String: Set<String>] = [:]
+        var availabilityQueries: [String: Set<String>] = [:]
+        var unresolvedAvailability = Set<String>()
+        let canImport = try NSRegularExpression(pattern: #"\bcanImport\s*\(\s*`?([A-Za-z_][A-Za-z_0-9.]*)`?"#)
+        for (module, original) in invocations {
+            guard original.contains("-explicit-module-build") else { throw ImpactError("\(module) has no explicit import inventory") }
+            guard !original.contains(where: { ["-load-plugin-executable", "-load-plugin-library", "-external-plugin-path"].contains($0) }) else {
+                throw ImpactError("Custom compiler plugins require a complete resource-input contract: \(module)")
+            }
+            let arguments = XcodeCompilerGraph.arguments(Array(original.dropFirst()))
+            let lists = original.filter { $0.hasPrefix("@") }
+            guard lists.count == 1 else { throw ImpactError("\(module) requires one unambiguous Swift file list") }
+            let list = URL(fileURLWithPath: String(lists[0].dropFirst()))
+            let sources = try XcodeSourceFileList.parse(String(contentsOf: list, encoding: .utf8))
+            guard !sources.isEmpty, sources.allSatisfy({ $0.hasSuffix(".swift") && $0.hasPrefix("/") }) else {
+                throw ImpactError("Unsupported source/response file for \(module)")
+            }
+            var inputs = sharedInputs
+            inputs["orderedSources"] = XcodeGraphCache.digest(try JSONEncoder().encode(sources.map(normalized)))
+            for path in sources {
+                inputs[normalized(path)] = try hash(path)
+                let text = try String(contentsOfFile: path, encoding: .utf8)
+                if text.contains("canImport"), text.contains("#if") || text.contains("#elseif") {
+                    let conditions = ModuleAvailabilityConditions(viewMode: .sourceAccurate)
+                    conditions.walk(Parser.parse(source: text))
+                    for text in conditions.values where text.contains("canImport") {
+                        let matches = canImport.matches(in: text, range: NSRange(text.startIndex..., in: text))
+                        // Unknown spellings are conservative. Extra matches in trivia
+                        // can only invalidate more fragments, never remove a key.
+                        if matches.count != text.components(separatedBy: "canImport").count - 1 { unresolvedAvailability.insert(module) }
+                        for match in matches {
+                            if let range = Range(match.range(at: 1), in: text) {
+                                let name = String(text[range]).split(separator: ".").first.map(String.init) ?? ""
+                                if invocations[name] != nil { availabilityQueries[module, default: []].insert(name) }
+                            }
+                        }
+                    }
+                }
+            }
+            inputs["availableProjectModules"] = XcodeGraphCache.digest(try JSONEncoder().encode(invocations.keys.sorted()))
+            for index in original.indices where original[index] == "-plugin-path" {
+                guard index + 1 < original.count else { throw ImpactError("Incomplete plugin path") }
+                let path = URL(fileURLWithPath: original[index + 1])
+                let compilerRoot = URL(fileURLWithPath: original[0]).deletingLastPathComponent().deletingLastPathComponent()
+                guard path.path.hasPrefix(compilerRoot.appendingPathComponent("lib/swift/host/plugins").path + "/") else {
+                    throw ImpactError("Custom plugin search path requires complete resource inputs: \(path.path)")
+                }
+                for (relative, digest) in try ArtifactFiles.manifest(at: path) { inputs["plugin:" + path.path + "/" + relative] = digest }
+            }
+            // The driver emits a transitive import map next to its output map.
+            // Do not guess when the toolchain changes that layout or emits variants.
+            let maps = try FileManager.default.contentsOfDirectory(at: list.deletingLastPathComponent(), includingPropertiesForKeys: nil)
+                .filter { $0.lastPathComponent.hasPrefix(module + "-dependencies-") && $0.pathExtension == "json" }
+            guard maps.count == 1,
+                  let dependencies = try JSONSerialization.jsonObject(with: Data(contentsOf: maps[0])) as? [[String: Any]],
+                  !dependencies.isEmpty else { throw ImpactError("Missing/ambiguous explicit import map for \(module)") }
+            var importMetadata: [[String: String]] = []
+            for dependency in dependencies {
+                guard let name = dependency["moduleName"] as? String else { throw ImpactError("Unknown import metadata for \(module)") }
+                var metadata: [String: String] = [:]
+                for (key, value) in dependency {
+                    if let value = value as? String { metadata[key] = normalized(value) }
+                    else if let value = value as? Bool { metadata[key] = String(value) }
+                    else { throw ImpactError("Unsupported import metadata for \(module)") }
+                }
+                if let path = dependency["modulePath"] as? String {
+                    if invocations[name] != nil {
+                        imports[module, default: []].insert(name)
+                    } else { inputs[normalized(path)] = try hash(path) }
+                } else if let path = dependency["clangModulePath"] as? String,
+                          let map = dependency["clangModuleMapPath"] as? String {
+                    inputs[normalized(path)] = try hash(path)
+                    inputs[normalized(map)] = try hash(map)
+                } else { throw ImpactError("Incomplete import paths for \(module).\(name)") }
+                importMetadata.append(metadata)
+            }
+            // Hash additional explicit file inputs (overlays, bridging headers,
+            // plugins, protocol lists, etc.). Unknown inputs err toward misses.
+            var transientFiles = Set<Int>()
+            for index in arguments.indices {
+                if ["-clang-build-session-file", "-dependency-scan-serialize-diagnostics-path"].contains(arguments[index]) {
+                    transientFiles.insert(index + 1)
+                }
+                if arguments[index] == "-ivfsstatcache", index + 1 < arguments.count {
+                    transientFiles.insert(index + (arguments[index + 1] == "-Xcc" ? 2 : 1))
+                }
+            }
+            for (index, argument) in arguments.enumerated() where !argument.hasPrefix("@") && !transientFiles.contains(index) {
+                let path = argument.components(separatedBy: "#")[0]
+                var isDirectory: ObjCBool = false
+                if path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue {
+                    inputs[normalized(path)] = try hash(path)
+                }
+            }
+            inputs["compiler"] = try hash(original[0])
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            inputs["arguments"] = XcodeGraphCache.digest(try encoder.encode(arguments.map(normalized)))
+            let sortedImports = try importMetadata.map { try XcodeGraphCache.key($0) }.sorted()
+            inputs["imports"] = XcodeGraphCache.digest(try encoder.encode(sortedImports))
+            localKeys[module] = try XcodeGraphCache.key(inputs)
+        }
+        let availableModuleInputs = try XcodeGraphCache.key(localKeys)
+        var completed: [String: String] = [:]
+        var visiting = Set<String>()
+        func closure(_ module: String) throws -> String {
+            if let key = completed[module] { return key }
+            guard visiting.insert(module).inserted, let own = localKeys[module] else { throw ImpactError("Cyclic/missing module input: \(module)") }
+            defer { visiting.remove(module) }
+            var keys = [module: own]
+            if unresolvedAvailability.contains(module) { keys["canImportInputs"] = availableModuleInputs }
+            for query in availabilityQueries[module] ?? [] { keys["canImport:" + query] = localKeys[query] }
+            for dependency in imports[module] ?? [] { keys[dependency] = try closure(dependency) }
+            let key = try XcodeGraphCache.key(keys)
+            completed[module] = key
+            return key
+        }
+        return try invocations.mapValues { arguments in
+            let module = arguments[arguments.firstIndex(of: "-module-name")! + 1]
+            var identity = context
+            identity["module"] = module
+            identity["inputs"] = try closure(module)
+            return identity
+        }
+    }
+}
+
+private final class ModuleAvailabilityConditions: SyntaxVisitor {
+    var values: [String] = []
+    override func visit(_ node: IfConfigClauseSyntax) -> SyntaxVisitorContinueKind {
+        if let condition = node.condition { values.append(condition.trimmedDescription) }
+        return .visitChildren
+    }
+}
