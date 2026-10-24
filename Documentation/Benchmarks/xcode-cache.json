@@ -1,0 +1,382 @@
+{
+  "tool": "/tmp/swift-test-impact-issue2-final",
+  "toolchain": "Xcode 26.6\nBuild version 17F113",
+  "hardware": "Apple M5",
+  "destination": "platform=iOS Simulator,id=E010327A-F795-4353-ADB5-146546025813",
+  "base": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+  "head": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+  "measurements": [
+    {
+      "case": "cold",
+      "seconds": 209.044325708,
+      "peakRSSBytes": 375488512,
+      "buildCount": 2,
+      "events": [
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 1.4247199296951294
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 0.00013196468353271484
+        },
+        {
+          "detail": "miss: incompatible or absent entry; fresh build required",
+          "phase": "cache",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "build",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 7.744862914085388
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "enumeration",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 128.58709704875946
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "extraction",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 6.013079047203064
+        },
+        {
+          "detail": "",
+          "phase": "graphPublish",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 0.002613067626953125
+        },
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 2.0357329845428467
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0.00011301040649414062
+        },
+        {
+          "detail": "miss: incompatible or absent entry; fresh build required",
+          "phase": "cache",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "build",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 7.907181978225708
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "enumeration",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 45.18406593799591
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "extraction",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 6.738738059997559
+        },
+        {
+          "detail": "",
+          "phase": "graphPublish",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0.003660917282104492
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 0.002061009407043457
+        }
+      ],
+      "selectedTests": [
+        "CheckoutUITests/SharingUITests/testShareSheet()"
+      ]
+    },
+    {
+      "case": "warm",
+      "seconds": 6.592832415999993,
+      "peakRSSBytes": 183468032,
+      "buildCount": 0,
+      "events": [
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 2.018907904624939
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 0.002017974853515625
+        },
+        {
+          "detail": "hit: no build, enumeration or extraction",
+          "phase": "cache",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 2.2655301094055176
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0.0017470121383666992
+        },
+        {
+          "detail": "hit: no build, enumeration or extraction",
+          "phase": "cache",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "1926cdeed4ee2a49fd8d9c06ede1957cbc4d26a0",
+          "seconds": 0.0007250308990478516
+        }
+      ],
+      "selectedTests": [
+        "CheckoutUITests/SharingUITests/testShareSheet()"
+      ]
+    },
+    {
+      "case": "fresh",
+      "seconds": 98.52967704099999,
+      "peakRSSBytes": 371556352,
+      "buildCount": 2,
+      "events": null,
+      "selectedTests": [
+        "CheckoutUITests/SharingUITests/testShareSheet()"
+      ]
+    },
+    {
+      "case": "new-head-warm-base",
+      "seconds": 61.147660290999966,
+      "peakRSSBytes": 371851264,
+      "buildCount": 1,
+      "events": [
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 1.415505051612854
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 0.00014090538024902344
+        },
+        {
+          "detail": "miss: incompatible or absent entry; fresh build required",
+          "phase": "cache",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "build",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 6.190744996070862
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "enumeration",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 43.802294969558716
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "extraction",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 5.625476002693176
+        },
+        {
+          "detail": "",
+          "phase": "graphPublish",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 0.003525972366333008
+        },
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 1.4372960329055786
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0.00264894962310791
+        },
+        {
+          "detail": "hit: no build, enumeration or extraction",
+          "phase": "cache",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 0.0009119510650634766
+        }
+      ],
+      "selectedTests": [
+        "CheckoutUITests/SharingUITests/testShareSheet()"
+      ]
+    },
+    {
+      "case": "merge-base",
+      "seconds": 4.84375325000002,
+      "peakRSSBytes": 183484416,
+      "buildCount": 0,
+      "events": [
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 1.1242849826812744
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 0.003140091896057129
+        },
+        {
+          "detail": "hit: no build, enumeration or extraction",
+          "phase": "cache",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 1.4137189388275146
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0.001520991325378418
+        },
+        {
+          "detail": "hit: no build, enumeration or extraction",
+          "phase": "cache",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 0.000641942024230957
+        }
+      ],
+      "selectedTests": [
+        "CheckoutUITests/SharingUITests/testShareSheet()"
+      ]
+    },
+    {
+      "case": "corrupt-base-rebuilt",
+      "seconds": 49.088401333000036,
+      "peakRSSBytes": 356974592,
+      "buildCount": 1,
+      "events": [
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 1.8437249660491943
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 0.0018590688705444336
+        },
+        {
+          "detail": "hit: no build, enumeration or extraction",
+          "phase": "cache",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 2.235139012336731
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0.0010050535202026367
+        },
+        {
+          "detail": "miss: incompatible or absent entry; fresh build required",
+          "phase": "cache",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "build",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 7.023261904716492
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "enumeration",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 28.451933979988098
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "extraction",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 6.949620962142944
+        },
+        {
+          "detail": "",
+          "phase": "graphPublish",
+          "revision": "361d49f2c0f29b90132275a792dcf5fbc2b04439",
+          "seconds": 0.002454996109008789
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "0be46bb62afeed0d3d58da7bb24e7544131e8a2b",
+          "seconds": 0.0006649494171142578
+        }
+      ],
+      "selectedTests": [
+        "CheckoutUITests/SharingUITests/testShareSheet()"
+      ]
+    }
+  ],
+  "analyzerSHA256": "90abfb176422337b5075208ecf1bc9052504b0be9e0c3191a301b20e3c78d5a3"
+}

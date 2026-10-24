@@ -4,6 +4,7 @@
 """Measure release cache reuse and compare selections with fresh Xcode analysis."""
 import argparse
 import json
+import hashlib
 import os
 import pathlib
 import shutil
@@ -101,7 +102,7 @@ try:
         assert sum(e['detail'].startswith('hit:') for e in report['analysisEvents']) == 2
     print('PASS concurrent readers: two complete warm selections', flush=True)
     a.output.parent.mkdir(parents=True, exist_ok=True)
-    a.output.write_text(json.dumps(dict(tool=str(a.tool), toolchain=run(['xcodebuild', '-version']), hardware=run(['sysctl', '-n', 'machdep.cpu.brand_string']), destination=a.destination, base=base, head=head, measurements=results), indent=2)+'\n')
+    a.output.write_text(json.dumps(dict(tool=str(a.tool), analyzerSHA256=hashlib.sha256(a.tool.read_bytes()).hexdigest(), toolchain=run(['xcodebuild', '-version']), hardware=run(['sysctl', '-n', 'machdep.cpu.brand_string']), destination=a.destination, base=base, head=head, measurements=results), indent=2)+'\n')
 finally:
     if a.keep_work: print(f'Retained {directory}', flush=True)
     else: shutil.rmtree(directory)
