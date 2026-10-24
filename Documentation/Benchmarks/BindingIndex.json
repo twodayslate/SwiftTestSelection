@@ -1,0 +1,45 @@
+{
+  "functions": 124506,
+  "input": "ChainOfCustody saved graph",
+  "measurements": [
+    {
+      "iteration": 1,
+      "memory": "reference: 115.47 s; analyzer footprint 501.0 MiB, process peak 970.1 MiB",
+      "mode": "reference",
+      "seconds": 115.47283
+    },
+    {
+      "iteration": 2,
+      "memory": "reference: 115.13 s; analyzer footprint 526.7 MiB, process peak 970.1 MiB",
+      "mode": "reference",
+      "seconds": 115.133771708
+    },
+    {
+      "iteration": 3,
+      "memory": "reference: 118.98 s; analyzer footprint 531.9 MiB, process peak 970.1 MiB",
+      "mode": "reference",
+      "seconds": 118.980086
+    },
+    {
+      "iteration": 1,
+      "memory": "indexed: 0.22 s; analyzer footprint 538.2 MiB, process peak 970.1 MiB",
+      "mode": "indexed",
+      "seconds": 0.216057875
+    },
+    {
+      "iteration": 2,
+      "memory": "indexed: 0.20 s; analyzer footprint 538.2 MiB, process peak 970.1 MiB",
+      "mode": "indexed",
+      "seconds": 0.202183417
+    },
+    {
+      "iteration": 3,
+      "memory": "indexed: 0.21 s; analyzer footprint 538.2 MiB, process peak 970.1 MiB",
+      "mode": "indexed",
+      "seconds": 0.206468667
+    }
+  ],
+  "tests": 1969,
+  "inputSHA256": "0b28a34ee881da82ec0a9041957592d062c042a2ac95a677d0a420e3ac6636f0",
+  "inputBytes": 330302333
+}
