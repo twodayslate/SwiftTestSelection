@@ -4,6 +4,9 @@
 import Foundation
 
 public struct UIFeatureMappings: Codable, Sendable {
+    public enum RuntimeDependencyPolicy: String, Codable, Sendable {
+        case conservative, declared
+    }
     public struct Feature: Codable, Sendable {
         public var name: String
         public var sources: [String]?
@@ -18,15 +21,28 @@ public struct UIFeatureMappings: Codable, Sendable {
         }
     }
     public var version: Int
+    /// Opt in only when feature boundaries and dependsOn declare runtime dependencies.
+    public var runtimeDependencyPolicy: RuntimeDependencyPolicy?
+    /// Explicit Markdown-only exclusions, agreed by both review revisions.
+    public var ignoredDocumentation: [String]?
     public var fixtures: [String: [String]]?
     public var features: [Feature]
 
-    public init(version: Int = 1, fixtures: [String: [String]] = [:], features: [Feature]) {
+    public init(version: Int = 1, fixtures: [String: [String]] = [:], features: [Feature],
+                runtimeDependencyPolicy: RuntimeDependencyPolicy? = nil, ignoredDocumentation: [String] = []) {
         self.version = version; self.fixtures = fixtures; self.features = features
+        self.runtimeDependencyPolicy = runtimeDependencyPolicy
+        self.ignoredDocumentation = ignoredDocumentation
     }
 
     public func validate() throws {
         guard version == 1 else { throw ImpactError("Unsupported UI mapping version: \(version)") }
+        for pattern in ignoredDocumentation ?? [] {
+            guard !pattern.hasPrefix("/"), pattern.hasSuffix(".md"),
+                  !pattern.split(separator: "/").contains("..") else {
+                throw ImpactError("Ignored documentation must be a repository-relative Markdown pattern: \(pattern)")
+            }
+        }
         let names = Set(features.map(\.name))
         guard names.count == features.count, !names.contains("") else { throw ImpactError("UI feature names must be unique and nonempty.") }
         for feature in features {
@@ -48,6 +64,7 @@ public struct UIFeatureMappings: Codable, Sendable {
     }
 
     static func matches(_ value: String, pattern: String) -> Bool {
+        guard pattern.contains("*") else { return value == pattern }
         var expression = "^"
         let chars = Array(pattern)
         var i = 0

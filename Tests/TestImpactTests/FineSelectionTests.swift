@@ -361,3 +361,120 @@ private func withOpaqueDependencies(_ input: XcodeTestGraph) -> XcodeTestGraph {
     #expect(report.selectedTests == current.tests)
     #expect(report.diagnostics.contains { $0.code == "unresolved_dependency" })
 }
+
+// Model app startup and the UI runner's unrelated opaque SDK dependencies.
+private func declaredRuntimeModel(app: String = appSource, ui: String = uiSource) -> XcodeTestGraph {
+    var result = model(ui: ui, app: app + "\nfunc launch() {}")
+    var mappings = result.mappings!
+    mappings.runtimeDependencyPolicy = .declared
+    mappings.features.append(.init(name: "launch", symbols: ["App.launch()"], tests: ["UI"]))
+    result = withOpaqueDependencies(result)
+    result.mappings = mappings
+    result.dependencies!.functions["App.launch()"]!.uncertainties = ["Global state access"]
+    // Unit-test runtime uncertainty is intentionally unaffected by the UI policy.
+    result.targets.append(.init(name: "Unit", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: []))
+    result.tests.append("Unit/Value/testValue()")
+    result.dependencies!.tests["Unit/Value/testValue()"] = ["opaque"]
+    return result
+}
+
+@Test func declaredRuntimePolicyDoesNotSelectUnrelatedLaunchOrUIRunnerUncertainty() {
+    let old = declaredRuntimeModel()
+    let current = declaredRuntimeModel(app: appSource.replacingOccurrences(of: "sharing() -> Int { common() }", with: "sharing() -> Int { common() + 1 }"))
+    let report = selection(current, old, paths: ["App/Features.swift"])
+    #expect(report.selectedTests == old.tests.filter { !$0.hasPrefix("UI/Notes/") }.sorted())
+    #expect(!report.diagnostics.contains { $0.code == "unresolved_feature_dependency" })
+    #expect(report.diagnostics.contains { $0.code == "unresolved_dependency" && $0.tests == ["Unit/Value/testValue()"] })
+    #expect(report.limitations.contains { $0.contains("runtime dependency policy is declared") })
+}
+
+@Test func declaredRuntimePolicyPreservesSharedAndExplicitFeatureDependencies() {
+    let old = declaredRuntimeModel()
+    let shared = declaredRuntimeModel(app: appSource.replacingOccurrences(of: "42", with: "43"))
+    #expect(selection(shared, old, paths: ["App/Features.swift"]).selectedTests == old.tests.sorted())
+    var before = old
+    var after = declaredRuntimeModel(app: appSource.replacingOccurrences(of: "sharing() -> Int { common() }", with: "sharing() -> Int { common() + 1 }"))
+    before.mappings!.features[1].dependsOn = ["sharing"]
+    after.mappings!.features[1].dependsOn = ["sharing"]
+    #expect(selection(after, before, paths: ["App/Features.swift"]).selectedTests == old.tests.sorted())
+}
+
+@Test func declaredRuntimePolicyRequiresBothRevisionsAndPreservesMissingCoverageFallbacks() {
+    let old = declaredRuntimeModel()
+    let current = declaredRuntimeModel(app: appSource.replacingOccurrences(of: "sharing() -> Int { common() }", with: "sharing() -> Int { common() + 1 }"))
+    for side in ["base", "head"] {
+        var before = old, after = current
+        if side == "base" { before.mappings!.runtimeDependencyPolicy = nil }
+        else { after.mappings!.runtimeDependencyPolicy = nil }
+        #expect(selection(after, before, paths: ["App/Features.swift"]).selectedTests == old.tests.sorted())
+    }
+    for code in ["missing_ui_mappings", "unmapped_production_boundary", "unresolved_mapping_boundary", "unmapped_ui_tests"] {
+        var before = old, after = current
+        for head in [false, true] {
+            var value = head ? after : before
+            switch code {
+            case "missing_ui_mappings": value.mappings = nil
+            case "unmapped_production_boundary": value.mappings!.features.removeFirst()
+            case "unresolved_mapping_boundary": value.mappings!.features[0].symbols = ["App.missing()"]
+            default:
+                value.mappings!.features.removeAll { $0.name == "notes" || $0.name == "launch" }
+            }
+            if head { after = value } else { before = value }
+        }
+        let report = selection(after, before, paths: ["App/Features.swift"])
+        #expect(report.selectedTests == old.tests.sorted())
+        #expect(report.diagnostics.contains { $0.code == code })
+    }
+}
+
+@Test func declaredRuntimePolicyKeepsHelperAndLifecycleFallbacksAndMixedEntrySelection() {
+    let old = declaredRuntimeModel()
+    let app = appSource.replacingOccurrences(of: "sharing() -> Int { common() }", with: "sharing() -> Int { common() + 1 }")
+    for literal in ["XCTAssertEqual(2, 2)", "XCTAssertEqual(3, 3)"] {
+        let current = declaredRuntimeModel(app: app, ui: uiSource.replacingOccurrences(of: literal, with: "XCTAssertEqual(7, 7)"))
+        #expect(selection(current, old, paths: ["App/Features.swift", "Tests/UI.swift"]).selectedTests == old.tests.sorted())
+    }
+    let current = declaredRuntimeModel(app: app, ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(7, 7)"))
+    #expect(!selection(current, old, paths: ["App/Features.swift", "Tests/UI.swift"]).selectedTests.contains("UI/Notes/testNotes()"))
+}
+
+@Test func allowedDocumentationDoesNotBroadenMixedChanges() {
+    var old = model(), current = model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)"))
+    let docs = ["AGENTS.md", "README.md", "Documentation/**.md"]
+    old.mappings!.ignoredDocumentation = docs; current.mappings!.ignoredDocumentation = docs
+    let report = selection(current, old, paths: ["Tests/UI.swift", "AGENTS.md", "Documentation/Nested/Guide.md"])
+    #expect(report.selectedTests == ["UI/Sharing/testIndependent()"])
+    #expect(report.ignoredChanges == ["AGENTS.md", "Documentation/Nested/Guide.md"])
+    #expect(report.diagnostics.isEmpty)
+    #expect(selection(old, old, paths: ["README.md"]).selectedTests.isEmpty)
+    for path in ["Other.md", "Documentation/data.json", "project.pbxproj", "Resources/image.png"] {
+        #expect(selection(current, old, paths: ["Tests/UI.swift", path]).selectedTests == old.tests)
+    }
+    old.mappings!.ignoredDocumentation = []
+    #expect(selection(current, old, paths: ["Tests/UI.swift", "AGENTS.md"]).selectedTests == old.tests)
+}
+
+@Test func documentationExclusionsCannotHideSourceRenamesOrInvalidPatterns() throws {
+    var graph = model()
+    graph.mappings!.ignoredDocumentation = ["README.md"]
+    var move = FileChange(path: "README.md")
+    move.previousPath = "Tests/UI.swift"; move.isPureMove = true
+    #expect(XcodeFineSelector.select(current: graph, previous: graph, changes: [move], baseRevision: "base").selectedTests == graph.tests)
+    for pattern in ["App/*.swift", "../README.md", "/README.md", "**"] {
+        graph.mappings!.ignoredDocumentation = [pattern]
+        #expect(throws: ImpactError.self) { try graph.mappings!.validate() }
+    }
+    #expect(throws: (any Error).self) {
+        try JSONDecoder().decode(UIFeatureMappings.self, from: Data(#"{"version":1,"features":[],"runtimeDependencyPolicy":"typo"}"#.utf8))
+    }
+}
+
+@Test func mappingPatternsKeepLiteralCharactersAndPathComponentWildcardRules() {
+    #expect(UIFeatureMappings.matches("App.Type.method(_:)", pattern: "App.Type.method(_:)"))
+    #expect(!UIFeatureMappings.matches("AppXTypeXmethod(_:)", pattern: "App.Type.method(_:)"))
+    #expect(UIFeatureMappings.matches("Documentation/Guide.md", pattern: "Documentation/*.md"))
+    #expect(!UIFeatureMappings.matches("Documentation/Nested/Guide.md", pattern: "Documentation/*.md"))
+    #expect(UIFeatureMappings.matches("Documentation/Nested/Guide.md", pattern: "Documentation/**.md"))
+    #expect(UIFeatureMappings.matches("App/a?.swift", pattern: "App/*?.swift"))
+    #expect(!UIFeatureMappings.matches("App/ab.swift", pattern: "App/*?.swift"))
+}
