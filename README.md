@@ -122,13 +122,33 @@ Compiler dependencies propagate transitively from feature roots. If sharing and 
 
 **Mappings are dependency declarations, not measured coverage.** They must cover app startup, shared services, and other cross-process behavior relevant to each UI test. An incorrect but syntactically valid mapping cannot be detected automatically. Narrowing is conditional on the declared boundaries being complete.
 
+To use declared UI boundaries as the complete runtime dependency contract, add
+`"runtimeDependencyPolicy": "declared"` at the mapping file's top level in both
+review revisions. The default remains `"conservative"`. In declared mode, an
+opaque startup/global-state/SDK dependency does not by itself select an unrelated
+UI feature for production edits. Compiled paths and `dependsOn` still propagate
+impact, including shared startup dependencies. Declare cross-feature relationships
+that the compiler cannot see with `dependsOn`. Unit-test uncertainty, UI test
+helper/lifecycle changes, unresolved boundaries, unmapped production changes, and
+missing UI coverage retain their conservative fallbacks. Mixed production and
+resolved test-entry edits can use the declared contract; ambiguous test changes
+cannot. Reports disclose this assumption in `limitations`.
+
+Optionally add `"ignoredDocumentation": ["README.md", "AGENTS.md", "Documentation/**.md"]`
+to exclude explicitly reviewed Markdown paths in mixed changes as well as
+standalone documentation changes. Patterns must be repository-relative and end
+in `.md`; compiled source paths cannot be ignored. Both base and head must allow
+each path (including both sides of a rename). The report retains the paths in
+`changedFiles` and lists exclusions in `ignoredChanges`. Configuration, resources,
+and other unclassified changes still request a full run.
+
 ### Diagnostics and fallback policy
 
 - No mapping file on a production change: select every enabled UI test; compiler-based unit selection still applies.
 - A UI test belongs to no feature: keep that test conservatively selected on production changes.
 - Changed production code has no mapped boundary or reachable feature: select every enabled UI test.
 - Missing feature boundary, unmatched test selector, or an affected feature with no tests: report it explicitly and conservatively include UI tests.
-- Opaque function calls, global state, raw pointers, or unresolved project dispatch: include tests or mapped features that reach the uncertainty, except when every changed declaration in both revisions is a resolved test entry point. In that case select the changed entries and their compiled callers. Helpers, setup/teardown, mixed production edits, and ambiguous source boundaries retain the conservative fallback. Compiled candidate edges model known dispatch; SDK UI calls are not treated as app-function edges.
+- Opaque function calls, global state, raw pointers, or unresolved project dispatch: by default include tests or mapped features that reach the uncertainty (see the opt-in declared UI policy above), except when every changed declaration in both revisions is a resolved test entry point. In that case select the changed entries and their compiled callers. Helpers, setup/teardown, mixed production edits, and ambiguous source boundaries retain the conservative fallback. Compiled candidate edges model known dispatch; SDK UI calls are not treated as app-function edges.
 - A test entry point cannot be bound: include that test on semantic changes.
 - Unsupported syntax/compiler formats, invalid mapping configuration, missing base graph, unclassified files, or other build changes: explicit full-selection fallback.
 

@@ -81,7 +81,16 @@ public enum XcodeFineSelector {
         let semanticPaths = Set((oldChanged + newChanged).map { $0.region.path })
         let knownPaths = Set((current.targets + (previous?.targets ?? [])).flatMap(\.sourceFiles))
         for change in changes {
-            if change.path.hasSuffix(".swift"), knownPaths.contains(change.path), !semanticPaths.contains(change.path) {
+            let paths = [change.path] + (change.previousPath.map { [$0] } ?? [])
+            let ignoredDocumentation = paths.allSatisfy { path in
+                path.hasSuffix(".md") && !knownPaths.contains(path) &&
+                [current.mappings, previous?.mappings].allSatisfy { mappings in
+                    mappings?.ignoredDocumentation?.contains { UIFeatureMappings.matches(path, pattern: $0) } == true
+                }
+            }
+            if ignoredDocumentation {
+                ignored.insert(change.path)
+            } else if change.path.hasSuffix(".swift"), knownPaths.contains(change.path), !semanticPaths.contains(change.path) {
                 ignored.insert(change.path)
             } else if change.isPureMove && change.path.hasSuffix(".pbxproj") {
                 ignored.insert(change.path)
@@ -99,6 +108,14 @@ public enum XcodeFineSelector {
         let testEntriesOnly = hasSemanticChanges && previous?.dependencies != nil &&
             oldChanged.allSatisfy { isTestEntry($0, in: previous!) } &&
             newChanged.allSatisfy { isTestEntry($0, in: current) }
+        // UI automation runs in another process. With an explicit, complete
+        // runtime dependency contract, app impact comes from mapped boundaries
+        // and dependsOn, not opaque calls in every UI runner's launch path.
+        // Test helpers/lifecycle changes still require the conservative policy.
+        let declaredUIRuntime = current.mappings?.runtimeDependencyPolicy == .declared &&
+            previous?.mappings?.runtimeDependencyPolicy == .declared && previous?.dependencies != nil &&
+            oldChanged.allSatisfy { isProductionOrTestEntry($0, in: previous!) } &&
+            newChanged.allSatisfy { isProductionOrTestEntry($0, in: current) }
         if hasSemanticChanges || !changes.isEmpty {
             for message in additionalFallbacks { fallback("base_unavailable", message) }
             if previous?.dependencies == nil { fallback("base_unavailable", "Base compiler graph is unavailable.") }
@@ -171,6 +188,7 @@ public enum XcodeFineSelector {
                     !node.regions.isEmpty && node.uncertainties.contains { $0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:") }
                 }.map(\.id))
                 for test in snapshot.tests where inventory.contains(test) {
+                    if declaredUIRuntime && uiTests.contains(test) { continue }
                     if let path = graph.dependencyPath(from: graph.tests[test] ?? [], to: uncertain) {
                         fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test): \(graph.functions[path.last!]!.uncertainties.sorted().joined(separator: "; "))", tests: [test])
                     }
@@ -185,6 +203,9 @@ public enum XcodeFineSelector {
             var featurePaths: [String: [String]] = [:]
             var coveredChanges = Set<String>()
             var mappedTests = Set<String>()
+            let opaqueProduction = declaredUIRuntime ? Set<String>() : Set(graph.functions.values.filter { node in
+                !node.regions.isEmpty && node.uncertainties.contains { $0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:") }
+            }.map(\.id))
             for feature in mappings.features {
                 let selectors = mappings.selectors(for: feature)
                 let tests = Set(snapshot.tests.filter { test in selectors.contains { UIFeatureMappings.selects(test, selector: $0) } })
@@ -196,10 +217,7 @@ public enum XcodeFineSelector {
                     (feature.sources ?? []).contains { pattern in node.regions.contains { UIFeatureMappings.matches($0.path, pattern: pattern) } } ||
                     (feature.symbols ?? []).contains { UIFeatureMappings.matches(node.module + "." + node.name, pattern: $0) }
                 }.map(\.id))
-                let opaqueProduction = Set(graph.functions.values.filter { node in
-                    !node.regions.isEmpty && node.uncertainties.contains { $0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:") }
-                }.map(\.id))
-                if graph.dependencyPath(from: roots, to: opaqueProduction) != nil {
+                if !declaredUIRuntime && graph.dependencyPath(from: roots, to: opaqueProduction) != nil {
                     fallback("unresolved_feature_dependency", "\(revision): feature \(feature.name) reaches opaque runtime dependencies.", tests: tests)
                 }
                 if roots.isEmpty && (!(feature.sources ?? []).isEmpty || !(feature.symbols ?? []).isEmpty) {
@@ -247,6 +265,9 @@ public enum XcodeFineSelector {
                                                 "Test-entry-only selection assumes independent tests: hidden cross-test calls or order-dependent shared state are not inferred. Explicit compiled callers remain selected.",
                                                 "Compiler graphs model the selected build configuration. External runtime behavior and generated code may require conservative fallbacks."])
         report.schemaVersion = 2
+        if declaredUIRuntime {
+            report.limitations.append("UI runtime dependency policy is declared in both revisions: opaque runtime relationships must be represented by complete feature boundaries and dependsOn. Unit and test-infrastructure uncertainty remains conservative.")
+        }
         report.onlyTestingArguments = report.selectedTests.map { "-only-testing:" + $0 }
         report.explanations.sort { ($0.test, $0.kind, $0.revision, $0.reason, $0.path.joined()) < ($1.test, $1.kind, $1.revision, $1.reason, $1.path.joined()) }
         report.diagnostics = Dictionary(grouping: diagnostics, by: { $0.code + $0.message + $0.tests.joined() }).values.compactMap(\.first).sorted { ($0.code, $0.message) < ($1.code, $1.message) }
@@ -273,6 +294,11 @@ public enum XcodeFineSelector {
             report.uiMappingCoverage!.unmatchedSelectors.sort()
         }
         return report
+    }
+
+    private static func isProductionOrTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
+        let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
+        return (!owners.isEmpty && owners.allSatisfy { !$0.isTest }) || isTestEntry(unit, in: snapshot)
     }
 
     private static func isTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
