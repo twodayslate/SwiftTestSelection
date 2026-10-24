@@ -72,6 +72,23 @@ final class XcodeGraphCache {
 
     deinit { _ = flock(descriptor, LOCK_UN); close(descriptor) }
 
+    /// argv[0] may be a bare PATH command, or an arbitrary launcher-supplied name.
+    /// Ask the loader which executable is running instead of resolving that name.
+    static func analyzerExecutable() throws -> URL {
+        #if canImport(Darwin)
+        var size: UInt32 = 0
+        _ = _NSGetExecutablePath(nil, &size)
+        var buffer = [CChar](repeating: 0, count: Int(size))
+        guard _NSGetExecutablePath(&buffer, &size) == 0 else {
+            throw ImpactError("Cannot determine the running analyzer executable.")
+        }
+        let path = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        return URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        #else
+        throw ImpactError("Xcode analysis requires macOS.")
+        #endif
+    }
+
     static func digest(_ data: Data) -> String {
         #if canImport(CryptoKit)
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
@@ -218,8 +235,7 @@ extension XcodeAnalysis {
         }
         let toolchain = try ArtifactFiles.toolchain(at: root)
         let sdk = try CommandRunner.run("xcodebuild", ["-showsdks", "-json"], at: root).text
-        let executable = URL(fileURLWithPath: CommandLine.arguments[0], relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
-        let analyzer = try ArtifactFiles.digest(executable)
+        let analyzer = try ArtifactFiles.digest(XcodeGraphCache.analyzerExecutable())
         let origin = try CommandRunner.run("git", ["remote", "get-url", "origin"], at: root, allowFailure: true)
         let repository = origin.status == 0 ? origin.text : try CommandRunner.run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], at: root).text
         let runtimes = options.destination.contains("Simulator") ? try CommandRunner.run("xcrun", ["simctl", "list", "runtimes", "-j"], at: root).stdout : Data()
