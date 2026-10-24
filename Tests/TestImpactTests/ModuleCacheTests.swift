@@ -216,6 +216,11 @@ private struct ModuleCacheFixture {
         XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: sources, graph: &dependencies)
         var graph = XcodeTestGraph(targets: targets, tests: tests)
         graph.modules = modules; graph.sources = sources; graph.dependencies = dependencies
+        let policy = fixture.source.appendingPathComponent(".swift-test-selection.json")
+        if FileManager.default.fileExists(atPath: policy.path) {
+            graph.mappings = try JSONDecoder().decode(UIFeatureMappings.self, from: Data(contentsOf: policy))
+            try graph.mappings?.validate()
+        }
         return (graph, compiled)
     }
     var previous = try graph(cached: true).0
@@ -230,6 +235,7 @@ private struct ModuleCacheFixture {
             #expect(expected.selectedTests == actual.selectedTests)
             #expect(expected.fullRunReasons == actual.fullRunReasons)
             #expect(expected.onlyTestingArguments == actual.onlyTestingArguments)
+            #expect(try XcodeGraphCache.canonicalInventory(JSONEncoder().encode(expected.explanations)) == XcodeGraphCache.canonicalInventory(JSONEncoder().encode(actual.explanations)))
         }
         previous = fresh
     }
@@ -252,8 +258,12 @@ private struct ModuleCacheFixture {
     var move = FileChange(path: testsPath)
     move.previousPath = oldPath; move.isPureMove = true
     try compare([move], expectedCompilations: 1)
-    try write(".swift-test-selection.json", "{\"features\":[]}")
+    try write(".swift-test-selection.json", #"{"version":1,"features":[{"name":"Core","sources":["Core.swift"],"tests":["Tests/Case/testCore()"]}]}"#)
     try compare([FileChange(path: ".swift-test-selection.json")], expectedCompilations: 4)
+    #expect(previous.mappings?.features.first?.sources == ["Core.swift"])
+    try write(".swift-test-selection.json", #"{"version":1,"features":[{"name":"Other","sources":["Other.swift"],"tests":["Tests/Case/testCore()"]}]}"#)
+    try compare([FileChange(path: ".swift-test-selection.json")], expectedCompilations: 4)
+    #expect(previous.mappings?.features.first?.sources == ["Other.swift"])
     fixture.context["externalInputs"] = "changed compiler environment"
     try compare([FileChange(path: "Core.swift")], expectedCompilations: 4)
     fixture.context["revision"] = "stacked-head"
