@@ -1,0 +1,111 @@
+// SPDX-FileCopyrightText: 2026 Zachary Gorak
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import Foundation
+
+public struct XcodeTarget: Codable, Sendable {
+    public var name: String
+    public var productType: String
+    public var sourceFiles: Set<String>
+
+    public var isTest: Bool {
+        ["com.apple.product-type.bundle.ui-testing", "com.apple.product-type.bundle.unit-test"].contains(productType)
+    }
+    public var isUITest: Bool { productType == "com.apple.product-type.bundle.ui-testing" }
+
+    public init(name: String, productType: String, sourceFiles: Set<String>) {
+        self.name = name
+        self.productType = productType
+        self.sourceFiles = sourceFiles
+    }
+}
+
+/// XCUITest crosses a process boundary. This is a build-target ownership graph,
+/// not a claim that accessibility actions are statically resolved app calls.
+public struct XcodeTestGraph: Codable, Sendable {
+    public var schemaVersion = 1
+    public var analysisKind = "xcode-build-targets"
+    public var targets: [XcodeTarget]
+    /// Exact identifiers emitted by xcodebuild test enumeration.
+    public var tests: [String]
+    public var diagnostics: [String]
+
+    public init(targets: [XcodeTarget], tests: [String], diagnostics: [String] = []) {
+        self.targets = targets
+        self.tests = tests
+        self.diagnostics = diagnostics
+    }
+
+    public func dot() -> String {
+        func quote(_ string: String) -> String {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .withoutEscapingSlashes
+            return String(decoding: try! encoder.encode(string), as: UTF8.self)
+        }
+        var lines = ["digraph XcodeTestTargets {", "  rankdir=LR;", "  label=\"Build-target ownership; UI interaction crosses a process boundary\";"]
+        for target in targets.sorted(by: { $0.name < $1.name }) {
+            let label = target.name + (target.isUITest ? " (XCUITest runner)" : "")
+            lines.append("  \(quote("target:" + target.name)) [label=\(quote(label)), shape=box];")
+            for file in target.sourceFiles.sorted() {
+                lines.append("  \(quote("target:" + target.name)) -> \(quote(file)) [label=\"compiles\"];")
+            }
+        }
+        for test in tests.sorted() {
+            let target = String(test.prefix(while: { $0 != "/" }))
+            lines.append("  \(quote(test)) -> \(quote("target:" + target)) [label=\"belongs to\"];")
+        }
+        return (lines + ["}"]).joined(separator: "\n") + "\n"
+    }
+}
+
+public enum XcodeSelector {
+    public static func select(
+        current: XcodeTestGraph, previous: XcodeTestGraph?, changes: [FileChange],
+        baseRevision: String, additionalFallbacks: [String] = []
+    ) -> ImpactReport {
+        var reasons = additionalFallbacks
+        var explanations: [TestExplanation] = []
+        var selected = Set<String>()
+        let inventory = Set(current.tests)
+        if !changes.isEmpty {
+            reasons += current.diagnostics
+            reasons += previous?.diagnostics ?? ["Base Xcode build-target ownership is unavailable."]
+        }
+        // Ownership in both builds is necessary for removed/moved/shared files.
+        let targets = current.targets + (previous?.targets ?? [])
+        for change in changes {
+            let owners = targets.filter { $0.sourceFiles.contains(change.path) }
+            if !change.path.hasSuffix(".swift") || owners.isEmpty || owners.contains(where: { !$0.isTest }) || change.requiresFallback {
+                reasons.append("App, resource, build, or unclassified change requires the full Xcode test selection: \(change.path). XCUITest app interactions cross a process boundary.")
+                continue
+            }
+            let names = Set(owners.map(\.name))
+            for test in current.tests where names.contains(String(test.prefix(while: { $0 != "/" }))) {
+                selected.insert(test)
+                explanations.append(TestExplanation(
+                    test: test, reason: "Changed source belongs to this test target; conservatively include its tests",
+                    revision: "base/current", path: [change.path, String(test.prefix(while: { $0 != "/" })), test]
+                ))
+            }
+        }
+        if !changes.isEmpty {
+            for test in inventory.subtracting(previous.map { Set($0.tests) } ?? []) {
+                selected.insert(test)
+                explanations.append(TestExplanation(test: test, reason: "New or previously undiscovered Xcode test", revision: "current", path: []))
+            }
+        }
+        reasons = Array(Set(reasons)).sorted()
+        if !reasons.isEmpty { selected = inventory }
+        return ImpactReport(
+            baseRevision: baseRevision, totalTests: inventory.count, selectedTests: selected.sorted(),
+            explanations: explanations.sorted { ($0.test, $0.reason, $0.path.joined()) < ($1.test, $1.reason, $1.path.joined()) },
+            fullRunReasons: reasons, changedFiles: changes.map(\.path).sorted(), unreferencedChanges: [],
+            limitations: [
+                "Xcode selection currently uses build-target ownership, not function-level SIL reachability.",
+                "UI automation crosses into the app process. App, resource, configuration, and unclassified changes select all discovered tests in the chosen scheme/test plan.",
+                "Test-only Swift changes select their owning test targets, including setup, helpers, and shared source files.",
+                "The inventory and build ownership apply only to the chosen scheme, destination, configuration, and test plan."
+            ]
+        )
+    }
+}

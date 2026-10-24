@@ -2,7 +2,7 @@
 
 Select Swift tests from a Git diff and a compiler-derived dependency graph. **No coverage baseline or initial full-suite run is required.**
 
-A Swift package providing a `swift-test-impact` executable and reusable `TestImpact` library. This first version analyzes SwiftPM packages on the host platform, with XCTest and Swift Testing discovery. It is experimental static analysis, not a guarantee of the smallest safe test set.
+A Swift package providing a `swift-test-impact` executable and reusable `TestImpact` library. SwiftPM packages use a function dependency graph with XCTest and Swift Testing discovery. Xcode projects/workspaces support XCUITest through conservative build-target selection. It is experimental static analysis, not a guarantee of the smallest safe test set.
 
 ## Build
 
@@ -48,6 +48,49 @@ swift run swift-test-impact select \
 
 Progress and test-run output go to stderr, so stdout remains usable as JSON. Keep reports under `.build` or another ignored directory so they do not become part of subsequent diffs.
 
+## Xcode and XCUITest
+
+Select and run tests from an Xcode scheme, using a destination available on your machine:
+
+```sh
+swift run swift-test-impact select \
+  --project /path/to/App.xcodeproj \
+  --scheme App \
+  --destination 'platform=iOS Simulator,id=YOUR-SIMULATOR-UUID' \
+  --base HEAD \
+  --run
+```
+
+Use `--workspace /path/to/App.xcworkspace` instead of `--project` for a workspace. Optional `--configuration Debug` and `--test-plan SmokeTests` are passed to every build, discovery, and execution command. Omit `--run` for a report; add `--format json` for machine-readable output. The container must be inside the Git repository for selection.
+
+XCUITest controls an app in a separate process, so a call graph from the test runner cannot establish which app functions an accessibility action reaches. This adapter therefore uses **target-level selection**:
+
+| Change | Selection |
+| --- | --- |
+| Swift source used only by test targets | All enabled tests in those targets |
+| Shared test helper | All enabled tests in every owning test target |
+| App/framework source, resources, project settings, or unclassified files | All enabled tests in the chosen scheme/test plan |
+| Missing base build or source ownership | Explicit full-selection fallback |
+| Empty diff | No tests executed |
+
+Both base and current compiled source-file lists establish ownership, covering moved/deleted sources. Newly discovered tests are included; deleted tests are excluded. Schemes containing unit tests use the same target-level policy in Xcode mode. Function-level selection remains available in SwiftPM mode.
+
+The adapter builds with `xcodebuild build-for-testing`, reads build settings and `SwiftFileList` compiler inputs, then discovers exact identifiers with `test-without-building -enumerate-tests`. It does not run test bodies during analysis, but discovery launches test runners and may require UI automation permissions. Enumeration errors, missing test identifiers, and an empty inventory fail explicitly, including errors embedded in otherwise successful Xcode output. Execution passes literal `-only-testing:` identifiers and preserves the runner's exit status.
+
+Requires macOS with Xcode's test-enumeration support (Xcode 15+) and a configured scheme/destination. The adapter preserves project signing settings. Analysis uses temporary DerivedData and rebuilds both revisions; these builds and discovery can cost more than a small suite. Selected runs retain `.xcresult` bundles under `.build/test-impact-results` beside the project/workspace. Current validation covers Xcode 26.6 on an iOS 26.2 simulator; macOS fixture builds passed, but local macOS UI discovery was blocked by an automation-mode timeout. Physical devices and other Apple platforms are not yet validated.
+
+Inspect the Xcode ownership graph with the same options:
+
+```sh
+swift run swift-test-impact graph \
+  --project /path/to/App.xcodeproj \
+  --scheme App \
+  --destination 'platform=iOS Simulator,id=YOUR-SIMULATOR-UUID' \
+  --format dot --output /path/to/.build/ui-targets.dot
+```
+
+Xcode JSON identifies this graph as `analysisKind: "xcode-build-targets"`; DOT shows tests, targets, and compiled source ownership. Neither format claims to resolve UI interactions into app function calls.
+
 ## Inspect the graph
 
 ```sh
@@ -80,7 +123,7 @@ Greetings.saysHello()       → greeting()
 
 A change inside `calculateTax` selects the three tax/checkout tests. Neither greeting test is selected in this example.
 
-## How it works
+## How SwiftPM analysis works
 
 1. Build the current package and test targets in `.build/test-impact`, a separate scratch directory.
 2. Read SwiftPM's compiler invocations and replay each root-package Swift target with `-emit-sil -whole-module-optimization -Onone -g`, reusing SDKs, search paths, defines, and plugin arguments.
@@ -100,7 +143,7 @@ The current build can reuse incremental artifacts. The base revision is rebuilt 
 - Newly added functions with resolvable caller-to-test paths need no historical coverage. Functions without an identified test path appear in `unreferencedChanges`; this does not prove they are unreachable or untested.
 - Mapping uses compiler debug-location ranges rather than a full Swift syntax tree. Declaration/type-layout changes and ambiguous mappings deliberately broaden the run.
 - External frameworks, runtime registration, Objective-C behavior, custom test traits, generated code, and implicit shared-state relationships can escape the graph. Conservative rules reduce omissions but do not make the analysis sound for arbitrary Swift programs. Validate against full-suite runs before using it as a CI gate.
-- Only host-platform debug builds are analyzed. Xcode projects/workspaces, iOS simulator destinations, custom SwiftPM build flags, and precompiled-binary-only input are not supported yet.
+- SwiftPM function analysis supports host-platform debug builds. Xcode uses the separate target-level adapter described above. Custom SwiftPM build flags and precompiled-binary-only input are not supported yet.
 - Only root-package Swift targets are extracted. Dependency source changes that cannot be mapped fall back to all tests. Historical builds with unavailable dependencies, submodules, or external local paths may also fall back.
 - SwiftPM's `description.json` and textual SIL are implementation formats. The adapter may need updates across Swift versions; unexpected build-description formats fail explicitly.
 - Keep source files stable during analysis/execution. This version does not snapshot the current worktree.
@@ -123,6 +166,8 @@ let exitCode = try analysis.run(report)
 
 `PackageAnalyzer` builds graphs, `SILParser` reads compiler output, and `StaticSelector` accepts graphs and structured changes without subprocesses. The original in-memory `CoverageBaseline`/`TestSelector` API remains for optional coverage experiments; the CLI does not use it.
 
+For Xcode, construct `XcodeConfiguration(container:path:scheme:destination:configuration:testPlan:)` and pass it to `XcodeAnalysis(options:)`. Its `graph()`, `select(base:)`, and `run(_:)` methods parallel the SwiftPM API. `XcodeSelector` accepts ownership graphs and changes directly for use without subprocesses.
+
 ## Validation
 
 ```sh
@@ -132,12 +177,21 @@ python3 Scripts/integration_test.py
 
 The integration script creates a temporary Git repository from `Fixtures/Shop`, including paths with spaces. It checks real SIL, both test frameworks, empty selections, selected execution, additions, deletions, manifest fallbacks, untracked sources, and DOT export. Unrelated tests intentionally fail in the temporary fixture, so a successful selected run verifies those tests were skipped. The original fixture remains untouched.
 
+For XCUITest, supply an available simulator destination:
+
+```sh
+python3 Scripts/xcode_integration_test.py \
+  --destination 'platform=iOS Simulator,id=YOUR-SIMULATOR-UUID'
+```
+
+This script copies `Fixtures/XcodeUITests` into a temporary Git repository with spaces in its path. It verifies project/workspace discovery, compiled source ownership, empty selections, test-target narrowing, and app-change fallbacks. It actually runs one selected UI test while the unrelated target contains a deliberately failing test, proving that target was skipped. The fixture supports iOS and macOS; it requires a usable UI automation environment.
+
 ## Next work
 
 - Cache graphs by source/build identity.
 - Add compiler-index or syntax-based mapping for declaration changes.
 - Improve dispatch, initializer, callback, and test-argument modeling.
-- Add Xcode scheme/destination adapters.
+- Improve Xcode function analysis and investigate explicit app-to-UI-test dependency mappings.
 - Collect optional per-test coverage during ordinary selected runs.
 
 References: [Swift compiler](https://www.swift.org/documentation/swift-compiler/), [SIL format](https://github.com/swiftlang/swift/blob/main/docs/SIL/SIL.md), [IndexStoreDB](https://github.com/swiftlang/indexstore-db).
