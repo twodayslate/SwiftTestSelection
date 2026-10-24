@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 import uuid
+from capture_inputs import frontend_inputs
 
 compiler = os.environ['IMPACT_REAL_SWIFTC']
 arguments = sys.argv[1:]
@@ -40,14 +41,15 @@ def digest_file(path):
         for chunk in iter(lambda: stream.read(1024*1024), b''): digest.update(chunk)
     return digest.hexdigest()
 
-sources = {a: digest_file(a) for a in arguments if a.endswith('.swift') and pathlib.Path(a).is_file()}
-record = dict(sources=sources, schemaVersion=1, compiler=compiler, directory=os.getcwd(), arguments=arguments,
+source_files, primaries, input_lists = frontend_inputs(arguments, os.getcwd())
+sources = {a: digest_file(a) for a in source_files}
+record = dict(inputLists=input_lists, sources=sources, sourceFiles=source_files, primaryFiles=primaries, schemaVersion=1,
+              compiler=compiler, directory=os.getcwd(), arguments=arguments,
               started=time.time(), status='incomplete')
 manifest = job / 'manifest.json'
 manifest.write_text(json.dumps(record, indent=2))
 capture_arguments = list(arguments)
 outputs = []
-primaries = [arguments[i+1] for i, value in enumerate(arguments[:-1]) if value == '-primary-file']
 if len(primaries) > 1 and '-supplementary-output-file-map' not in capture_arguments:
     # Repeated -sil-output-path values are accepted by the compiler but can
     # overwrite the first path for each primary. A per-input map avoids this.
@@ -82,7 +84,7 @@ if '-supplementary-output-file-map' in capture_arguments:
     private_map.write_text(json.dumps(output_map))
     capture_arguments[map_index] = str(private_map)
 else:
-    count = max(1, arguments.count('-primary-file'))
+    count = max(1, len(primaries))
     for index in range(count):
         path = sil if count == 1 else job / f'output-{index}.sil'
         capture_arguments += ['-sil-output-path', str(path)]
@@ -92,8 +94,8 @@ manifest.write_text(json.dumps(record, indent=2))
 result = subprocess.run([compiler, *capture_arguments])
 record.update(exitCode=result.returncode, seconds=time.time()-record['started'],
               compilerPeakRSSBytes=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
-if result.returncode == 0 and all(path.is_file() and path.stat().st_size for path in outputs) and all(
-        pathlib.Path(p).is_file() and digest_file(p) == digest for p, digest in sources.items()):
+if result.returncode == 0 and sources and all(path.is_file() and path.stat().st_size for path in outputs) and all(
+        pathlib.Path(p).is_file() and digest_file(p) == digest for p, digest in {**sources, **input_lists}.items()):
     record.update(status='complete', silBytes=sum(path.stat().st_size for path in outputs),
                   silSHA256={path.name: digest_file(path) for path in outputs})
 else:

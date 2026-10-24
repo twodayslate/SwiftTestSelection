@@ -14,6 +14,7 @@ The Xcode fixture built app, unit-test and UI-test targets with capture. Its nin
 - Every frontend job has an exclusive UUID directory. Primary inputs within a batch have separate SIL filenames. Targets and architectures cannot overwrite one another.
 - `-sil-output-path` cannot be combined with an existing supplementary output map. The wrapper copies the map and adds `sil` entries, preserving original output destinations.
 - Repeating `-sil-output-path` for multiple primaries can be accepted while overwriting the first output with the last primary's SIL. For batches without a map, the prototype moves the observed dependency/diagnostic/constant-value output arguments into an equivalent private per-input map before adding SIL. The regression specifically checks this case.
+- Frontend `-filelist` and `-primary-filelist` inputs are expanded as literal newline-separated filenames, preserving spaces, quotes and backslashes. The manifest snapshots ordered sources and primaries relative to the compiler working directory. Source and list hashes are checked again when compilation finishes; later validation uses the snapshot even if temporary lists have been deleted. Missing fingerprints or per-primary outputs fail validation.
 - Compiler queries and module-only jobs pass through. Capture adds no optimization, debug, language-version or code-generation flags. The validator only accepts `-Onone -g` captures. Optimized builds can remove or transform code that the existing replay deliberately retains and need separate investigation.
 - An initial incomplete manifest is written before compilation; complete manifests record input hashes, output hashes, compiler arguments, elapsed time and compiler-child peak RSS. Missing outputs or changed inputs remain failures. A successful Xcode build alone is insufficient evidence of complete capture.
 
@@ -24,8 +25,11 @@ The resource-layout behavior follows [SwiftDriver's feature discovery](https://g
 ```sh
 python3 Scripts/Experimental/test_capture.py
 python3 Scripts/Experimental/test_validate_capture.py
+python3 Scripts/Experimental/test_capture_filelists.py
 DEVELOPER_DIR=/Applications/Xcode-27.0.0.app/Contents/Developer \
   python3 Scripts/Experimental/test_capture.py
+DEVELOPER_DIR=/Applications/Xcode-27.0.0.app/Contents/Developer \
+  python3 Scripts/Experimental/test_capture_filelists.py
 ```
 
 For an isolated Xcode experiment, run `prepare_sil_capture.py --compiler /absolute/path/to/swiftc --output /new/session/path`. Apply the printed environment and append the printed flags to the existing `OTHER_SWIFT_FLAGS`, preserving `$(inherited)`. Capture an unfiltered successful full build-for-testing log. Run `validate_sil_capture.py --capture SESSION/capture --expected-build-log BUILD.log` before attempting a graph comparison. The directory must be new for each build; this prototype has no incremental fragment cache.

@@ -56,12 +56,29 @@ def validate(capture, expected_log):
         if record['status'] != 'complete':
             diagnostics.append('Incomplete frontend capture: ' + str(manifest))
             continue
-        primaries = [arguments[i+1] for i, a in enumerate(arguments[:-1]) if a == '-primary-file']
+        # Frontend file lists are temporary. Use the inventory snapshotted before
+        # compilation, not a list which may have disappeared or changed since.
+        uses_lists = any(a in arguments for a in ['-filelist', '-primary-filelist'])
+        source_files = record.get('sourceFiles')
+        primaries = record.get('primaryFiles')
+        if uses_lists and (source_files is None or primaries is None):
+            diagnostics.append('Missing expanded file-list inventory: ' + str(manifest))
+            continue
+        if primaries is None:
+            primaries = [arguments[i+1] for i, a in enumerate(arguments[:-1]) if a == '-primary-file']
+        if not isinstance(primaries, list) or any(not isinstance(p, str) for p in primaries):
+            diagnostics.append('Invalid primary inventory: ' + str(manifest))
+            continue
+        directory = pathlib.Path(record.get('directory', '.'))
         inputs = record.get('sources', {})
         if not inputs:
             diagnostics.append('Missing source fingerprints: ' + str(manifest))
             continue
         valid = True
+        if source_files is not None and (not isinstance(source_files, list) or
+                any(not isinstance(p, str) for p in source_files) or set(source_files) != set(inputs)):
+            diagnostics.append('Incomplete expanded source fingerprints: ' + str(manifest))
+            valid = False
         if key not in expected:
             diagnostics.append('Unexpected module/target: ' + repr(key))
             valid = False
@@ -69,7 +86,7 @@ def validate(capture, expected_log):
             diagnostics.append('Missing primary input fingerprint: ' + str(manifest))
             valid = False
         for path, fingerprint in inputs.items():
-            file = pathlib.Path(path)
+            file = directory / path
             if not file.is_file() or digest(file) != fingerprint:
                 diagnostics.append('Changed/missing source: ' + path)
                 valid = False
@@ -83,7 +100,7 @@ def validate(capture, expected_log):
                 diagnostics.append('Changed/missing SIL: ' + str(file))
                 valid = False
         if valid:
-            covered.setdefault(key, set()).update(str(pathlib.Path(p).resolve()) for p in (primaries or inputs.keys()))
+            covered.setdefault(key, set()).update(str((directory / p).resolve()) for p in (primaries or inputs.keys()))
             fragments += len(outputs)
     for key, inputs in expected.items():
         for path in sorted(inputs - covered.get(key, set())):
