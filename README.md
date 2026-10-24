@@ -428,3 +428,67 @@ References: [Swift compiler](https://www.swift.org/documentation/swift-compiler/
 Copyright (c) 2026 Zachary Gorak.
 
 Licensed under the **GNU Affero General Public License, version 3 only** (`AGPL-3.0-only`). See [LICENSE](LICENSE) for the complete terms. This is a strong-copyleft open-source license, including source-sharing requirements for modified versions used over a network. Commercial use is permitted under the license.
+
+### Persist Xcode analysis across comparisons
+
+```sh
+swift-test-impact select --project App.xcodeproj --scheme App \
+  --destination 'platform=iOS Simulator,id=SIMULATOR_UUID' --test-plan AllTests \
+  --base origin/main --head HEAD --merge-base \
+  --analysis-cache "$HOME/Library/Caches/SwiftTestSelection/App" \
+  --cache-context YOUR_EXTERNAL_INPUT_DIGEST --format json --output impact.json
+```
+
+Caching requires an explicit committed head. The actual review merge base and
+head each get an independently validated entry containing their compiler graph,
+source snapshots, mapping policies, and complete enabled test inventory. Warm
+entries do not build, enumerate tests, or extract SIL. Xcode still resolves build
+settings with locked package versions before lookup. New revisions receive fresh
+builds and analyses; cross-revision reuse of individual modules is not supported.
+
+The key includes repository identity, exact revision, graph/cache schema, the
+analyzer executable's SHA-256 (so changing upstream versions invalidates it),
+Xcode/Swift versions, installed SDKs and simulator runtimes, exact destination,
+container, scheme, plan, configuration, mapping path, and resolved build settings.
+Tracked dependency locks are part of the revision, and Xcode uses
+`-onlyUsePackageVersionsFromResolvedFile`. **`--cache-context` must be a stable
+fingerprint of any inputs not represented there:** build-script environment,
+untracked generated inputs, external local packages, or mutable external tools.
+If these cannot be identified reliably, omit caching. Never put secrets in this
+argument. Keep the destination stable across CI jobs: a different simulator UUID
+currently invalidates the entry, even for equivalent hardware/runtime.
+
+Use a dedicated local directory (network filesystems without working `flock`
+locks are unsupported). A process lock serializes reads, publication and pruning;
+completed entries are published by directory rename and verified by checksum.
+Corrupt entries are removed and rebuilt. Interrupted staging is removed by the
+next holder. A base analysis failure remains an explicit full-selection fallback;
+a head failure stops the command. `--cache-max-bytes` bounds persisted entries
+(default 5 GiB), evicting least recently used entries. Temporary builds can need
+additional disk space; they are removed at exit or on the next cache invocation
+following interruption. Do not delete an active cache directory or its lock file.
+
+Reports contain `analysisEvents` with per-revision cache status and elapsed
+settings, graph-load, build, enumeration, extraction, publication, and selection
+times. Standard error reports cache miss/invalidation/eviction reasons. The cache
+contains analysis only; `--run` on this path still uses the ordinary execution
+build until an execution artifact is explicitly supplied.
+
+Reproduce the release-build cache checks and machine-readable measurements:
+
+```sh
+swift build -c release
+python3 Scripts/xcode_cache_integration_test.py \
+  --destination 'platform=iOS Simulator,id=SIMULATOR_UUID' \
+  --output cache-measurements.json
+```
+
+This checks warm reuse, a new head against a warm base, actual merge-base lookup,
+corruption recovery, concurrent readers, and selection equivalence to fresh
+analysis. Fixture measurements are not evidence that ChainOfCustody meets its
+separate end-to-end CI adoption gate.
+
+Run `python3 Scripts/xcode_cli_path_test.py --tool .build/release/swift-test-impact`
+to check executable fingerprinting for absolute, relative, PATH/symlink, and
+launcher-supplied names. This CLI regression uses mocked Xcode commands and
+does not build an app or execute tests.

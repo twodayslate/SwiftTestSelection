@@ -24,6 +24,7 @@ public struct ImpactReport: Codable, Sendable {
     public var headRevision: String?
     /// Binds cached Xcode selections to the exact captured head graph.
     public var buildArtifactID: String?
+    public var analysisEvents: [XcodeAnalysisEvent]?
     public var comparisonMode: String?
     public var onlyTestingArguments: [String]?
     public var diagnostics: [SelectionDiagnostic] = []

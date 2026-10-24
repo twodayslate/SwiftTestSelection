@@ -23,6 +23,14 @@ USAGE
                            [--base REVISION] [--head REVISION] [--merge-base]
                            [--format FORMAT] [--output FILE] [--full-suite] [--run]
 
+Persistent Xcode analysis:
+  select <Xcode options> --base REV --head REV [--merge-base]
+         --analysis-cache PATH --cache-context EXTERNAL_INPUT_DIGEST
+         [--cache-max-bytes BYTES]
+Cache hits validate settings/toolchain and reuse graphs without build or enumeration.
+External input context must cover environment/scripts/local dependencies outside Git.
+The default disk limit is 5 GiB. New revisions rebuild; worktrees are not cached.
+
 Existing Xcode builds:
   graph <Xcode options> --derived-data PATH --build-log FILE --build-settings FILE
         --xctestrun FILE --revision REVISION --output head-graph.json
@@ -69,6 +77,9 @@ private struct Options {
     var baseGraph: String?
     var headGraph: String?
     var testProducts: String?
+    var cachePath: String?
+    var cacheContext: String?
+    var cacheMaxBytes: Int64 = 5 * 1_024 * 1_024 * 1_024
 
     init(_ arguments: [String]) throws {
         guard let first = arguments.first, ["graph", "select"].contains(first) else {
@@ -97,12 +108,17 @@ private struct Options {
             if flag == "--run" { run = true; continue }
             if flag == "--merge-base" { mergeBase = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
-            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products"].contains(flag), index < arguments.count else {
+            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
             let value = arguments[index]
             index += 1
             switch flag {
+            case "--analysis-cache": cachePath = value
+            case "--cache-context": cacheContext = value
+            case "--cache-max-bytes":
+                guard let size = Int64(value), size > 0 else { throw ImpactError("--cache-max-bytes must be positive.") }
+                cacheMaxBytes = size
             case "--package-path": packagePath = value
             case "--format": format = value
             case "--output": output = value
@@ -124,6 +140,12 @@ private struct Options {
             case "--configuration": configuration = value
             case "--test-plan": testPlan = value
             default: break
+            }
+        }
+        if cachePath != nil || cacheContext != nil || seen.contains("--cache-max-bytes") {
+            guard cachePath != nil, cacheContext?.isEmpty == false, head != nil, command == "select",
+                  project != nil || workspace != nil, baseGraph == nil, headGraph == nil else {
+                throw ImpactError("Analysis caching requires Xcode select, --head, --analysis-cache and --cache-context; cannot combine with saved graph inputs.")
             }
         }
         let captureCount = [derivedData, buildLog, buildSettings, xctestrun, revision].compactMap { $0 }.count
@@ -222,7 +244,8 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                     report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase,
                         fullSuite: options.fullSuite, baseGraph: baseGraph, headGraph: headGraph)
                 } else {
-                    report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite)
+                    report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite,
+                        cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) })
                 }
                 let data = options.format == "json" ? try encoder.encode(report) : Data(render(report).utf8)
                 try write(data, to: options.output)

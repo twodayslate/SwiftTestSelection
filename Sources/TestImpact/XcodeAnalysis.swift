@@ -44,6 +44,7 @@ public struct XcodeConfiguration: Sendable {
 public struct XcodeAnalysis {
     public var options: XcodeConfiguration
     public var progress: (String) -> Void
+    var measurement: (String, Double) -> Void = { _, _ in }
 
     public init(options: XcodeConfiguration, progress: @escaping (String) -> Void = { _ in }) {
         self.options = options
@@ -56,7 +57,11 @@ public struct XcodeAnalysis {
         return try analyze(options, sourceRoot: root)
     }
 
-    public func select(base: String, head: String? = nil, mergeBase: Bool = false, fullSuite: Bool = false) throws -> ImpactReport {
+    public func select(base: String, head: String? = nil, mergeBase: Bool = false, fullSuite: Bool = false, cache: XcodeAnalysisCache? = nil) throws -> ImpactReport {
+        if let cache {
+            guard let head else { throw ImpactError("--analysis-cache requires an explicit --head revision; worktree analysis is never cached.") }
+            return try selectCached(base: base, head: head, mergeBase: mergeBase, fullSuite: fullSuite, cache: cache)
+        }
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         guard options.path.path.hasPrefix(root.path + "/") else { throw ImpactError("Xcode container must be inside the Git repository.") }
         let comparison = try RevisionComparison(base: base, head: head, mergeBase: mergeBase, root: root)
@@ -208,10 +213,12 @@ public struct XcodeAnalysis {
         let enumerationArguments = xctestrun.map {
             ["test-without-building", "-xctestrun", $0.path, "-destination", configuration.destination]
         } ?? configuration.arguments(action: "test-without-building", derivedData: derived)
+        let enumerationStart = Date()
         _ = try CommandRunner.run("xcodebuild", enumerationArguments + [
             "-enumerate-tests", "-test-enumeration-style", "flat", "-test-enumeration-format", "json",
             "-test-enumeration-output-path", enumeration.path
         ], at: directory)
+        measurement("enumeration", Date().timeIntervalSince(enumerationStart))
         var suites = Set<String>()
         for (target, module) in modules {
             for key in sources.values.flatMap({ $0.inheritance.keys }) where key.hasPrefix(module + ".") {
@@ -226,7 +233,9 @@ public struct XcodeAnalysis {
         let ownership = targets.reduce(into: [String: Set<String>]()) { result, target in
             if let module = modules[target.name] { result[module, default: []].formUnion(target.sourceFiles) }
         }
+        let extractionStart = Date()
         var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership)
+        measurement("extraction", Date().timeIntervalSince(extractionStart))
         progress("Binding compiler dependencies to \(tests.count) enumerated tests…")
         let binding = AnalysisMeasurement()
         XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: sources, graph: &dependencies)
