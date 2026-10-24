@@ -20,6 +20,7 @@ USAGE
   swift-test-impact graph|select --project PATH.xcodeproj | --workspace PATH.xcworkspace
                            --scheme NAME --destination DESTINATION [--test-plan NAME]
                            [--configuration NAME] [--mappings REPOSITORY_RELATIVE_PATH]
+                           [--extraction-workers 1...8]
                            [--base REVISION] [--head REVISION] [--merge-base]
                            [--format FORMAT] [--output FILE] [--full-suite] [--run]
 
@@ -107,6 +108,7 @@ private struct Options {
         var configuration: String?
         var testPlan: String?
         var mappings: String?
+        var extractionWorkers = 1
         var derivedData: String?
         var buildLog: String?
         var buildSettings: String?
@@ -119,12 +121,15 @@ private struct Options {
             if flag == "--run" { run = true; continue }
             if flag == "--merge-base" { mergeBase = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
-            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--retain-build", "--report"].contains(flag), index < arguments.count else {
+            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--retain-build", "--report", "--extraction-workers"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
             let value = arguments[index]
             index += 1
             switch flag {
+            case "--extraction-workers":
+                guard let count = Int(value), (1...8).contains(count) else { throw ImpactError("--extraction-workers must be between 1 and 8.") }
+                extractionWorkers = count
             case "--retain-build": retainedBuild = value
             case "--report": reportPath = value
             case "--analysis-cache": cachePath = value
@@ -170,6 +175,9 @@ private struct Options {
                 buildSettings: URL(fileURLWithPath: buildSettings!), xctestrun: URL(fileURLWithPath: xctestrun!), revision: revision!)
         }
         let savedExecution = command == "run" || command == "verify-build"
+        if seen.contains("--extraction-workers") && (savedExecution || baseGraph != nil || headGraph != nil) {
+            throw ImpactError("--extraction-workers requires fresh Xcode graph extraction.")
+        }
         if savedExecution {
             guard reportPath != nil, headGraph != nil, project != nil || workspace != nil,
                   baseGraph == nil, base == nil, head == nil, !mergeBase, !fullSuite, !run,
@@ -203,8 +211,9 @@ private struct Options {
             xcode = XcodeConfiguration(container: project != nil ? .project : .workspace,
                                        path: URL(fileURLWithPath: container), scheme: scheme, destination: destination,
                                        configuration: configuration, testPlan: testPlan)
+            xcode!.extractionWorkers = extractionWorkers
             if let mappings { xcode!.mappingsPath = mappings }
-        } else if scheme != nil || destination != nil || configuration != nil || testPlan != nil || mappings != nil {
+        } else if scheme != nil || destination != nil || configuration != nil || testPlan != nil || mappings != nil || seen.contains("--extraction-workers") {
             throw ImpactError("Xcode options require --project or --workspace.")
         }
     }

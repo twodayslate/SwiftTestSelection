@@ -5,11 +5,17 @@ import Foundation
 
 enum XcodeCompilerGraph {
     static func extract(log: String, sourceRoot: URL, directory: URL, derived: URL,
-                        progress: (String) -> Void, ownership: [String: Set<String>] = [:]) -> DependencyGraph {
+                        progress: (String) -> Void, ownership: [String: Set<String>] = [:],
+                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init()) -> DependencyGraph {
         var graph = DependencyGraph()
+        guard (1...8).contains(workers) else {
+            graph.diagnostics.append("Extraction workers must be between 1 and 8.")
+            return graph
+        }
         var seen: [String: [String]] = [:]
-        var definingSymbols = Set<String>()
-        var dispatch: [String: Set<String>] = [:]
+        var jobs: [XcodeModuleJob] = []
+        // Validate inventory before scheduling; identical/ambiguous duplicates keep
+        // their original behavior regardless of worker completion order.
         for line in log.components(separatedBy: .newlines) {
             guard let marker = line.range(of: "builtin-SwiftDriver -- ") else { continue }
             do {
@@ -26,30 +32,63 @@ enum XcodeCompilerGraph {
                     continue
                 }
                 seen[module] = invocation
-                progress("Extracting Xcode SIL dependencies: \(module)…")
-                let output = derived.appendingPathComponent("impact-\(UUID().uuidString).sil")
-                let args = arguments(Array(invocation.dropFirst())) + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-o", output.path]
-                let compilation = AnalysisMeasurement()
-                _ = try CommandRunner.run(compiler, args, at: directory)
-                progress(compilation.report("Compiled \(module)"))
-                let parsing = AnalysisMeasurement()
-                let parsed = try SILParser.parse(file: output, module: module, sourceRoot: sourceRoot)
-                let bytes = (try? output.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                progress(parsing.report("Parsed \(module) (\(bytes) SIL bytes, \(parsed.functions.count) functions)"))
-                if parsed.functions.isEmpty { throw ImpactError("No SIL functions for \(module)") }
+                jobs.append(XcodeModuleJob(module: module, compiler: compiler, arguments: Array(invocation.dropFirst())))
+            } catch { graph.diagnostics.append("Compiler dependency extraction failed: \(error)") }
+        }
+        if seen.isEmpty { graph.diagnostics.append("No supported SwiftDriver invocations found in Xcode build output.") }
+        progress("Extracting \(jobs.count) Xcode modules with \(workers) worker(s)…")
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = workers
+        let results = jobs.map { _ in XcodeModuleResult() }
+        func schedule(_ index: Int) {
+            guard index < jobs.count else { return }
+            let job = jobs[index]
+            let result = results[index]
+            queue.addOperation {
+                result.complete {
+                    try cancellation.check()
+                    let output = derived.appendingPathComponent("impact-\(UUID().uuidString).sil")
+                    defer { try? FileManager.default.removeItem(at: output) }
+                    let args = arguments(job.arguments) + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-o", output.path]
+                    let compilation = AnalysisMeasurement()
+                    _ = try CommandRunner.run(job.compiler, args, at: directory)
+                    let compiled = compilation.report("Compiled \(job.module)")
+                    try cancellation.check()
+                    let parsing = AnalysisMeasurement()
+                    let parsed = try SILParser.parse(file: output, module: job.module, sourceRoot: sourceRoot)
+                    let bytes = (try? output.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                    try cancellation.check()
+                    guard !parsed.functions.isEmpty else { throw ImpactError("No SIL functions for \(job.module)") }
+                    return (parsed, [compiled, parsing.report("Parsed \(job.module) (\(bytes) SIL bytes, \(parsed.functions.count) functions)")])
+                }
+            }
+        }
+        for index in 0..<min(workers, jobs.count) { schedule(index) }
+        var definingSymbols = Set<String>()
+        var dispatch: [String: Set<String>] = [:]
+        for (index, job) in jobs.enumerated() {
+            let result = results[index]
+            defer { schedule(index + workers) }
+            do {
+                let (parsed, messages) = try result.take()
+                messages.forEach(progress)
                 for (symbol, node) in parsed.functions {
-                    let isDefinition = node.regions.contains { ownership[module]?.contains($0.path) == true }
+                    let isDefinition = node.regions.contains { ownership[job.module]?.contains($0.path) == true }
                     if isDefinition || !definingSymbols.contains(symbol) && (graph.functions[symbol] == nil || !node.regions.isEmpty && graph.functions[symbol]!.regions.isEmpty) {
                         graph.functions[symbol] = node
                     }
                     if isDefinition { definingSymbols.insert(symbol) }
                 }
                 for (declaration, symbols) in parsed.dispatchTargets { dispatch[declaration, default: []].formUnion(symbols) }
-            } catch {
-                graph.diagnostics.append("Compiler dependency extraction failed: \(error)")
-            }
+            } catch { graph.diagnostics.append("Compiler dependency extraction failed: \(job.module): \(error)") }
         }
-        if seen.isEmpty { graph.diagnostics.append("No supported SwiftDriver invocations found in Xcode build output.") }
+        queue.waitUntilAllOperationsAreFinished()
+        if cancellation.isCancelled {
+            // Never expose a partially merged success on cooperative cancellation.
+            graph = DependencyGraph()
+            graph.diagnostics = ["Compiler dependency extraction cancelled; a full selection is required."]
+            return graph
+        }
         for symbol in graph.functions.keys {
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
                 graph.functions[symbol]!.dependencies.formUnion(dispatch[declaration] ?? [])
