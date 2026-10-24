@@ -38,8 +38,8 @@ private struct ModuleCacheFixture {
         log = lines.joined(separator: "\n")
     }
 
-    func identities() throws -> [String: [String: String]] {
-        let fragments = XcodeModuleCache(cache: cache, identity: context, source: source, derived: derived, workspace: root)
+    func identities(directory: URL? = nil) throws -> [String: [String: String]] {
+        let fragments = XcodeModuleCache(cache: cache, identity: context, source: source, derived: derived, workspace: root, directory: directory)
         fragments.prepare(log: log)
         var result: [String: [String: String]] = [:]
         for name in ["Core", "App", "Tests", "Other"] {
@@ -48,6 +48,16 @@ private struct ModuleCacheFixture {
         }
         return result
     }
+}
+
+@Test func moduleCacheIncludesNestedCompilerWorkingDirectory() throws {
+    let fixture = try ModuleCacheFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let base = try fixture.identities()
+    let nested = fixture.source.appendingPathComponent("NestedProject")
+    try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+    let moved = try fixture.identities(directory: nested)
+    for module in base.keys { #expect(base[module] != moved[module]) }
 }
 
 @Test func moduleCacheInvalidatesCompilerDependencyClosureAcrossRevisions() throws {

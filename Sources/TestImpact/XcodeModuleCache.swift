@@ -13,6 +13,7 @@ final class XcodeModuleCache {
     private let source: URL
     private let derived: URL
     private let workspace: URL
+    private let directory: URL
     private var identities: [String: [String: String]] = [:]
     private var pending: [(URL, [String: String])] = []
 
@@ -50,7 +51,7 @@ final class XcodeModuleCache {
         }
     }
 
-    init(cache: XcodeGraphCache, identity: [String: String], source: URL, derived: URL, workspace: URL) {
+    init(cache: XcodeGraphCache, identity: [String: String], source: URL, derived: URL, workspace: URL, directory: URL? = nil) {
         self.cache = cache
         var context = identity
         context.removeValue(forKey: "revision")
@@ -59,6 +60,7 @@ final class XcodeModuleCache {
         self.source = source
         self.derived = derived
         self.workspace = workspace
+        self.directory = directory ?? source
     }
 
     private func normalized(_ path: String) -> String {
@@ -133,6 +135,9 @@ final class XcodeModuleCache {
                 throw ImpactError("Unsupported source/response file for \(module)")
             }
             var inputs = sharedInputs
+            if directory.standardizedFileURL.path != source.standardizedFileURL.path {
+                inputs["compilerWorkingDirectory"] = normalized(directory.path)
+            }
             inputs["orderedSources"] = XcodeGraphCache.digest(try JSONEncoder().encode(sources.map(normalized)))
             for path in sources {
                 inputs[normalized(path)] = try hash(path)
@@ -177,7 +182,7 @@ final class XcodeModuleCache {
             let scanned: XcodeDependencyInputs.Inventory?
             do {
                 scanned = try XcodeDependencyInputs.scan(compiler: original[0], arguments: arguments,
-                    directory: source, projectModules: Set(invocations.keys), normalize: normalized, hash: hash)
+                    directory: directory, projectModules: Set(invocations.keys), normalize: normalized, hash: hash)
             } catch {
                 scanned = nil
                 cache.progress("Module cache \(module): exact binary input identities (dependency scan unavailable: \(String(describing: error).prefix(240)))")

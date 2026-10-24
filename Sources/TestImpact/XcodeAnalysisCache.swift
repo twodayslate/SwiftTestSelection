@@ -305,7 +305,7 @@ extension XcodeAnalysis {
             var result: XcodeTestGraph
             if let found { result = found }
             else {
-                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: build.text, settingsData: settings, moduleCache: XcodeModuleCache(cache: cache, identity: identity, source: source, derived: derived, workspace: workspace))
+                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: build.text, settingsData: settings, moduleCache: XcodeModuleCache(cache: cache, identity: identity, source: source, derived: derived, workspace: workspace, directory: options.path.deletingLastPathComponent()))
                 try timed("graphPublish", revision: revision) { try cache.store(result, identity: identity) }
             }
             if keepBuild {
