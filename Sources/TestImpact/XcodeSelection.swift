@@ -20,15 +20,19 @@ public struct XcodeTarget: Codable, Sendable {
     }
 }
 
-/// XCUITest crosses a process boundary. This is a build-target ownership graph,
-/// not a claim that accessibility actions are statically resolved app calls.
+/// Combines build ownership, compiler dependencies and explicit UI mappings.
+/// Compiler edges alone never claim to cross the UI automation process boundary.
 public struct XcodeTestGraph: Codable, Sendable {
-    public var schemaVersion = 1
-    public var analysisKind = "xcode-build-targets"
+    public var schemaVersion = 2
+    public var analysisKind = "xcode-sil-and-ui-mappings"
     public var targets: [XcodeTarget]
     /// Exact identifiers emitted by xcodebuild test enumeration.
     public var tests: [String]
     public var diagnostics: [String]
+    public var dependencies: DependencyGraph?
+    public var sources: [String: SwiftSourceSnapshot] = [:]
+    public var modules: [String: String] = [:]
+    public var mappings: UIFeatureMappings?
 
     public init(targets: [XcodeTarget], tests: [String], diagnostics: [String] = []) {
         self.targets = targets
@@ -63,6 +67,9 @@ public enum XcodeSelector {
         current: XcodeTestGraph, previous: XcodeTestGraph?, changes: [FileChange],
         baseRevision: String, additionalFallbacks: [String] = []
     ) -> ImpactReport {
+        if current.dependencies != nil {
+            return XcodeFineSelector.select(current: current, previous: previous, changes: changes, baseRevision: baseRevision, additionalFallbacks: additionalFallbacks)
+        }
         var reasons = additionalFallbacks
         var explanations: [TestExplanation] = []
         var selected = Set<String>()

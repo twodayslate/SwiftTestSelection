@@ -11,6 +11,8 @@ public struct XcodeConfiguration: Sendable {
     public var destination: String
     public var configuration: String?
     public var testPlan: String?
+    /// Repository-relative mapping file, read separately from each revision.
+    public var mappingsPath: String = ".swift-test-selection.json"
 
     public init(container: Container, path: URL, scheme: String, destination: String, configuration: String? = nil, testPlan: String? = nil) {
         self.container = container
@@ -31,7 +33,7 @@ public struct XcodeConfiguration: Sendable {
 
     func executionArguments(tests: [String], derivedData: URL, resultBundle: URL) throws -> [String] {
         guard !tests.isEmpty else { throw ImpactError("Refusing an unfiltered Xcode test invocation for an empty selection.") }
-        guard tests.allSatisfy({ $0.split(separator: "/").count >= 3 && !$0.contains("\n") }) else {
+        guard tests.allSatisfy({ ($0.split(separator: "/").count >= 3 || $0.split(separator: "/").count == 2 && $0.hasSuffix(")")) && !$0.contains("\n") }) else {
             throw ImpactError("An Xcode selection must contain complete target/class/method test identifiers.")
         }
         return arguments(action: "test", derivedData: derivedData) +
@@ -54,30 +56,44 @@ public struct XcodeAnalysis {
         return try analyze(options, sourceRoot: root)
     }
 
-    public func select(base: String) throws -> ImpactReport {
+    public func select(base: String, head: String? = nil, mergeBase: Bool = false, fullSuite: Bool = false) throws -> ImpactReport {
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         guard options.path.path.hasPrefix(root.path + "/") else { throw ImpactError("Xcode container must be inside the Git repository.") }
-        let revision = try GitChanges.revision(base, at: root)
-        let changes = try GitChanges.read(base: revision, at: root)
-        let current = try analyze(options, sourceRoot: root)
-        if changes.isEmpty {
-            return XcodeSelector.select(current: current, previous: current, changes: [], baseRevision: revision)
+        let comparison = try RevisionComparison(base: base, head: head, mergeBase: mergeBase, root: root)
+        let changes = try GitChanges.readComparison(base: comparison.base, head: comparison.head, at: root)
+        let relative = String(options.path.path.dropFirst(root.path.count + 1))
+        let temporary = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        var headOptions = options
+        var headRoot = root
+        if let head = comparison.head {
+            headRoot = temporary.appendingPathComponent("head")
+            try GitChanges.export(base: head, from: root, into: headRoot)
+            headOptions.path = headRoot.appendingPathComponent(relative)
         }
-        let exported = FileManager.default.temporaryDirectory.appendingPathComponent("swift-test-impact-xcode-base-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: exported) }
+        let current = try analyze(headOptions, sourceRoot: headRoot)
         var previous: XcodeTestGraph?
         var fallbacks: [String] = []
-        do {
-            progress("Exporting base revision \(revision.prefix(12)) for Xcode analysis…")
-            try GitChanges.export(base: revision, from: root, into: exported)
-            var baseOptions = options
-            baseOptions.path = exported.appendingPathComponent(String(options.path.path.dropFirst(root.path.count + 1)))
-            previous = try analyze(baseOptions, sourceRoot: exported)
-        } catch {
-            fallbacks.append("Cannot analyze the base Xcode build; selecting all currently discovered tests. \(error)")
+        if changes.isEmpty { previous = current }
+        else {
+            do {
+                progress("Analyzing base revision \(comparison.base.prefix(12))…")
+                let exported = temporary.appendingPathComponent("base")
+                try GitChanges.export(base: comparison.base, from: root, into: exported)
+                var baseOptions = options
+                baseOptions.path = exported.appendingPathComponent(relative)
+                previous = try analyze(baseOptions, sourceRoot: exported)
+            } catch { fallbacks.append("Cannot analyze base revision: \(error)") }
         }
-        return XcodeSelector.select(current: current, previous: previous, changes: changes,
-                                    baseRevision: revision, additionalFallbacks: fallbacks)
+        var report = XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base, additionalFallbacks: fallbacks)
+        report.headRevision = comparison.head ?? "WORKTREE"
+        report.comparisonMode = comparison.mode
+        if fullSuite {
+            report.selectedTests = current.tests.sorted()
+            report.onlyTestingArguments = report.selectedTests.map { "-only-testing:" + $0 }
+            report.explanations += report.selectedTests.map { TestExplanation(test: $0, reason: "Full suite explicitly requested", revision: "head", path: [], kind: "fullSuite") }
+        }
+        return report
     }
 
     public func run(_ report: ImpactReport) throws -> Int32 {
@@ -91,8 +107,15 @@ public struct XcodeAnalysis {
         let results = directory.appendingPathComponent(".build/test-impact-results/\(UUID().uuidString).xcresult")
         try FileManager.default.createDirectory(at: results.deletingLastPathComponent(), withIntermediateDirectories: true)
         progress("Running \(report.selectedTests.count) selected Xcode tests; results: \(results.path)")
-        let arguments = try options.executionArguments(tests: report.selectedTests, derivedData: temporary, resultBundle: results)
-        let result = try CommandRunner.run("xcodebuild", arguments, at: directory, allowFailure: true)
+        var executionOptions = options
+        if let head = report.headRevision, head != "WORKTREE" {
+            let root = try GitChanges.repositoryRoot(at: directory)
+            let exported = temporary.appendingPathComponent("execution-source")
+            try GitChanges.export(base: head, from: root, into: exported)
+            executionOptions.path = exported.appendingPathComponent(String(options.path.path.dropFirst(root.path.count + 1)))
+        }
+        let arguments = try executionOptions.executionArguments(tests: report.selectedTests, derivedData: temporary.appendingPathComponent("DerivedData"), resultBundle: results)
+        let result = try CommandRunner.run("xcodebuild", arguments, at: executionOptions.path.deletingLastPathComponent(), allowFailure: true)
         progress(String(decoding: result.stdout + result.stderr, as: UTF8.self))
         return result.status
     }
@@ -112,12 +135,14 @@ public struct XcodeAnalysis {
         defer { try? FileManager.default.removeItem(at: derived) }
         let buildArguments = configuration.arguments(action: "build-for-testing", derivedData: derived)
         progress("Building Xcode scheme \(configuration.scheme) for \(configuration.destination) (no test bodies)…")
-        _ = try CommandRunner.run("xcodebuild", buildArguments, at: directory)
+        let build = try CommandRunner.run("xcodebuild", buildArguments, at: directory)
         let settingsData = try CommandRunner.run("xcodebuild", buildArguments + ["-showBuildSettings", "-json"], at: directory).stdout
         let settings = try JSONDecoder().decode([XcodeBuildSettings].self, from: settingsData)
         var targets: [XcodeTarget] = []
         var diagnostics: [String] = []
         var classifiedLists = Set<URL>()
+        var modules: [String: String] = [:]
+        var sources: [String: SwiftSourceSnapshot] = [:]
         func sourcePaths(in list: URL, sourceDirectory: URL) throws -> Set<String> {
             let lines = try String(contentsOf: list, encoding: .utf8)
             let root = sourceRoot.standardizedFileURL.resolvingSymlinksInPath().path + "/"
@@ -145,6 +170,14 @@ public struct XcodeAnalysis {
                 diagnostics.append("No in-repository Swift source ownership was found for test target \(name); narrowing is unavailable.")
             }
             targets.append(target)
+            if let module = entry.buildSettings["PRODUCT_MODULE_NAME"] {
+                modules[name] = module
+                for path in paths {
+                    let text = try String(contentsOf: sourceRoot.appendingPathComponent(path), encoding: .utf8)
+                    // A file can be compiled into multiple modules. Keep each snapshot.
+                    sources[module + ":" + path] = SwiftSourceSnapshot.parse(text, path: path, module: module)
+                }
+            }
         }
         // Scheme settings may omit transitive build targets. Preserve their
         // inputs as unclassified ownership, especially files shared with tests.
@@ -165,12 +198,46 @@ public struct XcodeAnalysis {
             "-enumerate-tests", "-test-enumeration-style", "flat", "-test-enumeration-format", "json",
             "-test-enumeration-output-path", enumeration.path
         ], at: directory)
-        let tests = try XcodeTestEnumeration.parse(Data(contentsOf: enumeration))
+        var suites = Set<String>()
+        for (target, module) in modules {
+            for key in sources.values.flatMap({ $0.inheritance.keys }) where key.hasPrefix(module + ".") {
+                suites.insert(target + "/" + key.dropFirst(module.count + 1))
+            }
+        }
+        let tests = try XcodeTestEnumeration.parse(Data(contentsOf: enumeration), emptySuiteIdentifiers: suites)
         let testTargets = Set(targets.filter(\.isTest).map(\.name))
         for test in tests where !testTargets.contains(String(test.prefix(while: { $0 != "/" }))) {
             diagnostics.append("No build-target metadata for discovered test: \(test)")
         }
-        return XcodeTestGraph(targets: targets, tests: tests, diagnostics: Array(Set(diagnostics)).sorted())
+        let ownership = targets.reduce(into: [String: Set<String>]()) { result, target in
+            if let module = modules[target.name] { result[module, default: []].formUnion(target.sourceFiles) }
+        }
+        var dependencies = XcodeCompilerGraph.extract(log: build.text, sourceRoot: sourceRoot, directory: directory, derived: derived, progress: progress, ownership: ownership)
+        XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: sources, graph: &dependencies)
+        for target in targets where !target.sourceFiles.isEmpty {
+            if let module = modules[target.name], !dependencies.functions.values.contains(where: { $0.module == module && !$0.regions.isEmpty }) {
+                dependencies.diagnostics.append("No compiled functions for target \(target.name)")
+            }
+        }
+        var result = XcodeTestGraph(targets: targets, tests: tests, diagnostics: Array(Set(diagnostics)).sorted())
+        result.dependencies = dependencies
+        result.modules = modules
+        result.sources = sources
+        guard !configuration.mappingsPath.hasPrefix("/") else { throw ImpactError("--mappings must be repository-relative.") }
+        let mappingURL = sourceRoot.appendingPathComponent(configuration.mappingsPath).standardizedFileURL.resolvingSymlinksInPath()
+        guard mappingURL.path.hasPrefix(sourceRoot.standardizedFileURL.resolvingSymlinksInPath().path + "/") else {
+            throw ImpactError("Mapping file must be inside the repository.")
+        }
+        if FileManager.default.fileExists(atPath: mappingURL.path) {
+            do {
+                result.mappings = try JSONDecoder().decode(UIFeatureMappings.self, from: Data(contentsOf: mappingURL))
+                try result.mappings?.validate()
+            } catch {
+                result.mappings = nil
+                result.diagnostics.append("Invalid UI mappings: \(error)")
+            }
+        }
+        return result
     }
 }
 
@@ -211,7 +278,7 @@ enum XcodeSourceFileList {
 public enum XcodeTestEnumeration {
     /// Xcode can exit successfully while returning enumeration errors. Never
     /// interpret such an incomplete inventory as an empty or safe selection.
-    public static func parse(_ data: Data) throws -> [String] {
+    public static func parse(_ data: Data, emptySuiteIdentifiers: Set<String> = []) throws -> [String] {
         struct Inventory: Decodable {
             struct Plan: Decodable {
                 struct Test: Decodable { var identifier: String }
@@ -224,10 +291,14 @@ public enum XcodeTestEnumeration {
         if let errors = inventory.errors, !errors.isEmpty {
             throw ImpactError("Xcode test enumeration failed: " + errors.joined(separator: "; "))
         }
-        let tests = Set(inventory.values.flatMap { $0.enabledTests.map(\.identifier) }).sorted()
+        let identifiers = Set(inventory.values.flatMap { $0.enabledTests.map(\.identifier) })
+        // Flat enumeration includes empty XCTestCase base classes. Only remove
+        // suites whose class declarations were independently found in source.
+        // Two-component Swift Testing function IDs remain executable tests.
+        let tests = identifiers.subtracting(emptySuiteIdentifiers).sorted()
         guard !tests.isEmpty else { throw ImpactError("Xcode enumerated no enabled tests; refusing to infer a safe empty selection.") }
-        guard tests.allSatisfy({ $0.split(separator: "/").count >= 3 }) else {
-            throw ImpactError("Xcode did not return complete target/class/method identifiers. Enumeration may be incomplete.")
+        guard tests.allSatisfy({ $0.split(separator: "/").count >= 3 || $0.split(separator: "/").count == 2 && $0.hasSuffix(")") }) else {
+            throw ImpactError("Xcode did not return complete test identifiers. Enumeration may be incomplete.")
         }
         return tests
     }

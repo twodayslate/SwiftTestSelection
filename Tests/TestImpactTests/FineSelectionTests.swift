@@ -1,0 +1,210 @@
+// SPDX-FileCopyrightText: 2026 Zachary Gorak
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import Foundation
+import Testing
+@testable import TestImpact
+
+private let uiSource = """
+import XCTest
+class Sharing: XCTestCase {
+    func testOne() { helper() }
+    func testTwo() { helper() }
+    func testThree() { helper() }
+    func testIndependent() { XCTAssertEqual(1, 1) }
+    func helper() { XCTAssertEqual(2, 2) }
+    override func setUpWithError() throws { XCTAssertEqual(3, 3) }
+}
+class Notes: XCTestCase {
+    func testNotes() { XCTAssertEqual(4, 4) }
+}
+"""
+private let appSource = """
+func sharing() -> Int { common() }
+func notes() -> Int { common() }
+func common() -> Int { 42 }
+"""
+
+private func model(ui: String = uiSource, app: String = appSource, uiPath: String = "Tests/UI.swift") -> XcodeTestGraph {
+    let uiSnapshot = SwiftSourceSnapshot.parse(ui, path: uiPath, module: "UI")
+    let appSnapshot = SwiftSourceSnapshot.parse(app, path: "App/Features.swift", module: "App")
+    var graph = DependencyGraph()
+    for (module, snapshot, source) in [("UI", uiSnapshot, ui), ("App", appSnapshot, app)] {
+        let lines = source.components(separatedBy: .newlines)
+        for unit in snapshot.units where unit.kind == "function" {
+            let line = lines[unit.region.startLine - 1]
+            let function = Pattern.groups(#"func ([A-Za-z]+)\("#, in: line)![0]
+            let name = (unit.scope.isEmpty ? "" : unit.scope + ".") + function + "()"
+            let id = module + "." + name
+            var dependencies = Set<String>()
+            if function.hasPrefix("test"), line.range(of: #"helper\(\s*\)"#, options: .regularExpression) != nil { dependencies.insert("UI.Sharing.helper()") }
+            if module == "App", function != "common" { dependencies.insert("App.common()") }
+            graph.functions[id] = FunctionNode(id: id, module: module, name: name, regions: [unit.region], dependencies: dependencies)
+            if function.hasPrefix("test") { graph.tests["UI/" + unit.scope + "/" + function + "()"] = [id] }
+        }
+    }
+    var snapshot = XcodeTestGraph(targets: [
+        XcodeTarget(name: "UI", productType: "com.apple.product-type.bundle.ui-testing", sourceFiles: [uiPath]),
+        XcodeTarget(name: "App", productType: "com.apple.product-type.application", sourceFiles: ["App/Features.swift"])
+    ], tests: graph.tests.keys.sorted())
+    snapshot.sources = [uiPath: uiSnapshot, "App/Features.swift": appSnapshot]
+    snapshot.modules = ["UI": "UI", "App": "App"]
+    XcodeCompilerGraph.bind(tests: snapshot.tests, modules: snapshot.modules, sources: snapshot.sources, graph: &graph)
+    snapshot.dependencies = graph
+    snapshot.mappings = UIFeatureMappings(fixtures: ["sharing": ["UI/Sharing"]], features: [
+        .init(name: "sharing", symbols: ["App.sharing()"], fixtures: ["sharing"]),
+        .init(name: "notes", symbols: ["App.notes()"], tests: ["UI/Notes/testNotes()"])
+    ])
+    return snapshot
+}
+
+private func selection(_ current: XcodeTestGraph, _ previous: XcodeTestGraph = model(), paths: [String] = ["Tests/UI.swift"]) -> ImpactReport {
+    XcodeSelector.select(current: current, previous: previous, changes: paths.map { FileChange(path: $0) }, baseRevision: "base")
+}
+
+@Test func editedMethodSelectsOnlyThatMethodAmong393Tests() {
+    var old = model(), current = model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)"))
+    for index in 0..<388 {
+        let test = "UI/Unrelated/test\(index)()"
+        old.tests.append(test); current.tests.append(test)
+        let node = FunctionNode(id: test, module: "UI", name: test)
+        old.dependencies!.functions[test] = node; current.dependencies!.functions[test] = node
+        old.dependencies!.tests[test] = [test]; current.dependencies!.tests[test] = [test]
+    }
+    let report = selection(current, old)
+    #expect(report.totalTests == 393)
+    #expect(report.selectedTests == ["UI/Sharing/testIndependent()"])
+    #expect(report.diagnostics.isEmpty)
+    #expect(report.onlyTestingArguments == ["-only-testing:UI/Sharing/testIndependent()"])
+}
+
+@Test func sharedHelperSelectsThreeCallersWithinOneTarget() {
+    let report = selection(model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(2, 2)", with: "XCTAssertEqual(2, 3)")))
+    #expect(report.selectedTests == ["UI/Sharing/testOne()", "UI/Sharing/testThree()", "UI/Sharing/testTwo()"])
+    #expect(report.explanations.allSatisfy { $0.kind == "dependency" })
+}
+
+@Test func setupSelectsItsClassWithoutSelectingOtherClasses() {
+    let report = selection(model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(3, 3)", with: "XCTAssertEqual(3, 4)")))
+    #expect(report.selectedTests.count == 4)
+    #expect(report.selectedTests.allSatisfy { $0.hasPrefix("UI/Sharing/") })
+}
+
+@Test func semanticComparisonIgnoresTriviaAndMovesButPreservesLiteralChanges() {
+    let formatted = uiSource.replacingOccurrences(of: "helper() }", with: "helper( ) /* comment */ }")
+    let report = selection(model(ui: "// new header\n" + formatted))
+    #expect(report.selectedTests.isEmpty)
+    #expect(report.ignoredChanges == ["Tests/UI.swift"])
+    #expect(selection(model(uiPath: "Moved/UI.swift"), paths: ["Moved/UI.swift", "Tests/UI.swift"]).selectedTests.isEmpty)
+    let old = SwiftSourceSnapshot.parse("func value() { print(\"a b\") }", path: "A.swift", module: "A")
+    let new = SwiftSourceSnapshot.parse("func value() { print(\"ab\") }", path: "A.swift", module: "A")
+    #expect(old.units[0].fingerprint != new.units[0].fingerprint)
+}
+
+@Test func newTestsIncludedAndDeletedTestsExcluded() {
+    let added = uiSource.replacingOccurrences(of: "func testIndependent()", with: "func testNew() { XCTAssertTrue(true) }\n    func testIndependent()")
+    #expect(selection(model(ui: added)).selectedTests == ["UI/Sharing/testNew()"])
+    let deleted = uiSource.replacingOccurrences(of: "    func testIndependent() { XCTAssertEqual(1, 1) }\n", with: "")
+    #expect(!selection(model(ui: deleted)).selectedTests.contains("UI/Sharing/testIndependent()"))
+}
+
+@Test func productionDependencyPropagatesToBothMappedFeatures() {
+    let report = selection(model(app: appSource.replacingOccurrences(of: "42", with: "43")), paths: ["App/Features.swift"])
+    #expect(report.selectedTests == model().tests)
+    #expect(report.diagnostics.isEmpty)
+    #expect(Set(report.explanations.map(\.kind)) == ["explicitMapping"])
+    let sharing = selection(model(app: appSource.replacingOccurrences(of: "sharing() -> Int { common() }", with: "sharing() -> Int { common() + 1 }")), paths: ["App/Features.swift"])
+    #expect(sharing.selectedTests.count == 4)
+    #expect(!sharing.selectedTests.contains("UI/Notes/testNotes()"))
+}
+
+@Test func missingMappingsAndOpaqueDependenciesAreExplicitFallbacks() {
+    var current = model(app: appSource.replacingOccurrences(of: "42", with: "43"))
+    current.mappings = nil
+    let report = selection(current, paths: ["App/Features.swift"])
+    #expect(report.selectedTests == current.tests)
+    #expect(report.diagnostics.contains { $0.code == "missing_ui_mappings" })
+    #expect(report.explanations.contains { $0.kind == "fallback" })
+    current = model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)"))
+    current.dependencies!.functions["UI.Sharing.helper()"]!.uncertainties = ["Indirect function invocation"]
+    #expect(selection(current).diagnostics.contains { $0.code == "unresolved_dependency" })
+}
+
+@Test func mappingValidationAndExplicitFeatureDependencies() throws {
+    let invalid = UIFeatureMappings(features: [.init(name: "sharing", fixtures: ["missing"])])
+    #expect(throws: ImpactError.self) { try invalid.validate() }
+    var old = model(), current = model(app: appSource.replacingOccurrences(of: "sharing() -> Int { common() }", with: "sharing() -> Int { common() + 1 }"))
+    let mappings = UIFeatureMappings(features: [
+        .init(name: "sharing", symbols: ["App.sharing()"], tests: ["UI/Sharing"]),
+        .init(name: "notes", symbols: ["App.notes()"], tests: ["UI/Notes"], dependsOn: ["sharing"])
+    ])
+    old.mappings = mappings; current.mappings = mappings
+    #expect(selection(current, old, paths: ["App/Features.swift"]).selectedTests == current.tests)
+}
+
+@Test func conditionalCompilationChangesAreNotTreatedAsTrivia() {
+    let before = SwiftSourceSnapshot.parse("#if FIRST\nfunc x() {}\n#endif", path: "A.swift", module: "A")
+    let after = SwiftSourceSnapshot.parse("#if SECOND\nfunc x() {}\n#endif", path: "A.swift", module: "A")
+    #expect(before.units.map(\.fingerprint) != after.units.map(\.fingerprint))
+}
+
+@Test func compiledResolutionChangesMatterEvenWithUnchangedSource() {
+    var current = model()
+    current.dependencies!.functions["UI.Sharing.testIndependent()"]!.dependencies.insert("UI.Sharing.helper()")
+    let report = selection(current)
+    #expect(report.selectedTests == ["UI/Sharing/testIndependent()"])
+}
+
+@Test func resourceMovesAreNotAssumedBehaviorPreserving() {
+    let graph = model()
+    var change = FileChange(path: "Resources/renamed.json")
+    change.isPureMove = true
+    change.previousPath = "Resources/original.json"
+    let report = XcodeSelector.select(current: graph, previous: graph, changes: [change], baseRevision: "base")
+    #expect(report.selectedTests == graph.tests)
+    #expect(report.diagnostics.contains { $0.code == "unclassified_change" })
+}
+
+@Test func emptyKnownSuitesDoNotHideTopLevelSwiftTestingMethods() throws {
+    let data = Data(#"{"errors":[],"values":[{"enabledTests":[{"identifier":"UI/Base"},{"identifier":"UnitTests/example()"},{"identifier":"UI/Suite/testA()"}]}]}"#.utf8)
+    #expect(try XcodeTestEnumeration.parse(data, emptySuiteIdentifiers: ["UI/Base"]) == ["UI/Suite/testA()", "UnitTests/example()"])
+    #expect(throws: ImpactError.self) { try XcodeTestEnumeration.parse(data) }
+}
+
+@Test func inheritedLifecycleRootsResolveAcrossKnownModulesAndDiagnoseUnknownParents() {
+    let child = "class Child: Support.BaseCase { func testOne() {} }"
+    let base = "class BaseCase: XCTestCase { func setUpWithError() throws {} }"
+    let test = "UI/Child/testOne()"
+    let sources = [
+        "child": SwiftSourceSnapshot.parse(child, path: "Child.swift", module: "UI"),
+        "base": SwiftSourceSnapshot.parse(base, path: "Base.swift", module: "Support")
+    ]
+    var graph = DependencyGraph(functions: [
+        "entry": FunctionNode(id: "entry", module: "UI", name: "Child.testOne()", regions: [SourceRegion(path: "Child.swift", startLine: 1, endLine: 1)]),
+        "hook": FunctionNode(id: "hook", module: "Support", name: "BaseCase.setUpWithError()", regions: [SourceRegion(path: "Base.swift", startLine: 1, endLine: 1)])
+    ])
+    XcodeCompilerGraph.bind(tests: [test], modules: ["UI": "UI"], sources: sources, graph: &graph)
+    #expect(graph.tests[test] == ["entry", "hook"])
+    #expect(graph.testDiagnostics[test] == nil)
+    graph.testDiagnostics = [:]
+    XcodeCompilerGraph.bind(tests: [test], modules: ["UI": "UI"], sources: ["child": sources["child"]!], graph: &graph)
+    #expect(graph.testDiagnostics[test]?.isEmpty == false)
+}
+
+@Test func sourceLocationMacrosRemainSensitiveButCommentsAndStringsDoNot() {
+    let source = "func x() { print(#line) }"
+    let old = SwiftSourceSnapshot.parse(source, path: "A.swift", module: "A")
+    let new = SwiftSourceSnapshot.parse("\n" + source, path: "A.swift", module: "A")
+    #expect(old.units.first?.fingerprint != new.units.first?.fingerprint)
+    let text = "func x() { print(\"#line\") } // #line"
+    #expect(SwiftSourceSnapshot.parse(text, path: "A.swift", module: "A").units.first?.fingerprint == SwiftSourceSnapshot.parse("\n" + text, path: "A.swift", module: "A").units.first?.fingerprint)
+}
+
+@Test func topLevelCodeAndConditionalSuperclassDeclarationsArePreserved() {
+    let source = "#if FIRST\nclass Child: BaseOne {}\n#else\nclass Child: BaseTwo {}\n#endif\nprint(1)"
+    let parsed = SwiftSourceSnapshot.parse(source, path: "main.swift", module: "App")
+    #expect(Set(parsed.inheritance["App.Child"] ?? []) == ["BaseOne", "BaseTwo"])
+    #expect(parsed.units.contains { $0.kind == "topLevel" })
+    let modified = SwiftSourceSnapshot.parse(source.replacingOccurrences(of: "print(1)", with: "print(2)"), path: "main.swift", module: "App")
+    #expect(parsed.units.map(\.fingerprint) != modified.units.map(\.fingerprint))
+}

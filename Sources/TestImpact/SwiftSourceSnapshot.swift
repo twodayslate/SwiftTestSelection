@@ -1,0 +1,94 @@
+// SPDX-FileCopyrightText: 2026 Zachary Gorak
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import Foundation
+import SwiftParser
+import SwiftSyntax
+
+public struct SourceUnit: Codable, Sendable {
+    public var key: String
+    public var fingerprint: String
+    public var kind: String
+    public var scope: String
+    public var region: SourceRegion
+}
+
+public struct SwiftSourceSnapshot: Codable, Sendable {
+    public var units: [SourceUnit]
+    public var inheritance: [String: [String]]
+    public var diagnostics: [String]
+
+    public static func parse(_ text: String, path: String, module: String) -> Self {
+        let tree = Parser.parse(source: text)
+        let locations = SourceLocationConverter(fileName: path, tree: tree)
+        var result = Self(units: [], inheritance: [:], diagnostics: [])
+        if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
+        let tokens = Array(tree.tokens(viewMode: .sourceAccurate))
+        let locationNames: Set<String> = ["line", "column", "file", "fileID", "filePath", "sourceLocation"]
+        let contextual = tokens.indices.contains { index in
+            tokens[index].text == "#" && index + 1 < tokens.count && locationNames.contains(tokens[index + 1].text)
+        } || tokens.contains { $0.tokenKind == .poundSourceLocation }
+        // Preserve syntax structure, token kinds and literal contents, but not
+        // trivia. Parsing first retains whitespace-sensitive operator fixity.
+        func fingerprint(_ node: Syntax) -> String {
+            if let token = node.as(TokenSyntax.self) { return "\(token.tokenKind):\(token.text.utf8.count):\(token.text)" }
+            return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(fingerprint).joined(separator: "|") + "]"
+        }
+        func add(_ node: Syntax, header: Syntax, kind: String, scope: [String]) {
+            let start = locations.location(for: node.positionAfterSkippingLeadingTrivia).line
+            let end = locations.location(for: node.endPositionBeforeTrailingTrivia).line
+            result.units.append(SourceUnit(
+                key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
+                fingerprint: fingerprint(node) + (contextual ? "@\(path):\(start)" : ""),
+                kind: kind, scope: scope.joined(separator: "."),
+                region: SourceRegion(path: path, startLine: start, endLine: end)))
+        }
+        func walk(_ node: Syntax, scope: [String]) {
+            if let item = node.as(CodeBlockItemSyntax.self), !item.item.is(DeclSyntax.self) {
+                add(node, header: node, kind: "topLevel", scope: scope)
+            } else if let value = node.as(IfConfigDeclSyntax.self) {
+                let header = Syntax(value.with(\.clauses, IfConfigClauseListSyntax(value.clauses.map { $0.with(\.elements, nil) })))
+                add(header, header: header, kind: "configuration", scope: scope)
+                for child in node.children(viewMode: .sourceAccurate) { walk(child, scope: scope) }
+            } else if let value = node.as(ClassDeclSyntax.self) {
+                let names = scope + [value.name.text]
+                let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
+                add(header, header: header, kind: "type", scope: names)
+                result.inheritance[module + "." + names.joined(separator: "."), default: []] += value.inheritanceClause?.inheritedTypes.map { $0.type.trimmedDescription } ?? []
+                for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
+            } else if let value = node.as(ProtocolDeclSyntax.self) {
+                let names = scope + [value.name.text]
+                let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
+                add(header, header: header, kind: "type", scope: names)
+                for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
+            } else if let value = node.as(StructDeclSyntax.self) {
+                let names = scope + [value.name.text]
+                let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
+                add(header, header: header, kind: "type", scope: names)
+                for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
+            } else if let value = node.as(EnumDeclSyntax.self) {
+                let names = scope + [value.name.text]
+                let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
+                add(header, header: header, kind: "type", scope: names)
+                for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
+            } else if let value = node.as(ExtensionDeclSyntax.self) {
+                let names = [value.extendedType.trimmedDescription]
+                let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
+                add(header, header: header, kind: "type", scope: names)
+                for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
+            } else if let value = node.as(FunctionDeclSyntax.self) {
+                add(node, header: Syntax(value.with(\.body, nil)), kind: "function", scope: scope)
+            } else if node.is(InitializerDeclSyntax.self) || node.is(DeinitializerDeclSyntax.self) || node.is(VariableDeclSyntax.self) || node.is(SubscriptDeclSyntax.self) {
+                add(node, header: node, kind: "state", scope: scope)
+            } else if node.is(ImportDeclSyntax.self) {
+                add(node, header: node, kind: "import", scope: scope)
+            } else if node.is(DeclSyntax.self) && !node.is(IfConfigDeclSyntax.self) {
+                add(node, header: node, kind: "declaration", scope: scope)
+            } else {
+                for child in node.children(viewMode: .sourceAccurate) { walk(child, scope: scope) }
+            }
+        }
+        walk(Syntax(tree), scope: [])
+        return result
+    }
+}

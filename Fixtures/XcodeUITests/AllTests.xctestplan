@@ -1,0 +1,27 @@
+{
+  "configurations": [
+    {
+      "id": "266C7D38-BDA0-4CCA-A013-CCBAEE625F63",
+      "name": "All tests",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {},
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:ImpactDemo.xcodeproj",
+        "identifier": "000000000000000000000016",
+        "name": "CheckoutUITests"
+      }
+    },
+    {
+      "target": {
+        "containerPath": "container:ImpactDemo.xcodeproj",
+        "identifier": "00000000000000000000001F",
+        "name": "UnitTests"
+      }
+    }
+  ],
+  "version": 1
+}

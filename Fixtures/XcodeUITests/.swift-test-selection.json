@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "fixtures": {
+    "sharing": [
+      "CheckoutUITests/SharingUITests",
+      "CheckoutUITests/InheritedUITests"
+    ]
+  },
+  "features": [
+    {
+      "name": "sharing",
+      "sources": [
+        "App/Sharing.swift"
+      ],
+      "fixtures": [
+        "sharing"
+      ]
+    },
+    {
+      "name": "notes",
+      "sources": [
+        "App/Notes.swift"
+      ],
+      "tests": [
+        "CheckoutUITests/NotesUITests"
+      ]
+    }
+  ]
+}

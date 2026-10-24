@@ -27,6 +27,7 @@ public struct FunctionNode: Codable, Sendable {
     /// Includes function values passed as callbacks, not only immediate calls.
     public var dependencies: Set<String>
     public var uncertainties: Set<String>
+    public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>
 
     public init(
@@ -51,6 +52,7 @@ public struct DependencyGraph: Codable, Sendable {
     /// SwiftPM test identifier -> one or more compiler function symbols.
     public var tests: [String: Set<String>]
     public var diagnostics: [String]
+    public var testDiagnostics: [String: [String]] = [:]
 
     public init(
         toolchain: String = "", functions: [String: FunctionNode] = [:],

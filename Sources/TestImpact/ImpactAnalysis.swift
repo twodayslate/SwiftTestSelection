@@ -12,28 +12,41 @@ public struct ImpactAnalysis {
         self.progress = progress
     }
 
-    public func select(base: String) throws -> ImpactReport {
+    public func select(base: String, head: String? = nil, mergeBase: Bool = false, fullSuite: Bool = false) throws -> ImpactReport {
         let root = try GitChanges.repositoryRoot(at: packagePath)
-        let revision = try GitChanges.revision(base, at: root)
-        let changes = try GitChanges.read(base: revision, at: root)
-        let current = try PackageAnalyzer(packagePath: packagePath, sourceRoot: root, progress: progress).analyze()
-        if changes.isEmpty {
-            return StaticSelector.select(current: current, previous: current, changes: [], baseRevision: revision)
-        }
+        let comparison = try RevisionComparison(base: base, head: head, mergeBase: mergeBase, root: root)
+        let changes = try GitChanges.readComparison(base: comparison.base, head: comparison.head, at: root)
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("swift-test-impact-base-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: temporary) }
+        let relative = String(packagePath.path.dropFirst(root.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var headRoot = root
+        var headPackage = packagePath
+        if let head = comparison.head {
+            headRoot = temporary.appendingPathComponent("head")
+            try GitChanges.export(base: head, from: root, into: headRoot)
+            headPackage = relative.isEmpty ? headRoot : headRoot.appendingPathComponent(relative)
+        }
+        let current = try PackageAnalyzer(packagePath: headPackage, sourceRoot: headRoot, progress: progress).analyze()
         var previous: DependencyGraph?
         var fallback: [String] = []
-        do {
-            progress("Exporting base revision \(revision.prefix(12)) into a temporary directory…")
-            try GitChanges.export(base: revision, from: root, into: temporary)
-            let relative = String(packagePath.path.dropFirst(root.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            let basePackage = relative.isEmpty ? temporary : temporary.appendingPathComponent(relative)
-            previous = try PackageAnalyzer(packagePath: basePackage, sourceRoot: temporary, progress: progress).analyze()
-        } catch {
-            fallback.append("Unable to analyze the base revision; selecting all tests. \(error)")
+        if changes.isEmpty { previous = current }
+        else {
+            do {
+                let baseRoot = temporary.appendingPathComponent("base")
+                progress("Analyzing base revision \(comparison.base.prefix(12))…")
+                try GitChanges.export(base: comparison.base, from: root, into: baseRoot)
+                let basePackage = relative.isEmpty ? baseRoot : baseRoot.appendingPathComponent(relative)
+                previous = try PackageAnalyzer(packagePath: basePackage, sourceRoot: baseRoot, progress: progress).analyze()
+            } catch { fallback.append("Unable to analyze base revision: \(error)") }
         }
-        return StaticSelector.select(current: current, previous: previous, changes: changes, baseRevision: revision, additionalFallbacks: fallback)
+        var report = StaticSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base, additionalFallbacks: fallback)
+        report.headRevision = comparison.head ?? "WORKTREE"
+        report.comparisonMode = comparison.mode
+        if fullSuite {
+            report.selectedTests = current.tests.keys.sorted()
+            report.explanations += report.selectedTests.map { TestExplanation(test: $0, reason: "Full suite explicitly requested", revision: "head", path: [], kind: "fullSuite") }
+        }
+        return report
     }
 
     /// Executes only when explicitly requested by a caller. An empty selection
@@ -44,11 +57,20 @@ public struct ImpactAnalysis {
             return 0
         }
         progress("Running \(report.selectedTests.count) selected tests…")
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("swift-test-impact-run-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        var executionPackage = packagePath
+        if let head = report.headRevision, head != "WORKTREE" {
+            let root = try GitChanges.repositoryRoot(at: packagePath)
+            try GitChanges.export(base: head, from: root, into: temporary)
+            let relative = String(packagePath.path.dropFirst(root.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            executionPackage = relative.isEmpty ? temporary : temporary.appendingPathComponent(relative)
+        }
         let result = try CommandRunner.run("swift", [
-            "test", "--package-path", packagePath.path,
-            "--scratch-path", packagePath.appendingPathComponent(".build/test-impact").path,
+            "test", "--package-path", executionPackage.path,
+            "--scratch-path", executionPackage.appendingPathComponent(".build/test-impact").path,
             "--filter", filter
-        ], at: packagePath, allowFailure: true)
+        ], at: executionPackage, allowFailure: true)
         progress(String(decoding: result.stdout + result.stderr, as: UTF8.self))
         return result.status
     }

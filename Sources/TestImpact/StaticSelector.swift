@@ -8,6 +8,7 @@ public struct TestExplanation: Codable, Sendable {
     public var reason: String
     public var revision: String
     public var path: [String]
+    public var kind: String = "dependency"
 }
 
 public struct ImpactReport: Codable, Sendable {
@@ -20,6 +21,12 @@ public struct ImpactReport: Codable, Sendable {
     public var changedFiles: [String]
     public var unreferencedChanges: [String]
     public var limitations: [String]
+    public var headRevision: String?
+    public var comparisonMode: String?
+    public var onlyTestingArguments: [String]?
+    public var diagnostics: [SelectionDiagnostic] = []
+    public var ignoredChanges: [String] = []
+    public var uiMappingCoverage: UIMappingCoverage?
 
     public var filter: String? {
         guard !selectedTests.isEmpty else { return nil }
@@ -132,4 +139,18 @@ public enum StaticSelector {
             ]
         )
     }
+}
+
+public struct SelectionDiagnostic: Codable, Sendable {
+    public var code: String
+    public var message: String
+    public var tests: [String]
+}
+
+public struct UIMappingCoverage: Codable, Sendable {
+    public var mappingFilePresent: Bool
+    public var mappedTests: [String]
+    public var unmappedTests: [String]
+    public var unresolvedBoundaries: [String] = []
+    public var unmatchedSelectors: [String] = []
 }

@@ -79,6 +79,7 @@ public enum SILParser {
                 current!.dependencies.insert(match[1])
             }
             if let match = Pattern.groups(#"\b(class_method|super_method|witness_method|objc_method|objc_super_method)\b.*#([^\s:]+)"#, in: line) {
+                if let value = Pattern.groups(#"^(%[\w]+) ="#, in: line)?.first { knownValues.insert(value) }
                 current!.dynamicDeclarations.insert(match[1].components(separatedBy: "!")[0])
                 current!.uncertainties.insert("Dynamic dispatch: \(match[0]) \(match[1])")
             }
@@ -88,6 +89,9 @@ public enum SILParser {
             }
             if let match = Pattern.groups(#"\b(?:apply|try_apply|begin_apply)(?: \[[^\]]*\])* (%[\w]+)"#, in: line), !knownValues.contains(match[0]) {
                 current!.uncertainties.insert("Indirect function invocation")
+            }
+            if line.contains("global_addr ") || line.contains("global_value ") {
+                current!.uncertainties.insert("Global state access")
             }
             if line.contains("global_addr ") || line.contains("global_value ") || line.contains("ref_element_addr ") {
                 current!.uncertainties.insert("Shared state access")

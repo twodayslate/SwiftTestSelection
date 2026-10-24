@@ -7,6 +7,8 @@ public struct FileChange: Codable, Sendable {
     public var path: String
     public var oldRegions: [SourceRegion]
     public var newRegions: [SourceRegion]
+    public var previousPath: String?
+    public var isPureMove: Bool = false
     public var requiresFallback: Bool
 
     public init(path: String, oldRegions: [SourceRegion] = [], newRegions: [SourceRegion] = [], requiresFallback: Bool = false) {

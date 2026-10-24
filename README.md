@@ -2,11 +2,11 @@
 
 Select Swift tests from a Git diff and a compiler-derived dependency graph. **No coverage baseline or initial full-suite run is required.**
 
-A Swift package providing a `swift-test-impact` executable and reusable `TestImpact` library. SwiftPM packages use a function dependency graph with XCTest and Swift Testing discovery. Xcode projects/workspaces support XCUITest through conservative build-target selection. It is experimental static analysis, not a guarantee of the smallest safe test set.
+A Swift package providing a `swift-test-impact` executable and reusable `TestImpact` library. SwiftPM packages use a function dependency graph with XCTest and Swift Testing discovery. Xcode projects/workspaces select individual XCTest methods through syntax and compiler dependencies, with explicit feature mappings for XCUITest. It is experimental static analysis, not a guarantee of the smallest safe test set.
 
 ## Build
 
-Requires Swift 6+, Git, and a toolchain capable of building the target package. Validated with Apple Swift 6.3.3 on Apple Silicon macOS; Linux is not yet validated. No third-party package dependencies.
+Requires Swift 6+, Git, and a toolchain capable of building the target package. Validated with Apple Swift 6.3.3 on Apple Silicon macOS; Linux is not yet validated. SwiftSyntax/SwiftParser 600.0.1 is pinned for source parsing; unsupported syntax produces a diagnostic and conservative fallback.
 
 ```sh
 swift build -c release
@@ -23,7 +23,7 @@ swift run swift-test-impact select \
   --base HEAD
 ```
 
-`--base HEAD` compares the committed revision with the current working tree, including staged, unstaged, and untracked files. To compare against an ancestor, supply its revision or SHA. The tool uses the exact supplied revision; it does not automatically compute a merge base.
+`--base HEAD` compares the committed revision with the current working tree, including staged, unstaged, and untracked files. To compare against an ancestor, supply its revision or SHA. The default uses the exact supplied revision. Add `--head REVISION` for two committed revisions and `--merge-base` for a PR comparison against their common ancestor. Without `--head`, merge-base uses `HEAD` as the ancestry anchor and still analyzes the worktree. Explicit head revisions are exported for both analysis and execution; dirty worktree changes are excluded.
 
 The default command reports a selection. Add `--run` to execute it:
 
@@ -48,48 +48,126 @@ swift run swift-test-impact select \
 
 Progress and test-run output go to stderr, so stdout remains usable as JSON. Keep reports under `.build` or another ignored directory so they do not become part of subsequent diffs.
 
-## Xcode and XCUITest
+## Fine-grained Xcode and XCUITest selection
 
-Select and run tests from an Xcode scheme, using a destination available on your machine:
+All tests can live in **one target and one test plan**. A test-method edit does not require running its entire target:
 
 ```sh
 swift run swift-test-impact select \
   --project /path/to/App.xcodeproj \
-  --scheme App \
+  --scheme App --test-plan AllTests \
   --destination 'platform=iOS Simulator,id=YOUR-SIMULATOR-UUID' \
-  --base HEAD \
-  --run
+  --base HEAD --format json
 ```
 
-Use `--workspace /path/to/App.xcworkspace` instead of `--project` for a workspace. Optional `--configuration Debug` and `--test-plan SmokeTests` are passed to every build, discovery, and execution command. Omit `--run` for a report; add `--format json` for machine-readable output. The container must be inside the Git repository for selection.
-
-XCUITest controls an app in a separate process, so a call graph from the test runner cannot establish which app functions an accessibility action reaches. This adapter therefore uses **target-level selection**:
+Use `--workspace /path/to/App.xcworkspace` instead of `--project` for a workspace. `--configuration Debug` is optional. These settings are used consistently for building, discovery, and execution. The container must be inside the Git repository. Omit `--run` to review the report without executing test bodies; add it to execute the selected exact identifiers.
 
 | Change | Selection |
 | --- | --- |
-| Swift source used only by test targets | All enabled tests in those targets |
-| Shared test helper | All enabled tests in every owning test target |
-| App/framework source, resources, project settings, or unclassified files | All enabled tests in the chosen scheme/test plan |
-| Missing base build or source ownership | Explicit full-selection fallback |
-| Empty diff | No tests executed |
+| Edit one test method | That method and any compiled callers |
+| Add a method | The newly discovered method |
+| Edit a helper | Tests that reach it through compiler references |
+| Edit setup/teardown | Tests in its class and dependent subclasses |
+| Edit an inherited method | Tests reaching that implementation, including inherited lifecycle roots |
+| Edit production code | Dependent unit tests and affected mapped UI tests |
+| Edit a shared production dependency | Tests for every feature whose compiled roots reach it, plus explicitly declared dependent features |
+| Comments/formatting | No additional tests when parsed syntax and compiled dependencies are unchanged |
+| Pure Swift file move | No additional tests when syntax, module ownership, and compiled dependencies are unchanged |
+| Missing/unresolved information | Structured diagnostic and conservative fallback |
 
-Both base and current compiled source-file lists establish ownership, covering moved/deleted sources. Newly discovered tests are included; deleted tests are excluded. Schemes containing unit tests use the same target-level policy in Xcode mode. Function-level selection remains available in SwiftPM mode.
+Both revisions are analyzed. Removed functions and dependencies retain their old callers; deleted tests are excluded. New tests are always included. Initializers and lifecycle hooks are associated with their class and ancestors. Stored state/type-layout changes broaden selection to the affected class; file-level declarations may broaden it further. Simple `PBXFileReference` path updates accompanying unchanged Swift file renames are recognized; other project/build changes fall back. Resource renames are not assumed to preserve behavior.
 
-The adapter builds with `xcodebuild build-for-testing`, reads build settings and `SwiftFileList` compiler inputs, then discovers exact identifiers with `test-without-building -enumerate-tests`. It does not run test bodies during analysis, but discovery launches test runners and may require UI automation permissions. Enumeration errors, missing test identifiers, and an empty inventory fail explicitly, including errors embedded in otherwise successful Xcode output. Execution passes literal `-only-testing:` identifiers and preserves the runner's exit status.
+### Explicit UI feature mappings
 
-Requires macOS with Xcode's test-enumeration support (Xcode 15+) and a configured scheme/destination. The adapter preserves project signing settings. Analysis uses temporary DerivedData and rebuilds both revisions; these builds and discovery can cost more than a small suite. Selected runs retain `.xcresult` bundles under `.build/test-impact-results` beside the project/workspace. Current validation covers Xcode 26.6 on an iOS 26.2 simulator; macOS fixture builds passed, but local macOS UI discovery was blocked by an automation-mode timeout. Physical devices and other Apple platforms are not yet validated.
+XCUITest runs across a process boundary. A test-runner call graph cannot tell which app code an accessibility action exercises. Check in `.swift-test-selection.json` at the **repository root** to declare those relationships:
 
-Inspect the Xcode ownership graph with the same options:
-
-```sh
-swift run swift-test-impact graph \
-  --project /path/to/App.xcodeproj \
-  --scheme App \
-  --destination 'platform=iOS Simulator,id=YOUR-SIMULATOR-UUID' \
-  --format dot --output /path/to/.build/ui-targets.dot
+```json
+{
+  "version": 1,
+  "fixtures": {
+    "sharing": [
+      "AppUITests/SharingTests",
+      "AppUITests/AttachmentTests/testShareAttachment()"
+    ]
+  },
+  "features": [
+    {
+      "name": "sharing",
+      "sources": ["App/Features/Sharing/**"],
+      "fixtures": ["sharing"],
+      "dependsOn": ["account"]
+    },
+    {
+      "name": "notes",
+      "symbols": ["App.notesTitle()"],
+      "tests": ["AppUITests/NotesTests"],
+      "dependsOn": ["account"]
+    },
+    {
+      "name": "account",
+      "sources": ["App/Account/**"],
+      "tests": ["AppUITests/AccountTests"]
+    }
+  ]
+}
 ```
 
-Xcode JSON identifies this graph as `analysisKind: "xcode-build-targets"`; DOT shows tests, targets, and compiled source ownership. Neither format claims to resolve UI interactions into app function calls.
+- `sources` matches repository-relative compiled source paths. `*` matches within one path component; `**` spans components. A source boundary includes all compiled functions in the matched files.
+- `symbols` matches the graph's `module + "." + name`, such as `App.notesTitle()`. Use it when several features share one source file. The same wildcard rules apply.
+- `tests` accepts exact discovered method IDs, class prefixes, target prefixes, or wildcard patterns. Copy identifiers from `graph` output, including parentheses.
+- `fixtures` defines named reusable lists of test selectors. It does not infer runtime fixture coverage.
+- `dependsOn` declares feature dependencies outside the compiler graph. A change to `account` affects both sharing and notes. Cycles are handled with finite traversal.
+
+Compiler dependencies propagate transitively from feature roots. If sharing and notes both call a common function, changing that function selects both features without listing the common file in each mapping. Explicit dependencies supplement this graph for service, runtime, or other relationships it cannot infer. Mappings are read independently from the base and head revisions. Use `--mappings path/to/mappings.json` to choose another repository-relative file.
+
+**Mappings are dependency declarations, not measured coverage.** They must cover app startup, shared services, and other cross-process behavior relevant to each UI test. An incorrect but syntactically valid mapping cannot be detected automatically. Narrowing is conditional on the declared boundaries being complete.
+
+### Diagnostics and fallback policy
+
+- No mapping file on a production change: select every enabled UI test; compiler-based unit selection still applies.
+- A UI test belongs to no feature: keep that test conservatively selected on production changes.
+- Changed production code has no mapped boundary or reachable feature: select every enabled UI test.
+- Missing feature boundary, unmatched test selector, or an affected feature with no tests: report it explicitly and conservatively include UI tests.
+- Opaque function calls, global state, raw pointers, or unresolved project dispatch: include tests or mapped features that reach the uncertainty. Compiled candidate edges model known dispatch; SDK UI calls are not treated as app-function edges.
+- A test entry point cannot be bound: include that test on semantic changes.
+- Unsupported syntax/compiler formats, invalid mapping configuration, missing base graph, unclassified files, or other build changes: explicit full-selection fallback.
+
+Resource and build-configuration changes currently fall back; this version does not infer resource dependencies from UI mappings. Unsupported inheritance across external modules and runtime registration may also broaden selection. The graph is experimental, and dynamic dependencies can still escape analysis. Validate with full runs before using selection as a CI gate.
+
+Reports use schema version 2 in Xcode mode. `selectedTests` and `onlyTestingArguments` contain exact IDs and literal `-only-testing:` arguments. Every selected test has an explanation whose `kind` distinguishes `dependency`, `explicitMapping`, `fallback`, `newTest`, or `fullSuite`. `revision` identifies the relevant side and `path` describes the dependency or mapping. `diagnostics` includes stable `code`, `message`, and affected `tests`; `fullRunReasons` lists suite-wide fallbacks. `ignoredChanges` lists changes ignored as semantic no-ops. `uiMappingCoverage` always lists mapped/unmapped UI tests, unresolved feature boundaries, and unmatched selectors, including on no-op or test-only changes; these are declarations, not measured coverage. `baseRevision`, `headRevision`, and `comparisonMode` identify the comparison.
+
+### Local and PR CI usage
+
+Use the same executable locally and in CI. Fetch both refs and their history before using merge-base mode:
+
+```sh
+.build/release/swift-test-impact select \
+  --workspace App.xcworkspace --scheme App --test-plan AllTests \
+  --destination "$TEST_DESTINATION" \
+  --base "$PR_BASE_SHA" --head "$PR_HEAD_SHA" --merge-base \
+  --format json --output .build/selection.json --run
+```
+
+`--head` exports and builds that exact commit, and `--run` executes from another export of the same commit. It never switches the user's checkout. Merge-base mode rejects histories with multiple merge bases rather than choosing an arbitrary ancestor. An empty selection executes no test command. Test failures preserve Xcode's nonzero exit status.
+
+Full-suite execution remains explicit:
+
+```sh
+.build/release/swift-test-impact select \
+  --project App.xcodeproj --scheme App --test-plan AllTests \
+  --destination "$TEST_DESTINATION" \
+  --base HEAD --full-suite --run
+```
+
+"Full suite" means all **enabled** tests in the chosen plan/configuration, not disabled tests. During adoption, retain selected-run reports and run the full plan at the same head/configuration. Compare failures and investigate any failing test omitted by selection; account for flaky tests and shared environment effects. Keep periodic full runs after adoption. The fixture validation does not validate the mappings for your own application.
+
+### Xcode implementation and requirements
+
+The adapter builds with `xcodebuild build-for-testing`, reads source ownership from compiler file lists, and replays supported `builtin-SwiftDriver` commands to emit SIL with debug locations. It parses source declarations with SwiftParser and compares syntax structure without trivia, while retaining literal contents and checking compiled dependency changes. It discovers exact enabled IDs with `test-without-building -enumerate-tests`. Discovery launches test runners and may require UI automation permissions; test bodies run only with `--run`. Enumeration errors are fatal even if Xcode exits successfully. Known empty XCTest base classes are excluded from the executable inventory.
+
+Requires macOS, Swift 6+, Xcode test enumeration (Xcode 15+), and a configured scheme/destination. The adapter preserves project signing settings. Compiler-driver output and SIL are version-sensitive; extraction failures and multiple distinct compiler invocations for one module produce fallback diagnostics. Analysis uses temporary DerivedData and rebuilds both revisions, which can cost more than a small suite. Selected runs retain `.xcresult` bundles under `.build/test-impact-results` beside the project/workspace. Validation covers Xcode 26.6 on an iOS 26.2 simulator. macOS UI execution, physical devices, and other Apple platforms are not yet validated for fine-grained selection.
+
+`graph` accepts the same container/build/mapping options and `--format json|dot`. Xcode JSON uses `analysisKind: "xcode-sil-and-ui-mappings"` and includes source snapshots, compiled dependencies, exact tests, ownership, and mappings. DOT currently shows compiled source ownership; the JSON `dependencies` graph contains function edges. No inferred compiler edge claims to cross the UI automation process boundary.
 
 ## Inspect the graph
 
@@ -136,17 +214,17 @@ A change inside `calculateTax` selects the three tax/checkout tests. Neither gre
 
 The current build can reuse incremental artifacts. The base revision is rebuilt in isolation on each selection; for short suites this analysis can cost more than running tests. Persistent caching is future work.
 
-## Conservative behavior and limits
+## SwiftPM conservative behavior and limits
 
 - Dynamic dispatch, indirect calls, shared-state access, raw-pointer operations, and parameterized test arguments cause reachable tests to be selected conservatively on source changes. Dispatch tables add candidate edges; they do not prove all runtime targets are known.
 - Changes outside mapped function regions, non-Swift files, manifests, unsupported targets, and graph/discovery diagnostics select the entire current suite. Even whitespace/comments outside mapped regions can broaden selection in this version.
 - Newly added functions with resolvable caller-to-test paths need no historical coverage. Functions without an identified test path appear in `unreferencedChanges`; this does not prove they are unreachable or untested.
 - Mapping uses compiler debug-location ranges rather than a full Swift syntax tree. Declaration/type-layout changes and ambiguous mappings deliberately broaden the run.
 - External frameworks, runtime registration, Objective-C behavior, custom test traits, generated code, and implicit shared-state relationships can escape the graph. Conservative rules reduce omissions but do not make the analysis sound for arbitrary Swift programs. Validate against full-suite runs before using it as a CI gate.
-- SwiftPM function analysis supports host-platform debug builds. Xcode uses the separate target-level adapter described above. Custom SwiftPM build flags and precompiled-binary-only input are not supported yet.
+- SwiftPM function analysis supports host-platform debug builds. Xcode uses the separate syntax/SIL/mapping adapter described above. Custom SwiftPM build flags and precompiled-binary-only input are not supported yet.
 - Only root-package Swift targets are extracted. Dependency source changes that cannot be mapped fall back to all tests. Historical builds with unavailable dependencies, submodules, or external local paths may also fall back.
 - SwiftPM's `description.json` and textual SIL are implementation formats. The adapter may need updates across Swift versions; unexpected build-description formats fail explicitly.
-- Keep source files stable during analysis/execution. This version does not snapshot the current worktree.
+- Keep source files stable during worktree analysis/execution. Explicit `--head` comparisons use isolated commit exports.
 
 ## Library
 
@@ -166,7 +244,7 @@ let exitCode = try analysis.run(report)
 
 `PackageAnalyzer` builds graphs, `SILParser` reads compiler output, and `StaticSelector` accepts graphs and structured changes without subprocesses. The original in-memory `CoverageBaseline`/`TestSelector` API remains for optional coverage experiments; the CLI does not use it.
 
-For Xcode, construct `XcodeConfiguration(container:path:scheme:destination:configuration:testPlan:)` and pass it to `XcodeAnalysis(options:)`. Its `graph()`, `select(base:)`, and `run(_:)` methods parallel the SwiftPM API. `XcodeSelector` accepts ownership graphs and changes directly for use without subprocesses.
+For Xcode, construct `XcodeConfiguration(container:path:scheme:destination:configuration:testPlan:)` and pass it to `XcodeAnalysis(options:)`. Its `graph()`, `select(base:head:mergeBase:fullSuite:)`, and `run(_:)` methods parallel the SwiftPM API. Set `mappingsPath` on the configuration to override the mapping file. `XcodeFineSelector` accepts populated Xcode graphs and structured changes directly without subprocesses. Legacy graphs without compiler data retain target-level fallback behavior.
 
 ## Validation
 
@@ -184,14 +262,14 @@ python3 Scripts/xcode_integration_test.py \
   --destination 'platform=iOS Simulator,id=YOUR-SIMULATOR-UUID'
 ```
 
-This script copies `Fixtures/XcodeUITests` into a temporary Git repository with spaces in its path. It verifies project/workspace discovery, compiled source ownership, empty selections, test-target narrowing, and app-change fallbacks. It actually runs one selected UI test while the unrelated target contains a deliberately failing test, proving that target was skipped. The fixture supports iOS and macOS; it requires a usable UI automation environment.
+This script copies `Fixtures/XcodeUITests` into a temporary repository with spaces in its path. A single plan contains seven UI tests in one target and two unit tests. It checks method additions/edits/deletions, helpers, setup, inheritance, mapped production dependencies, trivia, pure moves, fallback diagnostics, explicit heads, merge-base comparisons, and workspace discovery. A selected method actually runs while another method in the same target deliberately fails. Explicit-head execution is checked with an invalid dirty worktree. A healthy full-plan run verifies all nine tests. The package tests also model selecting one method from a 393-test target. Use `--keep-work` to retain integration artifacts and result bundles.
 
 ## Next work
 
 - Cache graphs by source/build identity.
-- Add compiler-index or syntax-based mapping for declaration changes.
+- Extend precise declaration mapping to more language constructs and SwiftPM.
 - Improve dispatch, initializer, callback, and test-argument modeling.
-- Improve Xcode function analysis and investigate explicit app-to-UI-test dependency mappings.
+- Expand compiler-version, Swift Testing, external inheritance, and resource modeling coverage.
 - Collect optional per-test coverage during ordinary selected runs.
 
 References: [Swift compiler](https://www.swift.org/documentation/swift-compiler/), [SIL format](https://github.com/swiftlang/swift/blob/main/docs/SIL/SIL.md), [IndexStoreDB](https://github.com/swiftlang/indexstore-db).

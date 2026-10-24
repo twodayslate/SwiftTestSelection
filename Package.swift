@@ -11,8 +11,14 @@ let package = Package(
         .library(name: "TestImpact", targets: ["TestImpact"]),
         .executable(name: "swift-test-impact", targets: ["SwiftTestImpactCLI"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "600.0.1")
+    ],
     targets: [
-        .target(name: "TestImpact"),
+        .target(name: "TestImpact", dependencies: [
+            .product(name: "SwiftParser", package: "swift-syntax"),
+            .product(name: "SwiftSyntax", package: "swift-syntax")
+        ]),
         .executableTarget(name: "SwiftTestImpactCLI", dependencies: ["TestImpact"]),
         .testTarget(name: "TestImpactTests", dependencies: ["TestImpact"])
     ]

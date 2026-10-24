@@ -10,28 +10,35 @@ import Glibc
 #endif
 
 private let usage = """
-swift-test-impact — test selection for Swift packages and Xcode projects
+swift-test-impact — compiler-derived test selection for Swift and Xcode
 
 USAGE
   swift-test-impact graph [--package-path PATH] [--format json|dot] [--output FILE]
-  swift-test-impact select --base REVISION [--package-path PATH] [--format text|json]
-                           [--output FILE] [--run]
+  swift-test-impact select --base REVISION [--head REVISION] [--merge-base]
+                           [--package-path PATH] [--format text|json]
+                           [--output FILE] [--full-suite] [--run]
   swift-test-impact graph|select --project PATH.xcodeproj | --workspace PATH.xcworkspace
                            --scheme NAME --destination DESTINATION [--test-plan NAME]
-                           [--configuration NAME] [--base REVISION] [--format FORMAT]
-                           [--output FILE] [--run]
+                           [--configuration NAME] [--mappings REPOSITORY_RELATIVE_PATH]
+                           [--base REVISION] [--head REVISION] [--merge-base]
+                           [--format FORMAT] [--output FILE] [--full-suite] [--run]
 
-graph builds targets and emits a SIL dependency graph (SwiftPM) or compiled
-source ownership graph (Xcode).
-select compares REVISION with the current worktree, including staged and untracked
-files. It builds both revisions but does not execute test bodies unless --run is
-provided. Test discovery loads test binaries and may execute initialization code.
-Xcode mode uses target-level selection. App/resource changes select all discovered
-tests; test-only Swift changes select their owning targets. XCUITest interacts with
-the app across a process boundary, so app calls are not inferred from UI actions.
+graph builds targets and emits compiled dependency graphs. select analyzes both
+revisions; without --head it includes staged, unstaged and untracked worktree files.
+--merge-base compares against the common ancestor of base and head (or HEAD).
+--head builds and executes an isolated export of that exact revision.
 
-Selection is conservative and experimental. Unsupported or unmapped changes may
-select the entire suite. Requires Swift 6+ and Git; Xcode mode requires Xcode 15+.
+Xcode mode selects individual test methods through syntax and SIL dependencies.
+UI feature mappings bridge the app/test process boundary; missing mappings and
+unresolved dependencies produce explicit conservative fallbacks. The default
+mapping file is .swift-test-selection.json at the Git repository root.
+
+Analysis does not execute test bodies; discovery can execute initialization code.
+--run executes the selection. --full-suite includes every discovered enabled test
+in the chosen scheme/plan. Omit --run to review the report without executing tests.
+
+Requires Swift 6+ and Git. Xcode mode requires macOS and test enumeration (Xcode 15+).
+Compiler/build formats are version-sensitive; validate against full runs before CI use.
 """
 
 private struct Options {
@@ -41,6 +48,9 @@ private struct Options {
     var output: String?
     var base: String?
     var run = false
+    var head: String?
+    var mergeBase = false
+    var fullSuite = false
     var xcode: XcodeConfiguration?
 
     init(_ arguments: [String]) throws {
@@ -57,12 +67,15 @@ private struct Options {
         var destination: String?
         var configuration: String?
         var testPlan: String?
+        var mappings: String?
         while index < arguments.count {
             let flag = arguments[index]
             index += 1
             guard seen.insert(flag).inserted else { throw ImpactError("Repeated option: \(flag)") }
             if flag == "--run" { run = true; continue }
-            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan"].contains(flag), index < arguments.count else {
+            if flag == "--merge-base" { mergeBase = true; continue }
+            if flag == "--full-suite" { fullSuite = true; continue }
+            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
             let value = arguments[index]
@@ -72,6 +85,8 @@ private struct Options {
             case "--format": format = value
             case "--output": output = value
             case "--base": base = value
+            case "--head": head = value
+            case "--mappings": mappings = value
             case "--project": project = value
             case "--workspace": workspace = value
             case "--scheme": scheme = value
@@ -82,7 +97,7 @@ private struct Options {
             }
         }
         if command == "select" && base == nil { throw ImpactError("select requires --base REVISION.") }
-        if command == "graph" && (base != nil || run) { throw ImpactError("--base and --run are only valid with select.") }
+        if command == "graph" && (base != nil || run || head != nil || mergeBase || fullSuite) { throw ImpactError("Comparison, execution, and full-suite options are only valid with select.") }
         let allowed = command == "graph" ? ["json", "dot"] : ["text", "json"]
         if !allowed.contains(format) { throw ImpactError("Unsupported format '\(format)' for \(command).") }
         if project != nil && workspace != nil { throw ImpactError("Choose --project or --workspace, not both.") }
@@ -94,7 +109,8 @@ private struct Options {
             xcode = XcodeConfiguration(container: project != nil ? .project : .workspace,
                                        path: URL(fileURLWithPath: container), scheme: scheme, destination: destination,
                                        configuration: configuration, testPlan: testPlan)
-        } else if scheme != nil || destination != nil || configuration != nil || testPlan != nil {
+            if let mappings { xcode!.mappingsPath = mappings }
+        } else if scheme != nil || destination != nil || configuration != nil || testPlan != nil || mappings != nil {
             throw ImpactError("Xcode options require --project or --workspace.")
         }
     }
@@ -118,11 +134,13 @@ private func write(_ data: Data, to path: String?) throws {
 
 private func render(_ report: ImpactReport) -> String {
     var lines = ["Selected \(report.selectedTests.count) of \(report.totalTests) tests", "Base: \(report.baseRevision)"]
+    if let head = report.headRevision { lines.append("Head: " + head + " (" + (report.comparisonMode ?? "direct") + ")") }
+    for diagnostic in report.diagnostics { lines.append("Diagnostic [\(diagnostic.code)]: \(diagnostic.message)") }
     for reason in report.fullRunReasons { lines.append("Full-suite fallback: \(reason)") }
     for test in report.selectedTests {
         lines.append("\n\(test)")
         for explanation in report.explanations where explanation.test == test {
-            lines.append("  [\(explanation.revision)] \(explanation.reason)")
+            lines.append("  [\(explanation.kind), \(explanation.revision)] \(explanation.reason)")
             if !explanation.path.isEmpty { lines.append("    " + explanation.path.joined(separator: " → ")) }
         }
     }
@@ -151,7 +169,7 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                 let data = options.format == "dot" ? Data(graph.dot().utf8) : try encoder.encode(graph)
                 try write(data, to: options.output)
             } else {
-                let report = try analysis.select(base: options.base!)
+                let report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite)
                 let data = options.format == "json" ? try encoder.encode(report) : Data(render(report).utf8)
                 try write(data, to: options.output)
                 if options.run { exit(try analysis.run(report)) }
@@ -163,7 +181,7 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
             try write(data, to: options.output)
         } else {
             let analysis = ImpactAnalysis(packagePath: package, progress: log)
-            let report = try analysis.select(base: options.base!)
+            let report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite)
             let data = options.format == "json" ? try encoder.encode(report) : Data(render(report).utf8)
             try write(data, to: options.output)
             if options.run { exit(try analysis.run(report)) }
