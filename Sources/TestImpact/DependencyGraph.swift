@@ -65,6 +65,7 @@ public struct DependencyGraph: Codable, Sendable {
     }
 
     public func dependencyPath(from roots: Set<String>, to destinations: Set<String>) -> [String]? {
+        guard !roots.isEmpty, !destinations.isEmpty else { return nil }
         var queue = roots.sorted()
         var visited = roots
         var parents: [String: String] = [:]

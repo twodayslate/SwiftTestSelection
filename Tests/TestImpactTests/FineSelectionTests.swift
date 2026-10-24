@@ -125,7 +125,7 @@ private func selection(_ current: XcodeTestGraph, _ previous: XcodeTestGraph = m
     #expect(report.selectedTests == current.tests)
     #expect(report.diagnostics.contains { $0.code == "missing_ui_mappings" })
     #expect(report.explanations.contains { $0.kind == "fallback" })
-    current = model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)"))
+    current = model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(2, 2)", with: "XCTAssertEqual(2, 3)"))
     current.dependencies!.functions["UI.Sharing.helper()"]!.uncertainties = ["Indirect function invocation"]
     #expect(selection(current).diagnostics.contains { $0.code == "unresolved_dependency" })
 }
@@ -207,4 +207,157 @@ private func selection(_ current: XcodeTestGraph, _ previous: XcodeTestGraph = m
     #expect(parsed.units.contains { $0.kind == "topLevel" })
     let modified = SwiftSourceSnapshot.parse(source.replacingOccurrences(of: "print(1)", with: "print(2)"), path: "main.swift", module: "App")
     #expect(parsed.units.map(\.fingerprint) != modified.units.map(\.fingerprint))
+}
+
+// Model runtime uncertainties normally present in real XCTest/SDK code, including
+// all tests' lifecycle roots. These must not broaden a proven test-entry edit.
+private func withOpaqueDependencies(_ input: XcodeTestGraph) -> XcodeTestGraph {
+    var result = input
+    result.dependencies!.functions["opaque"] = FunctionNode(
+        id: "opaque", module: "UI", name: "runtime()",
+        regions: [SourceRegion(path: "Tests/Runtime.swift", startLine: 1, endLine: 1)],
+        uncertainties: ["Indirect function invocation", "Raw pointer operation", "Global state access", "Unresolved project dispatch: XCTestCase.init"])
+    for test in result.tests { result.dependencies!.tests[test]!.insert("opaque") }
+    result.mappings = nil
+    return result
+}
+
+@Test func testEntryEditDoesNotReachUnrelatedRuntimeUncertaintyOrMissingMappings() {
+    let old = withOpaqueDependencies(model())
+    let current = withOpaqueDependencies(model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")))
+    let report = selection(current, old)
+    #expect(report.selectedTests == ["UI/Sharing/testIndependent()"])
+    #expect(report.explanations.allSatisfy { $0.kind == "dependency" })
+    #expect(report.diagnostics.isEmpty)
+    #expect(report.uiMappingCoverage?.unmappedTests.count == 5)
+}
+
+@Test func explicitCallersOfEditedTestEntriesRemainSelected() {
+    var old = withOpaqueDependencies(model())
+    var current = withOpaqueDependencies(model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")))
+    old.dependencies!.functions["UI.Sharing.testOne()"]!.dependencies.insert("UI.Sharing.testIndependent()")
+    current.dependencies!.functions["UI.Sharing.testOne()"]!.dependencies.insert("UI.Sharing.testIndependent()")
+    #expect(selection(current, old).selectedTests == ["UI/Sharing/testIndependent()", "UI/Sharing/testOne()"])
+}
+
+@Test func entryAdditionsAndDeletionsDoNotSelectOpaqueNeighbors() {
+    let old = withOpaqueDependencies(model())
+    let added = uiSource.replacingOccurrences(of: "func testIndependent()", with: "func testNew() { XCTAssertTrue(true) }\n    func testIndependent()")
+    #expect(selection(withOpaqueDependencies(model(ui: added)), old).selectedTests == ["UI/Sharing/testNew()"])
+    let deleted = uiSource.replacingOccurrences(of: "    func testIndependent() { XCTAssertEqual(1, 1) }\n", with: "")
+    #expect(selection(withOpaqueDependencies(model(ui: deleted)), old).selectedTests.isEmpty)
+}
+
+@Test func mixedHelperLifecycleAndProductionEditsKeepRuntimeFallbacks() {
+    let old = withOpaqueDependencies(model())
+    for (needle, replacement, production) in [
+        ("XCTAssertEqual(2, 2)", "XCTAssertEqual(2, 3)", false),
+        ("XCTAssertEqual(3, 3)", "XCTAssertEqual(3, 4)", false),
+        ("42", "43", true)
+    ] {
+        let ui = uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")
+        let current = withOpaqueDependencies(model(
+            ui: production ? ui : ui.replacingOccurrences(of: needle, with: replacement),
+            app: production ? appSource.replacingOccurrences(of: needle, with: replacement) : appSource))
+        let report = selection(current, old)
+        #expect(report.selectedTests == current.tests)
+        #expect(report.diagnostics.contains { $0.code == "unresolved_dependency" })
+        if production { #expect(report.diagnostics.contains { $0.code == "missing_ui_mappings" }) }
+    }
+}
+
+@Test func unresolvedChangedEntryRetainsConservativeSelection() {
+    let old = withOpaqueDependencies(model())
+    var current = withOpaqueDependencies(model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")))
+    current.dependencies!.functions.removeValue(forKey: "UI.Sharing.testIndependent()")
+    current.dependencies!.tests["UI/Sharing/testIndependent()"] = []
+    let report = selection(current, old)
+    #expect(report.selectedTests == current.tests)
+    #expect(report.diagnostics.contains { $0.code == "unresolved_declaration" })
+    #expect(report.diagnostics.contains { $0.code == "unresolved_test" })
+}
+
+@Test func importedSymbolAttributionAndSerializedBodiesDoNotCreateSourceChanges() {
+    var old = withOpaqueDependencies(model()), current = old
+    let id = "stdlib-string-literal"
+    // Imported copies may carry locations in an owned file without being an
+    // owned definition. Changing their serialized bodies is not a source edit.
+    let region = old.dependencies!.functions["UI.Sharing.testIndependent()"]!.regions
+    old.dependencies!.functions[id] = FunctionNode(id: id, module: "PackageA", name: "String.init()", regions: region, dependencies: ["implementationA"])
+    current.dependencies!.functions[id] = FunctionNode(id: id, module: "PackageB", name: "String.init()", regions: region, dependencies: ["implementationB"])
+    old.dependencies!.functions["UI.Sharing.testIndependent()"]!.dependencies.insert(id)
+    current.dependencies!.functions["UI.Sharing.testIndependent()"]!.dependencies.insert(id)
+    let report = selection(current, old)
+    #expect(report.selectedTests.isEmpty)
+    #expect(report.diagnostics.isEmpty)
+    #expect(report.ignoredChanges == ["Tests/UI.swift"])
+    // Even when import attribution is unchanged, a different serialized body
+    // must not manufacture a changed declaration at its borrowed debug location.
+    current.dependencies!.functions[id]!.module = "PackageA"
+    #expect(selection(current, old).selectedTests.isEmpty)
+    current.dependencies!.functions[id]!.module = "PackageB"
+    // The real edit must still select exactly one method despite import drift.
+    current.sources["Tests/UI.swift"] = SwiftSourceSnapshot.parse(uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)"), path: "Tests/UI.swift", module: "UI")
+    #expect(selection(current, old).selectedTests == ["UI/Sharing/testIndependent()"])
+}
+
+@Test func overloadChangesWithIdenticalDisplayNamesRemainSemanticChanges() {
+    var old = model(), current = old
+    for id in ["overload-int", "overload-string"] {
+        let node = FunctionNode(id: id, module: "UI", name: "overloaded(_:)")
+        old.dependencies!.functions[id] = node; current.dependencies!.functions[id] = node
+    }
+    old.dependencies!.functions["UI.Sharing.testIndependent()"]!.dependencies.insert("overload-int")
+    current.dependencies!.functions["UI.Sharing.testIndependent()"]!.dependencies.insert("overload-string")
+    #expect(selection(current, old).selectedTests == ["UI/Sharing/testIndependent()"])
+}
+
+@Test func movedPrivateSymbolIDsDoNotChangeCallers() {
+    var old = model(), current = model(uiPath: "Moved/UI.swift")
+    for (isOld, id) in [(true, "private-old"), (false, "private-new")] {
+        var snapshot = isOld ? old : current
+        var helper = snapshot.dependencies!.functions.removeValue(forKey: "UI.Sharing.helper()")!
+        helper.id = id
+        snapshot.dependencies!.functions[id] = helper
+        for symbol in snapshot.dependencies!.functions.keys {
+            if snapshot.dependencies!.functions[symbol]!.dependencies.remove("UI.Sharing.helper()") != nil {
+                snapshot.dependencies!.functions[symbol]!.dependencies.insert(id)
+            }
+        }
+        if isOld { old = snapshot } else { current = snapshot }
+    }
+    #expect(selection(current, old, paths: ["Moved/UI.swift", "Tests/UI.swift"]).selectedTests.isEmpty)
+}
+
+@Test func testEntryEditStillReportsUnboundTestsAndUnknownInheritance() {
+    let old = withOpaqueDependencies(model())
+    var current = withOpaqueDependencies(model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")))
+    current.dependencies!.tests["UI/Notes/testNotes()"] = []
+    current.dependencies!.testDiagnostics["UI/Sharing/testOne()"] = ["Unknown superclass"]
+    let report = selection(current, old)
+    #expect(report.selectedTests == ["UI/Notes/testNotes()", "UI/Sharing/testIndependent()", "UI/Sharing/testOne()"])
+    #expect(Set(report.diagnostics.map(\.code)) == ["unresolved_test", "unresolved_inheritance"])
+}
+
+@Test func inheritedEntryEditsSelectEveryDiscoveredSubclass() {
+    var old = withOpaqueDependencies(model())
+    var current = withOpaqueDependencies(model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")))
+    let inherited = "UI/Child/testIndependent()"
+    for isOld in [true, false] {
+        var snapshot = isOld ? old : current
+        snapshot.tests.append(inherited)
+        snapshot.dependencies!.tests[inherited] = snapshot.dependencies!.tests["UI/Sharing/testIndependent()"]
+        if isOld { old = snapshot } else { current = snapshot }
+    }
+    #expect(selection(current, old).selectedTests == [inherited, "UI/Sharing/testIndependent()"])
+}
+
+@Test func overlappingDebugLocationsCannotProveAnEntryOnlyEdit() {
+    let source = uiSource.replacingOccurrences(of: " }\n    func helper()", with: " }; func helper()")
+    let old = withOpaqueDependencies(model(ui: source))
+    let current = withOpaqueDependencies(model(ui: source.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")))
+    #expect(current.sources.values.allSatisfy { $0.diagnostics.isEmpty })
+    let report = selection(current, old)
+    #expect(report.selectedTests == current.tests)
+    #expect(report.diagnostics.contains { $0.code == "unresolved_dependency" })
 }

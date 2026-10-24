@@ -116,7 +116,7 @@ from five real modules (including a roughly 6.7 MiB test function), with matchin
 names, regions, dependencies, dispatch data, and uncertainty flags. All 48 package
 tests and the eight SwiftPM integration checks passed.
 
-## Individual-method validation: precision remains blocked
+## Individual-method validation before the precision fix
 
 The changed method was:
 
@@ -137,8 +137,8 @@ bytes of physical footprint. The report exposed two distinct issues:
 - 481 imported symbols changed their recorded module attribution as compiler
   invocation order changed. For example, the same `_finalizeUninitializedArray`
   symbol was attributed to CloudKitSyncMonitor in one graph and SnapshotTesting
-  in the other. Edge comparison uses this attribution, so unchanged declarations
-  appeared affected. The report assigned dependency reasons to 1,967 tests.
+  in the other. At `30b1042`, edge comparison used this attribution, so unchanged
+  declarations appeared affected. The report assigned dependency reasons to 1,967 tests.
 - 1,788 tests also received `unresolved_dependency` fallbacks for reachable global
   state, opaque calls, or unresolved dispatch. Holding the compiler graph constant
   while changing only the source snapshot isolated this policy: one test had a
@@ -150,12 +150,61 @@ built graphs still had zero extraction/source-parser diagnostics and zero unboun
 test entry points. Successful extraction is therefore not sufficient evidence of
 selection precision.
 
-This performance change preserves the conservative fallback policy. It does not
-claim that the individual-method acceptance case passes on ChainOfCustody. Stable
-imported-symbol identity and better-scoped runtime uncertainty need separate
-correctness work before using the consolidated plan as a selective CI gate.
+The performance change alone preserved the conservative fallback policy and did
+not pass the individual-method acceptance case. The separate precision fix below
+addresses the two causes identified by this measurement.
 No full-suite accuracy comparison or test-body execution was performed, and no
 application CI configuration was changed.
+
+## Precision fix: replaying the real graphs
+
+The updated selector compares dependency symbols by compiler ID, independent of
+which importing module emitted their SIL. Only source-owned definitions participate
+in implementation-edge comparisons. Private symbols whose IDs change after a file
+move can pair by a unique module/name match on both sides; different overload IDs
+remain distinct.
+
+When every changed declaration on both sides resolves unambiguously to a discovered
+test entry point, selection follows the compiled paths to those entries without
+expanding for unrelated runtime uncertainty. Explicit callers and inherited test
+entries remain selected. Helpers, lifecycle/state changes, production changes,
+ambiguous line locations, and mixed edits retain conservative runtime fallbacks.
+Unbound tests, unknown inheritance, and extraction diagnostics also retain their
+fallbacks. This policy assumes independent tests; reflective cross-test calls and
+order-dependent side effects require full-suite validation.
+
+Replaying the same independently compiled base/head graphs now selects **1 of
+1,969 tests**, with the exact argument:
+
+```text
+-only-testing:ChainOfCustodyUITests/CalendarPermissionUITests/testHolderCanCreateEventWhenEventsAreFilteredOut()
+```
+
+The report has dependency explanations for both revisions, no selection diagnostics,
+and no full-run reasons. It still explicitly reports all 393 UI tests as unmapped
+in `uiMappingCoverage`; test-entry edits do not require app-feature mappings.
+Production changes continue to require those mappings or conservative fallback.
+
+The comparison uses the release library with `GitChanges.read` and
+`XcodeFineSelector.select`, against saved graphs from the completed extraction runs.
+The final release replay, including JSON decoding and report writing, took **94.54
+seconds** with **1,595,803,352 bytes peak physical footprint** and 1,410,514,944 bytes
+maximum RSS (`/usr/bin/time -l`). These are graph-comparison measurements, not a
+new compiler-extraction run.
+
+It does not rebuild the app or execute its test bodies. No application CI settings
+were changed. This verifies the reported one-method precision case, not general
+selection accuracy against a full ChainOfCustody run.
+
+Validation also passed all 59 package tests, eight SwiftPM integration checks, and
+the full Xcode acceptance script on the iOS 26.2 simulator. The Xcode checks include
+actual execution of one selected method while a deliberately failing neighbor is
+skipped, additions/deletions, helper/lifecycle/inheritance propagation, production
+mappings, trivia and file moves, missing mappings, explicit-head/merge-base
+execution, workspace discovery, and a healthy full run of all nine fixture tests.
+The package regressions specifically cover imported-symbol drift, serialized
+imported bodies, overload identity, private-symbol moves, runtime uncertainty,
+explicit callers of tests, inherited entries, and unresolved or ambiguous inputs.
 
 ## Measuring a project
 

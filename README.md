@@ -128,9 +128,11 @@ Compiler dependencies propagate transitively from feature roots. If sharing and 
 - A UI test belongs to no feature: keep that test conservatively selected on production changes.
 - Changed production code has no mapped boundary or reachable feature: select every enabled UI test.
 - Missing feature boundary, unmatched test selector, or an affected feature with no tests: report it explicitly and conservatively include UI tests.
-- Opaque function calls, global state, raw pointers, or unresolved project dispatch: include tests or mapped features that reach the uncertainty. Compiled candidate edges model known dispatch; SDK UI calls are not treated as app-function edges.
+- Opaque function calls, global state, raw pointers, or unresolved project dispatch: include tests or mapped features that reach the uncertainty, except when every changed declaration in both revisions is a resolved test entry point. In that case select the changed entries and their compiled callers. Helpers, setup/teardown, mixed production edits, and ambiguous source boundaries retain the conservative fallback. Compiled candidate edges model known dispatch; SDK UI calls are not treated as app-function edges.
 - A test entry point cannot be bound: include that test on semantic changes.
 - Unsupported syntax/compiler formats, invalid mapping configuration, missing base graph, unclassified files, or other build changes: explicit full-selection fallback.
+
+Test-entry selection assumes independent tests. Hidden reflective calls between tests and order-dependent state shared by test bodies are not inferred; use full-suite runs for suites that rely on those behaviors. Missing entry points, unknown inheritance, extraction diagnostics, and missing production mappings still produce explicit fallbacks. Imported symbols are compared by compiler identity rather than the module that happened to emit their SIL; uniquely matched owned definitions also support private-symbol file moves.
 
 Resource and build-configuration changes currently fall back; this version does not infer resource dependencies from UI mappings. Unsupported inheritance across external modules and runtime registration may also broaden selection. The graph is experimental, and dynamic dependencies can still escape analysis. Validate with full runs before using selection as a CI gate.
 
@@ -275,11 +277,11 @@ counts as input grows. Xcode extraction reports elapsed time and analyzer memory
 for every module. See [SIL performance measurements](Documentation/SILPerformance.md)
 for the investigation, budgets, and release measurement procedure.
 
-The real ChainOfCustody combined-plan graph now completes, but its one-method
-precision check still selects all 1,969 tests. Imported-symbol attribution changes
-and conservative runtime fallbacks remain blockers to using that project as a
-selective CI gate; the performance report documents these findings separately
-from the passing synthetic acceptance tests.
+The real ChainOfCustody combined-plan graph completes, and replaying its two
+independently compiled graphs for an assertion-message edit selects exactly one
+method out of 1,969 tests. The performance report records the earlier over-selection
+and the precision fix. App-feature mappings and validation against full project
+runs are still required before relying on production-change selection as a CI gate.
 
 ## Next work
 

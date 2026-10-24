@@ -35,21 +35,40 @@ public enum XcodeFineSelector {
                 oldChanged += old; newChanged += new
             }
         }
-        // An unchanged source declaration can resolve to a different overload or
-        // implementation after a move/import/build change. Compare semantic
-        // edge names in both compiled graphs, independently of line numbers.
-        if let before = previous?.dependencies, let after = current.dependencies {
-            func edgeGroups(_ graph: DependencyGraph) -> [String: [FunctionNode]] {
-                Dictionary(grouping: graph.functions.values.filter { !$0.regions.isEmpty }, by: { $0.module + "." + $0.name })
+        // Only compare definitions owned by the source module. Imported SIL can
+        // be emitted by several compiler invocations, with different attribution
+        // and serialized implementation details in each copy.
+        if let previous, let before = previous.dependencies, let after = current.dependencies {
+            func edgeGroups(_ snapshot: XcodeTestGraph, _ graph: DependencyGraph) -> [String: [FunctionNode]] {
+                var ownership: [String: Set<String>] = [:]
+                for target in snapshot.targets {
+                    if let module = snapshot.modules[target.name] {
+                        ownership[module, default: []].formUnion(target.sourceFiles)
+                    }
+                }
+                return Dictionary(grouping: graph.functions.values.filter { node in
+                    node.regions.contains { ownership[node.module]?.contains($0.path) == true }
+                }, by: { $0.module + "." + $0.name })
             }
-            let oldEdges = edgeGroups(before), newEdges = edgeGroups(after)
-            func signatures(_ nodes: [FunctionNode], _ graph: DependencyGraph) -> [String] {
+            let oldEdges = edgeGroups(previous, before), newEdges = edgeGroups(current, after)
+            // Mangled IDs preserve overload identity and are independent of the
+            // importing module. Only pair renamed IDs by semantic name when both
+            // sides have one owned definition (e.g. a private function file move).
+            let sharedIDs = Set(before.functions.keys).intersection(after.functions.keys)
+            var movedIDs: [String: String] = [:]
+            for key in Set(oldEdges.keys).intersection(newEdges.keys) {
+                if let old = oldEdges[key], let new = newEdges[key], old.count == 1, new.count == 1,
+                   !sharedIDs.contains(old[0].id), !sharedIDs.contains(new[0].id) {
+                    movedIDs[old[0].id] = key; movedIDs[new[0].id] = key
+                }
+            }
+            func signatures(_ nodes: [FunctionNode]) -> [String] {
                 nodes.map { node in node.dependencies.map { id in
-                    graph.functions[id].map { $0.module + "." + $0.name } ?? id
+                    movedIDs[id].map { "definition:" + $0 } ?? "symbol:" + id
                 }.sorted().joined(separator: "\n") }.sorted()
             }
             for key in Set(oldEdges.keys).intersection(newEdges.keys) {
-                if signatures(oldEdges[key]!, before) != signatures(newEdges[key]!, after) {
+                if signatures(oldEdges[key]!) != signatures(newEdges[key]!) {
                     for (nodes, units, isOld) in [(oldEdges[key]!, oldUnits.values.flatMap { $0 }, true), (newEdges[key]!, newUnits.values.flatMap { $0 }, false)] {
                         let enclosing = units.filter { unit in unit.kind == "function" && nodes.contains { node in node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine } } }
                         if isOld { oldChanged += enclosing } else { newChanged += enclosing }
@@ -71,6 +90,15 @@ public enum XcodeFineSelector {
             }
         }
         let hasSemanticChanges = !oldChanged.isEmpty || !newChanged.isEmpty
+        // A proven test-entry change is invoked by the test runner, not by
+        // unrelated tests' opaque SDK calls. Keep explicit callers in the graph,
+        // but do not let uncertainty elsewhere expand this into a suite run.
+        // Both revisions must prove every change is an entry, so mixed edits,
+        // helpers, lifecycle hooks and unresolved/ambiguous boundaries retain
+        // the conservative policy.
+        let testEntriesOnly = hasSemanticChanges && previous?.dependencies != nil &&
+            oldChanged.allSatisfy { isTestEntry($0, in: previous!) } &&
+            newChanged.allSatisfy { isTestEntry($0, in: current) }
         if hasSemanticChanges || !changes.isEmpty {
             for message in additionalFallbacks { fallback("base_unavailable", message) }
             if previous?.dependencies == nil { fallback("base_unavailable", "Base compiler graph is unavailable.") }
@@ -135,7 +163,7 @@ public enum XcodeFineSelector {
                     fallback("unresolved_test", "Cannot resolve compiled entry point: \(test)", tests: [test])
                 }
             }
-            if hasSemanticChanges {
+            if hasSemanticChanges && !testEntriesOnly {
                 // Runtime dispatch to known project declarations is represented by
                 // candidate SIL edges. Opaque function values and raw pointers are
                 // not proof of absence; conservatively include their callers.
@@ -216,6 +244,7 @@ public enum XcodeFineSelector {
         var report = ImpactReport(baseRevision: baseRevision, totalTests: inventory.count, selectedTests: selected.sorted(), explanations: explanations,
                                   fullRunReasons: Array(Set(fullReasons)).sorted(), changedFiles: changes.map(\.path).sorted(), unreferencedChanges: [],
                                   limitations: ["UI feature mappings are explicit dependency declarations, not measured coverage; keep them complete and validate with full runs.",
+                                                "Test-entry-only selection assumes independent tests: hidden cross-test calls or order-dependent shared state are not inferred. Explicit compiled callers remain selected.",
                                                 "Compiler graphs model the selected build configuration. External runtime behavior and generated code may require conservative fallbacks."])
         report.schemaVersion = 2
         report.onlyTestingArguments = report.selectedTests.map { "-only-testing:" + $0 }
@@ -244,6 +273,30 @@ public enum XcodeFineSelector {
             report.uiMappingCoverage!.unmatchedSelectors.sort()
         }
         return report
+    }
+
+    private static func isTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
+        guard unit.kind == "function", let graph = snapshot.dependencies else { return false }
+        let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
+        guard !owners.isEmpty, owners.allSatisfy(\.isTest) else { return false }
+        // Debug information is line based. Two declarations on the same line
+        // cannot establish which function changed; retain fallback in that case.
+        let overlapping = Set(snapshot.sources.values.flatMap(\.units).filter {
+            $0.kind == "function" && $0.region.intersects(unit.region)
+        }.map(\.key))
+        guard overlapping == [unit.key] else { return false }
+        return snapshot.tests.contains { test in
+            let parts = test.split(separator: "/").map(String.init)
+            guard (2...3).contains(parts.count), let method = parts.last else { return false }
+            let name = (unit.scope.isEmpty ? "" : unit.scope + ".") +
+                (method.contains("(") ? method : method + "()")
+            return (graph.tests[test] ?? []).contains { id in
+                guard let node = graph.functions[id], node.name == name,
+                      owners.contains(where: { snapshot.modules[$0.name] == node.module }) else { return false }
+                return node.regions.contains { $0.path == unit.region.path &&
+                    $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }
+            }
+        }
     }
 
     private static func target(of test: String) -> String { String(test.prefix { $0 != "/" }) }
