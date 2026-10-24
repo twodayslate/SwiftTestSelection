@@ -14,12 +14,47 @@ final class XcodeModuleCache {
     private let derived: URL
     private let workspace: URL
     private var identities: [String: [String: String]] = [:]
+    private var pending: [(URL, [String: String])] = []
+
+    deinit { discardPending() }
+    private func discardPending() {
+        for (path, _) in pending { try? FileManager.default.removeItem(at: path.deletingLastPathComponent()) }
+        pending = []
+    }
+
+    func stage(_ fragment: SILModule, identity: [String: String]) throws {
+        // The existing cache recovery removes abandoned stage-* directories
+        // after an interrupted process; never leave large orphan files in /tmp.
+        let directory = cache.options.directory.appendingPathComponent("stage-module-" + UUID().uuidString)
+        let path = directory.appendingPathComponent("fragment.json")
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try JSONEncoder().encode(fragment).write(to: path, options: .atomic)
+            pending.append((path, identity))
+        } catch { try? FileManager.default.removeItem(at: directory); throw error }
+    }
+
+    /// Recheck all inputs once before accepting any reused fragments or publishing
+    /// newly extracted ones. Stage on disk so this does not retain every module.
+    func finish(log: String) throws {
+        defer { discardPending() }
+        guard !identities.isEmpty else { return }
+        let start = Date()
+        guard try makeIdentities(log: log) == identities else {
+            throw ImpactError("Compiler inputs changed during extraction; no fragments were published")
+        }
+        cache.progress(String(format: "Module cache final input recheck: %.3f s", Date().timeIntervalSince(start)))
+        for (path, identity) in pending {
+            do { try cache.storeModule(JSONDecoder().decode(SILModule.self, from: Data(contentsOf: path)), identity: identity) }
+            catch { cache.progress("Module cache publication bypass: \(error)") }
+        }
+    }
 
     init(cache: XcodeGraphCache, identity: [String: String], source: URL, derived: URL, workspace: URL) {
         self.cache = cache
         var context = identity
         context.removeValue(forKey: "revision")
-        context["schema"] = "xcode-module-fragment-1"
+        context["schema"] = "xcode-module-fragment-2"
         self.context = context
         self.source = source
         self.derived = derived
@@ -42,6 +77,7 @@ final class XcodeModuleCache {
 
     /// Unsupported or ambiguous metadata bypasses reuse; extraction still runs.
     func prepare(log: String) {
+        discardPending()
         identities = [:]
         let start = Date()
         do { identities = try makeIdentities(log: log) }
@@ -50,14 +86,6 @@ final class XcodeModuleCache {
     }
 
     func identity(for module: String) -> [String: String]? { identities[module] }
-
-    func validateUnchanged(_ identity: [String: String], module: String, log: String) throws {
-        let start = Date()
-        defer { cache.progress(String(format: "Module cache input recheck %@: %.3f s", module, Date().timeIntervalSince(start))) }
-        guard try makeIdentities(log: log)[module] == identity else {
-            throw ImpactError("Compiler inputs changed while extracting \(module); fragment was not published")
-        }
-    }
 
     private func makeIdentities(log: String) throws -> [String: [String: String]] {
         var invocations: [String: [String]] = [:]
@@ -143,6 +171,21 @@ final class XcodeModuleCache {
             guard maps.count == 1,
                   let dependencies = try JSONSerialization.jsonObject(with: Data(contentsOf: maps[0])) as? [[String: Any]],
                   !dependencies.isEmpty else { throw ImpactError("Missing/ambiguous explicit import map for \(module)") }
+            // A fresh compiler scan makes SDK module identities independent of
+            // generated PCM/module filenames. If unavailable, exact binary hashes
+            // below remain safe, but may miss across build directories.
+            let scanned: XcodeDependencyInputs.Inventory?
+            do {
+                scanned = try XcodeDependencyInputs.scan(compiler: original[0], arguments: arguments,
+                    directory: source, projectModules: Set(invocations.keys), normalize: normalized, hash: hash)
+            } catch {
+                scanned = nil
+                cache.progress("Module cache \(module): exact binary input identities (dependency scan unavailable: \(String(describing: error).prefix(240)))")
+            }
+            if let scanned {
+                inputs["scannedDependencies"] = scanned.digest
+                imports[module, default: []].formUnion(scanned.projectImports)
+            }
             var importMetadata: [[String: String]] = []
             for dependency in dependencies {
                 guard let name = dependency["moduleName"] as? String else { throw ImpactError("Unknown import metadata for \(module)") }
@@ -152,13 +195,18 @@ final class XcodeModuleCache {
                     else if let value = value as? Bool { metadata[key] = String(value) }
                     else { throw ImpactError("Unsupported import metadata for \(module)") }
                 }
+                if let scanned {
+                    let kind = dependency["clangModulePath"] != nil ? "clang:" : "swift:"
+                    guard scanned.modules.contains(kind + name) else { throw ImpactError("Explicit import absent from fresh scan: \(name)") }
+                    for key in ["modulePath", "clangModulePath"] where metadata[key] != nil { metadata[key] = "<MODULE:" + kind + name + ">" }
+                }
                 if let path = dependency["modulePath"] as? String {
                     if invocations[name] != nil {
                         imports[module, default: []].insert(name)
-                    } else { inputs[normalized(path)] = try hash(path) }
+                    } else if scanned == nil { inputs[normalized(path)] = try hash(path) }
                 } else if let path = dependency["clangModulePath"] as? String,
                           let map = dependency["clangModuleMapPath"] as? String {
-                    inputs[normalized(path)] = try hash(path)
+                    if scanned == nil { inputs[normalized(path)] = try hash(path) }
                     inputs[normalized(map)] = try hash(map)
                 } else { throw ImpactError("Incomplete import paths for \(module).\(name)") }
                 importMetadata.append(metadata)

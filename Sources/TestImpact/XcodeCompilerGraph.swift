@@ -37,7 +37,6 @@ enum XcodeCompilerGraph {
                 }
                 let parsed: SILModule
                 if let cached {
-                    if let identity { try moduleCache?.validateUnchanged(identity, module: module, log: log) }
                     progress(String(format: "Module cache %@: hit: compatible compiler inputs; skipped compiler and parser (%.3f s)", module, Date().timeIntervalSince(lookup)))
                     parsed = cached
                 } else {
@@ -56,8 +55,7 @@ enum XcodeCompilerGraph {
                     progress(parsing.report("Parsed \(module) (\(bytes) SIL bytes, \(parsed.functions.count) functions)"))
                     if parsed.functions.isEmpty { throw ImpactError("No SIL functions for \(module)") }
                     if let identity {
-                        try moduleCache?.validateUnchanged(identity, module: module, log: log)
-                        do { try moduleCache?.cache.storeModule(parsed, identity: identity) }
+                        do { try moduleCache?.stage(parsed, identity: identity) }
                         catch { progress("Module cache publication bypass \(module): \(error)") }
                     }
                 }
@@ -74,6 +72,12 @@ enum XcodeCompilerGraph {
             }
         }
         if seen.isEmpty { graph.diagnostics.append("No supported SwiftDriver invocations found in Xcode build output.") }
+        do { try moduleCache?.finish(log: log) }
+        catch {
+            graph = DependencyGraph()
+            graph.diagnostics = ["Compiler dependency extraction failed: \(error)"]
+            return graph
+        }
         for symbol in graph.functions.keys {
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
                 graph.functions[symbol]!.dependencies.formUnion(dispatch[declaration] ?? [])

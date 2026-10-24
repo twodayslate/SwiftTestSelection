@@ -574,12 +574,21 @@ lifecycle binding and cross-module dispatch resolution are reconstructed from
 the current revision. Whole-revision hits retain their existing behavior.
 
 Module keys include ordered source/generated inputs, compiler arguments, the
-transitive project import closure, imported Swift/Clang artifacts, compiler and
+transitive project import closure, imported Swift/Clang inputs, compiler and
 bundled plugin bytes, analyzer/schema/settings/toolchain/SDK identity and
 `--cache-context`. Paths are normalized; source bytes are never rewritten.
 Non-Swift repository files invalidate all fragments conservatively, including
 mapping files that could also be compiler or script inputs. Module availability probes also track the queried project-module inputs and the
 complete project-module name inventory; unrecognized probes invalidate more broadly.
+
+A fresh Swift dependency scan hashes SDK headers, module maps, Swift interfaces,
+prebuilt candidates, resolved macro binaries and compiler options. Generated
+module output paths are represented by their module identities; their input
+bytes are preserved. This permits reuse across independent build directories.
+When scanning is unavailable or unsupported, exact imported-artifact hashes
+provide a conservative fallback that may miss after relocation. Bridging-header
+targets currently use this fallback because Swift 6.4's standalone scanner
+crashed resolving an overlay through a bridging PCH in the consumer fixture.
 
 The initial implementation requires an unambiguous explicit SwiftDriver import
 map next to each file list. Missing metadata, custom compiler plugins without a
@@ -592,6 +601,7 @@ value after those inputs change.
 Fragments use the existing exclusive cache lock, checksummed atomic publication,
 corruption recovery and shared disk budget. They contain no test inventory or
 execution products. Source/import identities are checked again before accepting
-or publishing a fragment; changed inputs produce an explicit conservative
+or publishing fragments. Newly extracted fragments are staged on disk until
+that final validation; changed inputs produce an explicit conservative
 extraction diagnostic. Progress reports per-module hits, misses/bypasses,
 validation timing, and avoided compiler/parser work.

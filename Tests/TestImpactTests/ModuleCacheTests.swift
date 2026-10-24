@@ -270,8 +270,10 @@ private struct ModuleCacheFixture {
     let fragments = XcodeModuleCache(cache: fixture.cache, identity: fixture.context, source: fixture.source, derived: fixture.derived, workspace: fixture.root)
     fragments.prepare(log: fixture.log)
     let identity = try #require(fragments.identity(for: "Core"))
+    try fragments.stage(SILModule(functions: [:], dispatchTargets: [:]), identity: identity)
     try Data("public func core() {}".utf8).write(to: fixture.source.appendingPathComponent("Core.swift"))
-    #expect(throws: ImpactError.self) { try fragments.validateUnchanged(identity, module: "Core", log: fixture.log) }
+    #expect(throws: ImpactError.self) { try fragments.finish(log: fixture.log) }
+    #expect(try fixture.cache.loadModule(identity) == nil)
     fixture.log += " -load-plugin-executable /custom/plugin#Macros"
     fragments.prepare(log: fixture.log)
     #expect(fragments.identity(for: "Core") == nil)
