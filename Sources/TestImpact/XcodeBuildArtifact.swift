@@ -341,7 +341,12 @@ enum ArtifactFiles {
                 }
                 for key in ["TestBundlePath", "TestHostPath", "UITargetAppPath"] {
                     if let path = target[key] as? String {
-                        guard (path.hasPrefix("__TESTROOT__/") || path.hasPrefix("__TESTHOST__/")),
+                        // Unhosted iOS Simulator unit tests use Xcode's own
+                        // xctest agent. Its identity is bound by the toolchain
+                        // check; it is not a relocatable application product.
+                        let platformAgent = key == "TestHostPath"
+                            && path == "__PLATFORMS__/iPhoneSimulator.platform/Developer/Library/Xcode/Agents/xctest"
+                        guard (platformAgent || path.hasPrefix("__TESTROOT__/") || path.hasPrefix("__TESTHOST__/")),
                               !path.split(separator: "/").contains("..") else {
                             throw ImpactError("Non-relocatable or escaping \(key) in .xctestrun: \(path)")
                         }

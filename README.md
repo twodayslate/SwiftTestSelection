@@ -488,6 +488,11 @@ corruption recovery, concurrent readers, and selection equivalence to fresh
 analysis. Fixture measurements are not evidence that ChainOfCustody meets its
 separate end-to-end CI adoption gate.
 
+Run `python3 Scripts/xcode_cli_path_test.py --tool .build/release/swift-test-impact`
+to check executable fingerprinting for absolute, relative, PATH/symlink, and
+launcher-supplied names. This CLI regression uses mocked Xcode commands and
+does not build an app or execute tests.
+
 ### Keep the analyzed head build for execution
 
 ```sh
