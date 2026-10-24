@@ -56,6 +56,29 @@ private func artifactTemporary() throws -> URL {
     #expect(throws: ImpactError.self) { try analysis.artifactExecutionArguments(tests: [], xctestrun: root, resultBundle: root) }
 }
 
+@Test func unhostedSimulatorTestsAcceptOnlyTheToolchainXCTestAgent() throws {
+    let root = try artifactTemporary()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("Plan.xctestrun")
+    let agent = "__PLATFORMS__/iPhoneSimulator.platform/Developer/Library/Xcode/Agents/xctest"
+    func write(bundle: String = "__TESTROOT__/Tests.xctest", host: String, dependencies: [String] = []) throws {
+        let value: [String: Any] = ["__xctestrun_metadata__": ["FormatVersion": 2], "TestPlan": ["Name": "All"],
+            "TestConfigurations": [["TestTargets": [["TestBundlePath": bundle, "TestHostPath": host,
+                                                     "DependentProductPaths": dependencies]]]]]
+        try PropertyListSerialization.data(fromPropertyList: value, format: .xml, options: 0).write(to: file)
+    }
+    try write(host: agent)
+    try ArtifactFiles.validateTestRun(file, plan: "All")
+    for host in [agent + "/../other", agent + "-other", "/tmp/xctest", "__PLATFORMS__/Other.platform/xctest"] {
+        try write(host: host)
+        #expect(throws: ImpactError.self) { try ArtifactFiles.validateTestRun(file, plan: "All") }
+    }
+    try write(bundle: agent, host: agent)
+    #expect(throws: ImpactError.self) { try ArtifactFiles.validateTestRun(file, plan: "All") }
+    try write(host: agent, dependencies: [agent])
+    #expect(throws: ImpactError.self) { try ArtifactFiles.validateTestRun(file, plan: "All") }
+}
+
 private func capturedGraph(_ text: String, revision: String, context: [String: String]) -> XcodeTestGraph {
     let snapshot = SwiftSourceSnapshot.parse(text, path: "Tests.swift", module: "UI")
     let test = "UI/Suite/testOne()"
