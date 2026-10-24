@@ -1,0 +1,87 @@
+{
+  "hardware": "Apple M5, 32 GiB, macOS 26.6.1",
+  "toolchain": "Xcode 27.0, Swift 6.4",
+  "consumerRevision": "1f0e37b69458200227c584d9a4563b5391948cdf",
+  "analyzerBase": "ee2fa9c30b3e68661f05ce2b9aecc0b769005da3",
+  "productEntriesUnchanged": 248,
+  "results": [
+    {
+      "diagnostics": [],
+      "extractionSeconds": 425.79372000694275,
+      "functions": 124013,
+      "semanticDigest": "f8834a47a63335a32c0de607e2c95959d9f44ae9ee4d8bd0eccba65435d4708e",
+      "workers": 1,
+      "iteration": 1,
+      "wallSeconds": 431.51947562500004,
+      "sampledPeakProcessTreeRSSBytes": 1867694080,
+      "samples": 2639,
+      "maximumProcesses": 4,
+      "memoryCaveat": "Sampled sum includes runner and compiler children; shared pages counted repeatedly. Not physical footprint."
+    },
+    {
+      "diagnostics": [],
+      "extractionSeconds": 383.9119460582733,
+      "functions": 124013,
+      "semanticDigest": "f8834a47a63335a32c0de607e2c95959d9f44ae9ee4d8bd0eccba65435d4708e",
+      "workers": 2,
+      "iteration": 1,
+      "wallSeconds": 388.43299399999995,
+      "sampledPeakProcessTreeRSSBytes": 1894137856,
+      "samples": 2365,
+      "maximumProcesses": 6,
+      "memoryCaveat": "Sampled sum includes runner and compiler children; shared pages counted repeatedly. Not physical footprint."
+    },
+    {
+      "diagnostics": [],
+      "extractionSeconds": 394.07859897613525,
+      "functions": 124013,
+      "semanticDigest": "f8834a47a63335a32c0de607e2c95959d9f44ae9ee4d8bd0eccba65435d4708e",
+      "workers": 1,
+      "iteration": 2,
+      "wallSeconds": 398.3519820419999,
+      "sampledPeakProcessTreeRSSBytes": 1739538432,
+      "samples": 2465,
+      "maximumProcesses": 4,
+      "memoryCaveat": "Sampled sum includes runner and compiler children; shared pages counted repeatedly. Not physical footprint."
+    },
+    {
+      "diagnostics": [],
+      "extractionSeconds": 367.4612810611725,
+      "functions": 124013,
+      "semanticDigest": "f8834a47a63335a32c0de607e2c95959d9f44ae9ee4d8bd0eccba65435d4708e",
+      "workers": 2,
+      "iteration": 2,
+      "wallSeconds": 371.94250479200014,
+      "sampledPeakProcessTreeRSSBytes": 1590280192,
+      "samples": 2297,
+      "maximumProcesses": 6,
+      "memoryCaveat": "Sampled sum includes runner and compiler children; shared pages counted repeatedly. Not physical footprint."
+    },
+    {
+      "diagnostics": [],
+      "extractionSeconds": 394.7016990184784,
+      "functions": 124013,
+      "semanticDigest": "f8834a47a63335a32c0de607e2c95959d9f44ae9ee4d8bd0eccba65435d4708e",
+      "workers": 1,
+      "iteration": 3,
+      "wallSeconds": 398.80156850000003,
+      "sampledPeakProcessTreeRSSBytes": 1892663296,
+      "samples": 2454,
+      "maximumProcesses": 4,
+      "memoryCaveat": "Sampled sum includes runner and compiler children; shared pages counted repeatedly. Not physical footprint."
+    },
+    {
+      "diagnostics": [],
+      "extractionSeconds": 364.220242023468,
+      "functions": 124013,
+      "semanticDigest": "f8834a47a63335a32c0de607e2c95959d9f44ae9ee4d8bd0eccba65435d4708e",
+      "workers": 2,
+      "iteration": 3,
+      "wallSeconds": 368.4705369999999,
+      "sampledPeakProcessTreeRSSBytes": 1978990592,
+      "samples": 2273,
+      "maximumProcesses": 6,
+      "memoryCaveat": "Sampled sum includes runner and compiler children; shared pages counted repeatedly. Not physical footprint."
+    }
+  ]
+}

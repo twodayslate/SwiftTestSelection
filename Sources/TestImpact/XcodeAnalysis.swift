@@ -11,6 +11,8 @@ public struct XcodeConfiguration: Sendable {
     public var destination: String
     public var configuration: String?
     public var testPlan: String?
+    /// Maximum concurrent compiler/parser jobs (1...8). Serial by default.
+    public var extractionWorkers: Int = 1
     /// Repository-relative mapping file, read separately from each revision.
     public var mappingsPath: String = ".swift-test-selection.json"
 
@@ -44,6 +46,7 @@ public struct XcodeConfiguration: Sendable {
 public struct XcodeAnalysis {
     public var options: XcodeConfiguration
     public var progress: (String) -> Void
+    public var extractionCancellation = XcodeExtractionCancellation()
     var measurement: (String, Double) -> Void = { _, _ in }
 
     public init(options: XcodeConfiguration, progress: @escaping (String) -> Void = { _ in }) {
@@ -241,7 +244,7 @@ public struct XcodeAnalysis {
             if let module = modules[target.name] { result[module, default: []].formUnion(target.sourceFiles) }
         }
         let extractionStart = Date()
-        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership)
+        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation)
         measurement("extraction", Date().timeIntervalSince(extractionStart))
         progress("Binding compiler dependencies to \(tests.count) enumerated tests…")
         let binding = AnalysisMeasurement()
