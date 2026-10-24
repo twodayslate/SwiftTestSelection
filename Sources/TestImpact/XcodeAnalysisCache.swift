@@ -40,7 +40,8 @@ final class XcodeGraphCache {
     let options: XcodeAnalysisCache
     let progress: (String) -> Void
     private let fm = FileManager.default
-    var work: URL { options.directory.appendingPathComponent("work") }
+    private let workspaceName = "work-" + UUID().uuidString
+    var work: URL { options.directory.appendingPathComponent(workspaceName) }
 
     init(_ options: XcodeAnalysisCache, progress: @escaping (String) -> Void) throws {
         guard options.maximumBytes > 0, !options.context.isEmpty else {
@@ -94,7 +95,21 @@ final class XcodeGraphCache {
             }
             return value
         }
-        return try JSONSerialization.data(withJSONObject: normalize(JSONSerialization.jsonObject(with: data)), options: [.sortedKeys])
+        return try JSONSerialization.data(withJSONObject: normalize(JSONSerialization.jsonObject(with: data)), options: [.sortedKeys, .withoutEscapingSlashes])
+    }
+
+    static func runtimeFingerprint(_ data: Data) throws -> String {
+        guard !data.isEmpty else { return digest(data) }
+        guard var inventory = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let runtimes = inventory["runtimes"] as? [[String: Any]] else {
+            throw ImpactError("Unsupported simulator runtime inventory.")
+        }
+        inventory["runtimes"] = runtimes.map { runtime in
+            var result = runtime
+            result.removeValue(forKey: "lastUsage") // Changes whenever discovery boots a runtime.
+            return result
+        }
+        return try digest(canonicalInventory(JSONSerialization.data(withJSONObject: inventory)))
     }
 
     static func key(_ identity: [String: String]) throws -> String {
@@ -112,7 +127,10 @@ final class XcodeGraphCache {
         try fm.createDirectory(at: work, withIntermediateDirectories: true)
         // Only private staging names are removed. Committed entries are directories.
         for file in try fm.contentsOfDirectory(at: options.directory, includingPropertiesForKeys: nil)
-            where file.lastPathComponent.hasPrefix("stage-") { try fm.removeItem(at: file) }
+            where file.lastPathComponent.hasPrefix("stage-") ||
+                file.lastPathComponent.hasPrefix("work-") && file.lastPathComponent != workspaceName {
+                try fm.removeItem(at: file)
+            }
     }
 
     func load(_ identity: [String: String]) throws -> XcodeTestGraph? {
@@ -227,7 +245,7 @@ extension XcodeAnalysis {
             identity["analyzerExecutable"] = analyzer
             identity["toolchain"] = toolchain
             identity["sdks"] = XcodeGraphCache.digest(try XcodeGraphCache.canonicalInventory(Data(sdk.utf8)))
-            identity["simulatorRuntimes"] = XcodeGraphCache.digest(try XcodeGraphCache.canonicalInventory(runtimes))
+            identity["simulatorRuntimes"] = try XcodeGraphCache.runtimeFingerprint(runtimes)
             identity["settings"] = XcodeGraphCache.digest(Data(normalized.utf8))
             identity["externalInputs"] = configuration.context
             let found = try timed("graphLoad", revision: revision) { try cache.load(identity) }

@@ -86,3 +86,20 @@ private func cacheGraph() -> XcodeTestGraph {
     #expect(try XcodeGraphCache.canonicalInventory(a) == XcodeGraphCache.canonicalInventory(b))
     #expect(try XcodeGraphCache.canonicalInventory(a) != XcodeGraphCache.canonicalInventory(changed))
 }
+
+@Test func runtimeUsageDoesNotInvalidateCacheButRuntimeBuildDoes() throws {
+    let first = Data(#"{"runtimes":[{"identifier":"ios","buildversion":"123","lastUsage":{"arm64":"yesterday"}}]}"#.utf8)
+    let used = Data(#"{"runtimes":[{"identifier":"ios","buildversion":"123","lastUsage":{"arm64":"today"}}]}"#.utf8)
+    let upgraded = Data(#"{"runtimes":[{"identifier":"ios","buildversion":"124"}]}"#.utf8)
+    #expect(try XcodeGraphCache.runtimeFingerprint(first) == XcodeGraphCache.runtimeFingerprint(used))
+    #expect(try XcodeGraphCache.runtimeFingerprint(first) != XcodeGraphCache.runtimeFingerprint(upgraded))
+}
+
+@Test func buildSettingPathsCanBeNormalizedAcrossIsolatedWorkDirectories() throws {
+    let first = Data(#"[{"buildSettings":{"SRCROOT":"/tmp/work-first/source"}}]"#.utf8)
+    let next = Data(#"[{"buildSettings":{"SRCROOT":"/tmp/work-next/source"}}]"#.utf8)
+    let a = String(decoding: try XcodeGraphCache.canonicalInventory(first), as: UTF8.self).replacingOccurrences(of: "/tmp/work-first", with: "<WORK>")
+    let b = String(decoding: try XcodeGraphCache.canonicalInventory(next), as: UTF8.self).replacingOccurrences(of: "/tmp/work-next", with: "<WORK>")
+    #expect(a == b)
+    #expect(a.contains("<WORK>/source"))
+}
