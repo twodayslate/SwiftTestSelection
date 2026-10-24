@@ -33,6 +33,8 @@ public struct XcodeTestGraph: Codable, Sendable {
     public var sources: [String: SwiftSourceSnapshot] = [:]
     public var modules: [String: String] = [:]
     public var mappings: UIFeatureMappings?
+    /// Provenance and product fingerprints for an imported build-for-testing result.
+    public var buildArtifact: XcodeBuildArtifact?
 
     public init(targets: [XcodeTarget], tests: [String], diagnostics: [String] = []) {
         self.targets = targets

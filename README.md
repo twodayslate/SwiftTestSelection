@@ -163,11 +163,106 @@ Full-suite execution remains explicit:
 
 "Full suite" means all **enabled** tests in the chosen plan/configuration, not disabled tests. During adoption, retain selected-run reports and run the full plan at the same head/configuration. Compare failures and investigate any failing test omitted by selection; account for flaky tests and shared environment effects. Keep periodic full runs after adoption. The fixture validation does not validate the mappings for your own application.
 
+### Reuse an existing build-for-testing
+
+CI can build each revision once, capture its graph, and reuse the head products
+for selected execution. A cached **base graph** is enough for comparison; no base
+products or historical test execution/coverage baseline are required. This is an
+explicit cache: store graph JSON in your CI artifacts and supply it on later runs.
+
+Capture immediately after a successful build, from a **clean checkout of the built
+commit**. Use absolute paths, a fresh DerivedData directory, and an unfiltered build
+log; an incremental log may omit compiler commands needed for dependency extraction.
+The source checkout, compiler file lists, and dependencies must stay at their original
+paths until capture finishes. `--revision` asserts which commit produced the build;
+keep build, settings export, and capture in the same CI step without source changes.
+Store these outputs outside the repository or in an ignored directory.
+
+For example, in Bash (substitute your project, scheme, plan, and runnable simulator):
+
+```bash
+set -euo pipefail
+PROJECT="$PWD/App.xcodeproj"
+ARTIFACTS="$PWD/.build/ci-head"
+DERIVED_DATA="$ARTIFACTS/DerivedData"
+DESTINATION='platform=iOS Simulator,name=iPhone 17 Pro'
+mkdir -p "$ARTIFACTS"
+
+build_options=(-project "$PROJECT" -scheme App -testPlan AllTests
+               -configuration Debug -destination "$DESTINATION"
+               -derivedDataPath "$DERIVED_DATA")
+xcodebuild build-for-testing "${build_options[@]}" > "$ARTIFACTS/build.log" 2>&1
+xcodebuild build-for-testing "${build_options[@]}" -showBuildSettings -json \
+  > "$ARTIFACTS/settings.json"
+
+# Choose the .xctestrun for AllTests if the build produced several plans.
+test_runs=("$DERIVED_DATA"/Build/Products/*.xctestrun)
+(( ${#test_runs[@]} == 1 ))
+swift-test-impact graph \
+  --project "$PROJECT" --scheme App --test-plan AllTests \
+  --configuration Debug --destination "$DESTINATION" \
+  --derived-data "$DERIVED_DATA" --build-log "$ARTIFACTS/build.log" \
+  --build-settings "$ARTIFACTS/settings.json" --xctestrun "${test_runs[0]}" \
+  --revision "$(git rev-parse HEAD)" --output "$ARTIFACTS/head-graph.json"
+```
+
+Graph capture **does not rebuild app/test executables**, but still replays compiler
+commands to emit SIL and initializes runners to enumerate tests. It requires more
+than binaries or dSYMs. The capture fingerprints the complete `Build/Products`
+directory, including the `.xctestrun`, and records the revision, toolchain, build
+context, and input digests. SHA-256 file hashing uses bounded chunks.
+
+Produce a base graph the same way on the base commit (for PRs, the resolved merge
+base), using matching build options/toolchain. Then select and execute:
+
+```bash
+swift-test-impact select \
+  --project "$PROJECT" --scheme App --test-plan AllTests \
+  --configuration Debug --destination "$DESTINATION" \
+  --base "$PR_BASE_SHA" --head "$PR_HEAD_SHA" --merge-base \
+  --base-graph /path/to/cached-base-graph.json \
+  --head-graph "$ARTIFACTS/head-graph.json" \
+  --format json --output "$ARTIFACTS/selection.json" --run
+```
+
+Omit `--run` for report-only analysis: cached selection invokes Git and the selection
+engine, with **no Xcode build, enumeration, or compiler replay**. It does not need
+DerivedData or build products. Fetch the required Git history first. In this mode,
+`--head` defaults to the committed `HEAD`; dirty worktree changes are intentionally
+excluded. A wrong revision (including a graph for the PR target tip instead of its
+merge base), incompatible configuration/toolchain, or legacy graph without capture
+metadata is an error. There is no silent rebuild or substitution of a different cache.
+Use the regular selection workflow if you need uncommitted-worktree analysis.
+
+With `--run`, the tool verifies the head product fingerprints and invokes
+`xcodebuild test-without-building -xctestrun … -only-testing:…`. It never rebuilds
+the checkout. The report's `buildArtifactID` binds execution to the captured head
+graph. Empty selections issue no Xcode command; `--full-suite --run` runs all enabled
+tests from the same products. Xcode failures retain their nonzero exit status.
+To run the head's full plan without a base cache, supply the head graph for both
+graph flags and its commit for both revisions, with `--full-suite --run`.
+
+To move execution to another CI job, archive the **entire head `Build/Products`
+directory**, preserving symlinks and executable permissions, alongside its graph.
+Supply `--test-products /downloaded/Products` with `--run`. This changes only the
+product location; fingerprints must still match, and the original selected toolchain
+and compatible destination must be available. The supported version-2 `.xctestrun`
+uses product-relative paths. External product references are rejected; the supplied
+fixture validates relocated iOS Simulator UI and app-hosted unit-test products.
+Build settings, log, intermediate files, and original source paths are needed for
+capture, but not for cached selection or execution. The Git checkout/history is
+still needed for the comparison. Base products can be discarded after capture.
+
+Cache graphs by commit, artifact schema/tool version, toolchain, container, scheme,
+plan, configuration, SDK/architectures, destination, and mapping configuration.
+Retain conservative diagnostics in reports; cache reuse does not improve graph or
+mapping completeness. Validate selected runs against full runs before using a CI gate.
+
 ### Xcode implementation and requirements
 
 The adapter builds with `xcodebuild build-for-testing`, reads source ownership from compiler file lists, and replays supported `builtin-SwiftDriver` commands to emit SIL with debug locations. It parses source declarations with SwiftParser and compares syntax structure without trivia, while retaining literal contents and checking compiled dependency changes. It discovers exact enabled IDs with `test-without-building -enumerate-tests`. Discovery launches test runners and may require UI automation permissions; test bodies run only with `--run`. Enumeration errors are fatal even if Xcode exits successfully. Known empty XCTest base classes are excluded from the executable inventory.
 
-Requires macOS, Swift 6+, Xcode test enumeration (Xcode 15+), and a configured scheme/destination. The adapter preserves project signing settings. Compiler-driver output and SIL are version-sensitive; extraction failures and multiple distinct compiler invocations for one module produce fallback diagnostics. Analysis uses temporary DerivedData and rebuilds both revisions, which can cost more than a small suite. Selected runs retain `.xcresult` bundles under `.build/test-impact-results` beside the project/workspace. Validation covers Xcode 26.6 on an iOS 26.2 simulator. macOS UI execution, physical devices, and other Apple platforms are not yet validated for fine-grained selection.
+Requires macOS, Swift 6+, Xcode test enumeration (Xcode 15+), and a configured scheme/destination. The adapter preserves project signing settings. Compiler-driver output and SIL are version-sensitive; extraction failures and multiple distinct compiler invocations for one module produce fallback diagnostics. The default workflow uses temporary DerivedData and rebuilds both revisions, which can cost more than a small suite; the existing-build workflow above reuses captured graphs and products. Selected runs retain `.xcresult` bundles under `.build/test-impact-results` beside the project/workspace. Validation covers Xcode 26.6 on an iOS 26.2 simulator. macOS UI execution, physical devices, and other Apple platforms are not yet validated for fine-grained selection.
 
 `graph` accepts the same container/build/mapping options and `--format json|dot`. Xcode JSON uses `analysisKind: "xcode-sil-and-ui-mappings"` and includes source snapshots, compiled dependencies, exact tests, ownership, and mappings. DOT currently shows compiled source ownership; the JSON `dependencies` graph contains function edges. No inferred compiler edge claims to cross the UI automation process boundary.
 
@@ -184,7 +279,7 @@ swift run swift-test-impact graph \
   --output /path/to/YourPackage/.build/graph.dot
 ```
 
-JSON includes function symbols, source regions, dependencies, uncertainties, and test entry points. DOT can be opened with Graphviz. Graph generation also works without Git.
+JSON includes function symbols, source regions, dependencies, uncertainties, and test entry points. DOT can be opened with Graphviz. Normal graph generation also works without Git; existing-build Xcode capture requires Git revision provenance.
 
 For example, the included `Fixtures/Shop` package exposes:
 
@@ -246,7 +341,7 @@ let exitCode = try analysis.run(report)
 
 `PackageAnalyzer` builds graphs, `SILParser` reads compiler output, and `StaticSelector` accepts graphs and structured changes without subprocesses. The original in-memory `CoverageBaseline`/`TestSelector` API remains for optional coverage experiments; the CLI does not use it.
 
-For Xcode, construct `XcodeConfiguration(container:path:scheme:destination:configuration:testPlan:)` and pass it to `XcodeAnalysis(options:)`. Its `graph()`, `select(base:head:mergeBase:fullSuite:)`, and `run(_:)` methods parallel the SwiftPM API. Set `mappingsPath` on the configuration to override the mapping file. `XcodeFineSelector` accepts populated Xcode graphs and structured changes directly without subprocesses. Legacy graphs without compiler data retain target-level fallback behavior.
+For Xcode, construct `XcodeConfiguration(container:path:scheme:destination:configuration:testPlan:)` and pass it to `XcodeAnalysis(options:)`. Its `graph()`, `select(base:head:mergeBase:fullSuite:)`, and `run(_:)` methods parallel the SwiftPM API. Set `mappingsPath` on the configuration to override the mapping file. `XcodeFineSelector` accepts populated Xcode graphs and structured changes directly without subprocesses. Legacy graphs without compiler data retain target-level fallback behavior. For existing Xcode builds, use `graph(from: XcodeBuildInputs)`, `select(base:head:mergeBase:fullSuite:baseGraph:headGraph:)`, and `run(_:using:productsDirectory:)`. The optional `XcodeTestGraph.buildArtifact` stores capture metadata; cached selection requires it.
 
 ## Validation
 
@@ -265,6 +360,21 @@ python3 Scripts/xcode_integration_test.py \
 ```
 
 This script copies `Fixtures/XcodeUITests` into a temporary repository with spaces in its path. A single plan contains seven UI tests in one target and two unit tests. It checks method additions/edits/deletions, helpers, setup, inheritance, mapped production dependencies, trivia, pure moves, fallback diagnostics, explicit heads, merge-base comparisons, and workspace discovery. A selected method actually runs while another method in the same target deliberately fails. Explicit-head execution is checked with an invalid dirty worktree. A healthy full-plan run verifies all nine tests. The package tests also model selecting one method from a 393-test target. Use `--keep-work` to retain integration artifacts and result bundles.
+
+Existing-build acceptance is exercised separately:
+
+```sh
+python3 Scripts/xcode_artifact_integration_test.py \
+  --destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
+
+It records Xcode invocations to check that capture never rebuilds and cached
+selection invokes no Xcode commands. It deletes original DerivedData, relocates
+products, makes the checkout invalid, executes one selected UI method while a
+neighbor deliberately fails, and checks revision mismatch, merge-base selection,
+product tampering, empty execution, and full-suite execution. The full artifact
+run executes both UI and app-hosted unit tests and intentionally fails the neighbor
+test to verify nonzero failure propagation.
 
 The SIL parser also has an optimized large-input regression benchmark:
 
@@ -285,7 +395,7 @@ runs are still required before relying on production-change selection as a CI ga
 
 ## Next work
 
-- Cache graphs by source/build identity.
+- Add automatic cache lookup and eviction; Xcode graphs can currently be cached explicitly with build provenance.
 - Extend precise declaration mapping to more language constructs and SwiftPM.
 - Improve dispatch, initializer, callback, and test-argument modeling.
 - Expand compiler-version, Swift Testing, external inheritance, and resource modeling coverage.

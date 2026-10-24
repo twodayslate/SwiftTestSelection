@@ -130,13 +130,22 @@ public struct XcodeAnalysis {
         guard FileManager.default.fileExists(atPath: configuration.path.path) else {
             throw ImpactError("Xcode container does not exist: \(configuration.path.path)")
         }
-        let directory = configuration.path.deletingLastPathComponent()
         let derived = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: derived) }
-        let buildArguments = configuration.arguments(action: "build-for-testing", derivedData: derived)
+        let directory = configuration.path.deletingLastPathComponent()
+        let arguments = configuration.arguments(action: "build-for-testing", derivedData: derived)
         progress("Building Xcode scheme \(configuration.scheme) for \(configuration.destination) (no test bodies)…")
-        let build = try CommandRunner.run("xcodebuild", buildArguments, at: directory)
-        let settingsData = try CommandRunner.run("xcodebuild", buildArguments + ["-showBuildSettings", "-json"], at: directory).stdout
+        let build = try CommandRunner.run("xcodebuild", arguments, at: directory)
+        let settings = try CommandRunner.run("xcodebuild", arguments + ["-showBuildSettings", "-json"], at: directory).stdout
+        return try analyzeBuild(configuration, sourceRoot: sourceRoot, derived: derived, log: build.text, settingsData: settings)
+    }
+
+    func analyzeBuild(_ configuration: XcodeConfiguration, sourceRoot: URL, derived: URL,
+                      log: String, settingsData: Data, xctestrun: URL? = nil) throws -> XcodeTestGraph {
+        guard FileManager.default.fileExists(atPath: configuration.path.path) else {
+            throw ImpactError("Xcode container does not exist: \(configuration.path.path)")
+        }
+        let directory = configuration.path.deletingLastPathComponent()
         let settings = try JSONDecoder().decode([XcodeBuildSettings].self, from: settingsData)
         var targets: [XcodeTarget] = []
         var diagnostics: [String] = []
@@ -193,8 +202,13 @@ public struct XcodeAnalysis {
             targets.append(XcodeTarget(name: "Unclassified build inputs", productType: "unknown", sourceFiles: unclassifiedSources))
         }
         progress("Enumerating Xcode tests (runner initialization may require UI automation permissions)…")
-        let enumeration = derived.appendingPathComponent("test-enumeration.json")
-        _ = try CommandRunner.run("xcodebuild", configuration.arguments(action: "test-without-building", derivedData: derived) + [
+        let scratch = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let enumeration = scratch.appendingPathComponent("test-enumeration.json")
+        let enumerationArguments = xctestrun.map {
+            ["test-without-building", "-xctestrun", $0.path, "-destination", configuration.destination]
+        } ?? configuration.arguments(action: "test-without-building", derivedData: derived)
+        _ = try CommandRunner.run("xcodebuild", enumerationArguments + [
             "-enumerate-tests", "-test-enumeration-style", "flat", "-test-enumeration-format", "json",
             "-test-enumeration-output-path", enumeration.path
         ], at: directory)
@@ -212,7 +226,7 @@ public struct XcodeAnalysis {
         let ownership = targets.reduce(into: [String: Set<String>]()) { result, target in
             if let module = modules[target.name] { result[module, default: []].formUnion(target.sourceFiles) }
         }
-        var dependencies = XcodeCompilerGraph.extract(log: build.text, sourceRoot: sourceRoot, directory: directory, derived: derived, progress: progress, ownership: ownership)
+        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership)
         progress("Binding compiler dependencies to \(tests.count) enumerated tests…")
         let binding = AnalysisMeasurement()
         XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: sources, graph: &dependencies)
@@ -244,7 +258,7 @@ public struct XcodeAnalysis {
     }
 }
 
-private struct XcodeBuildSettings: Decodable {
+struct XcodeBuildSettings: Decodable {
     var buildSettings: [String: String]
 }
 

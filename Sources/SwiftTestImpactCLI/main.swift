@@ -23,8 +23,21 @@ USAGE
                            [--base REVISION] [--head REVISION] [--merge-base]
                            [--format FORMAT] [--output FILE] [--full-suite] [--run]
 
-graph builds targets and emits compiled dependency graphs. select analyzes both
-revisions; without --head it includes staged, unstaged and untracked worktree files.
+Existing Xcode builds:
+  graph <Xcode options> --derived-data PATH --build-log FILE --build-settings FILE
+        --xctestrun FILE --revision REVISION --output head-graph.json
+  select <Xcode options> --base REVISION [--head REVISION] [--merge-base]
+         --base-graph FILE --head-graph FILE [--run] [--test-products PATH]
+
+Capture requires a clean checkout of the built revision and an unfiltered successful
+build-for-testing log. Keep original source/DerivedData paths until capture finishes.
+Cached selection uses Git history and saved graphs only; head defaults to HEAD.
+--run with cached graphs uses test-without-building and fingerprinted products.
+--test-products relocates the intact Build/Products directory for execution.
+
+Normal graph builds targets and emits compiled dependency graphs. Without cached
+graphs, select analyzes both revisions; omitting --head includes staged, unstaged
+and untracked worktree files.
 --merge-base compares against the common ancestor of base and head (or HEAD).
 --head builds and executes an isolated export of that exact revision.
 
@@ -52,6 +65,10 @@ private struct Options {
     var mergeBase = false
     var fullSuite = false
     var xcode: XcodeConfiguration?
+    var buildInputs: XcodeBuildInputs?
+    var baseGraph: String?
+    var headGraph: String?
+    var testProducts: String?
 
     init(_ arguments: [String]) throws {
         guard let first = arguments.first, ["graph", "select"].contains(first) else {
@@ -68,6 +85,11 @@ private struct Options {
         var configuration: String?
         var testPlan: String?
         var mappings: String?
+        var derivedData: String?
+        var buildLog: String?
+        var buildSettings: String?
+        var xctestrun: String?
+        var revision: String?
         while index < arguments.count {
             let flag = arguments[index]
             index += 1
@@ -75,7 +97,7 @@ private struct Options {
             if flag == "--run" { run = true; continue }
             if flag == "--merge-base" { mergeBase = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
-            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings"].contains(flag), index < arguments.count else {
+            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
             let value = arguments[index]
@@ -87,6 +109,14 @@ private struct Options {
             case "--base": base = value
             case "--head": head = value
             case "--mappings": mappings = value
+            case "--derived-data": derivedData = value
+            case "--build-log": buildLog = value
+            case "--build-settings": buildSettings = value
+            case "--xctestrun": xctestrun = value
+            case "--revision": revision = value
+            case "--base-graph": baseGraph = value
+            case "--head-graph": headGraph = value
+            case "--test-products": testProducts = value
             case "--project": project = value
             case "--workspace": workspace = value
             case "--scheme": scheme = value
@@ -95,6 +125,22 @@ private struct Options {
             case "--test-plan": testPlan = value
             default: break
             }
+        }
+        let captureCount = [derivedData, buildLog, buildSettings, xctestrun, revision].compactMap { $0 }.count
+        if captureCount > 0 {
+            guard captureCount == 5, command == "graph", project != nil || workspace != nil else {
+                throw ImpactError("Existing-build capture requires Xcode graph mode and all of --derived-data, --build-log, --build-settings, --xctestrun, --revision.")
+            }
+            buildInputs = XcodeBuildInputs(derivedData: URL(fileURLWithPath: derivedData!), buildLog: URL(fileURLWithPath: buildLog!),
+                buildSettings: URL(fileURLWithPath: buildSettings!), xctestrun: URL(fileURLWithPath: xctestrun!), revision: revision!)
+        }
+        if baseGraph != nil || headGraph != nil {
+            guard command == "select", baseGraph != nil, headGraph != nil, project != nil || workspace != nil else {
+                throw ImpactError("Cached selection requires Xcode select mode and both --base-graph and --head-graph.")
+            }
+        }
+        if testProducts != nil && (baseGraph == nil || !run) {
+            throw ImpactError("--test-products requires cached selection with --run.")
         }
         if command == "select" && base == nil { throw ImpactError("select requires --base REVISION.") }
         if command == "graph" && (base != nil || run || head != nil || mergeBase || fullSuite) { throw ImpactError("Comparison, execution, and full-suite options are only valid with select.") }
@@ -165,14 +211,27 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
         if let xcode = options.xcode {
             let analysis = XcodeAnalysis(options: xcode, progress: log)
             if options.command == "graph" {
-                let graph = try analysis.graph()
+                let graph = try options.buildInputs.map { try analysis.graph(from: $0) } ?? analysis.graph()
                 let data = options.format == "dot" ? Data(graph.dot().utf8) : try encoder.encode(graph)
                 try write(data, to: options.output)
             } else {
-                let report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite)
+                let headGraph = try options.headGraph.map { try JSONDecoder().decode(XcodeTestGraph.self, from: Data(contentsOf: URL(fileURLWithPath: $0))) }
+                let report: ImpactReport
+                if let headGraph, let basePath = options.baseGraph {
+                    let baseGraph = try JSONDecoder().decode(XcodeTestGraph.self, from: Data(contentsOf: URL(fileURLWithPath: basePath)))
+                    report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase,
+                        fullSuite: options.fullSuite, baseGraph: baseGraph, headGraph: headGraph)
+                } else {
+                    report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite)
+                }
                 let data = options.format == "json" ? try encoder.encode(report) : Data(render(report).utf8)
                 try write(data, to: options.output)
-                if options.run { exit(try analysis.run(report)) }
+                if options.run {
+                    if let headGraph {
+                        exit(try analysis.run(report, using: headGraph, productsDirectory: options.testProducts.map { URL(fileURLWithPath: $0) }))
+                    }
+                    exit(try analysis.run(report))
+                }
             }
         } else if options.command == "graph" {
             let root = (try? GitChanges.repositoryRoot(at: package)) ?? package
