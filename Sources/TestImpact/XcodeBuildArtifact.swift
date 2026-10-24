@@ -13,6 +13,7 @@ public struct XcodeBuildArtifact: Codable, Sendable {
     public var revision: String
     public var context: [String: String]
     public var toolchain: String
+    public var simulatorRuntimes: String? = nil
     public var buildLogDigest: String
     public var buildSettingsDigest: String
     public var productsDirectory: String
@@ -80,6 +81,7 @@ extension XcodeAnalysis {
         graph.buildArtifact = XcodeBuildArtifact(revision: revision, context: context, toolchain: toolchain,
             buildLogDigest: logDigest, buildSettingsDigest: settingsDigest,
             productsDirectory: products.path, xctestrun: inputs.xctestrun.lastPathComponent, products: fingerprints)
+        graph.buildArtifact?.simulatorRuntimes = try ArtifactFiles.runtimeFingerprint(options: options, at: root)
         return graph
     }
 
@@ -93,8 +95,8 @@ extension XcodeAnalysis {
         guard old.revision == comparison.base, new.revision == comparison.head else {
             throw ImpactError("Cached graph revision mismatch. Supply graphs for resolved base \(comparison.base) and head \(comparison.head!). Merge-base mode requires a graph of the common ancestor.")
         }
-        guard old.context == new.context, old.toolchain == new.toolchain else {
-            throw ImpactError("Cached graphs have incompatible build contexts or toolchains. Recapture with matching scheme, plan, destination, configuration, SDK and architectures.")
+        guard old.context == new.context, old.toolchain == new.toolchain, old.simulatorRuntimes == new.simulatorRuntimes else {
+            throw ImpactError("Cached graphs have incompatible build contexts, toolchains, or simulator runtimes. Recapture with matching scheme, plan, destination, configuration, SDK and architectures.")
         }
         let changes = try GitChanges.readComparison(base: comparison.base, head: comparison.head, at: root)
         var report = XcodeSelector.select(current: headGraph, previous: baseGraph, changes: changes, baseRevision: comparison.base)
@@ -122,15 +124,7 @@ extension XcodeAnalysis {
             progress("No selected tests; no Xcode test command was executed.")
             return 0
         }
-        let products = (productsDirectory ?? URL(fileURLWithPath: artifact.productsDirectory)).standardizedFileURL.resolvingSymlinksInPath()
-        guard try artifact.products == ArtifactFiles.manifest(at: products) else {
-            throw ImpactError("Test products differ from the captured graph (missing, modified, or extra files). Restore the matching products or recapture the graph.")
-        }
-        guard try artifact.toolchain == ArtifactFiles.toolchain(at: root) else {
-            throw ImpactError("Execution toolchain differs from the captured build.")
-        }
-        let testRun = products.appendingPathComponent(artifact.xctestrun)
-        try ArtifactFiles.validateTestRun(testRun, plan: options.testPlan, scheme: options.scheme)
+        let testRun = try verifyBuild(report, using: graph, productsDirectory: productsDirectory)
         let results = options.path.deletingLastPathComponent().appendingPathComponent(".build/test-impact-results/\(UUID().uuidString).xcresult")
         try FileManager.default.createDirectory(at: results.deletingLastPathComponent(), withIntermediateDirectories: true)
         let arguments = try artifactExecutionArguments(tests: report.selectedTests, xctestrun: testRun, resultBundle: results)
@@ -138,6 +132,31 @@ extension XcodeAnalysis {
         let result = try CommandRunner.run("xcodebuild", arguments, at: root, allowFailure: true)
         progress(String(decoding: result.stdout + result.stderr, as: UTF8.self))
         return result.status
+    }
+
+    /// Validate a saved selection before handing its xctestrun to a custom runner.
+    /// This performs no build or test execution. Empty selections remain empty.
+    public func verifyBuild(_ report: ImpactReport, using graph: XcodeTestGraph, productsDirectory: URL? = nil) throws -> URL {
+        let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
+        let artifact = try validateArtifactGraph(graph, root: root)
+        guard report.headRevision == artifact.revision, report.buildArtifactID == artifact.id,
+              Set(report.selectedTests).isSubset(of: Set(graph.tests)) else {
+            throw ImpactError("Selection report does not match the captured head graph.")
+        }
+        let products = (productsDirectory ?? URL(fileURLWithPath: artifact.productsDirectory)).standardizedFileURL.resolvingSymlinksInPath()
+        guard try artifact.products == ArtifactFiles.manifest(at: products) else {
+            throw ImpactError("Test products differ from the captured graph (missing, modified, or extra files). Restore the matching products or recapture the graph.")
+        }
+        guard try artifact.toolchain == ArtifactFiles.toolchain(at: root) else {
+            throw ImpactError("Execution toolchain differs from the captured build.")
+        }
+        if let expected = artifact.simulatorRuntimes,
+           try expected != ArtifactFiles.runtimeFingerprint(options: options, at: root) {
+            throw ImpactError("Simulator runtimes differ from the captured build; build and select again.")
+        }
+        let testRun = products.appendingPathComponent(artifact.xctestrun)
+        try ArtifactFiles.validateTestRun(testRun, plan: options.testPlan, scheme: options.scheme)
+        return testRun
     }
 
     func artifactContext(root: URL) throws -> [String: String] {
@@ -216,6 +235,11 @@ enum ArtifactFiles {
 
     static func toolchain(at root: URL) throws -> String {
         try CommandRunner.run("xcodebuild", ["-version"], at: root).text + CommandRunner.run("xcrun", ["swiftc", "--version"], at: root).text
+    }
+
+    static func runtimeFingerprint(options: XcodeConfiguration, at root: URL) throws -> String {
+        let data = options.destination.contains("Simulator") ? try CommandRunner.run("xcrun", ["simctl", "list", "runtimes", "-j"], at: root).stdout : Data()
+        return try XcodeGraphCache.runtimeFingerprint(data)
     }
 
     static func validateCheckout(root: URL, revision: String, buildLog: URL) throws {
