@@ -1,0 +1,14 @@
+{
+  "added" : [
+
+  ],
+  "afterInitializerFallbackTests" : 0,
+  "afterSelected" : 1440,
+  "beforeInitializerFallbackTests" : 145,
+  "beforeSelected" : 1440,
+  "remainingDiagnostics" : 1416,
+  "removed" : [
+
+  ],
+  "sourceRevision" : "1f0e37b69458200227c584d9a4563b5391948cdf"
+}

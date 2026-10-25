@@ -15,7 +15,9 @@ conservative diagnostics for project callbacks and extension methods.
 ## Saved consumer comparison
 
 Release validation on the existing ChainOfCustody graph (124,013 functions, 2,000
-tests) reproduced issue #23's NoteListSort display-label source replay. Every
+tests, source revision `1f0e37b69458200227c584d9a4563b5391948cdf`) reproduced issue
+#23's NoteListSort display-label source replay. [Raw results](ExtensionDispatch.json)
+record the selected-identifier differences and remaining diagnostic count. Every
 source-unit key and fingerprint was checked against the available source export
 before refreshing ownership metadata. The comparison removes only the stale
 `XCTestCase.init` classification, then rebinds; other uncertainties are preserved.
