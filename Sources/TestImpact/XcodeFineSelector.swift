@@ -236,16 +236,18 @@ public enum XcodeFineSelector {
                 }
                 // Both semantic inventories participate, including added/deleted
                 // declarations and dependency changes in a stacked comparison.
-                // Infrastructure changes retain the existing conservative policy.
-                let changesAreProduction = previous != nil &&
-                    oldChanged.allSatisfy { isProduction($0, in: previous!) } &&
-                    newChanged.allSatisfy { isProduction($0, in: current) }
+                // Proven test entry bodies cannot invalidate an unrelated runtime
+                // closure. Keep their modules in the boundary comparison and all
+                // dependency selections; helpers/lifecycle/state remain conservative.
+                let changesHaveIsolatedOwnership = previous != nil &&
+                    oldChanged.allSatisfy { isProduction($0, in: previous!) || isTestEntry($0, in: previous!) } &&
+                    newChanged.allSatisfy { isProduction($0, in: current) || isTestEntry($0, in: current) }
                 let changedModules = Set((oldChanged + newChanged).map { String($0.key.prefix { $0 != ":" }) })
                 var bounded: [String: [String]] = [:]
                 for test in snapshot.tests where inventory.contains(test) {
                     if declaredUIRuntime && uiTests.contains(test) { continue }
                     if let path = uncertainPaths.path(from: graph.tests[test] ?? []) {
-                        if changesAreProduction, let boundary = boundedTargets[target(of: test)],
+                        if changesHaveIsolatedOwnership, let boundary = boundedTargets[target(of: test)],
                            changedModules.isDisjoint(with: boundary.modules) {
                             bounded[boundary.target, default: []].append(test)
                         } else {

@@ -62,6 +62,26 @@ import Testing
     let narrowed = XcodeFineSelector.select(current: head, previous: model, changes: [.init(path: "LabelApp.swift")], baseRevision: "base")
     #expect(narrowed.selectedTests == [model.tests[1]], "\(narrowed.diagnostics.map(\.message))")
     #expect(narrowed.runtimeBoundaryDecisions?.contains { $0.boundedUncertaintyTests == [model.tests[0]] } == true)
+    // A real compiled assertion edit accompanying the production change must
+    // preserve the independent Core boundary, including after graph persistence.
+    let appTestFile = root.appendingPathComponent("AppTests.swift")
+    let changedTest = try String(contentsOf: appTestFile, encoding: .utf8)
+        .replacingOccurrences(of: "XCTAssertFalse(label().isEmpty)", with: "XCTAssertFalse(label().isEmpty, \"updated assertion\")")
+    try changedTest.write(to: appTestFile, atomically: true, encoding: .utf8)
+    var mixed = head
+    mixed.sources["AppTests:AppTests.swift"] = SwiftSourceSnapshot.parse(changedTest, path: "AppTests.swift", module: "AppTests")
+    let testArgs = ["swiftc", "-module-name", "AppTests", "-I", root.path, "-F", frameworks, "-I", platform + "/Developer/usr/lib", "-g", "-Onone", appTestFile.path]
+    let mixedSIL = root.appendingPathComponent("MixedTests.sil")
+    _ = try CommandRunner.run("xcrun", testArgs + ["-emit-sil", "-whole-module-optimization", "-o", mixedSIL.path], at: root)
+    for (id, node) in try SILParser.parse(file: mixedSIL, module: "AppTests", sourceRoot: root).functions
+        where node.regions.contains(where: { $0.path == "AppTests.swift" }) { mixed.dependencies!.functions[id] = node }
+    for archived in [false, true] {
+        let candidate = try archived ? GraphArchive.decode(GraphArchive.encode(mixed)) : mixed
+        let report = XcodeFineSelector.select(current: candidate, previous: model,
+            changes: [.init(path: "LabelApp.swift"), .init(path: "AppTests.swift")], baseRevision: "base")
+        #expect(report.selectedTests == narrowed.selectedTests)
+        #expect(report.runtimeBoundaryDecisions?.count == 2)
+    }
     head.mappings = nil
     var noPolicy = model; noPolicy.mappings = nil
     let broad = XcodeFineSelector.select(current: head, previous: noPolicy, changes: [.init(path: "LabelApp.swift")], baseRevision: "base")

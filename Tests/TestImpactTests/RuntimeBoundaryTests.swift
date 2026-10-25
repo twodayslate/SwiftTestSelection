@@ -224,3 +224,90 @@ func runtimeInventoryScopesUnsupportedUnitTargets(failure: String) throws {
     #expect(!report.diagnostics.contains { $0.code == "unclassified_change" })
     #expect(report.runtimeBoundaryDecisions?.isEmpty ?? true)
 }
+
+private func mixedBoundaryFixture(_ body: String = "assert(true)", extra: String = "", setup: String = "") -> XcodeTestGraph {
+    var model = boundaryFixture()
+    let source = """
+    class Screen {
+        func testEdited() { \(body) }
+        func helper() { assert(true) }
+        func setUp() { \(setup) }
+        \(extra)
+    }
+    """
+    model.targets.append(.init(name: "UI", productType: "com.apple.product-type.bundle.ui-testing", sourceFiles: ["UI.swift"]))
+    model.modules["UI"] = "UI"
+    let snapshot = SwiftSourceSnapshot.parse(source, path: "UI.swift", module: "UI")
+    model.sources["UI:UI.swift"] = snapshot
+    for unit in snapshot.units where unit.kind == "function" {
+        let name = unit.key.contains("testAdded") ? "testAdded" : unit.key.contains("testEdited") ? "testEdited" : unit.key.contains("helper") ? "helper" : "setUp"
+        let id = "UI.Screen." + name
+        model.dependencies!.functions[id] = FunctionNode(id: id, module: "UI", name: "Screen." + name + "()", regions: [unit.region])
+        if name.hasPrefix("test") {
+            let test = "UI/Screen/" + name + "()"
+            model.tests.append(test)
+            model.dependencies!.tests[test] = [id]
+        }
+    }
+    model.mappings!.runtimeDependencyPolicy = .declared
+    model.mappings!.features = [.init(name: "label", sources: ["App.swift"], tests: ["UI/Screen/testEdited()"])]
+    return model
+}
+
+@Test func mixedEntryEditsPreserveUnrelatedBoundariesAcrossBothRevisionsAndArchives() throws {
+    let old = mixedBoundaryFixture()
+    for extra in ["", "func testAdded() { assert(true) }"] {
+        let head = labelEdit(mixedBoundaryFixture("assert(false)", extra: extra))
+        for reverse in [false, true] {
+            let (before, after) = reverse ? (head, old) : (old, head)
+            var fresh: ImpactReport?
+            for archived in [false, true] {
+                let base = try archived ? GraphArchive.decode(GraphArchive.encode(before)) : before
+                let current = try archived ? GraphArchive.decode(GraphArchive.encode(after)) : after
+                let report = XcodeFineSelector.select(current: current, previous: base,
+                    changes: [.init(path: "App.swift"), .init(path: "UI.swift"), .init(path: "AGENTS.md")], baseRevision: "merge-base")
+                #expect(!report.selectedTests.contains("Tests/Other/testOther()"))
+                #expect(report.selectedTests.contains("Hosted/Labels/testLabel()"))
+                #expect(report.selectedTests.contains("UI/Screen/testEdited()"))
+                #expect(report.selectedTests.contains("UI/Screen/testAdded()") == (!reverse && !extra.isEmpty))
+                #expect(report.runtimeBoundaryDecisions?.count == 2)
+                #expect(report.runtimeBoundaryDecisions?.allSatisfy { $0.changedModules == ["App", "UI"] } == true)
+                #expect(report.ignoredChanges == ["AGENTS.md"])
+                if let fresh {
+                    #expect(report.selectedTests == fresh.selectedTests)
+                    #expect(report.diagnostics.map(\.message).sorted() == fresh.diagnostics.map(\.message).sorted())
+                } else { fresh = report }
+            }
+        }
+    }
+}
+
+@Test(arguments: ["setup", "helper", "class", "unknownOwner", "unboundEntry", "explicitCaller", "changedContract", "staleBase"])
+func mixedEntryEditsKeepUnsupportedRuntimeFallbacks(reason: String) {
+    var old = mixedBoundaryFixture()
+    var current = labelEdit(mixedBoundaryFixture("assert(false)"))
+    switch reason {
+    case "setup": current = labelEdit(mixedBoundaryFixture("assert(false)", setup: "assert(false)"))
+    case "helper", "class":
+        let unit = current.sources["UI:UI.swift"]!.units.firstIndex { reason == "class" ? $0.kind == "type" : $0.key.contains("helper") }!
+        current.sources["UI:UI.swift"]!.units[unit].fingerprint += "changed"
+    case "unknownOwner": current.targets.removeAll { $0.name == "UI" }
+    case "unboundEntry": current.dependencies!.tests["UI/Screen/testEdited()"] = []
+    case "explicitCaller":
+        for head in [false, true] {
+            var snapshot = head ? current : old
+            snapshot.dependencies!.functions["shared"]!.dependencies.insert("UI.Screen.testEdited")
+            snapshot.dependencies!.functions["shared"]!.compilerReferences = ["UI.Screen.testEdited"]
+            if head { current = snapshot } else { old = snapshot }
+        }
+    case "changedContract": current.mappings!.testRuntimeBoundaries![0].rationale += "changed"
+    case "staleBase":
+        let i = old.sources["Tests:Tests.swift"]!.units.firstIndex { $0.kind == "type" }!
+        old.sources["Tests:Tests.swift"]!.units[i].fingerprint += "old infrastructure"
+    default: break
+    }
+    let report = XcodeFineSelector.select(current: current, previous: old,
+        changes: [.init(path: "App.swift"), .init(path: "UI.swift")], baseRevision: "base")
+    #expect(report.selectedTests.contains("Tests/Other/testOther()"))
+    #expect(report.runtimeBoundaryDecisions == nil)
+}
