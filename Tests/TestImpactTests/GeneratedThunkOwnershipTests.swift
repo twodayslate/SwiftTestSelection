@@ -6,17 +6,6 @@ import Testing
 @testable import TestImpact
 
 @Test func generatedActorAdaptersAndObjCAsyncClosuresPreserveGraphs() async throws {
-    // Extraction waits on OperationQueue workers. Do not occupy another Swift
-    // Testing cooperative thread while the other compiler fixtures are running.
-    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-        DispatchQueue.global().async {
-            do { try checkGeneratedThunkGraphs(); continuation.resume() }
-            catch { continuation.resume(throwing: error) }
-        }
-    }
-}
-
-private func checkGeneratedThunkGraphs() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -38,13 +27,14 @@ private func checkGeneratedThunkGraphs() throws {
     import Legacy
     @MainActor public func render(_ value: Date) -> String { value.description }
     @MainActor public func use() { consume(render) }
+    public func link(_ text: inout AttributedString, to url: URL) { text.link = url }
     @MainActor public final class AsyncTests: XCTestCase {
         public override func setUp() async throws { use() }
         public func testAsync() async throws { use() }
     }
     """.write(to: source, atomically: true, encoding: .utf8)
     var logs: [String] = [], captures: [String: [URL]] = [:]
-    var adapterIDs: [String: String] = [:]
+    var adapterIDs: [String: Set<String>] = [:]
     var closureIDs = Set<String>()
     for module in ["First", "Second"] {
         let args = ["-module-name", module, "-swift-version", "6", source.path, "-I", root.path,
@@ -70,7 +60,7 @@ private func checkGeneratedThunkGraphs() throws {
             closureIDs.insert(closure.id)
         }
         let local = adapter.id + "@emitted:" + module
-        adapterIDs[module] = local
+        adapterIDs[module, default: []].insert(local)
         let node = try #require(resolved.functions[local])
         #expect(resolved.functions[adapter.id] == nil)
         #expect(node.regions.isEmpty)
@@ -80,6 +70,23 @@ private func checkGeneratedThunkGraphs() throws {
         #expect(resolved.functions.values.contains { $0.dependencies.contains(local) })
         #expect(resolved.functions.values.contains { $0.compilerReferences?.contains(local) == true })
         #expect(!resolved.functions.values.contains { $0.dependencies.contains(adapter.id) })
+        let keyPaths = parsed.functions.values.filter { $0.name.hasPrefix("key path index") }
+        #expect(keyPaths.count == 2) // Type-only equality and hash helpers.
+        for helper in keyPaths {
+            #expect(!helper.regions.isEmpty)
+            #expect(parsed.sharedSymbols?.contains(helper.id) == true)
+            let id = helper.id + "@emitted:" + module
+            adapterIDs[module, default: []].insert(id)
+            let localHelper = try #require(resolved.functions[id])
+            #expect(resolved.functions[helper.id] == nil)
+            #expect(localHelper.regions.isEmpty)
+            #expect(localHelper.dependencies == helper.dependencies)
+            #expect(localHelper.compilerReferences == helper.compilerReferences)
+            #expect(localHelper.uncertainties == helper.uncertainties)
+            #expect(resolved.functions.values.contains { $0.dependencies.contains(id) })
+            #expect(resolved.functions.values.contains { $0.compilerReferences?.contains(id) == true })
+            #expect(resolved.functions.values.contains { $0.dependencies.contains(id) && $0.uncertainties.contains("Key path access") })
+        }
         let cached = try GraphArchive.decodeValue(SILModule.self, from: GraphArchive.encodeValue(resolved))
         let hit = try SILOwnership.resolve(cached, module: module, compiler: "/missing/swiftc", directory: root)
         #expect(hit.sharedSymbols == nil)
@@ -91,17 +98,28 @@ private func checkGeneratedThunkGraphs() throws {
     // Identical adapter manglings emitted by different modules cannot overwrite
     // each other's dependencies or be attributed to Foundation/Swift.MainActor.
     let capture = CapturedSIL(modules: captures, fingerprints: [:], diagnostics: [])
+    let log = logs.joined(separator: "\n")
     for captured in [false, true] {
         for workers in [1, 2] {
-            let graph = XcodeCompilerGraph.extract(log: logs.joined(separator: "\n"), sourceRoot: root,
-                directory: root, derived: root, progress: { _ in },
-                ownership: ["First": ["Generated.swift"], "Second": ["Generated.swift"]],
-                workers: workers, captured: captured ? capture : nil)
+            // Extraction waits on OperationQueue workers. Release the cooperative
+            // test thread while it runs, then check results in this test's context.
+            let graph = await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    continuation.resume(returning: XcodeCompilerGraph.extract(log: log, sourceRoot: root,
+                        directory: root, derived: root, progress: { _ in },
+                        ownership: ["First": ["Generated.swift"], "Second": ["Generated.swift"]],
+                        workers: workers, captured: captured ? capture : nil))
+                }
+            }
             #expect(graph.diagnostics.isEmpty)
-            for (module, id) in adapterIDs {
-                #expect(graph.functions[id]?.module == module)
-                #expect(graph.functions[id]?.regions.isEmpty == true)
-                #expect(graph.functions[id]?.dependencies.isEmpty == false)
+            for (module, ids) in adapterIDs {
+                for id in ids {
+                    #expect(graph.functions[id]?.module == module)
+                    #expect(graph.functions[id]?.regions.isEmpty == true)
+                    let helper = try #require(graph.functions[id])
+                    #expect(!helper.dependencies.isEmpty || !helper.dynamicDeclarations.isEmpty)
+                    #expect(!helper.uncertainties.isEmpty)
+                }
             }
             for id in closureIDs {
                 #expect(graph.functions[id]?.regions.isEmpty == false)

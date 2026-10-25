@@ -18,11 +18,15 @@ enum SILOwnership {
         let output = try CommandRunner.run(demangler, ["--expand", "--tree-only"], at: directory,
             input: Data((symbols.joined(separator: "\n") + "\n").utf8)).text
         let owners = ownerships(output)
+        let unresolved = symbols.filter { owners[$0] == nil }
+        guard unresolved.isEmpty else {
+            let examples = unresolved.prefix(16).joined(separator: ", ")
+            let remaining = unresolved.count > 16 ? " (and \(unresolved.count - 16) more)" : ""
+            throw ImpactError("Cannot resolve defining module for client-emitted SIL symbol \(examples)\(remaining)")
+        }
         var adapters: [String: String] = [:]
         for symbol in symbols {
-            guard let owner = owners[symbol] else {
-                throw ImpactError("Cannot resolve defining module for client-emitted SIL symbol \(symbol)")
-            }
+            let owner = owners[symbol]!
             if result.importedSymbols == nil { result.importedSymbols = [] }
             switch owner {
             case .declaration(let owner):
@@ -103,6 +107,14 @@ enum SILOwnership {
                 let signatures = nodes[(helper + 1)..<actor].filter { $0.depth == 3 }
                 guard signatures.count == 2, signatures.allSatisfy({ $0.value == "kind=Type" }),
                       actor + 1 < nodes.count, nodes[actor + 1].depth == 3 else { return nil }
+                return .adapter
+            }
+            if nodes.count > 1, nodes[1].depth == 1,
+               ["kind=KeyPathEqualsThunkHelper", "kind=KeyPathHashThunkHelper"].contains(nodes[1].value) {
+                let captures = nodes.enumerated().filter { $0.element.depth == 2 }
+                guard nodes.filter({ $0.depth == 1 }).count == 1, !captures.isEmpty,
+                      captures.allSatisfy({ $0.element.value == "kind=Type" && $0.offset + 1 < nodes.count
+                          && nodes[$0.offset + 1].depth == 3 }) else { return nil }
                 return .adapter
             }
             var index = 0, depth = 0

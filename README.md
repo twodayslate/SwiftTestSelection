@@ -549,9 +549,11 @@ the defining module or its feature mappings. For source-bearing `shared` bodies
 (including `@_alwaysEmitIntoClient`), the compiler's adjacent `swift-demangle`
 resolves the declaration module, including extension and protocol-conformance
 ownership. Objective-C async closure wrappers retain their enclosing declaration's
-owner. Type-only global-actor reabstraction adapters have no declaration owner:
+owner. Type-only global-actor reabstraction and key-path equality/hash adapters have no declaration owner:
 their bodies remain separate per emitting module, with dependencies and runtime
-uncertainty intact. Their incidental conversion-site debug locations are not
+uncertainty intact. Key-path instructions retain embedded accessor and index-helper
+references as compiler edges, plus conservative key-path uncertainty.
+Their incidental conversion-site debug locations are not
 shared source declarations. Resolution is batched per module and cached;
 unfamiliar symbol contexts produce an explicit conservative fallback.
 These records prove compiler

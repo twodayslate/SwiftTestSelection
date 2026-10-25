@@ -26,8 +26,9 @@ public struct FunctionNode: Codable, Sendable {
     public var regions: [SourceRegion]
     /// Includes function values passed as callbacks, not only immediate calls.
     public var dependencies: Set<String>
-    /// Exact SIL function_ref edges (including escaped callbacks), before broad
-    /// dispatch candidates are added. Nil means legacy/unknown edge provenance.
+    /// Exact SIL function_ref and key-path function edges (including escaped
+    /// callbacks), before broad dispatch candidates are added. Nil means legacy
+    /// or unknown edge provenance.
     public var compilerReferences: Set<String>? = nil
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
