@@ -388,6 +388,23 @@ private func declaredRuntimeModel(app: String = appSource, ui: String = uiSource
     #expect(report.limitations.contains { $0.contains("runtime dependency policy is declared") })
 }
 
+@Test(arguments: [UIFeatureMappings.RuntimeDependencyPolicy.conservative, .declared])
+func importedSDKHelperWithoutLocationsPreservesUIRuntimePolicy(policy: UIFeatureMappings.RuntimeDependencyPolicy) {
+    func sdkModel(_ app: String) -> XcodeTestGraph {
+        var result = model(app: app)
+        result.mappings!.runtimeDependencyPolicy = policy
+        result.dependencies!.functions["App.notes()"]!.dependencies.insert("sdk-helper")
+        result.dependencies!.functions["sdk-helper"] = .init(id: "sdk-helper", module: "SDK", name: "equal()",
+            uncertainties: ["Imported conformance: Equatable@witness:NSObject module Foundation"])
+        return result
+    }
+    let old = sdkModel(appSource)
+    let current = sdkModel(appSource.replacingOccurrences(of: "sharing() -> Int { common() }", with: "sharing() -> Int { common() + 1 }"))
+    let report = selection(current, old, paths: ["App/Features.swift"])
+    #expect(report.selectedTests.contains("UI/Notes/testNotes()") == (policy == .conservative))
+    #expect(report.diagnostics.contains { $0.code == "unresolved_feature_dependency" } == (policy == .conservative))
+}
+
 @Test func declaredRuntimePolicyPreservesSharedAndExplicitFeatureDependencies() {
     let old = declaredRuntimeModel()
     let shared = declaredRuntimeModel(app: appSource.replacingOccurrences(of: "42", with: "43"))

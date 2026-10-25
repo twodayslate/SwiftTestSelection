@@ -264,6 +264,7 @@ public struct XcodeAnalysis {
         result.dependencies = dependencies
         result.modules = modules
         result.sources = sources
+        result.runtimeInventory = XcodeRuntimeInventory.capture(log: log, settings: settings)
         let mappingURL = try UIFeatureMappings.fileURL(path: configuration.mappingsPath, root: sourceRoot)
         if FileManager.default.fileExists(atPath: mappingURL.path) {
             do {

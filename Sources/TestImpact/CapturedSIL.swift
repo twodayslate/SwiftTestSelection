@@ -148,6 +148,9 @@ struct CapturedSIL: Sendable {
             for (id, node) in parsed.functions {
                 if var old = result.functions[id] {
                     old.dependencies.formUnion(node.dependencies)
+                    if let before = old.compilerReferences, let after = node.compilerReferences {
+                        old.compilerReferences = before.union(after)
+                    } else { old.compilerReferences = nil }
                     old.dynamicDeclarations.formUnion(node.dynamicDeclarations)
                     old.uncertainties.formUnion(node.uncertainties)
                     old.regions = Set(old.regions + node.regions).sorted { ($0.path, $0.startLine, $0.endLine) < ($1.path, $1.startLine, $1.endLine) }
@@ -155,6 +158,8 @@ struct CapturedSIL: Sendable {
                 } else { result.functions[id] = node }
             }
             for (key, values) in parsed.dispatchTargets { result.dispatchTargets[key, default: []].formUnion(values) }
+            if result.externalWitnesses == nil { result.externalWitnesses = [:] }
+            for (key, owners) in parsed.externalWitnesses ?? [:] { result.externalWitnesses![key, default: []].formUnion(owners) }
         }
         return result
     }

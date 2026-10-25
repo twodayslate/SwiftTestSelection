@@ -142,13 +142,80 @@ each path (including both sides of a rename). The report retains the paths in
 `changedFiles` and lists exclusions in `ignoredChanges`. Configuration, resources,
 and other unclassified changes still request a full run.
 
+### Non-UI runtime boundaries (opt-in)
+
+A reachable opaque call is uncertainty, not a proven dependency on the changed
+feature. The default still selects its callers conservatively. For a genuinely
+isolated test target, you can declare a **closed runtime module contract**:
+
+```json
+"testRuntimeBoundaries": [
+  {
+    "target": "CoreTests",
+    "modules": ["CoreTests", "Core"],
+    "rationale": "Hostless tests execute only Core and SDK code; no dynamic loading, app IPC, or app-owned shared state."
+  }
+]
+```
+
+This top-level field in `.swift-test-selection.json` applies only to non-UI test
+targets. Module names are Swift `PRODUCT_MODULE_NAME` values; the target is the
+exact Xcode test-target name. Include the test module, all transitively imported
+project modules, and the app host and its imports for hosted tests. **The contract
+also asserts that opaque callbacks, SDK calls, reflection, dynamic loading, IPC,
+shared files/preferences, and other runtime effects cannot depend on project code
+outside those modules.** Compiler imports cannot prove that assertion. Do not add
+a contract to a suite with such dependencies merely to reduce the selected count.
+
+Both revisions must declare the identical contract. The analyzer validates
+compiler-produced explicit-module import inventories, test-host settings, bound
+entries/lifecycle evidence, and explicit compiler references in each revision.
+Broad dispatch candidates outside the declared runtime universe do not contradict
+that contract; explicit references (including escaped callback addresses) do.
+Graphs lacking the edge provenance needed to make that distinction fall back. Missing,
+ambiguous, unsupported, or contradictory evidence produces an
+`invalid_runtime_boundary` fallback. Old saved graphs without that inventory
+cannot establish isolation. Bridging headers are unsupported for a boundary's
+module closure; an unrelated test target’s bridging header, missing import map,
+or unresolved host does not invalidate a complete hostless boundary. These failures
+are recorded per target and retain conservative selection for the affected target.
+Missing target identities or an ambiguous compiler inventory still invalidate the
+whole runtime inventory.
+
+Only production changes **entirely outside** that validated module closure can
+exclude its runtime-uncertainty fallback. Direct dependency selections always
+win. Shared module changes, helpers/setup, configuration/resources, unknown
+ownership, and changed contracts keep conservative behavior. This is module-level
+isolation: it does not separate features inside the same app module. Full runs
+remain available with `--full-suite`, and representative full-run comparisons are
+required before adopting a contract as a CI gate.
+
+Reports expose `runtimeBoundaryDecisions` with the target, revision, declared
+modules, changed modules, rationale, and exact `boundedUncertaintyTests`. These
+identify suppressed uncertainty fallbacks, not a list of tests guaranteed absent
+from `selectedTests`; a separate dependency/mapping/fallback can still select a
+test. Remaining `unresolved_dependency` messages identify the missing boundary
+evidence instead of claiming a proven dependency on the changed feature.
+
+The SIL reader also recognizes compiler-emitted concrete imported-conformance
+declarations, such as UUID/Date equality witnesses. Proofs are scoped to the
+emitting module and retained in cached fragments. Existing project witness tables
+win; missing, ambiguous, generic, unsupported, or project-owned declarations
+remain conservative. An external declaration proves ownership, not absence of
+callbacks (for example NSObject overrides or type-erased equality). Without an
+implementation summary it retains runtime uncertainty; only a validated boundary
+can exclude unrelated changes. This is not a Foundation allowlist and does not
+ignore shared state or escaped callbacks.
+
+See [the issue #29 validation](Documentation/Issue29Validation.md) for the real-project comparison, exact identifiers, execution evidence, and remaining consumer CI gate.
+
 ### Diagnostics and fallback policy
 
 - No mapping file on a production change: select every enabled UI test; compiler-based unit selection still applies.
 - A UI test belongs to no feature: keep that test conservatively selected on production changes.
 - Changed production code has no mapped boundary or reachable feature: select every enabled UI test.
 - Missing feature boundary, unmatched test selector, or an affected feature with no tests: report it explicitly and conservatively include UI tests.
-- Opaque function calls, global state, raw pointers, or unresolved project dispatch: by default include tests or mapped features that reach the uncertainty (see the opt-in declared UI policy above), except when every changed declaration in both revisions is a resolved test entry point. In that case select the changed entries and their compiled callers. Helpers, setup/teardown, mixed production edits, and ambiguous source boundaries retain the conservative fallback. Compiled candidate edges model known dispatch; SDK UI calls are not treated as app-function edges.
+- Opaque function calls, global state, raw pointers, or unresolved project dispatch: by default include tests or mapped features that reach the uncertainty (see the opt-in UI and non-UI contracts above), except when every changed declaration in both revisions is a resolved test entry point. In that case select the changed entries and their compiled callers. Helpers, setup/teardown, mixed production edits, and ambiguous source boundaries retain the conservative fallback. Compiled candidate edges model known dispatch; SDK UI calls are not treated as app-function edges.
 - A test entry point cannot be bound: include that test on semantic changes.
 - Unsupported syntax/compiler formats, invalid mapping configuration, missing base graph, unclassified files, or other build changes: explicit full-selection fallback.
 

@@ -6,6 +6,9 @@ import Foundation
 public struct SILModule: Codable, Sendable {
     public var functions: [String: FunctionNode]
     public var dispatchTargets: [String: Set<String>]
+    /// Concrete imported conformances, keyed by emitting module and declaration.
+    /// SIL display names are not globally unique across compilation units.
+    public var externalWitnesses: [String: Set<String>]? = nil
 }
 
 /// A deliberately conservative reader of textual SIL. It retains function
@@ -114,6 +117,7 @@ public enum SILParser {
         static let method = try! NSRegularExpression(pattern: #"\b(class_method|super_method|witness_method|objc_method|objc_super_method)\b.*#([^\s:]+)"#)
         static let witnessType = try! NSRegularExpression(pattern: #"\bwitness_method \$([\w.]+),"#)
         static let witnessTable = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+)* ([\w.]+): [\w.]+ module [\w]+ \{"#)
+        static let externalWitness = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+| \[[^\]]+\])* ([\w.]+): ([\w.]+) module ([\w]+)$"#)
         static let value = try! NSRegularExpression(pattern: #"^(%[\w]+) ="#)
         static let conversion = try! NSRegularExpression(pattern: #"(%[\w]+) = (?:thin_to_thick_function|convert_function|convert_escape_to_noescape|copy_value|move_value|begin_borrow|partial_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
         static let apply = try! NSRegularExpression(pattern: #"\b(?:apply|try_apply|begin_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
@@ -128,10 +132,11 @@ public enum SILParser {
             self.module = module
             self.root = sourceRoot.standardizedFileURL.resolvingSymlinksInPath().path + "/"
         }
-        var result: SILModule { SILModule(functions: functions, dispatchTargets: tables) }
+        var result: SILModule { SILModule(functions: functions, dispatchTargets: tables, externalWitnesses: externalWitnesses) }
 
         var functions: [String: FunctionNode] = [:]
         var tables: [String: Set<String>] = [:]
+        var externalWitnesses: [String: Set<String>] = [:]
         var current: FunctionNode?
         var pendingName = ""
         var pendingLocation: SourceRegion?
@@ -174,6 +179,9 @@ public enum SILParser {
             if current == nil {
                 if line.hasPrefix("sil_witness_table") {
                     witnessType = Pattern.groups(Expressions.witnessTable, in: line)?.first
+                    if let fields = Pattern.groups(Expressions.externalWitness, in: line) {
+                        externalWitnesses[module + ":" + fields[1] + "@witness:" + fields[0], default: []].insert(fields[2])
+                    }
                 } else if line.hasPrefix("sil_vtable") || line == "}" { witnessType = nil }
                 if line.hasPrefix("// "), !line.hasPrefix("// Isolation:") {
                     let name = String(line.dropFirst(3))
@@ -204,6 +212,7 @@ public enum SILParser {
                 current!.regions = locations.map {
                     SourceRegion(path: $0.key, startLine: $0.value.lowerBound, endLine: $0.value.upperBound)
                 }.sorted { ($0.path, $0.startLine) < ($1.path, $1.startLine) }
+                current!.compilerReferences = current!.dependencies
                 functions[current!.id] = current!
                 current = nil
                 return
