@@ -41,6 +41,8 @@ public enum SILParser {
         static let dispatch = try! NSRegularExpression(pattern: #"#([^\s:]+).*:\s*@([^\s:]+)"#)
         static let reference = try! NSRegularExpression(pattern: #"(%[\w]+) = (?:function_ref|dynamic_function_ref|previous_dynamic_function_ref) @([^\s:]+)"#)
         static let method = try! NSRegularExpression(pattern: #"\b(class_method|super_method|witness_method|objc_method|objc_super_method)\b.*#([^\s:]+)"#)
+        static let witnessType = try! NSRegularExpression(pattern: #"\bwitness_method \$([\w.]+),"#)
+        static let witnessTable = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+)* ([\w.]+): [\w.]+ module [\w]+ \{"#)
         static let value = try! NSRegularExpression(pattern: #"^(%[\w]+) ="#)
         static let conversion = try! NSRegularExpression(pattern: #"(%[\w]+) = (?:thin_to_thick_function|convert_function|convert_escape_to_noescape|copy_value|move_value|begin_borrow|partial_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
         static let apply = try! NSRegularExpression(pattern: #"\b(?:apply|try_apply|begin_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
@@ -64,6 +66,7 @@ public enum SILParser {
         var pendingLocation: SourceRegion?
         var locations: [String: ClosedRange<Int>] = [:]
         var knownValues = Set<String>()
+        var witnessType: String?
 
         func location(_ line: String) -> SourceRegion? {
             guard line.containsASCII("loc "), let fields = Pattern.groups(Expressions.location, in: line),
@@ -97,6 +100,9 @@ public enum SILParser {
         func consume(_ raw: String) {
             let line = raw.trimmingSILWhitespace()
             if current == nil {
+                if line.hasPrefix("sil_witness_table") {
+                    witnessType = Pattern.groups(Expressions.witnessTable, in: line)?.first
+                } else if line.hasPrefix("sil_vtable") || line == "}" { witnessType = nil }
                 if line.hasPrefix("// "), !line.hasPrefix("// Isolation:") {
                     let name = String(line.dropFirst(3))
                     pendingName = name.components(separatedBy: ", loc ")[0].components(separatedBy: ", scope ")[0]
@@ -113,6 +119,7 @@ public enum SILParser {
                 } else if line.containsASCII("#"), let match = Pattern.groups(Expressions.dispatch, in: line) {
                     let key = match[0].components(separatedBy: "!")[0]
                     tables[key, default: []].insert(match[1])
+                    if let witnessType { tables[key + "@witness:" + witnessType, default: []].insert(match[1]) }
                 }
                 return
             }
@@ -134,7 +141,14 @@ public enum SILParser {
             }
             if line.containsASCII("_method"), let match = Pattern.groups(Expressions.method, in: line) {
                 if let value = Pattern.groups(Expressions.value, in: line)?.first { knownValues.insert(value) }
-                current!.dynamicDeclarations.insert(match[1].components(separatedBy: "!")[0])
+                var declaration = match[1].components(separatedBy: "!")[0]
+                // Narrow only a concrete nominal receiver. Generic, existential,
+                // compound and unfamiliar forms retain the broad candidate set.
+                if match[0] == "witness_method", let type = Pattern.groups(Expressions.witnessType, in: line)?.first,
+                   !type.contains("τ_"), !["Self", "T", "U", "V"].contains(type) {
+                    declaration += "@witness:" + type
+                }
+                current!.dynamicDeclarations.insert(declaration)
                 current!.uncertainties.insert("Dynamic dispatch: \(match[0]) \(match[1])")
             }
             // Retain dependency flow through common function-value conversions.

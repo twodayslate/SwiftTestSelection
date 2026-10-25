@@ -137,6 +137,7 @@ final class XcodeGraphCache {
     private struct Entry: Codable {
         var identity: [String: String]
         var digest: String
+        var payload: String? = nil
     }
 
     func resetWork() throws {
@@ -157,30 +158,33 @@ final class XcodeGraphCache {
         }
     }
 
-    func loadModule(_ identity: [String: String]) throws -> SILModule? {
-        try load(identity, as: SILModule.self) { module in
+    func loadModule(_ identity: [String: String], report: Bool = true) throws -> SILModule? {
+        try load(identity, as: SILModule.self, report: report) { module in
             guard !module.functions.isEmpty else { throw ImpactError("empty module fragment") }
         }
     }
 
-    private func load<T: Decodable>(_ identity: [String: String], as type: T.Type, validate: (T) throws -> Void) throws -> T? {
+    private func load<T: Decodable>(_ identity: [String: String], as type: T.Type, report: Bool = true, validate: (T) throws -> Void) throws -> T? {
+        let notify: (String) -> Void = report ? progress : { _ in }
         let key = try Self.key(identity)
         let entry = options.directory.appendingPathComponent(key)
         guard fm.fileExists(atPath: entry.path) else {
-            progress("Cache miss \(key.prefix(12)): no entry matching analyzer, toolchain, settings and input identity")
+            notify("Cache miss \(key.prefix(12)): no entry matching analyzer, toolchain, settings and input identity")
             return nil
         }
         do {
             let manifest = try JSONDecoder().decode(Entry.self, from: Data(contentsOf: entry.appendingPathComponent("manifest.json")))
-            let data = try Data(contentsOf: entry.appendingPathComponent("graph.json"))
+            let payload = manifest.payload ?? "graph.json"
+            guard ["graph.json", "graph.bin"].contains(payload) else { throw ImpactError("unsupported cache payload") }
+            let data = try Data(contentsOf: entry.appendingPathComponent(payload))
             guard manifest.identity == identity, manifest.digest == Self.digest(data) else { throw ImpactError("identity/checksum mismatch") }
-            let graph = try JSONDecoder().decode(type, from: data)
+            let graph = try GraphArchive.decodeValue(type, from: data)
             try validate(graph)
             try fm.setAttributes([.modificationDate: Date()], ofItemAtPath: entry.path)
-            progress("Cache hit \(key.prefix(12)): validated identity and payload checksum")
+            notify("Cache hit \(key.prefix(12)): validated identity and payload checksum")
             return graph
         } catch {
-            progress("Cache invalidated \(key.prefix(12)): \(error); rebuilding")
+            notify("Cache invalidated \(key.prefix(12)): \(error); rebuilding")
             try fm.removeItem(at: entry)
             return nil
         }
@@ -204,13 +208,13 @@ final class XcodeGraphCache {
         try fm.createDirectory(at: stage, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: stage) }
         let encoder = JSONEncoder()
-        let data = try encoder.encode(graph)
-        let manifest = try encoder.encode(Entry(identity: identity, digest: Self.digest(data)))
+        let data = try GraphArchive.encodeValue(graph)
+        let manifest = try encoder.encode(Entry(identity: identity, digest: Self.digest(data), payload: "graph.bin"))
         guard Int64(data.count + manifest.count) <= options.maximumBytes else {
             progress("Cache bypass: graph exceeds --cache-max-bytes; analysis remains usable")
             return
         }
-        try data.write(to: stage.appendingPathComponent("graph.json"))
+        try data.write(to: stage.appendingPathComponent("graph.bin"))
         try manifest.write(to: stage.appendingPathComponent("manifest.json"))
         if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
         try fm.moveItem(at: stage, to: destination)
@@ -305,7 +309,7 @@ extension XcodeAnalysis {
             var result: XcodeTestGraph
             if let found { result = found }
             else {
-                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: build.text, settingsData: settings, moduleCache: XcodeModuleCache(cache: cache, identity: identity, source: source, derived: derived, workspace: workspace, directory: options.path.deletingLastPathComponent()))
+                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: build.text, settingsData: settings, moduleCache: XcodeModuleCache(cache: cache, identity: identity, source: source, derived: derived, workspace: workspace, directory: options.path.deletingLastPathComponent(), workers: options.extractionWorkers))
                 try timed("graphPublish", revision: revision) { try cache.store(result, identity: identity) }
             }
             if keepBuild {

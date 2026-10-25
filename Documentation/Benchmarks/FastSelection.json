@@ -1,0 +1,154 @@
+{
+  "date": "2026-10-24",
+  "hardware": "Apple M5, 32 GiB",
+  "macOS": "26.6.1",
+  "compiler": "Swift 6.3.3, Xcode 26.6",
+  "consumerRevision": "1f0e37b69458200227c584d9a4563b5391948cdf",
+  "functions": 124013,
+  "tests": 2000,
+  "referenceCommit": "1990736",
+  "reportParity": "All nine sorted JSON reports identical",
+  "combinedProcessMaximumRSSBytes": 1038811136,
+  "combinedBenchmarkWallSeconds": 723.48,
+  "measurements": [
+    {
+      "indexedSeconds": 2.3480160236358643,
+      "referenceSeconds": 72.70245003700256,
+      "run": 1,
+      "scenario": "SharingPeopleUITests.swift",
+      "selected": 1
+    },
+    {
+      "indexedSeconds": 2.3180679082870483,
+      "referenceSeconds": 68.68665707111359,
+      "run": 2,
+      "scenario": "SharingPeopleUITests.swift",
+      "selected": 1
+    },
+    {
+      "indexedSeconds": 2.6477240324020386,
+      "referenceSeconds": 70.82620000839233,
+      "run": 3,
+      "scenario": "SharingPeopleUITests.swift",
+      "selected": 1
+    },
+    {
+      "indexedSeconds": 1.7809100151062012,
+      "referenceSeconds": 93.00468790531158,
+      "run": 1,
+      "scenario": "SharingPeopleUITestView.swift",
+      "selected": 1819
+    },
+    {
+      "indexedSeconds": 1.758774995803833,
+      "referenceSeconds": 91.24734091758728,
+      "run": 2,
+      "scenario": "SharingPeopleUITestView.swift",
+      "selected": 1819
+    },
+    {
+      "indexedSeconds": 2.0208619832992554,
+      "referenceSeconds": 91.44176197052002,
+      "run": 3,
+      "scenario": "SharingPeopleUITestView.swift",
+      "selected": 1819
+    },
+    {
+      "indexedSeconds": 2.735826015472412,
+      "referenceSeconds": 69.08916795253754,
+      "run": 1,
+      "scenario": "NoteCommentsTests.swift",
+      "selected": 1
+    },
+    {
+      "indexedSeconds": 2.299837112426758,
+      "referenceSeconds": 70.76713597774506,
+      "run": 2,
+      "scenario": "NoteCommentsTests.swift",
+      "selected": 1
+    },
+    {
+      "indexedSeconds": 2.300408959388733,
+      "referenceSeconds": 70.31826102733612,
+      "run": 3,
+      "scenario": "NoteCommentsTests.swift",
+      "selected": 1
+    }
+  ],
+  "scope": "Selection only, no build or extraction. Synthetic one-source-unit fingerprint edits. Some local development overlapped measurements.",
+  "indexedOnlyProcessMaximumRSSBytes": 1040744448,
+  "indexedOnlyMeasurements": [
+    {
+      "indexedSeconds": 2.2614411115646362,
+      "referenceSeconds": 0,
+      "run": 1,
+      "scenario": "SharingPeopleUITests.swift",
+      "selected": 1
+    },
+    {
+      "indexedSeconds": 2.2553449869155884,
+      "referenceSeconds": 0,
+      "run": 2,
+      "scenario": "SharingPeopleUITests.swift",
+      "selected": 1
+    },
+    {
+      "indexedSeconds": 2.2009400129318237,
+      "referenceSeconds": 0,
+      "run": 3,
+      "scenario": "SharingPeopleUITests.swift",
+      "selected": 1
+    },
+    {
+      "indexedSeconds": 1.7610419988632202,
+      "referenceSeconds": 0,
+      "run": 1,
+      "scenario": "SharingPeopleUITestView.swift",
+      "selected": 1819
+    },
+    {
+      "indexedSeconds": 1.905440092086792,
+      "referenceSeconds": 0,
+      "run": 2,
+      "scenario": "SharingPeopleUITestView.swift",
+      "selected": 1819
+    },
+    {
+      "indexedSeconds": 1.7793110609054565,
+      "referenceSeconds": 0,
+      "run": 3,
+      "scenario": "SharingPeopleUITestView.swift",
+      "selected": 1819
+    },
+    {
+      "indexedSeconds": 2.159558057785034,
+      "referenceSeconds": 0,
+      "run": 1,
+      "scenario": "NoteCommentsTests.swift",
+      "selected": 1
+    },
+    {
+      "indexedSeconds": 2.2080150842666626,
+      "referenceSeconds": 0,
+      "run": 2,
+      "scenario": "NoteCommentsTests.swift",
+      "selected": 1
+    },
+    {
+      "indexedSeconds": 2.172863006591797,
+      "referenceSeconds": 0,
+      "run": 3,
+      "scenario": "NoteCommentsTests.swift",
+      "selected": 1
+    }
+  ],
+  "archive": {
+    "binaryBytes": 121726384,
+    "binaryDecodeSeconds": 0.6511620283126831,
+    "binaryEncodeSeconds": 0.9843690395355225,
+    "inputJSONBytes": 333941964,
+    "jsonDecodeSeconds": 1.3184599876403809,
+    "memory": "archive benchmark process: 0.00 s; analyzer footprint 794.0 MiB, process peak 1396.0 MiB",
+    "processMaximumRSSBytes": 1487945728
+  }
+}

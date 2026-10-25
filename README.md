@@ -231,8 +231,7 @@ commands to emit SIL and initializes runners to enumerate tests. It requires mor
 than binaries or dSYMs. The capture fingerprints the complete `Build/Products`
 directory, including the `.xctestrun`, and records the revision, toolchain, build
 context, and input digests. SHA-256 file hashing uses bounded chunks.
-This supported workflow does not consume SIL retained by the build; see
-[build-time SIL capture](#build-time-sil-capture-experimental) for that separate experiment.
+To skip compiler replay, opt in to [sealed build-time SIL capture](#build-time-sil-capture-opt-in). Ordinary build-for-testing does not retain SIL automatically.
 
 Produce a base graph the same way on the base commit (for PRs, the resolved merge
 base), using matching build options/toolchain. Then select and execute:
@@ -280,37 +279,87 @@ plan, configuration, SDK/architectures, destination, and mapping configuration.
 Retain conservative diagnostics in reports; cache reuse does not improve graph or
 mapping completeness. Validate selected runs against full runs before using a CI gate.
 
-### Build-time SIL capture (experimental)
+### Build-time SIL capture (opt-in)
 
-**Capturing complete, validated SIL during build-for-testing would eliminate
-separate compiler replay.** An ordinary build-for-testing does not automatically
-retain the SIL this tool needs; the experimental wrapper adds that output to
-normal compilation.
+`Scripts/capture-build.py` wraps **your build-for-testing step** to add supplementary
+SIL output to normal object compilation. `graph --sil-capture SESSION` validates
+and parses those fragments without recompiling complete captured modules. It does
+not execute test bodies. Keep this path opt-in while validating selections against
+full runs; normal-build SIL and whole-module replay are not universally equivalent.
 
-| Workflow | Dependency extraction |
-| --- | --- |
-| Supported existing-build capture | Build-for-testing → replay compiler commands to emit SIL → parse graphs |
-| Experimental build-time capture | Build-for-testing also emits SIL → validate captured fragments → parse graphs |
+```bash
+# Use a dedicated, stable session OUTSIDE the source checkout and one build at a time.
+python3 /path/to/SwiftTestSelection/Scripts/capture-build.py \
+  --session /tmp/app-impact-capture --context "$EXTERNAL_BUILD_INPUT_DIGEST" \
+  --project "$PWD/App.xcodeproj" --scheme App --test-plan AllTests \
+  --configuration Debug --destination "$DESTINATION" \
+  --derived-data /tmp/app-impact-derived
 
-Parsing, test enumeration, dependency binding and test selection are still
-required. Build-time emission uses Xcode's existing compilation concurrency
-across modules. Saved parsed graphs or compatible module fragments can avoid
-repeated parsing as well.
+swift-test-impact graph \
+  --project "$PWD/App.xcodeproj" --scheme App --test-plan AllTests \
+  --configuration Debug --destination "$DESTINATION" \
+  --derived-data /tmp/app-impact-derived \
+  --build-log /tmp/app-impact-capture/build.log \
+  --build-settings /tmp/app-impact-capture/settings.json \
+  --xctestrun /tmp/app-impact-derived/Build/Products/App_AllTests_iphonesimulator.xctestrun \
+  --revision HEAD --sil-capture /tmp/app-impact-capture \
+  --extraction-workers 2 --format binary --output /tmp/head.impactgraph
+```
 
-The scripts in `Scripts/Experimental` demonstrate capture, but **the supported
-CLI does not yet accept captured SIL as a replacement for replay**. Production
-integration still needs:
+Replace the `.xctestrun` filename with the actual generated file. Use a clean
+committed checkout and a fresh DerivedData directory on the first run. Subsequent
+builds may be incremental. The session retains a complete compiler inventory and
+checks primary-file coverage for each module. Fresh complete captures skip replay;
+missing or unsupported modules explicitly replay. Previous fragments are reused
+only when the full source tree, settings, compiler, command and external context
+match. A source edit may therefore replay unchanged modules: partial capture is
+never accepted as proof that omitted code has no impact. Changing build settings
+or toolchains may require a new session and clean build.
 
-- Complete incremental inventories: unchanged files emit no new fragments, so
-  their previous fragments must be validated and retained, or extraction must
-  fall back explicitly.
-- Provenance tying fragments to the exact revision, compiler inputs and test
-  products used for selection and execution.
-- Correct handling of the dispatch and dependency differences observed between
-  normal-build SIL and replayed SIL; interchangeable graphs are not yet proven.
+The wrapper seals the revision, log, settings, source fingerprints, SIL checksums
+and exact product hashes after a successful build. Failed builds invalidate the
+seal and retain the full log. Analysis checks the seal and rechecks inputs before
+returning a graph. `--context` must fingerprint ignored/generated inputs, external
+packages, scripts and relevant environment settings outside Git. Keep these inputs
+stable during the build and analysis. Sessions retain SIL and logs until you remove
+them; manage their disk space explicitly. Capture supports `-Onone -g`, one compiler
+invocation per module and supported Xcode SwiftDriver formats.
 
-See the [build-time SIL investigation](Documentation/BuildTimeSILInvestigation.md)
-for the prototype, measurements, limitations and implementation follow-ups.
+Concrete witness dispatch keeps the receiver's conformance (for example,
+`UIApplication.State` equality), avoiding unrelated equality implementations.
+Generic, existential and unsupported receiver forms remain conservative. Missing
+concrete witness tables produce explicit unresolved-dependency handling.
+
+The original [investigation](Documentation/BuildTimeSILInvestigation.md) records
+prototype measurements and remaining normal-build/replay differences.
+
+### Compact graphs and reuse of test discovery
+
+Use `graph --format binary --output head.impactgraph` for a checksummed binary
+archive with interned symbols, paths and graph strings. `--base-graph` and
+`--head-graph` automatically accept binary or existing JSON graphs; JSON remains
+the readable interchange/report format. Persistent graph and module caches use the
+compact representation too. A bad checksum or unsupported archive fails explicitly.
+
+Existing-build graph capture also accepts:
+
+```text
+--discovery-cache /path/to/dedicated-cache --discovery-context INPUT_DIGEST
+```
+
+This reuses the **inventory and entire bound analysis**, saving enumeration,
+parsing and binding when the products, source revision and compiler source inputs,
+log, settings, destination, plan, toolchain, simulator runtime, analyzer and capture
+seal match exactly. A changed or new test, changed products or discovery context
+misses the cache. The context must cover external data and runner initialization
+inputs; disable caching for nondeterministic/dynamic discovery without a stable
+input contract. Cache reuse does not discover new runtime-generated tests on its
+own. The cache shares the validated, locked publication and 5 GiB eviction policy.
+
+Selection builds a dense forward/reverse index once per revision and traverses
+backward once per changed destination set. Test explanations retain the original
+shortest-path tie breaking. File and feature indexes avoid repeated full-graph
+scans; selection does not need a coverage baseline.
 
 ### Xcode implementation and requirements
 
@@ -602,7 +651,8 @@ products. This regression invokes no real Xcode commands or test bodies.
 
 ### Bounded Xcode extraction
 
-`--extraction-workers N` bounds concurrent compiler/parser jobs during fresh Xcode
+`--extraction-workers N` bounds concurrent compiler/parser jobs, dependency scans,
+source parsing and product hashing during fresh Xcode
 analysis, including capture from existing builds. The default is **1**; values
 from 1 through 8 are accepted. Start with 2 only after measuring your runner's
 memory. This setting does not change the normal executable build or test execution.
@@ -678,3 +728,11 @@ validation timing, and avoided compiler/parser work.
 
 Release measurements, fresh-extraction parity checks and reproduction commands
 are in [the module cache benchmark](Documentation/Benchmarks/ModuleCache.md).
+
+With multiple workers, completed extraction fragments are staged on disk and
+merged in compiler-inventory order. Single-worker extraction avoids this extra I/O. Workers immediately take another module, even when an earlier module is
+slow. This bounds transient parsed-module memory by worker count and preserves
+ownership and diagnostic ordering. Extra staging I/O is the tradeoff; start with
+1–2 workers on memory-constrained CI runners and measure your project.
+
+See [release measurements and validation](Documentation/Benchmarks/FastSelection.md).

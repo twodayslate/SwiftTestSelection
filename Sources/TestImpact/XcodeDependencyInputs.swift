@@ -8,7 +8,7 @@ import Foundation
 /// Never remove those details from opaque binaries: fingerprint the compiler's
 /// input inventory instead, retaining all options and hashing every input file.
 enum XcodeDependencyInputs {
-    struct Inventory {
+    struct Inventory: Sendable {
         var digest: String
         var modules: Set<String>
         var projectImports: Set<String>

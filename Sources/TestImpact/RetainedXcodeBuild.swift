@@ -68,7 +68,7 @@ enum RetainedXcodeBuild {
         guard completion.schemaVersion == 1, completion.graphDigest == (try ArtifactFiles.digest(path)) else {
             throw ImpactError("Retained head graph is incomplete, corrupt, or incompatible. Build and select again.")
         }
-        return try JSONDecoder().decode(XcodeTestGraph.self, from: Data(contentsOf: path))
+        return try GraphArchive.decodeValue(XcodeTestGraph.self, from: Data(contentsOf: path))
     }
 }
 
@@ -80,6 +80,6 @@ extension XcodeAnalysis {
         if ["state", "complete.json"].contains(where: { FileManager.default.fileExists(atPath: parent.appendingPathComponent($0).path) }) {
             return try RetainedXcodeBuild.load(from: path)
         }
-        return try JSONDecoder().decode(XcodeTestGraph.self, from: Data(contentsOf: path))
+        return try GraphArchive.decodeValue(XcodeTestGraph.self, from: Data(contentsOf: path))
     }
 }

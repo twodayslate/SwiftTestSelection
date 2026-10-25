@@ -13,6 +13,7 @@ public enum XcodeFineSelector {
         var diagnostics: [SelectionDiagnostic] = []
         var fullReasons: [String] = []
         var ignored = Set<String>()
+        var headMappingIndex: MappingIndex?
         func include(_ tests: Set<String>, kind: String, reason: String, revision: String, path: [String] = []) {
             for test in tests.intersection(inventory).sorted() {
                 selected.insert(test)
@@ -27,6 +28,8 @@ public enum XcodeFineSelector {
         }
         let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.units) ?? [], by: \.key)
         let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.units), by: \.key)
+        let oldUnitsByFile = Dictionary(grouping: oldUnits.values.flatMap { $0 }, by: { $0.region.path })
+        let newUnitsByFile = Dictionary(grouping: newUnits.values.flatMap { $0 }, by: { $0.region.path })
         var oldChanged: [SourceUnit] = []
         var newChanged: [SourceUnit] = []
         for key in Set(oldUnits.keys).union(newUnits.keys) {
@@ -69,8 +72,9 @@ public enum XcodeFineSelector {
             }
             for key in Set(oldEdges.keys).intersection(newEdges.keys) {
                 if signatures(oldEdges[key]!) != signatures(newEdges[key]!) {
-                    for (nodes, units, isOld) in [(oldEdges[key]!, oldUnits.values.flatMap { $0 }, true), (newEdges[key]!, newUnits.values.flatMap { $0 }, false)] {
-                        let enclosing = units.filter { unit in unit.kind == "function" && nodes.contains { node in node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine } } }
+                    for (nodes, units, isOld) in [(oldEdges[key]!, oldUnitsByFile, true), (newEdges[key]!, newUnitsByFile, false)] {
+                        let candidates = Set(nodes.flatMap(\.regions).map(\.path)).flatMap { units[$0] ?? [] }
+                        let enclosing = candidates.filter { unit in unit.kind == "function" && nodes.contains { node in node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine } } }
                         if isOld { oldChanged += enclosing } else { newChanged += enclosing }
                     }
                 }
@@ -127,13 +131,17 @@ public enum XcodeFineSelector {
         }
         for (revision, optionalGraph, units) in [("base", previous, oldChanged), ("head", Optional(current), newChanged)] {
             guard let snapshot = optionalGraph, let graph = snapshot.dependencies else { continue }
+            let index = DependencyIndex(graph)
             var affected = Set<String>()
             var productionUnits: [SourceUnit] = []
             var productionAffected = Set<String>()
             for unit in units {
                 let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
                 let production = owners.isEmpty || owners.contains { !$0.isTest }
-                let nodes = graph.functions.values.filter { node in
+                let candidates = unit.kind != "function" && !unit.scope.isEmpty
+                    ? owners.reduce(into: Set<String>()) { $0.formUnion(index.byModule[snapshot.modules[$1.name] ?? ""] ?? []) }
+                    : index.byFile[unit.region.path] ?? []
+                let nodes = candidates.compactMap { graph.functions[$0] }.filter { node in
                     guard !node.regions.isEmpty else { return false }
                     if unit.kind == "function" {
                         return node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }
@@ -166,13 +174,14 @@ public enum XcodeFineSelector {
                     fallback("unresolved_declaration", "Cannot associate changed declaration with compiled functions: \(unit.region.path):\(unit.region.startLine)", tests: production ? inventory : tests)
                 }
             }
+            let affectedPaths = index.paths(to: affected)
             for test in snapshot.tests where inventory.contains(test) {
                 if hasSemanticChanges {
                     for diagnostic in graph.testDiagnostics[test] ?? [] {
                         fallback("unresolved_inheritance", diagnostic + " for " + test, tests: [test])
                     }
                 }
-                if let path = graph.dependencyPath(from: graph.tests[test] ?? [], to: affected) {
+                if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
                     include([test], kind: "dependency", reason: "Compiled dependency reaches a changed declaration", revision: revision,
                             path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
@@ -187,9 +196,10 @@ public enum XcodeFineSelector {
                 let uncertain = Set(graph.functions.values.filter { node in
                     !node.regions.isEmpty && node.uncertainties.contains { $0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:") }
                 }.map(\.id))
+                let uncertainPaths = index.paths(to: uncertain)
                 for test in snapshot.tests where inventory.contains(test) {
                     if declaredUIRuntime && uiTests.contains(test) { continue }
-                    if let path = graph.dependencyPath(from: graph.tests[test] ?? [], to: uncertain) {
+                    if let path = uncertainPaths.path(from: graph.tests[test] ?? []) {
                         fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test): \(graph.functions[path.last!]!.uncertainties.sorted().joined(separator: "; "))", tests: [test])
                     }
                 }
@@ -206,27 +216,34 @@ public enum XcodeFineSelector {
             let opaqueProduction = declaredUIRuntime ? Set<String>() : Set(graph.functions.values.filter { node in
                 !node.regions.isEmpty && node.uncertainties.contains { $0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:") }
             }.map(\.id))
+            let opaquePaths = index.paths(to: opaqueProduction)
+            let mappingIndex = MappingIndex(mappings, snapshot: snapshot, graph: graph, index: index)
+            if revision == "head" { headMappingIndex = mappingIndex }
+            let featureRoots = mappingIndex.roots
+            // Keep only explanations between each feature and boundary, rather
+            // than a V-sized distance array for every changed declaration.
+            let unitChains: [[String: [String]]] = productionUnits.map { unit in
+                let paths = index.paths(to: Set((index.byFile[unit.region.path] ?? []).filter { id in
+                    graph.functions[id]!.regions.contains { $0.intersects(unit.region) }
+                }).intersection(productionAffected))
+                return featureRoots.compactMapValues { paths.path(from: $0) }
+            }
             for feature in mappings.features {
-                let selectors = mappings.selectors(for: feature)
-                let tests = Set(snapshot.tests.filter { test in selectors.contains { UIFeatureMappings.selects(test, selector: $0) } })
+                let tests = mappingIndex.tests[feature.name] ?? []
                 mappedTests.formUnion(tests)
-                for selector in selectors where !snapshot.tests.contains(where: { UIFeatureMappings.selects($0, selector: selector) }) {
+                for selector in mappingIndex.unmatched[feature.name] ?? [] {
                     fallback("unresolved_mapping_selector", "\(revision): feature \(feature.name) has no discovered tests for \(selector)", tests: uiTests)
                 }
-                let roots = Set(graph.functions.values.filter { node in
-                    (feature.sources ?? []).contains { pattern in node.regions.contains { UIFeatureMappings.matches($0.path, pattern: pattern) } } ||
-                    (feature.symbols ?? []).contains { UIFeatureMappings.matches(node.module + "." + node.name, pattern: $0) }
-                }.map(\.id))
-                if !declaredUIRuntime && graph.dependencyPath(from: roots, to: opaqueProduction) != nil {
+                let roots = featureRoots[feature.name]!
+                if !declaredUIRuntime && opaquePaths.path(from: roots) != nil {
                     fallback("unresolved_feature_dependency", "\(revision): feature \(feature.name) reaches opaque runtime dependencies.", tests: tests)
                 }
                 if roots.isEmpty && (!(feature.sources ?? []).isEmpty || !(feature.symbols ?? []).isEmpty) {
                     fallback("unresolved_mapping_boundary", "\(revision): no compiled source/symbol boundary for feature \(feature.name)", tests: uiTests)
                 }
-                for unit in productionUnits {
+                for (unitIndex, unit) in productionUnits.enumerated() {
                     let directlyMapped = (feature.sources ?? []).contains { UIFeatureMappings.matches(unit.region.path, pattern: $0) }
-                    let unitIDs = Set(graph.functions.values.filter { node in node.regions.contains { $0.intersects(unit.region) } }.map(\.id)).intersection(productionAffected)
-                    let chain = graph.dependencyPath(from: roots, to: unitIDs)
+                    let chain = unitChains[unitIndex][feature.name]
                     if directlyMapped || chain != nil {
                         featurePaths[feature.name] = (chain ?? []).map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 } + [unit.region.path]
                         matchedFeatures.insert(feature.name)
@@ -246,7 +263,7 @@ public enum XcodeFineSelector {
             }
             for feature in mappings.features where matchedFeatures.contains(feature.name) {
                 let selectors = mappings.selectors(for: feature)
-                let tests = Set(snapshot.tests.filter { test in selectors.contains { UIFeatureMappings.selects(test, selector: $0) } })
+                let tests = mappingIndex.tests[feature.name] ?? []
                 include(tests, kind: "explicitMapping", reason: "Affected UI feature: \(feature.name)", revision: revision, path: [feature.name] + (featurePaths[feature.name] ?? []) + selectors)
                 if tests.isEmpty { fallback("unresolved_feature_tests", "\(revision): affected feature \(feature.name) has no test mappings.", tests: uiTests) }
             }
@@ -272,21 +289,23 @@ public enum XcodeFineSelector {
         report.explanations.sort { ($0.test, $0.kind, $0.revision, $0.reason, $0.path.joined()) < ($1.test, $1.kind, $1.revision, $1.reason, $1.path.joined()) }
         report.diagnostics = Dictionary(grouping: diagnostics, by: { $0.code + $0.message + $0.tests.joined() }).values.compactMap(\.first).sorted { ($0.code, $0.message) < ($1.code, $1.message) }
         report.ignoredChanges = ignored.sorted()
-        let declaredTests = Set(current.tests.filter { test in current.mappings?.features.contains { feature in
-            current.mappings!.selectors(for: feature).contains { UIFeatureMappings.selects(test, selector: $0) }
-        } == true })
+        if headMappingIndex == nil, let mappings = current.mappings, let graph = current.dependencies {
+            headMappingIndex = MappingIndex(mappings, snapshot: current, graph: graph, index: DependencyIndex(graph))
+        }
+        let declaredTests = headMappingIndex.map { Set($0.tests.values.flatMap { $0 }) } ?? Set(current.tests.filter { test in
+            current.mappings?.features.contains { feature in
+                current.mappings!.selectors(for: feature).contains { UIFeatureMappings.selects(test, selector: $0) }
+            } == true
+        })
         report.uiMappingCoverage = UIMappingCoverage(mappingFilePresent: current.mappings != nil,
             mappedTests: uiTests.intersection(declaredTests).sorted(), unmappedTests: uiTests.subtracting(declaredTests).sorted())
-        if let mappings = current.mappings, let graph = current.dependencies {
+        if let mappings = current.mappings, current.dependencies != nil {
             for feature in mappings.features {
                 if !(feature.sources ?? []).isEmpty || !(feature.symbols ?? []).isEmpty {
-                    let resolved = graph.functions.values.contains { node in
-                        (feature.sources ?? []).contains { pattern in node.regions.contains { UIFeatureMappings.matches($0.path, pattern: pattern) } } ||
-                        (feature.symbols ?? []).contains { UIFeatureMappings.matches(node.module + "." + node.name, pattern: $0) }
-                    }
+                    let resolved = !(headMappingIndex?.roots[feature.name]?.isEmpty ?? true)
                     if !resolved { report.uiMappingCoverage!.unresolvedBoundaries.append(feature.name) }
                 }
-                for selector in mappings.selectors(for: feature) where !current.tests.contains(where: { UIFeatureMappings.selects($0, selector: selector) }) {
+                for selector in headMappingIndex?.unmatched[feature.name] ?? [] {
                     report.uiMappingCoverage!.unmatchedSelectors.append(feature.name + ": " + selector)
                 }
             }

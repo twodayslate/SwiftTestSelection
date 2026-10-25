@@ -1,6 +1,11 @@
 # Capturing SIL during the normal Xcode build
 
-This is an investigation for #11. The scripts under `Scripts/Experimental` do not add a supported CLI input format or change production selection. Keep compiler replay as the production path until capture completeness, provenance and selection equivalence are enforced together.
+This records the original investigation for #11. Opt-in integration is now available
+through `Scripts/capture-build.py` and `graph --sil-capture`; see the
+[current workflow](../README.md#build-time-sil-capture-opt-in) and
+[validation results](Benchmarks/FastSelection.md). The measurements below describe
+the prototype. Universal normal-build/replay equivalence remains unproven; keep
+capture opt-in and validate against full runs before using it as a CI gate.
 
 ## What works
 
