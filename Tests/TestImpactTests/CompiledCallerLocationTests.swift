@@ -4,7 +4,7 @@ import Foundation
 import Testing
 @testable import TestImpact
 
-@Test(.serialized, arguments: ["regular", "transparent", "escapedTransparent", "enum", "inferredEnum"])
+@Test(.serialized, arguments: ["regular", "transparent", "escapedTransparent", "enum", "inferredEnum", "callable", "memberCallable"])
 func compiledCallerLocationChangeCannotHideAFailingTest(kind: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("caller-locations-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -13,10 +13,17 @@ func compiledCallerLocationChangeCannotHideAFailingTest(kind: String) throws {
     let frameworks = platform + "/Developer/Library/Frameworks"
     let test = "Tests/LocationTests/testLine()"
     let isEnum = kind == "enum" || kind == "inferredEnum"
+    let isCallable = kind == "callable" || kind == "memberCallable"
     let name = kind == "escapedTransparent" ? "`currentLine`" : "currentLine"
-    let helper = isEnum ? "enum Location { case line(Int = #line) }" :
+    let callableHelper = """
+    struct LineReader { @_transparent func callAsFunction(line: Int = #line) -> Int { line } }
+    struct Readers { let current = LineReader() }
+    """
+    let helper = isCallable ? callableHelper : isEnum ? "enum Location { case line(Int = #line) }" :
         (kind == "regular" ? "" : "@_transparent ") + "func \(name)(line: Int = #line) -> Int { line }"
-    let assertion = kind == "inferredEnum" ? "let location: Location = .line(); if case .line(let value) = location { XCTAssertEqual(value, 3) }" :
+    let assertion = kind == "callable" ? "let currentLine = LineReader(); XCTAssertEqual(currentLine(), 3)" :
+        kind == "memberCallable" ? "let readers = Readers(); XCTAssertEqual(readers.current(), 3)" :
+        kind == "inferredEnum" ? "let location: Location = .line(); if case .line(let value) = location { XCTAssertEqual(value, 3) }" :
         isEnum ? "if case .line(let value) = Location.line() { XCTAssertEqual(value, 3) }" :
         "XCTAssertEqual(currentLine(), 3)"
     let source = """

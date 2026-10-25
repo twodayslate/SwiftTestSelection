@@ -155,7 +155,8 @@ mandatory inlining (such as `@_transparent`) and enum constructor lowering canno
 hide shifted location arguments. Enum associated-value defaults use caller
 locations too. A shifted call can therefore select its test even if its
 syntax is unchanged. Calls with explicit arguments, ambiguous bindings, matching
-names in unrelated modules/overloads, and constructor aliases remain conservative because syntax and
+names in unrelated modules/overloads, constructor aliases, and implicit
+`callAsFunction` invocations remain conservative because syntax and
 dependency edges do not prove the selected declaration or omitted argument slots. Body
 expressions and parenthesized/arithmetic defaults retain their evaluated location;
 `#sourceLocation` adjusts presumed file/line values, and `#column` tracks its own

@@ -435,7 +435,11 @@ public enum XcodeFineSelector {
         for unit in units {
             let names = unit.invocationNames ?? []
             guard !names.isEmpty else { continue }
-            var kinds = kindsByName["*"] ?? []
+            // `reader()` and `holder.reader()` spell the receiver, not
+            // callAsFunction. Its edge can disappear through mandatory inlining,
+            // so source names cannot rule out an implicit callable-object call.
+            // Interpret the stored declaration name here to cover saved graphs too.
+            var kinds = (kindsByName["*"] ?? []).union(kindsByName["callAsFunction"] ?? [])
             for name in names { kinds.formUnion(name == "*" ? allKinds : kindsByName[name] ?? []) }
             if !kinds.isEmpty { result[unit.key, default: []].formUnion(kinds) }
         }
