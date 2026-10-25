@@ -334,6 +334,13 @@ Concrete witness dispatch keeps the receiver's conformance (for example,
 Generic, existential and unsupported receiver forms remain conservative. Missing
 concrete witness tables produce explicit unresolved-dependency handling.
 
+Source snapshots distinguish project type declarations from extensions of imported
+types. An `extension XCTestCase` helper owns that member, not unrelated framework
+initializers. Missing project members still produce conservative dispatch
+diagnostics, and compiled helpers and lifecycle overrides remain dependencies.
+Regenerate older saved graphs to acquire this ownership metadata; legacy snapshots
+retain their conservative classification.
+
 The original [investigation](Documentation/BuildTimeSILInvestigation.md) records
 prototype measurements and remaining normal-build/replay differences.
 

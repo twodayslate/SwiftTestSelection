@@ -17,11 +17,15 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     public var units: [SourceUnit]
     public var inheritance: [String: [String]]
     public var diagnostics: [String]
+    /// Member declarations owned by the project, including extensions of SDK
+    /// types. Optional so older saved graphs keep their conservative behavior.
+    public var dispatchMembers: Set<String>? = nil
 
     public static func parse(_ text: String, path: String, module: String) -> Self {
         let tree = Parser.parse(source: text)
         let locations = SourceLocationConverter(fileName: path, tree: tree)
         var result = Self(units: [], inheritance: [:], diagnostics: [])
+        result.dispatchMembers = []
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
         let tokens = Array(tree.tokens(viewMode: .sourceAccurate))
         let locationNames: Set<String> = ["line", "column", "file", "fileID", "filePath", "sourceLocation"]
@@ -35,6 +39,17 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(fingerprint).joined(separator: "|") + "]"
         }
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String]) {
+            if !scope.isEmpty {
+                let names: [String]
+                if let function = node.as(FunctionDeclSyntax.self) { names = [function.name.text] }
+                else if node.is(InitializerDeclSyntax.self) { names = ["init"] }
+                else if node.is(DeinitializerDeclSyntax.self) { names = ["deinit"] }
+                else if node.is(SubscriptDeclSyntax.self) { names = ["subscript"] }
+                else if let variable = node.as(VariableDeclSyntax.self) {
+                    names = variable.bindings.compactMap { $0.pattern.as(IdentifierPatternSyntax.self)?.identifier.text }
+                } else { names = [] }
+                result.dispatchMembers!.formUnion(names.map { scope.joined(separator: ".") + "." + $0 })
+            }
             let start = locations.location(for: node.positionAfterSkippingLeadingTrivia).line
             let end = locations.location(for: node.endPositionBeforeTrailingTrivia).line
             result.units.append(SourceUnit(
@@ -74,7 +89,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             } else if let value = node.as(ExtensionDeclSyntax.self) {
                 let names = [value.extendedType.trimmedDescription]
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "type", scope: names)
+                add(header, header: header, kind: "extension", scope: names)
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(FunctionDeclSyntax.self) {
                 add(node, header: Syntax(value.with(\.body, nil)), kind: "function", scope: scope)

@@ -154,6 +154,7 @@ enum XcodeCompilerGraph {
             result.merge(file.inheritance) { Array(Set($0 + $1)) }
         }
         let projectTypes = Set(sources.values.flatMap { $0.units.filter { $0.kind == "type" }.map(\.scope) })
+        let projectMembers = Set(sources.values.flatMap { $0.dispatchMembers ?? [] })
         // Index the exact prefixes used by the conservative dispatch matcher.
         // Re-scanning every function for every unresolved declaration is quadratic
         // on large XCTest targets. Store only prefixes present in declarations.
@@ -170,8 +171,7 @@ enum XcodeCompilerGraph {
         }
         for symbol in graph.functions.keys {
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
-                let type = declaration.components(separatedBy: ".").first ?? declaration
-                if projectTypes.contains(type), !graph.functions[symbol]!.resolvedDynamicDeclarations.contains(declaration) {
+                if !graph.functions[symbol]!.resolvedDynamicDeclarations.contains(declaration) {
                     // Objective-C entry points (including XCTest initializers)
                     // may have no Swift vtable slot. Include all matching
                     // compiled implementations rather than dropping the edge.
@@ -181,7 +181,10 @@ enum XcodeCompilerGraph {
                         graph.functions[symbol]!.resolvedDynamicDeclarations.insert(declaration)
                         continue
                     }
-                    graph.functions[symbol]!.uncertainties.insert("Unresolved project dispatch: " + declaration)
+                    let ownedType = declaration.indices.contains { declaration[$0] == "." && projectTypes.contains(String(declaration[..<$0])) }
+                    if ownedType || projectMembers.contains(declaration) {
+                        graph.functions[symbol]!.uncertainties.insert("Unresolved project dispatch: " + declaration)
+                    }
                 }
             }
         }
