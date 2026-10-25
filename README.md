@@ -567,6 +567,11 @@ The key includes repository identity, exact revision, graph/cache schema, the
 analyzer executable's SHA-256 (so changing upstream versions invalidates it),
 Xcode/Swift versions, installed SDKs and simulator runtimes, exact destination,
 container, scheme, plan, configuration, mapping path, and resolved build settings.
+Workspace paths in settings normalize verified aliases of that exact export,
+including `/tmp` and `/private/tmp` and the caller's symlinked retained parent.
+External paths, neighboring directories and semantic flags remain in the identity.
+Run the retained-build integration script with `--workspace-alias` to exercise warm
+reuse through a symlinked parent containing spaces.
 Tracked dependency locks are part of the revision, and Xcode uses
 `-onlyUsePackageVersionsFromResolvedFile`. **`--cache-context` must be a stable
 fingerprint of any inputs not represented there:** build-script environment,

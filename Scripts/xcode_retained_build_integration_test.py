@@ -18,8 +18,14 @@ p.add_argument('--destination', required=True)
 p.add_argument('--tool', type=pathlib.Path, default=ROOT / '.build/release/swift-test-impact')
 p.add_argument('--output', type=pathlib.Path, required=True)
 p.add_argument('--keep-work', action='store_true')
+p.add_argument('--workspace-alias', action='store_true', help='Exercise /tmp aliases and a symlinked parent containing spaces')
 a = p.parse_args()
-directory = pathlib.Path(tempfile.mkdtemp(prefix='swift-impact-retained-'))
+cleanup_root = pathlib.Path(tempfile.mkdtemp(prefix='swift-impact-retained-', dir='/tmp' if a.workspace_alias else None))
+directory = cleanup_root
+if a.workspace_alias:
+    (directory / 'physical parent').mkdir()
+    (directory / 'linked parent').symlink_to(directory / 'physical parent', target_is_directory=True)
+    directory = directory / 'linked parent'
 work = directory / 'App'
 
 
@@ -128,4 +134,4 @@ try:
     a.output.write_text(json.dumps(dict(analyzerSHA256=hashlib.sha256(a.tool.read_bytes()).hexdigest(), hardware=run(['sysctl', '-n', 'machdep.cpu.brand_string']).stdout.strip(), toolchain=run(['xcodebuild', '-version']).stdout.strip(), destination=a.destination, base=base, head=head, analysisSeconds=analysis_seconds, executionSeconds=execution_seconds, headBuildCount=1, totalBuildCount=2, automaticRunVerified=True, selectedTests=expected, events=report['analysisEvents']), indent=2)+'\n')
 finally:
     if a.keep_work: print(f'Retained {directory}', flush=True)
-    else: shutil.rmtree(directory)
+    else: shutil.rmtree(cleanup_root)

@@ -98,10 +98,41 @@ private func cacheGraph() -> XcodeTestGraph {
 @Test func buildSettingPathsCanBeNormalizedAcrossIsolatedWorkDirectories() throws {
     let first = Data(#"[{"buildSettings":{"SRCROOT":"/tmp/work-first/source"}}]"#.utf8)
     let next = Data(#"[{"buildSettings":{"SRCROOT":"/tmp/work-next/source"}}]"#.utf8)
-    let a = String(decoding: try XcodeGraphCache.canonicalInventory(first), as: UTF8.self).replacingOccurrences(of: "/tmp/work-first", with: "<WORK>")
-    let b = String(decoding: try XcodeGraphCache.canonicalInventory(next), as: UTF8.self).replacingOccurrences(of: "/tmp/work-next", with: "<WORK>")
+    let a = String(decoding: try XcodeGraphCache.normalizedSettings(first, workspace: URL(fileURLWithPath: "/tmp/work-first")), as: UTF8.self)
+    let b = String(decoding: try XcodeGraphCache.normalizedSettings(next, workspace: URL(fileURLWithPath: "/tmp/work-next")), as: UTF8.self)
     #expect(a == b)
-    #expect(a.contains("<WORK>/source"))
+    #expect(a.contains("<CACHE-WORK>/source"))
+}
+
+@Test func settingsNormalizeExactWorkspaceAliasesWithoutDroppingSemanticPaths() throws {
+    let root = URL(fileURLWithPath: "/tmp/settings-alias-" + UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let actual = root.appendingPathComponent("real parent")
+    let alias = root.appendingPathComponent("linked parent")
+    try FileManager.default.createDirectory(at: actual, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: actual)
+    func settings(_ workspace: URL, external: String = "/external/SDK", flag: String = "DEBUG") throws -> Data {
+        try JSONSerialization.data(withJSONObject: [["buildSettings": [
+            "SRCROOT": workspace.appendingPathComponent("source").path,
+            "PATH": workspace.path + "/bin:/usr/bin:" + external,
+            "OTHER_SWIFT_FLAGS": "-I\"\(workspace.path)/Includes\" -F\(workspace.path)/Frameworks -D" + flag,
+            "EXTERNAL": external
+        ]]])
+    }
+    let first = actual.appendingPathComponent("first bundle")
+    let second = actual.appendingPathComponent("second bundle")
+    for path in [first, second] { try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true) }
+    let linked = alias.appendingPathComponent("first bundle")
+    let privatePath = URL(fileURLWithPath: "/private" + first.path)
+    let expected = try XcodeGraphCache.normalizedSettings(settings(second), workspace: second)
+    for spelling in [first, linked, privatePath] {
+        #expect(try XcodeGraphCache.normalizedSettings(settings(spelling), workspace: first, aliases: [linked]) == expected)
+    }
+    #expect(try XcodeGraphCache.normalizedSettings(settings(first, external: "/other/SDK"), workspace: first) != expected)
+    #expect(try XcodeGraphCache.normalizedSettings(settings(first, flag: "RELEASE"), workspace: first) != expected)
+    let neighbors = [first.path + "-unrelated", first.path + " unrelated", "/external" + first.path, "/other/SDK"]
+    let data = try JSONSerialization.data(withJSONObject: neighbors)
+    #expect(try XcodeGraphCache.normalizedSettings(data, workspace: first, aliases: [URL(fileURLWithPath: "/other/SDK")]) == XcodeGraphCache.canonicalInventory(data))
 }
 
 @Test func compactCacheStillReadsLegacyJSONEntries() throws {
