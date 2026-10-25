@@ -632,6 +632,10 @@ caller-owned bundle containing `source/`, `DerivedData/` (including the complete
 or partially created bundle directories are rejected. Use a distinct path per
 job. Keep the bundle until execution has finished, then explicitly remove it.
 Cancellation can leave an incomplete bundle, which must be removed explicitly.
+Build stdout and stderr stream directly to `build.log` before compilation starts.
+The CLI prints its path; the complete log and settings survive failed builds,
+later analysis failures, and cancellation. An incomplete bundle remains ineligible
+for execution. Check this with `python3 Scripts/retained_failure_log_test.py --tool .build/release/swift-test-impact`.
 Cache eviction never removes these caller-owned products.
 
 `--retain-build` can accompany the analysis cache options. On a warm head graph,
