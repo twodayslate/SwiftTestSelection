@@ -31,6 +31,14 @@ explicit `incomplete override ancestry` diagnostic for matching member dispatche
 Known XCTest/NSObject ancestry and super calls keep their precise behavior. This
 is conservative handling, not type-alias resolution.
 
+Superclass lookup follows enclosing scopes before module-level names, so a
+top-level `Parent` does not hide `Scope.Parent`. Alias declarations, including
+aliases used as qualifiers, stop lookup conservatively rather than letting it
+fall through to an unrelated class. Required initializer implementations are
+recorded even without an `override` modifier. Compiled regressions verify a path
+to the actual nested override and required initializer, then check that an edit
+selects its caller and leaves an unrelated test out.
+
 ## Saved consumer comparison
 
 Release validation on the existing ChainOfCustody graph (124,013 functions, 2,000
@@ -65,7 +73,7 @@ IMPACT_EXTENSION_OUTPUT=/tmp/extension-results.json \
 swift test -c release --filter consumerExtensionDispatchProbe
 ```
 
-## Generic-superclass follow-up
+## Superclass and initializer validation
 
 A separate saved-input check of `issue11-consumer-graph.json` at the same consumer
 source revision selects **1,464 tests versus 1,445** in its saved baseline: 19
@@ -73,7 +81,7 @@ additional conservative candidates and no omissions. The incorrect XCTestCase
 initializer classification remains absent (145 affected tests before, zero after).
 The source fingerprints were verified before rebinding. These counts compare
 against this saved baseline, not the previous PR head. Its SHA-256 and exact added identifiers are recorded
-under `genericSuperclassValidation` in the raw results.
+under `overrideResolutionValidation` in the raw results.
 
 The ancestry fallback deliberately retains callers of matching dispatches when
 an override's superclass chain cannot be established. This can add conservative
@@ -81,6 +89,7 @@ candidates; it does not claim complete type-alias or external-framework hierarch
 resolution. The compiled generic-superclass case has no such diagnostic and
 selects only its caller. Full-suite behavioral validation remains separate.
 
-Review-fix validation: all 127 release tests passed, including both compiled
+Review-fix validation after rebasing onto `4e36974` (main): all 133 release tests passed, including both compiled
 override cases, nested nominal-name parsing, unresolved ancestry, trailing
-protocol conformances, and missing-implementation/super-call checks.
+protocol conformances, missing-implementation/super-call checks, lexical
+shadowing, required initializer dispatch, and the capture tests merged in #28.

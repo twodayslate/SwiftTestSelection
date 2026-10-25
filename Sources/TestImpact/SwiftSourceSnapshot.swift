@@ -20,8 +20,11 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Member declarations owned by the project, including extensions of SDK
     /// types. Optional so older saved graphs keep their conservative behavior.
     public var dispatchMembers: Set<String>? = nil
-    /// Module-qualified class/member names explicitly declared with override.
+    /// Module-qualified overrides and required initializer implementations.
     public var dispatchOverrides: Set<String>? = nil
+    /// Alias declarations shadow nominal names even when their targets cannot
+    /// be resolved by the source index.
+    public var typeAliases: Set<String>? = nil
     /// First inherited type for each class, excluding trailing conformances.
     /// Older snapshots fall back to the broader inheritance inventory.
     public var superclasses: [String: [String]]? = nil
@@ -49,6 +52,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         var result = Self(units: [], inheritance: [:], diagnostics: [])
         result.dispatchMembers = []
         result.dispatchOverrides = []
+        result.typeAliases = []
         result.superclasses = [:]
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
         let tokens = Array(tree.tokens(viewMode: .sourceAccurate))
@@ -63,6 +67,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(fingerprint).joined(separator: "|") + "]"
         }
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String]) {
+            if let alias = node.as(TypeAliasDeclSyntax.self) {
+                result.typeAliases!.insert(([module] + scope + [alias.name.text]).joined(separator: "."))
+            }
             if !scope.isEmpty {
                 let names: [String]
                 if let function = node.as(FunctionDeclSyntax.self) { names = [function.name.text] }
@@ -77,7 +84,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     ?? node.as(InitializerDeclSyntax.self)?.modifiers
                     ?? node.as(VariableDeclSyntax.self)?.modifiers
                     ?? node.as(SubscriptDeclSyntax.self)?.modifiers
-                if modifiers?.contains(where: { $0.name.tokenKind == .keyword(.override) }) == true {
+                if modifiers?.contains(where: {
+                    $0.name.tokenKind == .keyword(.override) ||
+                        node.is(InitializerDeclSyntax.self) && $0.name.tokenKind == .keyword(.required)
+                }) == true {
                     result.dispatchOverrides!.formUnion(names.map { module + "." + scope.joined(separator: ".") + "." + $0 })
                 }
             }

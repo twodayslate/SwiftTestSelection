@@ -10,7 +10,7 @@
   "remainingDiagnostics": 1418,
   "removed": [],
   "sourceRevision": "1f0e37b69458200227c584d9a4563b5391948cdf",
-  "genericSuperclassValidation": {
+  "overrideResolutionValidation": {
     "added": [
       "ChainOfCustodySnapshotTests/NoteMediaGeometryTests/testThumbnailAndPlayerContentCannotChangeReservedFrame()",
       "ChainOfCustodyTests/CalendarCategoryNotificationTests/legacyPreferencesPreserveExistingAlertsAndOptInToNewOnes()",
@@ -40,6 +40,8 @@
     "removed": [],
     "sourceRevision": "1f0e37b69458200227c584d9a4563b5391948cdf",
     "referenceGraphSHA256": "8c453ef17b7d71dcbd3a76d96a660f3d58682d20e2791c9ae60216fb738c6300",
-    "referenceGraphFile": "issue11-consumer-graph.json"
+    "referenceGraphFile": "issue11-consumer-graph.json",
+    "baseRevision": "4e36974d831d3e7cfc53b19a742530114b7683fc",
+    "releaseTestsPassed": 133
   }
 }

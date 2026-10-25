@@ -342,6 +342,9 @@ Specialized superclass references such as `Parent<Int>` resolve through `Parent`
 including qualified and nested types. Unresolved override ancestry (for example,
 a type alias the source index cannot resolve) produces an explicit conservative
 fallback for matching member dispatches rather than proof of no impact.
+Superclass lookup checks enclosing scopes before module-level names. Required
+initializer implementations participate in dispatch binding even when Swift does
+not spell them with `override`.
 Regenerate older saved graphs to acquire this ownership metadata; legacy snapshots
 retain their conservative classification.
 

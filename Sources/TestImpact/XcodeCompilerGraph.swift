@@ -167,6 +167,29 @@ enum XcodeCompilerGraph {
         let nominalParents = Dictionary(uniqueKeysWithValues: Set(superclasses.values.flatMap { $0 }).compactMap { spelling in
             SwiftSourceSnapshot.nominalTypeName(spelling).map { (spelling, $0) }
         })
+        let typeAliases = Set(sources.values.flatMap { $0.typeAliases ?? [] })
+        func containsAlias(_ name: String) -> Bool {
+            typeAliases.contains(name) || name.indices.contains {
+                name[$0] == "." && typeAliases.contains(String(name[..<$0]))
+            }
+        }
+        func resolveSuperclass(_ parent: String, of owner: String) -> (candidates: [String], complete: Bool) {
+            // Swift resolves an unqualified name from its enclosing scopes
+            // outward. A module-level class must not hide a nested superclass.
+            var scope = owner.split(separator: ".").dropLast()
+            while !scope.isEmpty {
+                let candidate = scope.joined(separator: ".") + "." + parent
+                if containsAlias(candidate) { return ([], false) }
+                if superclasses[candidate] != nil { return ([candidate], true) }
+                scope = scope.dropLast()
+            }
+            if containsAlias(parent) { return ([], false) }
+            if superclasses[parent] != nil { return ([parent], true) }
+            let candidates = superclasses.keys.filter { $0.hasSuffix("." + parent) }
+            // Imports are not resolved by this index. Retain possible imported
+            // classes without treating a same-named class as proof of ancestry.
+            return (candidates, candidates.isEmpty)
+        }
         let declarationsByMember = Dictionary(grouping: declarations, by: { $0.split(separator: ".").last.map(String.init) ?? $0 })
         var overrides: [String: Set<String>] = [:]
         var unresolvedOverrideDeclarations = Set<String>()
@@ -182,13 +205,13 @@ enum XcodeCompilerGraph {
                 var complete = true
                 while let type = pending.popLast() {
                     guard visited.insert(type).inserted else { continue }
-                    let module = String(type.prefix { $0 != "." })
                     guard let parents = superclasses[type] else { complete = false; continue }
                     for spelling in parents {
                         guard let parent = nominalParents[spelling] else { complete = false; continue }
                         names.insert(parent)
-                        let local = module + "." + parent
-                        let candidates = superclasses[local] != nil ? [local] : superclasses.keys.filter { $0 == parent || $0.hasSuffix("." + parent) }
+                        let resolution = resolveSuperclass(parent, of: type)
+                        let candidates = resolution.candidates
+                        if !resolution.complete { complete = false }
                         for candidate in candidates {
                             names.insert(String(candidate.dropFirst(candidate.prefix { $0 != "." }.count + 1)))
                             pending.append(candidate)
