@@ -656,6 +656,11 @@ For Xcode, construct `XcodeConfiguration(container:path:scheme:destination:confi
 
 ## Validation
 
+See [issue #39 validation](Documentation/Issue39Validation.md) for fresh
+real-project graphs, source-location policy and cache comparisons, measured time
+and memory, and execution of the single selected UI test. The report also records
+remaining conservative selections and limits on CI rollout evidence.
+
 ```sh
 swift test
 python3 Scripts/integration_test.py
