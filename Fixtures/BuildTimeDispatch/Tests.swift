@@ -5,8 +5,10 @@ import UIKit
 
 class ConcreteTests: XCTestCase {
     func testState() { XCTAssertTrue(concrete(.active)) }
+    func testComparison() { XCTAssertTrue(concreteContainer([.orderedSame], .orderedSame)) }
 }
 class GenericTests: XCTestCase {
+    func testNestedGeneric() { XCTAssertTrue(nestedGeneric(Rows(values: [[1]]), Rows(values: [[1]]))) }
     func testFirst() { XCTAssertTrue(generic(First(value: 1), First(value: 1))) }
     func testSecond() { XCTAssertTrue(generic(Second(value: 1), Second(value: 1))) }
     func testAssociated() { XCTAssertTrue(associated([First(value: 1)])) }

@@ -28,7 +28,7 @@ import Testing
     _ = try xcrun(arguments + ["-emit-sil", "-o", replay.path])
     let capturedText = try String(contentsOf: capture, encoding: .utf8)
     #expect(capturedText.contains("witness_method $Element,"), "Fixture must reproduce named generic shadowing")
-    let ids = ["ConcreteTests/testState()", "GenericTests/testFirst()", "GenericTests/testSecond()", "GenericTests/testAssociated()",
+    let ids = ["ConcreteTests/testState()", "ConcreteTests/testComparison()", "GenericTests/testNestedGeneric()", "GenericTests/testFirst()", "GenericTests/testSecond()", "GenericTests/testAssociated()",
         "DispatchTests/testProtocol()", "DispatchTests/testClass()", "DispatchTests/testObjC()", "DispatchTests/testEscaped()",
         "DispatchTests/testShared()", "InheritedTests/testInheritedSetup()"].map { "Tests/" + $0 }
     func graph(_ file: URL) throws -> XcodeTestGraph {
@@ -44,6 +44,15 @@ import Testing
         #expect(generic.dependencies.isSuperset(of: equalities))
         #expect(dependencies.dependencyPath(from: [concrete.id], to: equalities.subtracting(state)) == nil)
         #expect(generic.uncertainties.contains { $0.hasPrefix("Dynamic dispatch:") })
+        let nested = try #require(dependencies.functions.values.first { $0.name.hasPrefix("nestedGeneric<") })
+        #expect(nested.dynamicDeclarations.contains("Equatable.\"==\""))
+        #expect(nested.dependencies.isSuperset(of: equalities))
+        let rowsEquality = try #require(parsed.dispatchTargets["Equatable.\"==\"@witness:Rows"])
+        #expect(dependencies.dependencyPath(from: dependencies.tests["Tests/GenericTests/testNestedGeneric()"] ?? [], to: rowsEquality) != nil)
+        let container = try #require(dependencies.functions.values.first { $0.name == "concreteContainer(_:_:)" })
+        let comparison = try #require(parsed.dispatchTargets["Equatable.\"==\"@witness:ComparisonResult"])
+        #expect(container.dynamicDeclarations.contains("Equatable.\"==\"@witness:ComparisonResult"))
+        #expect(dependencies.dependencyPath(from: [container.id], to: equalities.subtracting(comparison)) == nil)
         let callback = try #require(dependencies.functions.values.first { $0.name == "callbackCall(_:)" })
         #expect(callback.uncertainties.contains("Indirect function invocation"))
         let shared = try #require(dependencies.functions.values.first { $0.name == "sharedState()" })
@@ -68,4 +77,14 @@ import Testing
             #expect(selected(captured).selectedTests == selected(reference).selectedTests, "Stage selection differs for \(snapshot.units[i].key)")
         }
     }
+}
+
+@Test func silGenericBindersExcludeTypeApplicationsAndBalanceNestedConstraints() {
+    func parameters(_ type: String) -> Set<String>? { SILParser.genericParameters(in: "sil @f : $" + type + " {") }
+    #expect(parameters("@convention(thin) (@guaranteed Array<ComparisonResult>) -> ()") == [])
+    #expect(parameters("@convention(thin) <Element where Element : Sequence, Element.Element == Array<Int>> (Element) -> ()") == ["Element"])
+    #expect(parameters("@convention(thin) <each Item, Container where Container : Sequence, Container.Element == Array<(Int) -> Int>> (Container) -> ()") == ["Item", "Container"])
+    #expect(parameters("@convention(thin) <T: Pair<Int, String>, U> (T, U) -> ()") == ["T", "U"])
+    #expect(parameters("@convention(thin) <Element where Element == Array<Int> (Element) -> ()") == nil)
+    #expect(parameters("@unknown_syntax [future] (Array<Int>) -> ()") == nil)
 }

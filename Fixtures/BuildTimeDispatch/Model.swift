@@ -9,6 +9,15 @@ struct First: Equatable {
 }
 struct Second: Equatable { var value: Int }
 func concrete(_ state: UIApplication.State) -> Bool { state == .active }
+func concreteContainer(_ values: [ComparisonResult], _ rhs: ComparisonResult) -> Bool { values[0] == rhs }
+struct Rows: Equatable, Sequence {
+    var values: [[Int]]
+    static func == (lhs: Rows, rhs: Rows) -> Bool { lhs.values == rhs.values }
+    func makeIterator() -> IndexingIterator<[[Int]]> { values.makeIterator() }
+}
+func nestedGeneric<Element: Equatable & Sequence>(_ a: Element, _ b: Element) -> Bool where Element.Element == [Int] {
+    a == b
+}
 func generic<Element: Equatable>(_ a: Element, _ b: Element) -> Bool { a == b }
 func associated<Values: Collection>(_ values: Values) -> Bool where Values.Element: Equatable {
     values.first == values.first
