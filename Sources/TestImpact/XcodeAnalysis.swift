@@ -156,7 +156,7 @@ public struct XcodeAnalysis {
     }
 
     func analyzeBuild(_ configuration: XcodeConfiguration, sourceRoot: URL, derived: URL,
-                      log: String, settingsData: Data, xctestrun: URL? = nil) throws -> XcodeTestGraph {
+                      log: String, settingsData: Data, xctestrun: URL? = nil, moduleCache: XcodeModuleCache? = nil) throws -> XcodeTestGraph {
         guard FileManager.default.fileExists(atPath: configuration.path.path) else {
             throw ImpactError("Xcode container does not exist: \(configuration.path.path)")
         }
@@ -244,7 +244,7 @@ public struct XcodeAnalysis {
             if let module = modules[target.name] { result[module, default: []].formUnion(target.sourceFiles) }
         }
         let extractionStart = Date()
-        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation)
+        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation, moduleCache: moduleCache)
         measurement("extraction", Date().timeIntervalSince(extractionStart))
         progress("Binding compiler dependencies to \(tests.count) enumerated tests…")
         let binding = AnalysisMeasurement()

@@ -590,3 +590,56 @@ See `Scripts/benchmark_xcode_extraction.py` and the opt-in
 children included in sampled process-tree RSS. RSS sums double-count shared pages;
 they are not physical-footprint peaks. Larger worker counts are not assumed to
 scale linearly.
+
+### Reusing module fragments on a changed revision
+
+`--analysis-cache` also reuses compatible parsed module fragments after a new
+revision's normal build and test discovery. A fragment hit skips that module's
+SIL compiler replay and parser. Inventory, source ownership, UI mappings,
+lifecycle binding and cross-module dispatch resolution are reconstructed from
+the current revision. Whole-revision hits retain their existing behavior.
+
+Module keys include ordered source/generated inputs and their resolved paths, compiler arguments, the
+transitive project import closure, imported Swift/Clang inputs, compiler and
+bundled plugin bytes, analyzer/schema/settings/toolchain/SDK identity and
+`--cache-context`. Known root aliases and supported header-map destination
+paths are normalized; source bytes are never rewritten. Swift symlink metadata
+is retained, so retargeting a source link invalidates affected fragments even
+when the destination bytes match; SIL source locations can still change.
+Non-Swift repository files invalidate all fragments conservatively, including
+mapping files that could also be compiler or script inputs. Module availability probes also track the queried project-module inputs and the
+complete project-module name inventory; unrecognized probes invalidate more broadly.
+
+A fresh Swift dependency scan hashes SDK headers, module maps, Swift interfaces,
+prebuilt candidates, resolved macro binaries and compiler options. Generated
+module output paths are represented by their module identities; their input
+bytes are preserved. This permits reuse across independent build directories.
+When scanning is unavailable or unsupported, exact imported-artifact hashes
+provide a conservative fallback that may miss after relocation. Bridging-header
+targets currently use this fallback because Swift 6.4's standalone scanner
+crashed resolving an overlay through a bridging PCH in the consumer fixture.
+
+The initial implementation requires an unambiguous explicit SwiftDriver import
+map next to each file list. Missing metadata, custom compiler plugins without a
+complete resource-input contract, unsupported responses, and ambiguous target or
+architecture invocations bypass fragment caching. Modules containing
+`#sourceLocation(file:line:)` directives and their transitive importers also
+bypass reuse, with an explicit progress message: their presumed source paths
+can refer to another checkout or an untracked symlink even with identical
+source bytes. Unrelated modules remain cacheable. Comments, string literals,
+and reset-only `#sourceLocation()` directives do not trigger this bypass.
+External context must cover
+external dependency/module availability and other compiler-visible inputs not
+represented by Git, settings or the import inventory. Never reuse a context
+value after those inputs change.
+
+Fragments use the existing exclusive cache lock, checksummed atomic publication,
+corruption recovery and shared disk budget. They contain no test inventory or
+execution products. Source/import identities are checked again before accepting
+or publishing fragments. Newly extracted fragments are staged on disk until
+that final validation; changed inputs produce an explicit conservative
+extraction diagnostic. Progress reports per-module hits, misses/bypasses,
+validation timing, and avoided compiler/parser work.
+
+Release measurements, fresh-extraction parity checks and reproduction commands
+are in [the module cache benchmark](Documentation/Benchmarks/ModuleCache.md).

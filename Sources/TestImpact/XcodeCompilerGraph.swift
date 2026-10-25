@@ -6,12 +6,13 @@ import Foundation
 enum XcodeCompilerGraph {
     static func extract(log: String, sourceRoot: URL, directory: URL, derived: URL,
                         progress: (String) -> Void, ownership: [String: Set<String>] = [:],
-                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init()) -> DependencyGraph {
+                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil) -> DependencyGraph {
         var graph = DependencyGraph()
         guard (1...8).contains(workers) else {
             graph.diagnostics.append("Extraction workers must be between 1 and 8.")
             return graph
         }
+        moduleCache?.prepare(log: log)
         var seen: [String: [String]] = [:]
         var jobs: [XcodeModuleJob] = []
         // Validate inventory before scheduling; identical/ambiguous duplicates keep
@@ -40,13 +41,29 @@ enum XcodeCompilerGraph {
         let queue = OperationQueue()
         queue.maxConcurrentOperationCount = workers
         let results = jobs.map { _ in XcodeModuleResult() }
+        var cacheHits = Set<String>()
         func schedule(_ index: Int) {
             guard index < jobs.count else { return }
             let job = jobs[index]
             let result = results[index]
+            let lookup = Date()
+            let identity = moduleCache?.identity(for: job.module)
+            var loaded: SILModule?
+            if let identity {
+                do { loaded = try moduleCache?.cache.loadModule(identity) }
+                catch { progress("Module cache bypass \(job.module): \(error)") }
+            }
+            let cached = loaded
+            if cached != nil {
+                cacheHits.insert(job.module)
+                progress(String(format: "Module cache %@: hit: compatible compiler inputs; skipped compiler and parser (%.3f s)", job.module, Date().timeIntervalSince(lookup)))
+            } else if moduleCache != nil {
+                progress(String(format: "Module cache %@: %@ (%.3f s)", job.module, identity == nil ? "bypass: unsupported input identity" : "miss: absent, incompatible or corrupt inputs", Date().timeIntervalSince(lookup)))
+            }
             queue.addOperation {
                 result.complete {
                     try cancellation.check()
+                    if let cached { return (cached, []) }
                     let output = derived.appendingPathComponent("impact-\(UUID().uuidString).sil")
                     defer { try? FileManager.default.removeItem(at: output) }
                     let args = arguments(job.arguments) + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-o", output.path]
@@ -72,6 +89,10 @@ enum XcodeCompilerGraph {
             do {
                 let (parsed, messages) = try result.take()
                 messages.forEach(progress)
+                if !cacheHits.contains(job.module), let identity = moduleCache?.identity(for: job.module) {
+                    do { try moduleCache?.stage(parsed, identity: identity) }
+                    catch { progress("Module cache publication bypass \(job.module): \(error)") }
+                }
                 for (symbol, node) in parsed.functions {
                     let isDefinition = node.regions.contains { ownership[job.module]?.contains($0.path) == true }
                     if isDefinition || !definingSymbols.contains(symbol) && (graph.functions[symbol] == nil || !node.regions.isEmpty && graph.functions[symbol]!.regions.isEmpty) {
@@ -87,6 +108,12 @@ enum XcodeCompilerGraph {
             // Never expose a partially merged success on cooperative cancellation.
             graph = DependencyGraph()
             graph.diagnostics = ["Compiler dependency extraction cancelled; a full selection is required."]
+            return graph
+        }
+        do { try moduleCache?.finish(log: log) }
+        catch {
+            graph = DependencyGraph()
+            graph.diagnostics = ["Compiler dependency extraction failed: \(error)"]
             return graph
         }
         for symbol in graph.functions.keys {
