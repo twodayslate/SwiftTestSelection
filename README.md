@@ -144,6 +144,12 @@ and other unclassified changes still request a full run.
 
 ### Non-UI runtime boundaries (opt-in)
 
+Validated boundaries continue to apply to mixed production changes and edits to
+proven test entry bodies. Every changed/added test and explicit dependency remains
+eligible for selection, and changed test modules stay in the boundary comparison.
+Shared helpers, lifecycle hooks, class state, unknown ownership, and changed or
+invalid contracts keep conservative uncertainty selection.
+
 A reachable opaque call is uncertainty, not a proven dependency on the changed
 feature. The default still selects its callers conservatively. For a genuinely
 isolated test target, you can declare a **closed runtime module contract**:
