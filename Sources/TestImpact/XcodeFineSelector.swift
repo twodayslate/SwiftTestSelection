@@ -267,7 +267,10 @@ public enum XcodeFineSelector {
             var coveredChanges = Set<String>()
             var mappedTests = Set<String>()
             let opaqueProduction = declaredUIRuntime ? Set<String>() : Set(graph.functions.values.filter { node in
-                !node.regions.isEmpty && node.uncertainties.contains { $0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:") || $0.hasPrefix("Imported conformance:") }
+                node.uncertainties.contains {
+                    $0.hasPrefix("Imported conformance:") || !node.regions.isEmpty &&
+                    ($0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:"))
+                }
             }.map(\.id))
             let opaquePaths = index.paths(to: opaqueProduction)
             let mappingIndex = MappingIndex(mappings, snapshot: snapshot, graph: graph, index: index)
