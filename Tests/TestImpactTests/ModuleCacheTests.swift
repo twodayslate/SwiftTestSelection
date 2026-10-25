@@ -241,7 +241,7 @@ private struct ModuleCacheFixture {
         let tests = testNames.map { "Tests/Case/" + $0 + "()" }.sorted()
         var compiled = 0
         let fragments = XcodeModuleCache(cache: fixture.cache, identity: fixture.context, source: fixture.source, derived: fixture.derived, workspace: fixture.root)
-        var dependencies = XcodeCompilerGraph.extract(log: fixture.log, sourceRoot: fixture.source, directory: fixture.root, derived: fixture.derived, progress: { if $0.hasPrefix("Compiled ") { compiled += 1 } }, ownership: ownership, moduleCache: cached ? fragments : nil)
+        var dependencies = XcodeCompilerGraph.extract(log: fixture.log, sourceRoot: fixture.source, directory: fixture.root, derived: fixture.derived, progress: { if $0.hasPrefix("Compiled ") { compiled += 1 } }, ownership: ownership, workers: cached ? 2 : 1, moduleCache: cached ? fragments : nil)
         #expect(dependencies.diagnostics.isEmpty)
         XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: sources, graph: &dependencies)
         var graph = XcodeTestGraph(targets: targets, tests: tests)
@@ -345,4 +345,34 @@ private struct ModuleCacheFixture {
     // require a miss when the SIL source-region path changes.
     #expect(before["Tests"] != after["Tests"])
     for module in ["Core", "App", "Other"] { #expect(before[module] == after[module]) }
+}
+
+@Test func moduleCacheBypassesPresumedLocationsAndTransitiveImporters() throws {
+    let fixture = try ModuleCacheFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    try Data("#sourceLocation(file: \"/old/Generated.swift\", line: 1)\npublic func core() {}".utf8).write(to: fixture.source.appendingPathComponent("Core.swift"))
+    // Tests imports App, which imports Core: the bypass must be transitive.
+    let map = fixture.derived.appendingPathComponent("Tests-dependencies-1.json")
+    var imports = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: map)) as? [[String: Any]])
+    imports[1]["moduleName"] = "App"
+    imports[1]["modulePath"] = fixture.derived.appendingPathComponent("App.swiftmodule").path
+    try JSONSerialization.data(withJSONObject: imports).write(to: map)
+    let fragments = XcodeModuleCache(cache: fixture.cache, identity: fixture.context,
+        source: fixture.source, derived: fixture.derived, workspace: fixture.root)
+    fragments.prepare(log: fixture.log)
+    for module in ["Core", "App", "Tests"] { #expect(fragments.identity(for: module) == nil) }
+    #expect(fragments.identity(for: "Other") != nil)
+}
+
+@Test func moduleCacheIgnoresSourceLocationMentionsInTriviaAndStrings() throws {
+    let fixture = try ModuleCacheFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let text = #"""
+    // #sourceLocation(file: "/old/File.swift", line: 1)
+    let example = "#sourceLocation(file: \"/old/File.swift\", line: 1)"
+    #sourceLocation()
+    public func core() {}
+    """#
+    try Data(text.utf8).write(to: fixture.source.appendingPathComponent("Core.swift"))
+    #expect(try fixture.identities().count == 4)
 }

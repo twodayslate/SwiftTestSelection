@@ -622,7 +622,13 @@ crashed resolving an overlay through a bridging PCH in the consumer fixture.
 The initial implementation requires an unambiguous explicit SwiftDriver import
 map next to each file list. Missing metadata, custom compiler plugins without a
 complete resource-input contract, unsupported responses, and ambiguous target or
-architecture invocations bypass fragment caching. External context must cover
+architecture invocations bypass fragment caching. Modules containing
+`#sourceLocation(file:line:)` directives and their transitive importers also
+bypass reuse, with an explicit progress message: their presumed source paths
+can refer to another checkout or an untracked symlink even with identical
+source bytes. Unrelated modules remain cacheable. Comments, string literals,
+and reset-only `#sourceLocation()` directives do not trigger this bypass.
+External context must cover
 external dependency/module availability and other compiler-visible inputs not
 represented by Git, settings or the import inventory. Never reuse a context
 value after those inputs change.

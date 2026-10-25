@@ -18,9 +18,14 @@ compiler regression retargets a Swift symlink between byte-identical files and
 compares the invalidated cache result with fresh extraction; generated-source
 symlinks outside the repository manifest are checked separately.
 
-The measurements below precede the schema-3 fix that includes resolved source
-paths and Swift symlink metadata. That fix was validated by debug/release
-regressions; these large-consumer timings were not rerun for it.
+The measurements below precede the source-path correctness fixes: schema 3
+included resolved source paths and Swift symlink metadata; schema 4 bypasses
+modules with `#sourceLocation(file:line:)` and their transitive importers. A real
+compiler regression keeps an absolute presumed path unchanged while moving the
+checkout, and verifies exact graph parity with fresh extraction at both roots.
+Unrelated modules remain cacheable; comments, strings and reset directives do
+not disable caching. These fixes were validated by debug/release regressions;
+the large-consumer timings were not rerun for them.
 
 An independently built three-module Xcode fixture reused all three fragments
 after moving both its source and DerivedData directories. Its complete function

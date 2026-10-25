@@ -57,7 +57,7 @@ final class XcodeModuleCache {
         self.cache = cache
         var context = identity
         context.removeValue(forKey: "revision")
-        context["schema"] = "xcode-module-fragment-3"
+        context["schema"] = "xcode-module-fragment-4"
         self.context = context
         self.source = source
         self.derived = derived
@@ -141,6 +141,7 @@ final class XcodeModuleCache {
         var imports: [String: Set<String>] = [:]
         var availabilityQueries: [String: Set<String>] = [:]
         var unresolvedAvailability = Set<String>()
+        var sourceLocationModules = Set<String>()
         let canImport = try NSRegularExpression(pattern: #"\bcanImport\s*\(\s*`?([A-Za-z_][A-Za-z_0-9.]*)`?"#)
         for (module, original) in invocations {
             guard original.contains("-explicit-module-build") else { throw ImpactError("\(module) has no explicit import inventory") }
@@ -169,9 +170,10 @@ final class XcodeModuleCache {
             for path in sources {
                 inputs[normalized(path)] = try hash(path)
                 let text = try String(contentsOfFile: path, encoding: .utf8)
-                if text.contains("canImport"), text.contains("#if") || text.contains("#elseif") {
-                    let conditions = ModuleAvailabilityConditions(viewMode: .sourceAccurate)
+                if text.contains("#sourceLocation") || text.contains("canImport") && (text.contains("#if") || text.contains("#elseif")) {
+                    let conditions = ModuleInputConditions(viewMode: .sourceAccurate)
                     conditions.walk(Parser.parse(source: text))
+                    if conditions.hasSourceLocation { sourceLocationModules.insert(module) }
                     for text in conditions.values where text.contains("canImport") {
                         let matches = canImport.matches(in: text, range: NSRange(text.startIndex..., in: text))
                         // Unknown spellings are conservative. Extra matches in trivia
@@ -282,23 +284,43 @@ final class XcodeModuleCache {
             var keys = [module: own]
             if unresolvedAvailability.contains(module) { keys["canImportInputs"] = availableModuleInputs }
             for query in availabilityQueries[module] ?? [] { keys["canImport:" + query] = localKeys[query] }
-            for dependency in imports[module] ?? [] { keys[dependency] = try closure(dependency) }
+            for dependency in imports[module] ?? [] {
+                keys[dependency] = try closure(dependency)
+                // Imported definitions can also carry the original module's
+                // presumed locations into this module's SIL.
+                if sourceLocationModules.contains(dependency) { sourceLocationModules.insert(module) }
+            }
             let key = try XcodeGraphCache.key(keys)
             completed[module] = key
             return key
         }
-        return try invocations.mapValues { arguments in
-            let module = arguments[arguments.firstIndex(of: "-module-name")! + 1]
+        var result: [String: [String: String]] = [:]
+        for module in invocations.keys.sorted() {
+            let inputs = try closure(module)
+            // Parsed regions are relative to the current checkout, but an
+            // absolute #sourceLocation may point into an older checkout or
+            // through a symlink outside the compiler source inventory. Until
+            // those presumed paths are validated, replay affected modules.
+            if sourceLocationModules.contains(module) {
+                cache.progress("Module cache \(module): bypass: #sourceLocation in compiler inputs or an imported project module")
+                continue
+            }
             var identity = context
             identity["module"] = module
-            identity["inputs"] = try closure(module)
-            return identity
+            identity["inputs"] = inputs
+            result[module] = identity
         }
+        return result
     }
 }
 
-private final class ModuleAvailabilityConditions: SyntaxVisitor {
+private final class ModuleInputConditions: SyntaxVisitor {
     var values: [String] = []
+    var hasSourceLocation = false
+    override func visit(_ node: PoundSourceLocationSyntax) -> SyntaxVisitorContinueKind {
+        if node.arguments != nil { hasSourceLocation = true }
+        return .skipChildren
+    }
     override func visit(_ node: IfConfigClauseSyntax) -> SyntaxVisitorContinueKind {
         if let condition = node.condition { values.append(condition.trimmedDescription) }
         return .visitChildren
