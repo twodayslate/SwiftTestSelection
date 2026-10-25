@@ -473,7 +473,11 @@ parses in-repository sources under that module. JSON represents these owners as
 `Compiler module: <name>` with product type `compiler-module`. A file compiled by
 several modules retains a separate semantic snapshot for each module. Imported
 SIL bodies retain their external linkage so shared source paths cannot overwrite
-the defining module or its feature mappings. These records prove compiler
+the defining module or its feature mappings. For source-bearing `shared` bodies
+(including `@_alwaysEmitIntoClient`), the compiler's adjacent `swift-demangle`
+resolves the declaration module, including extension ownership. Resolution is
+batched per module and cached; unfamiliar symbol contexts produce an explicit
+conservative fallback. These records prove compiler
 ownership, not a test target's identity or runtime isolation; they do not enable
 the UI or non-UI runtime uncertainty exemptions.
 Explicit UI feature mappings and unresolved-dependency fallbacks still apply.

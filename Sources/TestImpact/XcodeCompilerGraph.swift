@@ -57,7 +57,8 @@ enum XcodeCompilerGraph {
                     try cancellation.check()
                     let cached = access.load(job.module)
                     let stage = spool.appendingPathComponent(String(index))
-                    func publish(_ module: SILModule) throws -> XcodeModuleFragment {
+                    func publish(_ fragment: SILModule) throws -> XcodeModuleFragment {
+                        let module = try SILOwnership.resolve(fragment, module: job.module, compiler: job.compiler, directory: directory)
                         if workers == 1 { return .memory(module) }
                         try GraphArchive.encodeValue(module).write(to: stage)
                         return .file(stage)

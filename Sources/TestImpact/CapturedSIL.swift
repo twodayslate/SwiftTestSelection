@@ -141,10 +141,11 @@ struct CapturedSIL: Sendable {
     }
     func parse(module: String, sourceRoot: URL) throws -> SILModule? {
         guard let files = modules[module] else { return nil }
-        var result = SILModule(importedSymbols: [], functions: [:], dispatchTargets: [:])
+        var result = SILModule(importedSymbols: [], sharedSymbols: [], functions: [:], dispatchTargets: [:])
         for file in files.sorted(by: { $0.path < $1.path }) {
             let parsed = try SILParser.parse(file: file, module: module, sourceRoot: sourceRoot)
             guard !parsed.functions.isEmpty else { throw ImpactError("Empty captured SIL: \(file.path)") }
+            result.sharedSymbols!.formUnion(parsed.sharedSymbols ?? [])
             for (id, node) in parsed.functions {
                 if parsed.importedSymbols?.contains(id) == true {
                     if result.functions[id] == nil { result.importedSymbols!.insert(id) }

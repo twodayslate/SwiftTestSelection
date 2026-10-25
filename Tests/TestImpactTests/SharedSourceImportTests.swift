@@ -5,7 +5,8 @@ import Foundation
 import Testing
 @testable import TestImpact
 
-@Test func sharedSourceImportsPreserveDefiningModuleAndFeatureMappings() throws {
+@Test(arguments: ["@_transparent", "@_alwaysEmitIntoClient"])
+func sharedSourceImportsPreserveDefiningModuleAndFeatureMappings(attribute: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
     let derived = root.appendingPathComponent("DerivedData")
     try FileManager.default.createDirectory(at: derived, withIntermediateDirectories: true)
@@ -14,16 +15,26 @@ import Testing
     try """
     #if SECOND
     import First
-    public func invoke() -> Int { First.value() }
+    public func invoke() -> Int { First.value() + First.Box().extensionValue() + First.Box().count + First.Box()[0] + First.make()() }
+    extension First.Box {
+        @_alwaysEmitIntoClient public func extensionValue() -> Int { 1 }
+    }
     #else
-    @_transparent public func value() -> Int { helper() }
+    \(attribute) public func value() -> Int { helper() }
     @usableFromInline internal func helper() -> Int { 1 }
+    @_alwaysEmitIntoClient public func make() -> () -> Int { { 1 } }
+    public struct Box {
+        @_alwaysEmitIntoClient public init(_ x: Int = 1) {}
+        @_alwaysEmitIntoClient public var count: Int { 1 }
+        @_alwaysEmitIntoClient public subscript(_ x: Int) -> Int { x }
+    }
     #endif
     """.write(to: source, atomically: true, encoding: .utf8)
     let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     _ = try CommandRunner.run(compiler, ["-emit-module", "-module-name", "First", source.path,
         "-emit-module-path", derived.appendingPathComponent("First.swiftmodule").path, "-Onone", "-g"], at: root)
     var logs: [String] = [], captures: [String: [URL]] = [:]
+    var firstDefinitions = Set<String>()
     for module in ["First", "Second"] {
         let list = derived.appendingPathComponent(module + ".SwiftFileList")
         try source.path.write(to: list, atomically: true, encoding: .utf8)
@@ -35,7 +46,23 @@ import Testing
         let parsed = try SILParser.parse(file: sil, module: module, sourceRoot: root)
         let restored = try GraphArchive.decodeValue(SILModule.self, from: GraphArchive.encodeValue(parsed))
         #expect(restored.importedSymbols == parsed.importedSymbols)
-        #expect(restored.importedSymbols?.contains("$s5First5valueSiyF") == (module == "Second"))
+        #expect(restored.importedSymbols?.contains("$s5First5valueSiyF") == (module == "Second" && attribute == "@_transparent"))
+        #expect(restored.sharedSymbols == parsed.sharedSymbols)
+        let resolved = try SILOwnership.resolve(restored, module: module, compiler: compiler, directory: root)
+        #expect(resolved.importedSymbols?.contains("$s5First5valueSiyF") == (module == "Second"))
+        #expect(resolved.sharedSymbols == nil)
+        if module == "First" {
+            firstDefinitions = Set(resolved.functions.keys.filter { $0.hasPrefix("$s5First") })
+        }
+        if module == "Second" {
+            let extensionNode = try #require(resolved.functions.values.first { $0.name.contains("extensionValue()") })
+            #expect(extensionNode.id.hasPrefix("$s5First")) // The type's module is not the extension's owner.
+            #expect(resolved.importedSymbols?.contains(extensionNode.id) == false)
+        }
+        let cached = try GraphArchive.decodeValue(SILModule.self, from: GraphArchive.encodeValue(resolved))
+        // A resolved fragment must not need the compiler or demangler again.
+        let hit = try SILOwnership.resolve(cached, module: module, compiler: "/missing/swiftc", directory: root)
+        #expect(hit.importedSymbols == resolved.importedSymbols)
     }
     var targets: [XcodeTarget] = [], modules: [String: String] = [:], unsupported: [String: [String]] = [:]
     var classified = Set<URL>(), diagnostics: [String] = []
@@ -53,6 +80,7 @@ import Testing
                     directory: root, derived: derived, progress: { _ in }, ownership: ownership,
                     workers: workers, captured: captured ? capture : nil)
                 #expect(graph.diagnostics.isEmpty)
+                for symbol in firstDefinitions { #expect(graph.functions[symbol]?.module == "First") }
                 let node = try #require(graph.functions["$s5First5valueSiyF"])
                 #expect(node.module == "First" && node.name == "value()")
                 #expect(node.dependencies.contains("$s5First6helperSiyF"))
@@ -77,4 +105,50 @@ import Testing
     }
     let legacy = Data(#"{"functions":{},"dispatchTargets":{}}"#.utf8)
     #expect(try GraphArchive.decodeValue(SILModule.self, from: legacy).importedSymbols == nil)
+}
+
+@Test func clientOwnershipRejectsUnknownContextsAndIgnoresSignatureModules() {
+    let output = """
+    Demangling for function
+    kind=Global
+      kind=Function
+        kind=Module, text="Owner"
+        kind=Type
+          kind=Module, text="ResultTypeModule"
+    Demangling for extension
+    kind=Global
+      kind=Function
+        kind=Extension
+          kind=Module, text="ExtensionOwner"
+          kind=Structure
+            kind=Module, text="TypeOwner"
+    Demangling for unknown
+    kind=Global
+      kind=UnknownContext
+        kind=Module, text="NotProven"
+    Demangling for signatureOnly
+    kind=Global
+      kind=Function
+        kind=Type
+          kind=Module, text="NotAnOwner"
+    """
+    #expect(SILOwnership.declarationOwners(output) == ["function": "Owner", "extension": "ExtensionOwner"])
+}
+
+@Test func unresolvedClientOwnershipProducesExtractionDiagnostic() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sil = root.appendingPathComponent("module.sil")
+    try """
+    // unknown(), loc "\(root.path)/Shared.swift":1:1
+    sil shared [export_implementation] @not_a_swift_symbol : $@convention(thin) () -> () {
+    } // end sil function 'not_a_swift_symbol'
+    """.write(to: sil, atomically: true, encoding: .utf8)
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let capture = CapturedSIL(modules: ["Example": [sil]], fingerprints: [:], diagnostics: [])
+    let graph = XcodeCompilerGraph.extract(log: "builtin-SwiftDriver -- \(compiler) -module-name Example", sourceRoot: root,
+        directory: root, derived: root, progress: { _ in }, captured: capture)
+    #expect(graph.functions.isEmpty)
+    #expect(graph.diagnostics.contains { $0.contains("Cannot resolve defining module for client-emitted SIL symbol") })
 }
