@@ -20,12 +20,15 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Member declarations owned by the project, including extensions of SDK
     /// types. Optional so older saved graphs keep their conservative behavior.
     public var dispatchMembers: Set<String>? = nil
+    /// Module-qualified class/member names explicitly declared with override.
+    public var dispatchOverrides: Set<String>? = nil
 
     public static func parse(_ text: String, path: String, module: String) -> Self {
         let tree = Parser.parse(source: text)
         let locations = SourceLocationConverter(fileName: path, tree: tree)
         var result = Self(units: [], inheritance: [:], diagnostics: [])
         result.dispatchMembers = []
+        result.dispatchOverrides = []
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
         let tokens = Array(tree.tokens(viewMode: .sourceAccurate))
         let locationNames: Set<String> = ["line", "column", "file", "fileID", "filePath", "sourceLocation"]
@@ -49,6 +52,13 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     names = variable.bindings.compactMap { $0.pattern.as(IdentifierPatternSyntax.self)?.identifier.text }
                 } else { names = [] }
                 result.dispatchMembers!.formUnion(names.map { scope.joined(separator: ".") + "." + $0 })
+                let modifiers = node.as(FunctionDeclSyntax.self)?.modifiers
+                    ?? node.as(InitializerDeclSyntax.self)?.modifiers
+                    ?? node.as(VariableDeclSyntax.self)?.modifiers
+                    ?? node.as(SubscriptDeclSyntax.self)?.modifiers
+                if modifiers?.contains(where: { $0.name.tokenKind == .keyword(.override) }) == true {
+                    result.dispatchOverrides!.formUnion(names.map { module + "." + scope.joined(separator: ".") + "." + $0 })
+                }
             }
             let start = locations.location(for: node.positionAfterSkippingLeadingTrivia).line
             let end = locations.location(for: node.endPositionBeforeTrailingTrivia).line

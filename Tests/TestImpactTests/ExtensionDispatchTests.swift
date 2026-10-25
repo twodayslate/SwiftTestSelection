@@ -22,7 +22,14 @@ import Testing
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("extension-dispatch-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let app = "func unrelatedProduction() -> Int { 1 }"
+    let app = """
+    func unrelatedProduction() -> Int { 1 }
+    import Foundation
+    extension NSObject { @objc func projectHelper() {} }
+    class Parent: Foundation.NSObject {}
+    class Local: Parent { override func isEqual(_ object: Any?) -> Bool { false } }
+    func compare(_ object: NSObject) -> Bool { object.isEqual(nil) }
+    """
     let tests = """
     import XCTest
     extension XCTestCase {
@@ -37,6 +44,10 @@ import Testing
         override func setUp() { localHelper() }
         func testLifecycle() {}
     }
+    class OverrideTests: XCTestCase {
+        func testOverride() { XCTAssertFalse(compare(Local())) }
+        func testUnrelated() {}
+    }
     """
     for (name, text) in [("App.swift", app), ("Tests.swift", tests)] { try Data(text.utf8).write(to: root.appendingPathComponent(name)) }
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -47,7 +58,7 @@ import Testing
     let parsed = try SILParser.parse(file: sil, module: "Fixture", sourceRoot: root)
     var dependencies = DependencyGraph(functions: parsed.functions)
     XcodeCompilerGraph.resolveDispatch(&dependencies, tables: parsed.dispatchTargets)
-    let ids = ["Tests/HelperTests/testHelper()", "Tests/HelperTests/testOther()", "Tests/LifecycleTests/testLifecycle()"]
+    let ids = ["Tests/HelperTests/testHelper()", "Tests/HelperTests/testOther()", "Tests/LifecycleTests/testLifecycle()", "Tests/OverrideTests/testOverride()", "Tests/OverrideTests/testUnrelated()"]
     let sources = ["Fixture:App.swift": SwiftSourceSnapshot.parse(app, path: "App.swift", module: "Fixture"),
                    "Fixture:Tests.swift": SwiftSourceSnapshot.parse(tests, path: "Tests.swift", module: "Fixture")]
     XcodeCompilerGraph.bind(tests: ids, modules: ["Tests": "Fixture"], sources: sources, graph: &dependencies)
@@ -68,6 +79,30 @@ import Testing
     #expect(try edit("Fixture:App.swift", line: 1).selectedTests.isEmpty)
     #expect(try edit("Fixture:Tests.swift", line: 3).selectedTests == [ids[0], ids[2]])
     #expect(try edit("Fixture:Tests.swift", line: 6).selectedTests == [ids[0], ids[1]])
+    #expect(try edit("Fixture:App.swift", line: 5).selectedTests == [ids[3]])
+    let overrides = Set(dependencies.functions.values.filter { $0.name == "Local.isEqual(_:)" }.map(\.id))
+    let compare = try #require(dependencies.functions.values.first { $0.name == "compare(_:)" })
+    #expect(dependencies.dependencyPath(from: [compare.id], to: overrides) != nil)
+}
+
+@Test func missingOverridesStayConservativeWithoutRedirectingSuperCalls() {
+    let source = SwiftSourceSnapshot.parse("""
+    class Parent: Foundation.NSObject {}
+    class Child: Parent {
+        override func isEqual(_ object: Any?) -> Bool { false }
+        override init() { super.init() }
+    }
+    """, path: "App.swift", module: "App")
+    #expect(source.dispatchOverrides == ["App.Child.isEqual", "App.Child.init"])
+    var graph = DependencyGraph(functions: [
+        "call": FunctionNode(id: "call", module: "Tests", name: "call()", dynamicDeclarations: ["NSObject.isEqual"]),
+        "super": FunctionNode(id: "super", module: "App", name: "Child.init()",
+            uncertainties: ["Dynamic dispatch: objc_super_method NSObject.init!initializer.foreign"], dynamicDeclarations: ["NSObject.init"])
+    ])
+    XcodeCompilerGraph.bind(tests: [], modules: [:], sources: ["App:App.swift": source], graph: &graph)
+    #expect(graph.functions["call"]?.uncertainties.contains("Unresolved project dispatch: NSObject.isEqual") == true)
+    #expect(graph.functions["super"]?.uncertainties.contains("Unresolved project dispatch: NSObject.init") == false)
+    #expect(graph.functions["super"]?.dependencies.isEmpty == true)
 }
 
 /// Rebind a saved consumer graph after verifying its source fingerprints. This

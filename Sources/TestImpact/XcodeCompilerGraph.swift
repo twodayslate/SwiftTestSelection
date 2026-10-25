@@ -159,23 +159,80 @@ enum XcodeCompilerGraph {
         // Re-scanning every function for every unresolved declaration is quadratic
         // on large XCTest targets. Store only prefixes present in declarations.
         let declarations = Set(graph.functions.values.flatMap(\.dynamicDeclarations))
+        // Imported Objective-C methods have no project Swift vtable slot. A
+        // dispatch through the base class must still reach declared overrides.
+        var overrides: [String: Set<String>] = [:]
+        var ancestorCache: [String: Set<String>] = [:]
+        for member in sources.values.flatMap({ $0.dispatchOverrides ?? [] }) {
+            guard let dot = member.lastIndex(of: "."), let moduleEnd = member.firstIndex(of: ".") else { continue }
+            let owner = String(member[..<dot]), method = String(member[member.index(after: dot)...])
+            let implementation = String(member[member.index(after: moduleEnd)...])
+            let ancestors: Set<String>
+            if let cached = ancestorCache[owner] { ancestors = cached }
+            else {
+                var names = Set<String>(), visited = Set<String>(), pending = [owner]
+                while let type = pending.popLast() {
+                    guard visited.insert(type).inserted else { continue }
+                    let module = String(type.prefix { $0 != "." })
+                    for parent in inheritance[type] ?? [] {
+                        names.insert(parent)
+                        let local = module + "." + parent
+                        let candidates = inheritance[local] != nil ? [local] : inheritance.keys.filter { $0 == parent || $0.hasSuffix("." + parent) }
+                        for candidate in candidates {
+                            names.insert(String(candidate.dropFirst(candidate.prefix { $0 != "." }.count + 1)))
+                            pending.append(candidate)
+                        }
+                        // SIL omits an imported type's module qualifier.
+                        if candidates.isEmpty, let separator = parent.firstIndex(of: ".") {
+                            names.insert(String(parent[parent.index(after: separator)...]))
+                        }
+                    }
+                }
+                ancestors = names; ancestorCache[owner] = names
+            }
+            for ancestor in ancestors where declarations.contains(ancestor + "." + method) {
+                overrides[ancestor + "." + method, default: []].insert(implementation)
+            }
+        }
+        let overrideNames = Set(overrides.values.flatMap { $0 })
+        let implementationNames = declarations.union(overrideNames)
         var implementations: [String: Set<String>] = [:]
         for node in graph.functions.values where !node.regions.isEmpty {
-            for index in node.name.indices {
-                let character = node.name[index]
+            let name = node.name.hasPrefix("static ") ? String(node.name.dropFirst(7)) : node.name
+            for index in name.indices {
+                let character = name[index]
                 if character == "." || character == "(" {
-                    let prefix = String(node.name[..<index])
-                    if declarations.contains(prefix) { implementations[prefix, default: []].insert(node.id) }
+                    let prefix = String(name[..<index])
+                    if (node.name.hasPrefix("static ") ? overrideNames : implementationNames).contains(prefix) { implementations[prefix, default: []].insert(node.id) }
                 }
             }
         }
         for symbol in graph.functions.keys {
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
+                var overrideCandidates = Set<String>()
+                if let members = overrides[declaration] {
+                    // A super call targets the ancestor implementation, not its
+                    // descendants. Do not introduce override cycles at super.init.
+                    let dispatches = graph.functions[symbol]!.uncertainties.filter {
+                        $0.hasPrefix("Dynamic dispatch:") && ($0.hasSuffix(" " + declaration) || $0.contains(" " + declaration + "!"))
+                    }
+                    let onlySuper = !dispatches.isEmpty && dispatches.allSatisfy {
+                        $0.hasPrefix("Dynamic dispatch: super_method ") || $0.hasPrefix("Dynamic dispatch: objc_super_method ")
+                    }
+                    for implementation in onlySuper ? [] : members {
+                        if let candidates = implementations[implementation], !candidates.isEmpty {
+                            overrideCandidates.formUnion(candidates)
+                        } else {
+                            graph.functions[symbol]!.uncertainties.insert("Unresolved project dispatch: " + declaration)
+                        }
+                    }
+                }
+                graph.functions[symbol]!.dependencies.formUnion(overrideCandidates)
                 if !graph.functions[symbol]!.resolvedDynamicDeclarations.contains(declaration) {
                     // Objective-C entry points (including XCTest initializers)
                     // may have no Swift vtable slot. Include all matching
                     // compiled implementations rather than dropping the edge.
-                    let candidates = implementations[declaration] ?? []
+                    let candidates = (implementations[declaration] ?? []).union(overrideCandidates)
                     if !candidates.isEmpty {
                         graph.functions[symbol]!.dependencies.formUnion(candidates)
                         graph.functions[symbol]!.resolvedDynamicDeclarations.insert(declaration)

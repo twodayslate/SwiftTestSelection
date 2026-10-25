@@ -7,10 +7,18 @@ record owned member names. Binding retains compiled implementations and diagnose
 missing project members without claiming ownership of the entire imported type.
 
 The compiled regression imports XCTest, calls an Objective-C extension helper,
-overrides setup, and binds three methods. An unrelated production edit selects no
+overrides setup, and binds five methods. An unrelated production edit selects no
 tests; editing the helper selects its direct caller and the test whose setup calls
 it; editing setup selects that class. Separate missing-member checks retain
 conservative diagnostics for project callbacks and extension methods.
+
+The review regression adds a project `isEqual` override reached through an
+`NSObject` reference, with an intermediate project superclass and a qualified
+`Foundation.NSObject` ancestor. Editing the override selects its caller and leaves
+an unrelated test out. Snapshots record explicit overrides; the binder connects
+base declarations to their available implementations and preserves uncertainty
+when those implementations are missing. Super calls retain their ancestor target,
+so framework initializers do not acquire subclass-override cycles.
 
 ## Saved consumer comparison
 
