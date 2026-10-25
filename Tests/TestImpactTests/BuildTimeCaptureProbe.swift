@@ -48,6 +48,8 @@ import Testing
     try #require(!original.functions.isEmpty && original.diagnostics.isEmpty, "Reference extraction must succeed before comparing captures")
     var moduleFiles: [String: [URL]] = [:]
     var checkedInputs: [String: String] = [:]
+    let archivedEmpty = Set(config["archivedEmptyFragments"]?.components(separatedBy: "|") ?? [])
+    var excludedEmpty: [String] = []
     let start = Date()
     for folder in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).sorted(by: { $0.path < $1.path }) {
         let manifest = folder.appendingPathComponent("manifest.json")
@@ -74,10 +76,16 @@ import Testing
             try #require((info["silSHA256"] as? [String: String])?[filename] == checksum, "Captured SIL changed: \(sil.path)")
             bytes += (try sil.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
             fragments += 1
-            moduleFiles[module, default: []].append(sil)
+            let relative = folder.lastPathComponent + "/" + filename
+            if archivedEmpty.contains(relative) {
+                let parsed = try SILParser.parse(file: sil, module: module, sourceRoot: root)
+                try #require(parsed.functions.isEmpty && parsed.dispatchTargets.isEmpty, "Only genuinely empty archived fragments may be excluded")
+                excludedEmpty.append(relative)
+            } else { moduleFiles[module, default: []].append(sil) }
         }
     }
     try #require(fragments > 0)
+    try #require(Set(excludedEmpty) == archivedEmpty, "Every archived exclusion must identify a verified fragment")
     // Use the production per-module fragment merger and the same ownership rule
     // as compiler replay. A global union would invent cross-module dependencies.
     let capture = CapturedSIL(modules: moduleFiles, fingerprints: [:], diagnostics: [])
@@ -157,7 +165,7 @@ import Testing
             announce("Compared edit \(checked)/\(selectionLimit): \(change.path):\(snapshot.units[index].region.startLine)")
         }
     }
-    let result: [String: Any] = ["fragments": fragments, "silBytes": bytes, "referenceFunctions": original.functions.count, "capturedFunctions": graph.functions.count, "tests": reference.tests.count, "missingProjectFunctions": missing, "rootParity": original.tests == graph.tests, "selectionsChecked": selectionSamples.count, "selectionDifferences": selectionDifferences, "diagnostics": graph.diagnostics, "differingFunctions": differingFunctions, "parseSeconds": parseSeconds, "bindingSeconds": bindingSeconds, "selectionValidationSeconds": Date().timeIntervalSince(selectionStart), "selectionSamples": selectionSamples]
+    let result: [String: Any] = ["fragments": fragments, "excludedArchivedEmptyFragments": excludedEmpty.sorted(), "silBytes": bytes, "referenceFunctions": original.functions.count, "capturedFunctions": graph.functions.count, "tests": reference.tests.count, "missingProjectFunctions": missing, "rootParity": original.tests == graph.tests, "selectionsChecked": selectionSamples.count, "selectionDifferences": selectionDifferences, "diagnostics": graph.diagnostics, "differingFunctions": differingFunctions, "parseSeconds": parseSeconds, "bindingSeconds": bindingSeconds, "selectionValidationSeconds": Date().timeIntervalSince(selectionStart), "selectionSamples": selectionSamples]
     try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: try url("output"))
     announce("CAPTURE RESULT: \(checked) selections, \(selectionDifferences.count) differences, \(missing.count) missing project functions, roots equal: \(original.tests == graph.tests)")
 }
