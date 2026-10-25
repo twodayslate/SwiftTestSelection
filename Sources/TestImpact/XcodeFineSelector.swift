@@ -27,15 +27,46 @@ public enum XcodeFineSelector {
             include(affected, kind: "fallback", reason: message, revision: "base/head")
             if affected == inventory { fullReasons.append(message) }
         }
+        // Both revisions must opt into treating source locations as diagnostics.
+        // Explicit macro/directive syntax remains executable under either policy.
+        let diagnosticLocations = current.mappings?.sourceLocationPolicy == .diagnostic &&
+            previous?.mappings?.sourceLocationPolicy == .diagnostic &&
+            (try? current.mappings?.validate()) != nil && (try? previous?.mappings?.validate()) != nil
+        func fingerprint(_ unit: SourceUnit) -> String {
+            diagnosticLocations ? unit.syntaxFingerprint ?? unit.fingerprint : unit.fingerprint
+        }
         let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.units) ?? [], by: \.key)
         let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.units), by: \.key)
+        let sourceUnits: [SourceUnit] = oldUnits.values.flatMap { $0 } + newUnits.values.flatMap { $0 }
+        let missingCallerMetadata = sourceUnits.contains { unit in
+            unit.locationDefaultKinds == nil || unit.callerLocations == nil ||
+                unit.locationDefaultNames == nil || unit.invocationNames == nil
+        }
+        if !diagnosticLocations, missingCallerMetadata,
+           changes.contains(where: { $0.path.hasSuffix(".swift") || $0.previousPath?.hasSuffix(".swift") == true }) {
+            fallback("incomplete_caller_locations", "Saved source snapshots lack caller-location metadata. Regenerate both graphs before using semantic location selection.")
+        }
         let oldUnitsByFile = Dictionary(grouping: oldUnits.values.flatMap { $0 }, by: { $0.region.path })
         let newUnitsByFile = Dictionary(grouping: newUnits.values.flatMap { $0 }, by: { $0.region.path })
         var oldChanged: [SourceUnit] = []
         var newChanged: [SourceUnit] = []
+        // A bare #line/#file default is evaluated in its caller. Source syntax
+        // and dependency edges can both stay identical while that value changes.
+        // Match source invocations as well as compiler edges: transparent helpers
+        // and enum constructors can lose their call edges even under -Onone.
+        let callerKinds = diagnosticLocations ? [:] : callerLocationKinds(current)
+            .merging(previous.map(callerLocationKinds) ?? [:], uniquingKeysWith: { $0.union($1) })
+        func comparisonFingerprint(_ unit: SourceUnit) -> String {
+            let kinds = callerKinds[unit.key] ?? []
+            guard !kinds.isEmpty else { return fingerprint(unit) }
+            return fingerprint(unit) + "@caller[" + kinds.sorted().map { kind in
+                let value = unit.callerLocations.map { $0[kind] ?? "" }
+                return kind + ":" + (value ?? "unknown:" + unit.region.path + ":" + String(unit.region.startLine))
+            }.joined(separator: "|") + "]"
+        }
         for key in Set(oldUnits.keys).union(newUnits.keys) {
             let old = oldUnits[key] ?? [], new = newUnits[key] ?? []
-            if old.map(\.fingerprint).sorted() != new.map(\.fingerprint).sorted() {
+            if old.map(comparisonFingerprint).sorted() != new.map(comparisonFingerprint).sorted() {
                 oldChanged += old; newChanged += new
             }
         }
@@ -346,6 +377,9 @@ public enum XcodeFineSelector {
                                                 "Test-entry-only selection assumes independent tests: hidden cross-test calls or order-dependent shared state are not inferred. Explicit compiled callers remain selected.",
                                                 "Compiler graphs model the selected build configuration. External runtime behavior and generated code may require conservative fallbacks."])
         report.schemaVersion = 2
+        if diagnosticLocations {
+            report.limitations.append("Source-location policy is diagnostic in both revisions: implicit location-value changes do not select tests. Location literals must not control application behavior; explicit macro/directive syntax and compiled dependency changes still participate.")
+        }
         if !boundaryDecisions.isEmpty {
             report.runtimeBoundaryDecisions = boundaryDecisions.sorted { ($0.target, $0.revision) < ($1.target, $1.revision) }
             report.limitations.append("Non-UI runtime boundaries are explicit closed-module contracts validated against compiler imports, test hosts, and visible dependencies in each revision. They require independent full-run validation and exclude undeclared dynamic loading, IPC, and cross-boundary shared-state effects; they are not measured coverage.")
@@ -381,6 +415,70 @@ public enum XcodeFineSelector {
             report.uiMappingCoverage!.unmatchedSelectors.sort()
         }
         return report
+    }
+
+    private static func callerLocationKinds(_ snapshot: XcodeTestGraph) -> [String: Set<String>] {
+        let units = snapshot.sources.values.flatMap(\.units)
+        let defaults = units.filter { !($0.locationDefaultKinds?.isEmpty ?? true) }
+        guard !defaults.isEmpty else { return [:] }
+        let allKinds = defaults.reduce(into: Set<String>()) { $0.formUnion($1.locationDefaultKinds ?? []) }
+        var kindsByName: [String: Set<String>] = [:]
+        for unit in defaults {
+            for (name, kinds) in unit.locationDefaultNames ?? [:] {
+                kindsByName[name, default: []].formUnion(kinds)
+            }
+        }
+        // Name matching is deliberately an over-approximation across modules,
+        // overloads, receivers and argument slots. A surviving SIL definition is
+        // not evidence that all its calls survived mandatory inlining/lowering.
+        var result: [String: Set<String>] = [:]
+        for unit in units {
+            let names = unit.invocationNames ?? []
+            guard !names.isEmpty else { continue }
+            // `reader()` and `holder.reader()` spell the receiver, not
+            // callAsFunction. Its edge can disappear through mandatory inlining,
+            // so source names cannot rule out an implicit callable-object call.
+            // Interpret the stored declaration name here to cover saved graphs too.
+            var kinds = (kindsByName["*"] ?? []).union(kindsByName["callAsFunction"] ?? [])
+            for name in names { kinds.formUnion(name == "*" ? allKinds : kindsByName[name] ?? []) }
+            if !kinds.isEmpty { result[unit.key, default: []].formUnion(kinds) }
+        }
+        guard let graph = snapshot.dependencies else {
+            return Dictionary(units.map { ($0.key, allKinds) }, uniquingKeysWith: { $0.union($1) })
+        }
+        let byFile = Dictionary(grouping: units, by: { $0.region.path })
+        var symbolsByUnit: [String: Set<String>] = [:]
+        var unitsBySymbol: [String: Set<String>] = [:]
+        for node in graph.functions.values {
+            for region in node.regions {
+                for unit in byFile[region.path] ?? [] where unit.key.hasPrefix(node.module + ":") &&
+                    region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine {
+                    symbolsByUnit[unit.key, default: []].insert(node.id)
+                    unitsBySymbol[node.id, default: []].insert(unit.key)
+                }
+            }
+        }
+        var defaultSymbols: [String: Set<String>] = [:]
+        var unresolved = Set<String>()
+        for unit in defaults {
+            let kinds = unit.locationDefaultKinds ?? []
+            let symbols = symbolsByUnit[unit.key] ?? []
+            if symbols.isEmpty { unresolved.formUnion(kinds) }
+            for symbol in symbols { defaultSymbols[symbol, default: []].formUnion(kinds) }
+        }
+        // A missing declaration binding cannot prove absence of callers.
+        let sourceModules = Set(snapshot.modules.values)
+        for node in graph.functions.values {
+            let kinds = node.dependencies.reduce(into: Set<String>()) { $0.formUnion(defaultSymbols[$1] ?? []) }
+            guard !kinds.isEmpty else { continue }
+            let callers = unitsBySymbol[node.id] ?? []
+            if callers.isEmpty && sourceModules.contains(node.module) { unresolved.formUnion(kinds) }
+            for key in callers { result[key, default: []].formUnion(kinds) }
+        }
+        if !unresolved.isEmpty {
+            for unit in units { result[unit.key, default: []].formUnion(unresolved) }
+        }
+        return result
     }
 
     private static func isProductionOrTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {

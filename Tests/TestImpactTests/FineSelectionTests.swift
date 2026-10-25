@@ -540,3 +540,99 @@ func importedSDKHelperWithoutLocationsPreservesUIRuntimePolicy(policy: UIFeature
     #expect(precise.diagnostics.isEmpty)
     #expect(try GraphArchive.decode(GraphArchive.encode(old)).unsupportedSourceInputs == old.unsupportedSourceInputs)
 }
+
+private let locationAwareTests = uiSource.replacingOccurrences(of: "func helper()", with: "func helper(file: StaticString = #filePath, line: UInt = #line)")
+private func locationModel(_ source: String, diagnostic: Bool = false) -> XcodeTestGraph {
+    var snapshot = withOpaqueDependencies(model(ui: source))
+    snapshot.mappings = UIFeatureMappings(features: [], ignoredDocumentation: ["*.md", "**/*.md"])
+    snapshot.mappings!.sourceLocationPolicy = diagnostic ? .diagnostic : .semantic
+    return snapshot
+}
+
+@Test func nestedEntryEditWithLocationDefaultsDoesNotChangeLaterClasses() throws {
+    let old = locationModel(locationAwareTests)
+    let edited = locationAwareTests.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: """
+    func waitForImageFrame() -> Int {
+        return 1
+    }
+    XCTAssertEqual(waitForImageFrame(), 1)
+    """)
+    let current = locationModel(edited)
+    for archive in [false, true] {
+        let head = try archive ? GraphArchive.decode(GraphArchive.encode(current)) : current
+        let report = selection(head, old, paths: ["Tests/UI.swift", "AGENTS.md", "docs/guide.md"])
+        #expect(report.selectedTests == ["UI/Sharing/testIndependent()"])
+        #expect(report.diagnostics.isEmpty)
+        #expect(report.ignoredChanges == ["AGENTS.md", "docs/guide.md"])
+        #expect(!report.explanations.contains { $0.reason.contains("Changed class state") })
+    }
+    var caller = current
+    caller.dependencies!.functions["UI.Sharing.testOne()"]!.dependencies.insert("UI.Sharing.testIndependent()")
+    #expect(selection(caller, old).selectedTests == ["UI/Sharing/testIndependent()", "UI/Sharing/testOne()"])
+    for (before, after) in [("XCTAssertEqual(2, 2)", "XCTAssertEqual(2, 3)"),
+                            ("XCTAssertEqual(3, 3)", "XCTAssertEqual(3, 4)"),
+                            ("class Notes: XCTestCase", "class Notes: OtherCase")] {
+        let report = selection(locationModel(edited.replacingOccurrences(of: before, with: after)), old)
+        #expect(Set(report.selectedTests) == Set(old.tests))
+    }
+}
+
+@Test(arguments: ["// line comment\n", "/* block\n comment */\n", "/// Documentation\n"])
+func locationAwareCommentEditsAndMarkdownContributeNoTests(comment: String) {
+    let old = locationModel(locationAwareTests, diagnostic: true)
+    let documented = comment + locationAwareTests.replacingOccurrences(of: "class Notes", with: comment + "class Notes")
+    for paths in [["Tests/UI.swift"], ["Tests/UI.swift", "AGENTS.md", "docs/guide.md"]] {
+        #expect(selection(locationModel(documented, diagnostic: true), old, paths: paths).selectedTests.isEmpty)
+    }
+    let code = locationAwareTests.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")
+    let mixed = comment + code.replacingOccurrences(of: "class Notes", with: comment + "class Notes")
+    #expect(selection(locationModel(mixed, diagnostic: true), old).selectedTests == selection(locationModel(code, diagnostic: true), old).selectedTests)
+}
+
+@Test func diagnosticLocationPolicyRequiresBothRevisionsAndKeepsExplicitSyntax() throws {
+    let source = locationAwareTests.replacingOccurrences(of: "XCTAssertEqual(4, 4)", with: "print(#line)")
+    let shifted = "// documentation\n" + source
+    let old = locationModel(source, diagnostic: true)
+    let current = locationModel(shifted, diagnostic: true)
+    #expect(selection(current, old).selectedTests.isEmpty)
+    #expect(!selection(locationModel(shifted), old).selectedTests.isEmpty)
+    #expect(!selection(current, locationModel(source)).selectedTests.isEmpty)
+    let code = source.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")
+    #expect(selection(locationModel("// comment\n" + code, diagnostic: true), old).selectedTests == ["UI/Sharing/testIndependent()"])
+    #expect(!selection(locationModel(shifted.replacingOccurrences(of: "#line", with: "#column"), diagnostic: true), old).selectedTests.isEmpty)
+    var legacy = current
+    for key in legacy.sources.keys {
+        for i in legacy.sources[key]!.units.indices { legacy.sources[key]!.units[i].syntaxFingerprint = nil }
+    }
+    #expect(!selection(legacy, old).selectedTests.isEmpty)
+    let restored = try GraphArchive.decode(GraphArchive.encode(current))
+    #expect(restored.mappings?.sourceLocationPolicy == .diagnostic)
+    #expect(selection(restored, old).selectedTests.isEmpty)
+}
+
+@Test func callerLocationDefaultsSelectOnlyShiftedCompilerCallers() throws {
+    let expected = ["UI/Sharing/testOne()", "UI/Sharing/testThree()", "UI/Sharing/testTwo()"]
+    for macro in ["line", "column", "filePath", "fileID"] {
+        let source = uiSource.replacingOccurrences(of: "func helper()", with: "func helper(location: Any = #\(macro))")
+        let base = model(ui: source)
+        let shifted = macro == "line" ? "// docs\n" + source :
+            macro == "column" ? source.replacingOccurrences(of: "{ helper()", with: "{  helper()") : source
+        let path = macro.hasPrefix("file") ? "Moved/Other.swift" : "Tests/UI.swift"
+        let head = model(ui: shifted, uiPath: path)
+        for reversed in [false, true] {
+            let (before, after) = reversed ? (head, base) : (base, head)
+            let report = selection(try GraphArchive.decode(GraphArchive.encode(after)), before,
+                paths: ["Tests/UI.swift", path])
+            #expect(report.selectedTests == expected, "\(macro): \(report.selectedTests)")
+        }
+        // Moving the declaration, without moving any caller, changes no value.
+        let movedHelper = source.replacingOccurrences(of: "    func helper", with: "\n    func helper")
+        #expect(selection(model(ui: movedHelper), base).selectedTests.isEmpty)
+        if macro.hasPrefix("file") {
+            #expect(selection(model(ui: "// docs\n" + source), base).selectedTests.isEmpty)
+        }
+        if macro == "fileID" {
+            #expect(selection(model(ui: source, uiPath: "Moved/UI.swift"), base, paths: ["Moved/UI.swift"]).selectedTests.isEmpty)
+        }
+    }
+}

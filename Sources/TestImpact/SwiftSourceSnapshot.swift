@@ -4,6 +4,9 @@
 import Foundation
 import SwiftParser
 import SwiftSyntax
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 
 public struct SourceUnit: Codable, Sendable {
     public var key: String
@@ -11,6 +14,20 @@ public struct SourceUnit: Codable, Sendable {
     public var kind: String
     public var scope: String
     public var region: SourceRegion
+    /// Present only when evaluated location literals add meaning beyond syntax.
+    /// Older graphs lack this evidence and keep their conservative fingerprint.
+    public var syntaxFingerprint: String? = nil
+    /// Bare source-location defaults declared in this unit. Callers, rather than
+    /// the declaration, supply these values.
+    public var locationDefaultKinds: Set<String>? = nil
+    /// Syntactic callable names supplement compiler edges lost during lowering.
+    /// "*" represents constructors or an otherwise ambiguous callable name.
+    public var locationDefaultNames: [String: Set<String>]? = nil
+    public var invocationNames: Set<String>? = nil
+    /// Invocation token locations, compared only for compiler callers of a
+    /// source-location default. Separate dimensions avoid line-only changes
+    /// affecting callers of a file-only default.
+    public var callerLocations: [String: String]? = nil
 }
 
 public struct SwiftSourceSnapshot: Codable, Sendable {
@@ -55,16 +72,103 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         result.typeAliases = []
         result.superclasses = [:]
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
-        let tokens = Array(tree.tokens(viewMode: .sourceAccurate))
-        let locationNames: Set<String> = ["line", "column", "file", "fileID", "filePath", "sourceLocation"]
-        let contextual = tokens.indices.contains { index in
-            tokens[index].text == "#" && index + 1 < tokens.count && locationNames.contains(tokens[index + 1].text)
-        } || tokens.contains { $0.tokenKind == .poundSourceLocation }
         // Preserve syntax structure, token kinds and literal contents, but not
-        // trivia. Parsing first retains whitespace-sensitive operator fixity.
+        // trivia. Location values belong to their expression, not the whole file.
         func fingerprint(_ node: Syntax) -> String {
             if let token = node.as(TokenSyntax.self) { return "\(token.tokenKind):\(token.text.utf8.count):\(token.text)" }
             return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(fingerprint).joined(separator: "|") + "]"
+        }
+        let locationNames: Set<String> = ["line", "column", "file", "fileID", "filePath"]
+        func bareDefault(_ macro: MacroExpansionExprSyntax) -> Bool {
+            macro.parent?.is(InitializerClauseSyntax.self) == true &&
+                (macro.parent?.parent?.is(FunctionParameterSyntax.self) == true ||
+                 macro.parent?.parent?.is(EnumCaseParameterSyntax.self) == true)
+        }
+        func locationValue(_ name: String, at position: AbsolutePosition) -> String {
+            let location = locations.location(for: position)
+            switch name {
+            case "line": return String(location.presumedLine)
+            case "column": return String(location.column)
+            case "fileID": return module + "/" + (location.presumedFile.split(separator: "/").last.map(String.init) ?? "")
+            default: return location.presumedFile
+            }
+        }
+        func defaultName(_ macro: MacroExpansionExprSyntax) -> String {
+            var ancestor = macro.parent
+            while let node = ancestor {
+                if let function = node.as(FunctionDeclSyntax.self) { return function.name.identifier?.name ?? function.name.text }
+                if let element = node.as(EnumCaseElementSyntax.self) { return element.name.identifier?.name ?? element.name.text }
+                if node.is(InitializerDeclSyntax.self) { return "*" } // Type aliases can rename constructors.
+                if node.is(SubscriptDeclSyntax.self) { return "subscript" }
+                ancestor = node.parent
+            }
+            return "*"
+        }
+        func callerInfo(_ node: Syntax) -> (locations: [String: String], names: Set<String>) {
+            var offsets = Set<Int>()
+            var names = Set<String>()
+            func calledName(_ expression: ExprSyntax) -> String {
+                if let reference = expression.as(DeclReferenceExprSyntax.self) { return reference.baseName.identifier?.name ?? reference.baseName.text }
+                if let member = expression.as(MemberAccessExprSyntax.self) { return member.declName.baseName.identifier?.name ?? member.declName.baseName.text }
+                if let generic = expression.as(GenericSpecializationExprSyntax.self) { return calledName(generic.expression) }
+                return "*"
+            }
+            func record(_ tokens: TokenSequence) {
+                offsets.formUnion(tokens.map { $0.positionAfterSkippingLeadingTrivia.utf8Offset })
+            }
+            func visit(_ node: Syntax) {
+                if let call = node.as(FunctionCallExprSyntax.self) {
+                    names.insert(calledName(call.calledExpression))
+                    record(call.calledExpression.tokens(viewMode: .sourceAccurate))
+                    for token in [call.leftParen, call.rightParen].compactMap({ $0 }) {
+                        offsets.insert(token.positionAfterSkippingLeadingTrivia.utf8Offset)
+                    }
+                } else if let call = node.as(SubscriptCallExprSyntax.self) {
+                    names.insert("subscript")
+                    record(call.calledExpression.tokens(viewMode: .sourceAccurate))
+                    offsets.insert(call.leftSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
+                    offsets.insert(call.rightSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
+                } else if let attribute = node.as(AttributeSyntax.self) {
+                    names.insert(attribute.attributeName.trimmedDescription)
+                    record(attribute.tokens(viewMode: .sourceAccurate))
+                } else if let macro = node.as(MacroExpansionExprSyntax.self),
+                          !locationNames.contains(macro.macroName.text) && macro.macroName.text != "function" {
+                    // A source macro can synthesize a call that subsequently inlines.
+                    names.insert("*")
+                    record(macro.tokens(viewMode: .sourceAccurate))
+                }
+                for child in node.children(viewMode: .sourceAccurate) { visit(child) }
+            }
+            visit(node)
+            guard !offsets.isEmpty else { return ([:], names) }
+            let positions = offsets.sorted().map { AbsolutePosition(utf8Offset: $0) }
+            let valuesByKind = Dictionary(uniqueKeysWithValues: locationNames.map { name in
+                let values = positions.map {
+                    let value = locationValue(name, at: $0)
+                    return "\(value.utf8.count):" + value
+                }.joined(separator: "|")
+                #if canImport(CryptoKit)
+                // Keep archive size bounded even for large generated functions.
+                return (name, Data(SHA256.hash(data: Data(values.utf8))).base64EncodedString())
+                #else
+                return (name, values)
+                #endif
+            })
+            return (valuesByKind, names)
+        }
+        func locationValues(_ node: Syntax) -> [String] {
+            var values: [String] = []
+            for token in node.tokens(viewMode: .sourceAccurate) where token.tokenKind == .pound {
+                guard let macro = token.parent?.as(MacroExpansionExprSyntax.self) else { continue }
+                // Bare parameter defaults use the caller's location. Parenthesized
+                // or arithmetic defaults use the declaration's location instead.
+                if bareDefault(macro) { continue }
+                let name = macro.macroName.text
+                if locationNames.contains(name) {
+                    values.append(name + ":" + locationValue(name, at: macro.positionAfterSkippingLeadingTrivia))
+                }
+            }
+            return values
         }
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String]) {
             if let alias = node.as(TypeAliasDeclSyntax.self) {
@@ -93,11 +197,27 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             let start = locations.location(for: node.positionAfterSkippingLeadingTrivia).line
             let end = locations.location(for: node.endPositionBeforeTrailingTrivia).line
+            var defaultNames: [String: Set<String>] = [:]
+            for token in node.tokens(viewMode: .sourceAccurate) where token.tokenKind == .pound {
+                guard let macro = token.parent?.as(MacroExpansionExprSyntax.self),
+                      bareDefault(macro), locationNames.contains(macro.macroName.text) else { continue }
+                defaultNames[defaultName(macro), default: []].insert(macro.macroName.text)
+            }
+            let defaults = Set(defaultNames.values.flatMap { $0 })
+            let calls = callerInfo(node)
+            let syntax = fingerprint(node)
+            let values = locationValues(node)
+            let semantic = values.isEmpty ? syntax : syntax + "@locations[" +
+                values.map { "\($0.utf8.count):" + $0 }.joined(separator: "|") + "]"
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
-                fingerprint: fingerprint(node) + (contextual ? "@\(path):\(start)" : ""),
+                fingerprint: semantic,
                 kind: kind, scope: scope.joined(separator: "."),
-                region: SourceRegion(path: path, startLine: start, endLine: end)))
+                region: SourceRegion(path: path, startLine: start, endLine: end),
+                syntaxFingerprint: semantic == syntax ? nil : syntax,
+                locationDefaultKinds: defaults,
+                locationDefaultNames: defaultNames, invocationNames: calls.names,
+                callerLocations: calls.locations))
         }
         func walk(_ node: Syntax, scope: [String]) {
             if let item = node.as(CodeBlockItemSyntax.self), !item.item.is(DeclSyntax.self) {

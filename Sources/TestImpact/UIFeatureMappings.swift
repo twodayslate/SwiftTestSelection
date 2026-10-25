@@ -7,6 +7,12 @@ public struct UIFeatureMappings: Codable, Sendable {
     public enum RuntimeDependencyPolicy: String, Codable, Sendable {
         case conservative, declared
     }
+    public enum SourceLocationPolicy: String, Codable, Sendable {
+        case semantic, diagnostic
+    }
+    /// Opt in only when implicit location values are diagnostic, never behavior.
+    public var sourceLocationPolicy: SourceLocationPolicy? = nil
+
     public struct Feature: Codable, Sendable {
         public var name: String
         public var sources: [String]?

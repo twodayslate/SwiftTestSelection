@@ -142,6 +142,51 @@ each path (including both sides of a rename). The report retains the paths in
 `changedFiles` and lists exclusions in `ignoredChanges`. Configuration, resources,
 and other unclassified changes still request a full run.
 
+### Documentation and source-location literals
+
+Swift comparisons preserve parsed syntax, operators, strings, and regex contents
+while ignoring comments and whitespace. Location sensitivity is per expression:
+an unrelated `#line` never makes a later class header change. Bare location
+literals used as parameter defaults (as in XCTest assertion helpers) capture the
+caller's location, so moving the helper does not change its fingerprint. Callers of
+source-declared defaults compare their invocation locations, including across
+source files. Syntactic callable names supplement compiler dependencies so
+mandatory inlining (such as `@_transparent`) and enum constructor lowering cannot
+hide shifted location arguments. Enum associated-value defaults use caller
+locations too. A shifted call can therefore select its test even if its
+syntax is unchanged. Calls with explicit arguments, ambiguous bindings, matching
+names in unrelated modules/overloads, constructor aliases, and implicit
+`callAsFunction` invocations remain conservative because syntax and
+dependency edges do not prove the selected declaration or omitted argument slots. Body
+expressions and parenthesized/arithmetic defaults retain their evaluated location;
+`#sourceLocation` adjusts presumed file/line values, and `#column` tracks its own
+expression position.
+
+By default, actual location-value changes remain semantic. A project whose
+source-location literals are exclusively diagnostic can explicitly opt out in
+**both** revisions of `.swift-test-selection.json`:
+
+```json
+{
+  "version": 1,
+  "sourceLocationPolicy": "diagnostic",
+  "ignoredDocumentation": ["*.md", "**/*.md"],
+  "features": []
+}
+```
+
+Add these fields to the existing mapping file, preserving feature mappings and
+runtime contracts. This policy makes comment-only edits select no tests even
+when comments shift a body-level `#line` or a caller-evaluated location default, and prevents documentation in a mixed
+change from adding candidates through location values. It must not be used when
+those values control application behavior. Explicit macro/directive edits,
+literal contents, operator changes, and compiled dependency changes still count.
+The default `sourceLocationPolicy` is `semantic`; a one-sided opt-in also retains
+semantic comparison. Unresolved ownership remains conservative. Regenerate saved
+graphs for the new fingerprints. Under the semantic policy, saved snapshots
+without caller metadata request a full run with `incomplete_caller_locations`;
+legacy snapshots also cannot prove diagnostic-only location differences.
+
 ### Non-UI runtime boundaries (opt-in)
 
 Validated boundaries continue to apply to mixed production changes and edits to
