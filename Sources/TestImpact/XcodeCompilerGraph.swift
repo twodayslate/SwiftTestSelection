@@ -88,6 +88,7 @@ enum XcodeCompilerGraph {
         for index in 0..<(workers == 1 ? min(1, jobs.count) : jobs.count) { schedule(index) }
         var definingSymbols = Set<String>()
         var dispatch: [String: Set<String>] = [:]
+        var externalWitnesses: [String: Set<String>] = [:]
         for (index, job) in jobs.enumerated() {
             let result = results[index]
             defer { if workers == 1 && index + 1 < jobs.count { schedule(index + 1) } }
@@ -108,6 +109,7 @@ enum XcodeCompilerGraph {
                     if isDefinition { definingSymbols.insert(symbol) }
                 }
                 for (declaration, symbols) in parsed.dispatchTargets { dispatch[declaration, default: []].formUnion(symbols) }
+                for (key, owners) in parsed.externalWitnesses ?? [:] { externalWitnesses[key, default: []].formUnion(owners) }
             } catch { graph.diagnostics.append("Compiler dependency extraction failed: \(job.module): \(error)") }
         }
         queue.waitUntilAllOperationsAreFinished()
@@ -123,12 +125,14 @@ enum XcodeCompilerGraph {
             graph.diagnostics = ["Compiler dependency extraction failed: \(error)"]
             return graph
         }
-        resolveDispatch(&graph, tables: dispatch)
+        resolveDispatch(&graph, tables: dispatch, externalWitnesses: externalWitnesses, projectModules: Set(jobs.map(\.module)))
 
         return graph
     }
 
-    static func resolveDispatch(_ graph: inout DependencyGraph, tables: [String: Set<String>]) {
+    static func resolveDispatch(_ graph: inout DependencyGraph, tables: [String: Set<String>],
+                                externalWitnesses: [String: Set<String>] = [:], projectModules: Set<String>? = nil) {
+        let localModules = projectModules ?? Set(graph.functions.values.filter { !$0.regions.isEmpty }.map(\.module))
         for symbol in graph.functions.keys {
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
                 if let candidates = tables[declaration], !candidates.isEmpty {
@@ -136,6 +140,17 @@ enum XcodeCompilerGraph {
                     graph.functions[symbol]!.resolvedDynamicDeclarations.insert(declaration)
                 } else if let separator = declaration.range(of: "@witness:") {
                     let general = String(declaration[..<separator.lowerBound])
+                    let requirement = general.split(separator: ".").dropLast().joined(separator: ".")
+                    let key = requirement + declaration[separator.lowerBound...]
+                    if let owners = externalWitnesses[graph.functions[symbol]!.module + ":" + key], owners.count == 1, owners.isDisjoint(with: localModules) {
+                        // The compiler, not a Foundation/type-name allowlist,
+                        // establishes the concrete conformance's external owner.
+                        // Like a direct external function_ref, this is a resolved
+                        // imported implementation, not a missing project table.
+                        graph.functions[symbol]!.resolvedDynamicDeclarations.insert(declaration)
+                        graph.functions[symbol]!.uncertainties.insert("Imported conformance: " + key + " module " + owners.first!)
+                        continue
+                    }
                     // Never turn a missing concrete table into proof of no impact.
                     graph.functions[symbol]!.dependencies.formUnion(tables[general] ?? [])
                     graph.functions[symbol]!.uncertainties.insert("Unresolved project dispatch: " + declaration)

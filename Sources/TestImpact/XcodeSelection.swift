@@ -33,6 +33,7 @@ public struct XcodeTestGraph: Codable, Sendable {
     public var sources: [String: SwiftSourceSnapshot] = [:]
     public var modules: [String: String] = [:]
     public var mappings: UIFeatureMappings?
+    public var runtimeInventory: XcodeRuntimeInventory? = nil
     /// Provenance and product fingerprints for an imported build-for-testing result.
     public var buildArtifact: XcodeBuildArtifact?
 

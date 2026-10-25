@@ -25,6 +25,8 @@ public struct UIFeatureMappings: Codable, Sendable {
     public var runtimeDependencyPolicy: RuntimeDependencyPolicy?
     /// Explicit Markdown-only exclusions, agreed by both review revisions.
     public var ignoredDocumentation: [String]?
+    /// Non-UI closed-module contracts, checked against compiler imports and hosts.
+    public var testRuntimeBoundaries: [TestRuntimeBoundary]? = nil
     public var fixtures: [String: [String]]?
     public var features: [Feature]
 
@@ -44,6 +46,17 @@ public struct UIFeatureMappings: Codable, Sendable {
             }
         }
         let names = Set(features.map(\.name))
+        let boundaries = testRuntimeBoundaries ?? []
+        guard Set(boundaries.map(\.target)).count == boundaries.count else {
+            throw ImpactError("Test runtime boundary targets must be unique")
+        }
+        for boundary in boundaries {
+            guard !boundary.target.isEmpty, !boundary.target.contains("/"),
+                  !boundary.modules.isEmpty, !boundary.modules.contains(""),
+                  !boundary.rationale.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ImpactError("Test runtime boundaries require a target, modules, and an isolation rationale")
+            }
+        }
         guard names.count == features.count, !names.contains("") else { throw ImpactError("UI feature names must be unique and nonempty.") }
         for feature in features {
             for dependency in feature.dependsOn ?? [] where !names.contains(dependency) {

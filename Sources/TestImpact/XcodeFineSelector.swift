@@ -14,6 +14,7 @@ public enum XcodeFineSelector {
         var fullReasons: [String] = []
         var ignored = Set<String>()
         var headMappingIndex: MappingIndex?
+        var boundaryDecisions: [RuntimeBoundaryDecision] = []
         func include(_ tests: Set<String>, kind: String, reason: String, revision: String, path: [String] = []) {
             for test in tests.intersection(inventory).sorted() {
                 selected.insert(test)
@@ -84,6 +85,10 @@ public enum XcodeFineSelector {
         newChanged = Dictionary(grouping: newChanged, by: { $0.key + $0.region.path }).values.compactMap(\.first)
         let semanticPaths = Set((oldChanged + newChanged).map { $0.region.path })
         let knownPaths = Set((current.targets + (previous?.targets ?? [])).flatMap(\.sourceFiles))
+        let analyzedPaths = Set((Array(current.sources.keys) + Array(previous?.sources.keys ?? [:].keys)).compactMap { key in
+            key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) }
+        }).union(oldUnits.values.flatMap { $0 }.map { $0.region.path })
+            .union(newUnits.values.flatMap { $0 }.map { $0.region.path })
         for change in changes {
             let paths = [change.path] + (change.previousPath.map { [$0] } ?? [])
             let ignoredDocumentation = paths.allSatisfy { path in
@@ -94,11 +99,11 @@ public enum XcodeFineSelector {
             }
             if ignoredDocumentation {
                 ignored.insert(change.path)
-            } else if change.path.hasSuffix(".swift"), knownPaths.contains(change.path), !semanticPaths.contains(change.path) {
+            } else if change.path.hasSuffix(".swift"), knownPaths.contains(change.path), analyzedPaths.contains(change.path), !semanticPaths.contains(change.path) {
                 ignored.insert(change.path)
             } else if change.isPureMove && change.path.hasSuffix(".pbxproj") {
                 ignored.insert(change.path)
-            } else if !change.path.hasSuffix(".swift") || !knownPaths.contains(change.path) {
+            } else if !change.path.hasSuffix(".swift") || !knownPaths.contains(change.path) || !analyzedPaths.contains(change.path) {
                 fallback("unclassified_change", "Change lacks a supported semantic source boundary: \(change.path)")
             }
         }
@@ -197,11 +202,50 @@ public enum XcodeFineSelector {
                     !node.regions.isEmpty && node.uncertainties.contains { $0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:") }
                 }.map(\.id))
                 let uncertainPaths = index.paths(to: uncertain)
+                var boundedTargets: [String: TestRuntimeBoundary] = [:]
+                let peer = revision == "base" ? current : previous
+                for group in Dictionary(grouping: snapshot.mappings?.testRuntimeBoundaries ?? [], by: \.target).values {
+                    let boundary = group[0]
+                    let targetTests = Set(snapshot.tests.filter { $0.hasPrefix(boundary.target + "/") })
+                    let peerBoundaries = peer?.mappings?.testRuntimeBoundaries?.filter { $0.target == boundary.target } ?? []
+                    let failure: String?
+                    if group.count != 1 || peerBoundaries.count != 1 || peerBoundaries.first != boundary {
+                        failure = "Runtime boundary for \(boundary.target) is missing, ambiguous, or changed between revisions"
+                    } else if (try? snapshot.mappings?.validate()) == nil {
+                        failure = "Invalid runtime boundary policy for \(boundary.target)"
+                    } else {
+                        failure = boundary.validationFailure(in: snapshot)
+                    }
+                    if let failure {
+                        fallback("invalid_runtime_boundary", "\(revision): \(failure)", tests: targetTests.isEmpty ? inventory.subtracting(uiTests) : targetTests)
+                    } else {
+                        boundedTargets[boundary.target] = boundary
+                    }
+                }
+                // Both semantic inventories participate, including added/deleted
+                // declarations and dependency changes in a stacked comparison.
+                // Infrastructure changes retain the existing conservative policy.
+                let changesAreProduction = previous != nil &&
+                    oldChanged.allSatisfy { isProduction($0, in: previous!) } &&
+                    newChanged.allSatisfy { isProduction($0, in: current) }
+                let changedModules = Set((oldChanged + newChanged).map { String($0.key.prefix { $0 != ":" }) })
+                var bounded: [String: [String]] = [:]
                 for test in snapshot.tests where inventory.contains(test) {
                     if declaredUIRuntime && uiTests.contains(test) { continue }
                     if let path = uncertainPaths.path(from: graph.tests[test] ?? []) {
-                        fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test): \(graph.functions[path.last!]!.uncertainties.sorted().joined(separator: "; "))", tests: [test])
+                        if changesAreProduction, let boundary = boundedTargets[target(of: test)],
+                           changedModules.isDisjoint(with: boundary.modules) {
+                            bounded[boundary.target, default: []].append(test)
+                        } else {
+                            fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test); no validated boundary excludes changed modules [\(changedModules.sorted().joined(separator: ", "))]: \(graph.functions[path.last!]!.uncertainties.sorted().joined(separator: "; "))", tests: [test])
+                        }
                     }
+                }
+                for (target, tests) in bounded {
+                    let boundary = boundedTargets[target]!
+                    boundaryDecisions.append(RuntimeBoundaryDecision(target: target, revision: revision,
+                        modules: boundary.modules.sorted(), changedModules: changedModules.sorted(),
+                        boundedUncertaintyTests: tests.sorted(), rationale: boundary.rationale))
                 }
             }
             guard !productionUnits.isEmpty, !uiTests.isEmpty else { continue }
@@ -282,6 +326,10 @@ public enum XcodeFineSelector {
                                                 "Test-entry-only selection assumes independent tests: hidden cross-test calls or order-dependent shared state are not inferred. Explicit compiled callers remain selected.",
                                                 "Compiler graphs model the selected build configuration. External runtime behavior and generated code may require conservative fallbacks."])
         report.schemaVersion = 2
+        if !boundaryDecisions.isEmpty {
+            report.runtimeBoundaryDecisions = boundaryDecisions.sorted { ($0.target, $0.revision) < ($1.target, $1.revision) }
+            report.limitations.append("Non-UI runtime boundaries are explicit closed-module contracts validated against compiler imports, test hosts, and visible dependencies in each revision. They require independent full-run validation and exclude undeclared dynamic loading, IPC, and cross-boundary shared-state effects; they are not measured coverage.")
+        }
         if declaredUIRuntime {
             report.limitations.append("UI runtime dependency policy is declared in both revisions: opaque runtime relationships must be represented by complete feature boundaries and dependsOn. Unit and test-infrastructure uncertainty remains conservative.")
         }
@@ -318,6 +366,13 @@ public enum XcodeFineSelector {
     private static func isProductionOrTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
         let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
         return (!owners.isEmpty && owners.allSatisfy { !$0.isTest }) || isTestEntry(unit, in: snapshot)
+    }
+
+    private static func isProduction(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
+        let module = String(unit.key.prefix { $0 != ":" })
+        let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
+        return snapshot.runtimeInventory?.imports[module] != nil && !owners.isEmpty &&
+            owners.allSatisfy { !$0.isTest && snapshot.modules[$0.name] == module }
     }
 
     private static func isTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {

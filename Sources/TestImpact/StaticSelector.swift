@@ -32,6 +32,7 @@ public struct ImpactReport: Codable, Sendable {
     public var diagnostics: [SelectionDiagnostic] = []
     public var ignoredChanges: [String] = []
     public var uiMappingCoverage: UIMappingCoverage?
+    public var runtimeBoundaryDecisions: [RuntimeBoundaryDecision]? = nil
 
     public var filter: String? {
         guard !selectedTests.isEmpty else { return nil }

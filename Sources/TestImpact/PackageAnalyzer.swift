@@ -38,6 +38,7 @@ public struct PackageAnalyzer {
         }
 
         var dispatchTargets: [String: Set<String>] = [:]
+        var externalWitnesses: [String: Set<String>] = [:]
         var seenModules = Set<String>()
         for command in build.swiftCommands.values.sorted(by: { $0.moduleName < $1.moduleName }) where modules.contains(command.moduleName) {
             seenModules.insert(command.moduleName)
@@ -60,11 +61,12 @@ public struct PackageAnalyzer {
             for (declaration, targets) in parsed.dispatchTargets {
                 dispatchTargets[declaration, default: []].formUnion(targets)
             }
+            for (key, owners) in parsed.externalWitnesses ?? [:] { externalWitnesses[key, default: []].formUnion(owners) }
         }
         for missing in modules.subtracting(seenModules).sorted() {
             graph.diagnostics.append("No compiler invocation was found for target \(missing).")
         }
-        XcodeCompilerGraph.resolveDispatch(&graph, tables: dispatchTargets)
+        XcodeCompilerGraph.resolveDispatch(&graph, tables: dispatchTargets, externalWitnesses: externalWitnesses)
 
         progress("Discovering test identifiers…")
         let listing = try CommandRunner.run("swift", ["test"] + common + ["list", "--skip-build"], at: packagePath).text

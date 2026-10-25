@@ -7,7 +7,12 @@ import Foundation
 /// decode; the compact representation interns repeated symbols, paths and text.
 public enum GraphArchive {
     private static let magic = Data("STIGRAPH1\n".utf8)
-    private struct Envelope: Codable { var metadata: Data; var graph: PackedGraph?; var dispatch: [String: Set<String>]? }
+    private struct Envelope: Codable {
+        var metadata: Data
+        var graph: PackedGraph?
+        var dispatch: [String: Set<String>]?
+        var externalWitnesses: [String: Set<String>]? = nil
+    }
     private struct PackedGraph: Codable {
         var strings: [String]
         var nodes: Data
@@ -29,6 +34,9 @@ public enum GraphArchive {
                 for r in n.regions { row += [intern(r.path), r.startLine, r.endLine] }
                 for values in [n.dependencies, n.uncertainties, n.dynamicDeclarations, n.resolvedDynamicDeclarations] {
                     row.append(values.count); row += values.sorted().map(intern)
+                }
+                if let references = n.compilerReferences {
+                    row.append(references.count); row += references.sorted().map(intern)
                 }
                 words.append(UInt64(row.count).littleEndian)
                 words += row.map { UInt64(bitPattern: Int64($0)).littleEndian }
@@ -76,6 +84,7 @@ public enum GraphArchive {
                 }
                 node.dependencies = try values(); node.uncertainties = try values()
                 node.dynamicDeclarations = try values(); node.resolvedDynamicDeclarations = try values()
+                if cursor < row.count { node.compilerReferences = try values() }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
                 graph.functions[node.id] = node
             }
@@ -92,7 +101,7 @@ public enum GraphArchive {
             let packed = graph.dependencies.map(PackedGraph.init); graph.dependencies = nil
             envelope = try Envelope(metadata: JSONEncoder().encode(graph), graph: packed)
         } else if let module = value as? SILModule {
-            envelope = Envelope(metadata: Data(), graph: PackedGraph(DependencyGraph(functions: module.functions)), dispatch: module.dispatchTargets)
+            envelope = Envelope(metadata: Data(), graph: PackedGraph(DependencyGraph(functions: module.functions)), dispatch: module.dispatchTargets, externalWitnesses: module.externalWitnesses)
         } else { return try JSONEncoder().encode(value) }
         let encoder = PropertyListEncoder(); encoder.outputFormat = .binary
         let payload = try encoder.encode(envelope)
@@ -112,7 +121,7 @@ public enum GraphArchive {
             return graph as! T
         }
         if type == SILModule.self, let packed = envelope.graph, let dispatch = envelope.dispatch {
-            return try SILModule(functions: packed.unpack().functions, dispatchTargets: dispatch) as! T
+            return try SILModule(functions: packed.unpack().functions, dispatchTargets: dispatch, externalWitnesses: envelope.externalWitnesses) as! T
         }
         throw ImpactError("Unsupported compact graph payload")
     }
