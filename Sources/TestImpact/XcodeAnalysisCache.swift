@@ -129,6 +129,44 @@ final class XcodeGraphCache {
         return try digest(canonicalInventory(JSONSerialization.data(withJSONObject: inventory)))
     }
 
+    /// Rewrite only known spellings of this exact workspace, at path boundaries.
+    /// Settings can contain /tmp even when the exported workspace uses /private/tmp.
+    static func normalizedSettings(_ data: Data, workspace: URL, aliases: [URL] = []) throws -> Data {
+        func physical(_ url: URL) -> String {
+            if let path = realpath(url.path, nil) { defer { free(path) }; return String(cString: path) }
+            return url.standardizedFileURL.resolvingSymlinksInPath().path
+        }
+        let canonical = physical(workspace)
+        var paths = Set([canonical, workspace.standardizedFileURL.path])
+        for alias in aliases where physical(alias) == canonical { paths.insert(alias.standardizedFileURL.path) }
+        // Darwin's system aliases are bidirectional; Foundation sometimes keeps
+        // the short spelling. Confirm each candidate still resolves to this root.
+        for path in Array(paths) {
+            for short in ["/tmp", "/var", "/etc"] {
+                let long = "/private" + short
+                let alternate: String?
+                if path.hasPrefix(long + "/") { alternate = String(path.dropFirst(8)) }
+                else if path.hasPrefix(short + "/") { alternate = "/private" + path }
+                else { alternate = nil }
+                if let alternate, physical(URL(fileURLWithPath: alternate)) == canonical { paths.insert(alternate) }
+            }
+        }
+        paths.formUnion(paths.map { $0.replacingOccurrences(of: " ", with: "\\ ") })
+        let expressions = try paths.sorted { $0.count > $1.count }.map { path in
+            try NSRegularExpression(pattern: #"(^|[\s"'=,:;@])(-[IFL])?"# + NSRegularExpression.escapedPattern(for: path) + #"(?=$|[/"'=,:;])"#)
+        }
+        func normalize(_ value: Any) -> Any {
+            if let values = value as? [String: Any] { return values.mapValues(normalize) }
+            if let values = value as? [Any] { return values.map(normalize) }
+            guard var string = value as? String else { return value }
+            for expression in expressions {
+                string = expression.stringByReplacingMatches(in: string, range: NSRange(string.startIndex..., in: string), withTemplate: "$1$2<CACHE-WORK>")
+            }
+            return string
+        }
+        return try canonicalInventory(JSONSerialization.data(withJSONObject: normalize(JSONSerialization.jsonObject(with: data))))
+    }
+
     static func key(_ identity: [String: String]) throws -> String {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         return digest(try encoder.encode(identity))
@@ -284,7 +322,7 @@ extension XcodeAnalysis {
             }
             let decoded = try JSONDecoder().decode([XcodeBuildSettings].self, from: settings)
             guard !decoded.isEmpty else { throw ImpactError("Cannot cache empty build settings.") }
-            let normalized = String(decoding: try XcodeGraphCache.canonicalInventory(settings), as: UTF8.self).replacingOccurrences(of: workspace.path, with: "<CACHE-WORK>")
+            let normalized = try XcodeGraphCache.normalizedSettings(settings, workspace: workspace, aliases: keepBuild ? retained.map { [$0] } ?? [] : [])
             var identity = context
             identity["schema"] = "xcode-analysis-cache-1/graph-2"
             identity["repository"] = XcodeGraphCache.digest(Data(repository.utf8))
@@ -293,7 +331,7 @@ extension XcodeAnalysis {
             identity["toolchain"] = toolchain
             identity["sdks"] = XcodeGraphCache.digest(try XcodeGraphCache.canonicalInventory(Data(sdk.utf8)))
             identity["simulatorRuntimes"] = try XcodeGraphCache.runtimeFingerprint(runtimes)
-            identity["settings"] = XcodeGraphCache.digest(Data(normalized.utf8))
+            identity["settings"] = XcodeGraphCache.digest(normalized)
             identity["externalInputs"] = configuration.context
             let found = try timed("graphLoad", revision: revision) { try cache.load(identity) }
             events.append(.init(phase: "cache", revision: revision, seconds: 0, detail: found == nil ? "miss: incompatible or absent entry; fresh build required" : "hit: no build, enumeration or extraction"))
