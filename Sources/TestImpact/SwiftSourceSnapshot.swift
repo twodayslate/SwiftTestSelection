@@ -11,6 +11,9 @@ public struct SourceUnit: Codable, Sendable {
     public var kind: String
     public var scope: String
     public var region: SourceRegion
+    /// Present only when evaluated location literals add meaning beyond syntax.
+    /// Older graphs lack this evidence and keep their conservative fingerprint.
+    public var syntaxFingerprint: String? = nil
 }
 
 public struct SwiftSourceSnapshot: Codable, Sendable {
@@ -55,16 +58,30 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         result.typeAliases = []
         result.superclasses = [:]
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
-        let tokens = Array(tree.tokens(viewMode: .sourceAccurate))
-        let locationNames: Set<String> = ["line", "column", "file", "fileID", "filePath", "sourceLocation"]
-        let contextual = tokens.indices.contains { index in
-            tokens[index].text == "#" && index + 1 < tokens.count && locationNames.contains(tokens[index + 1].text)
-        } || tokens.contains { $0.tokenKind == .poundSourceLocation }
         // Preserve syntax structure, token kinds and literal contents, but not
-        // trivia. Parsing first retains whitespace-sensitive operator fixity.
+        // trivia. Location values belong to their expression, not the whole file.
         func fingerprint(_ node: Syntax) -> String {
             if let token = node.as(TokenSyntax.self) { return "\(token.tokenKind):\(token.text.utf8.count):\(token.text)" }
             return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(fingerprint).joined(separator: "|") + "]"
+        }
+        func locationValues(_ node: Syntax) -> [String] {
+            var values: [String] = []
+            for token in node.tokens(viewMode: .sourceAccurate) where token.tokenKind == .pound {
+                guard let macro = token.parent?.as(MacroExpansionExprSyntax.self) else { continue }
+                // Bare parameter defaults use the caller's location. Parenthesized
+                // or arithmetic defaults use the declaration's location instead.
+                if macro.parent?.is(InitializerClauseSyntax.self) == true &&
+                    macro.parent?.parent?.is(FunctionParameterSyntax.self) == true { continue }
+                let location = locations.location(for: macro.positionAfterSkippingLeadingTrivia)
+                switch macro.macroName.text {
+                case "line": values.append("line:\(location.presumedLine)")
+                case "column": values.append("column:\(location.column)")
+                case "file", "filePath": values.append("file:\(location.presumedFile)")
+                case "fileID": values.append("fileID:\(module)/\(location.presumedFile.split(separator: "/").last ?? "")")
+                default: break
+                }
+            }
+            return values
         }
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String]) {
             if let alias = node.as(TypeAliasDeclSyntax.self) {
@@ -93,11 +110,16 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             let start = locations.location(for: node.positionAfterSkippingLeadingTrivia).line
             let end = locations.location(for: node.endPositionBeforeTrailingTrivia).line
+            let syntax = fingerprint(node)
+            let values = locationValues(node)
+            let semantic = values.isEmpty ? syntax : syntax + "@locations[" +
+                values.map { "\($0.utf8.count):" + $0 }.joined(separator: "|") + "]"
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
-                fingerprint: fingerprint(node) + (contextual ? "@\(path):\(start)" : ""),
+                fingerprint: semantic,
                 kind: kind, scope: scope.joined(separator: "."),
-                region: SourceRegion(path: path, startLine: start, endLine: end)))
+                region: SourceRegion(path: path, startLine: start, endLine: end),
+                syntaxFingerprint: semantic == syntax ? nil : syntax))
         }
         func walk(_ node: Syntax, scope: [String]) {
             if let item = node.as(CodeBlockItemSyntax.self), !item.item.is(DeclSyntax.self) {

@@ -27,6 +27,14 @@ public enum XcodeFineSelector {
             include(affected, kind: "fallback", reason: message, revision: "base/head")
             if affected == inventory { fullReasons.append(message) }
         }
+        // Both revisions must opt into treating source locations as diagnostics.
+        // Explicit macro/directive syntax remains executable under either policy.
+        let diagnosticLocations = current.mappings?.sourceLocationPolicy == .diagnostic &&
+            previous?.mappings?.sourceLocationPolicy == .diagnostic &&
+            (try? current.mappings?.validate()) != nil && (try? previous?.mappings?.validate()) != nil
+        func fingerprint(_ unit: SourceUnit) -> String {
+            diagnosticLocations ? unit.syntaxFingerprint ?? unit.fingerprint : unit.fingerprint
+        }
         let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.units) ?? [], by: \.key)
         let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.units), by: \.key)
         let oldUnitsByFile = Dictionary(grouping: oldUnits.values.flatMap { $0 }, by: { $0.region.path })
@@ -35,7 +43,7 @@ public enum XcodeFineSelector {
         var newChanged: [SourceUnit] = []
         for key in Set(oldUnits.keys).union(newUnits.keys) {
             let old = oldUnits[key] ?? [], new = newUnits[key] ?? []
-            if old.map(\.fingerprint).sorted() != new.map(\.fingerprint).sorted() {
+            if old.map(fingerprint).sorted() != new.map(fingerprint).sorted() {
                 oldChanged += old; newChanged += new
             }
         }
@@ -346,6 +354,9 @@ public enum XcodeFineSelector {
                                                 "Test-entry-only selection assumes independent tests: hidden cross-test calls or order-dependent shared state are not inferred. Explicit compiled callers remain selected.",
                                                 "Compiler graphs model the selected build configuration. External runtime behavior and generated code may require conservative fallbacks."])
         report.schemaVersion = 2
+        if diagnosticLocations {
+            report.limitations.append("Source-location policy is diagnostic in both revisions: implicit location-value changes do not select tests. Location literals must not control application behavior; explicit macro/directive syntax and compiled dependency changes still participate.")
+        }
         if !boundaryDecisions.isEmpty {
             report.runtimeBoundaryDecisions = boundaryDecisions.sorted { ($0.target, $0.revision) < ($1.target, $1.revision) }
             report.limitations.append("Non-UI runtime boundaries are explicit closed-module contracts validated against compiler imports, test hosts, and visible dependencies in each revision. They require independent full-run validation and exclude undeclared dynamic loading, IPC, and cross-boundary shared-state effects; they are not measured coverage.")
