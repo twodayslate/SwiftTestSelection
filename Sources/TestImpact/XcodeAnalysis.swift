@@ -156,7 +156,8 @@ public struct XcodeAnalysis {
     }
 
     func analyzeBuild(_ configuration: XcodeConfiguration, sourceRoot: URL, derived: URL,
-                      log: String, settingsData: Data, xctestrun: URL? = nil, moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil) throws -> XcodeTestGraph {
+                      log: String, settingsData: Data, xctestrun: URL? = nil, moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil,
+                      activeCompilerInputs: Set<String>? = nil) throws -> XcodeTestGraph {
         guard FileManager.default.fileExists(atPath: configuration.path.path) else {
             throw ImpactError("Xcode container does not exist: \(configuration.path.path)")
         }
@@ -168,6 +169,9 @@ public struct XcodeAnalysis {
         var modules: [String: String] = [:]
         var sources: [String: SwiftSourceSnapshot] = [:]
         var sourceJobs: [(String, String)] = []
+        func isActiveList(_ file: URL) -> Bool {
+            activeCompilerInputs?.contains(file.standardizedFileURL.resolvingSymlinksInPath().path) ?? true
+        }
         func sourcePaths(in list: URL, sourceDirectory: URL) throws -> Set<String> {
             let lines = try String(contentsOf: list, encoding: .utf8)
             let root = sourceRoot.standardizedFileURL.resolvingSymlinksInPath().path + "/"
@@ -185,7 +189,7 @@ public struct XcodeAnalysis {
             var paths = Set<String>()
             if let temporaryPath = entry.buildSettings["TARGET_TEMP_DIR"],
                let enumerator = FileManager.default.enumerator(at: URL(fileURLWithPath: temporaryPath), includingPropertiesForKeys: nil) {
-                for case let file as URL in enumerator where file.pathExtension == "SwiftFileList" {
+                for case let file as URL in enumerator where file.pathExtension == "SwiftFileList" && isActiveList(file) {
                     classifiedLists.insert(file.standardizedFileURL.resolvingSymlinksInPath())
                     paths.formUnion(try sourcePaths(in: file, sourceDirectory: URL(fileURLWithPath: entry.buildSettings["SRCROOT"] ?? directory.path, isDirectory: true)))
                 }
@@ -209,7 +213,7 @@ public struct XcodeAnalysis {
         // Otherwise a production dependency could look like test-only source.
         var unclassifiedSources = Set<String>()
         if let enumerator = FileManager.default.enumerator(at: derived, includingPropertiesForKeys: nil) {
-            for case let file as URL in enumerator where file.pathExtension == "SwiftFileList" {
+            for case let file as URL in enumerator where file.pathExtension == "SwiftFileList" && isActiveList(file) {
                 guard !classifiedLists.contains(file.standardizedFileURL.resolvingSymlinksInPath()) else { continue }
                 unclassifiedSources.formUnion(try sourcePaths(in: file, sourceDirectory: directory))
             }

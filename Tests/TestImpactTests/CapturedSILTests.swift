@@ -62,7 +62,56 @@ import Testing
     #expect(try ArtifactFiles.manifest(at: root, workers: 1) == ArtifactFiles.manifest(at: root, workers: 4))
     let list = root.appendingPathComponent("M.SwiftFileList")
     try Data("\"\(root.path)/0.swift\"\n".utf8).write(to: list)
-    let before = try ArtifactFiles.sourceInputs(derived: root, directory: root)
+    let log = "builtin-SwiftDriver -- swiftc -module-name M @\"\(list.path)\""
+    let before = try ArtifactFiles.sourceInputs(log: log, directory: root)
     try Data("new source".utf8).write(to: root.appendingPathComponent("0.swift"))
-    #expect(try before != ArtifactFiles.sourceInputs(derived: root, directory: root))
+    #expect(try before != ArtifactFiles.sourceInputs(log: log, directory: root))
+}
+
+@Test func compilerSourceFingerprintIgnoresInactiveListsButRejectsMissingActiveInputs() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = root.appendingPathComponent("Active.swift")
+    let list = root.appendingPathComponent("Active.SwiftFileList")
+    try Data("func active() {}".utf8).write(to: source)
+    try Data("Active.swift\n".utf8).write(to: list)
+    let log = "builtin-SwiftDriver -- swiftc -module-name Active @Active.SwiftFileList"
+    let before = try ArtifactFiles.sourceInputs(log: log, directory: root)
+    let stale = root.appendingPathComponent("Inactive.SwiftFileList")
+    try Data("Deleted.swift\n".utf8).write(to: stale)
+    #expect(try ArtifactFiles.sourceInputs(log: log, directory: root) == before)
+    // Adding an active source must change the fingerprint, even when its bytes
+    // match another source. A missing active source or response file must fail.
+    let added = root.appendingPathComponent("Added.swift")
+    try Data(contentsOf: source).write(to: added)
+    try Data("Active.swift Added.swift\n".utf8).write(to: list)
+    #expect(try ArtifactFiles.sourceInputs(log: log, directory: root) != before)
+    try FileManager.default.removeItem(at: added)
+    #expect(throws: (any Error).self) { try ArtifactFiles.sourceInputs(log: log, directory: root) }
+    try FileManager.default.removeItem(at: list)
+    #expect(throws: (any Error).self) { try ArtifactFiles.sourceInputs(log: log, directory: root) }
+}
+
+@Test func compilerSourceFingerprintHandlesWorkingDirectoriesAndResponseFiles() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let nested = root.appendingPathComponent("Nested")
+    try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let direct = nested.appendingPathComponent("Direct.swift")
+    let literal = nested.appendingPathComponent("Space Name.swift")
+    try Data("func direct() {}".utf8).write(to: direct)
+    try Data("func literal() {}".utf8).write(to: literal)
+    try Data("Space Name.swift\n".utf8).write(to: nested.appendingPathComponent("sources.list"))
+    try Data("@nested.rsp".utf8).write(to: nested.appendingPathComponent("outer.rsp"))
+    try Data("Direct.swift -filelist sources.list".utf8).write(to: nested.appendingPathComponent("nested.rsp"))
+    let log = "cd \"\(nested.path)\"\nbuiltin-SwiftDriver -- swiftc -module-name M @outer.rsp"
+    let fingerprints = try ArtifactFiles.sourceInputs(log: log, directory: root)
+    #expect(fingerprints.count == 5)
+    #expect(fingerprints[direct.path] != nil && fingerprints[literal.path] != nil)
+    let working = "builtin-SwiftDriver -- swiftc -working-directory Nested Direct.swift"
+    #expect(try ArtifactFiles.sourceInputs(log: working, directory: root)[direct.path] == fingerprints[direct.path])
+    try Data("@outer.rsp".utf8).write(to: nested.appendingPathComponent("nested.rsp"))
+    #expect(throws: ImpactError.self) { try ArtifactFiles.sourceInputs(log: log, directory: root) }
+    #expect(throws: ImpactError.self) { try ArtifactFiles.sourceInputs(log: "", directory: root) }
 }

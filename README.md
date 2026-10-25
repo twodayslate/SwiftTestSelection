@@ -349,8 +349,10 @@ Existing-build graph capture also accepts:
 
 This reuses the **inventory and entire bound analysis**, saving enumeration,
 parsing and binding when the products, source revision and compiler source inputs,
-log, settings, destination, plan, toolchain, simulator runtime, analyzer and capture
-seal match exactly. A changed or new test, changed products or discovery context
+selected `.xctestrun`, log, settings, destination, plan, toolchain, simulator runtime,
+analyzer and capture seal match exactly. Source fingerprints follow the supplied
+build log’s compiler invocations; stale source lists from inactive configurations
+in DerivedData are ignored, while missing active inputs remain errors. A changed or new test, changed products or discovery context
 misses the cache. The context must cover external data and runner initialization
 inputs; disable caching for nondeterministic/dynamic discovery without a stable
 input contract. Cache reuse does not discover new runtime-generated tests on its
@@ -478,6 +480,18 @@ neighbor deliberately fails, and checks revision mismatch, merge-base selection,
 product tampering, empty execution, and full-suite execution. The full artifact
 run executes both UI and app-hosted unit tests and intentionally fails the neighbor
 test to verify nonzero failure propagation.
+
+Discovery-cache regressions can be checked without executing test bodies:
+
+```sh
+python3 Scripts/xcode_discovery_cache_integration_test.py \
+  --tool .build/release/swift-test-impact \
+  --destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
+
+This builds the fixture, checks that different `.xctestrun` files retain their own
+test inventories, verifies warm-cache reuse, and checks that inactive source lists
+do not alter source ownership or block analysis.
 
 The SIL parser also has an optimized large-input regression benchmark:
 

@@ -70,7 +70,7 @@ extension XcodeAnalysis {
         progress("Fingerprinting existing test products…")
         let fingerprints = try ArtifactFiles.manifest(at: products, workers: options.extractionWorkers)
         let toolchain = try ArtifactFiles.toolchain(at: root)
-        let sourceInputs = try ArtifactFiles.sourceInputs(derived: inputs.derivedData, directory: options.path.deletingLastPathComponent())
+        let sourceInputs = try ArtifactFiles.sourceInputs(log: log, directory: options.path.deletingLastPathComponent())
         let cache = try inputs.discoveryCache.map { try XcodeGraphCache($0, progress: progress) }
         try cache?.resetWork()
         defer { if let cache { try? FileManager.default.removeItem(at: cache.work) } }
@@ -79,6 +79,8 @@ extension XcodeAnalysis {
         identity["revision"] = revision
         identity["sourceRoot"] = root.path
         identity["productsRoot"] = products.path
+        // Products can contain several runners with different enabled tests.
+        identity["xctestrun"] = inputs.xctestrun.lastPathComponent
         identity["sourceInputs"] = try XcodeGraphCache.key(sourceInputs)
         identity["products"] = try XcodeGraphCache.key(fingerprints)
         identity["settings"] = settingsDigest
@@ -97,7 +99,8 @@ extension XcodeAnalysis {
             graph = cached
         } else {
             graph = try analyzeBuild(options, sourceRoot: root, derived: inputs.derivedData, log: log,
-                settingsData: data, xctestrun: inputs.xctestrun, captured: captured)
+                settingsData: data, xctestrun: inputs.xctestrun, captured: captured,
+                activeCompilerInputs: Set(sourceInputs.keys.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }))
         }
         try ArtifactFiles.validateCheckout(root: root, revision: revision, buildLog: inputs.buildLog)
         guard try logDigest == ArtifactFiles.digest(inputs.buildLog), try settingsDigest == ArtifactFiles.digest(inputs.buildSettings) else {
@@ -106,7 +109,7 @@ extension XcodeAnalysis {
         guard try fingerprints == ArtifactFiles.manifest(at: products, workers: options.extractionWorkers) else {
             throw ImpactError("Test products changed during capture; build and capture again without concurrent builds.")
         }
-        guard try sourceInputs == ArtifactFiles.sourceInputs(derived: inputs.derivedData, directory: options.path.deletingLastPathComponent()) else { throw ImpactError("Compiler source inputs changed during capture") }
+        guard try sourceInputs == ArtifactFiles.sourceInputs(log: log, directory: options.path.deletingLastPathComponent()) else { throw ImpactError("Compiler source inputs changed during capture") }
         try captured?.validateFiles()
         if cached == nil { try cache?.store(graph, identity: identity) }
         var context = try artifactContext(root: root)
@@ -270,19 +273,64 @@ enum ArtifactFiles {
         return result
     }
 
-    static func sourceInputs(derived: URL, directory: URL) throws -> [String: String] {
+    /// Fingerprint only inputs referenced by this build's compiler commands.
+    /// DerivedData also retains lists from inactive configurations/removed targets.
+    static func sourceInputs(log: String, directory: URL) throws -> [String: String] {
         var result: [String: String] = [:]
-        guard let enumerator = FileManager.default.enumerator(at: derived, includingPropertiesForKeys: nil) else {
-            throw ImpactError("Missing compiler source inventory")
+        var commandDirectory = directory
+        var sources = Set<URL>()
+        func absolute(_ path: String, at directory: URL) -> URL {
+            URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: directory.path, isDirectory: true)).standardizedFileURL
         }
-        for case let list as URL in enumerator where list.pathExtension == "SwiftFileList" {
-            result[list.path] = try digest(list)
-            for path in try XcodeSourceFileList.parse(String(contentsOf: list, encoding: .utf8)) {
-                let source = URL(fileURLWithPath: path, relativeTo: directory).standardizedFileURL
-                result[source.path] = source.resolvingSymlinksInPath().path + ":" + (try digest(source))
+        func expand(_ arguments: [String], at directory: URL, visiting: Set<String> = []) throws -> [String] {
+            var expanded: [String] = []
+            for argument in arguments {
+                guard argument.hasPrefix("@") else { expanded.append(argument); continue }
+                let list = absolute(String(argument.dropFirst()), at: directory)
+                let canonical = list.resolvingSymlinksInPath().path
+                guard !visiting.contains(canonical), visiting.count < 64 else {
+                    throw ImpactError("Recursive compiler response file: \(list.path)")
+                }
+                result[list.path] = canonical + ":" + (try digest(list))
+                let contents = try XcodeSourceFileList.parse(String(contentsOf: list, encoding: .utf8))
+                expanded += try expand(contents, at: directory, visiting: visiting.union([canonical]))
+            }
+            return expanded
+        }
+        for raw in log.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("cd ") {
+                let paths = try XcodeSourceFileList.parse(String(line.dropFirst(3)))
+                if paths.count == 1 { commandDirectory = absolute(paths[0], at: directory) }
+            }
+            guard let marker = line.range(of: "builtin-SwiftDriver -- ") else { continue }
+            let arguments = try expand(XcodeSourceFileList.parse(String(line[marker.upperBound...])), at: commandDirectory)
+            var sourceDirectory = commandDirectory
+            if let i = arguments.lastIndex(of: "-working-directory"), i + 1 < arguments.count {
+                sourceDirectory = absolute(arguments[i + 1], at: commandDirectory)
+            }
+            var i = 1 // Skip the compiler executable.
+            while i < arguments.count {
+                let argument = arguments[i]
+                if argument == "-filelist" {
+                    guard i + 1 < arguments.count else { throw ImpactError("Missing compiler file-list operand") }
+                    let list = absolute(arguments[i + 1], at: sourceDirectory)
+                    result[list.path] = list.resolvingSymlinksInPath().path + ":" + (try digest(list))
+                    // -filelist uses literal paths, one per line, unlike @response files.
+                    for path in try String(contentsOf: list, encoding: .utf8).split(whereSeparator: \.isNewline) {
+                        sources.insert(absolute(String(path), at: sourceDirectory))
+                    }
+                    i += 2
+                } else {
+                    if argument.hasSuffix(".swift") { sources.insert(absolute(argument, at: sourceDirectory)) }
+                    i += 1
+                }
             }
         }
-        guard !result.isEmpty else { throw ImpactError("Missing compiler source inventory") }
+        guard !sources.isEmpty else { throw ImpactError("Missing compiler source inventory") }
+        for source in sources {
+            result[source.path] = source.resolvingSymlinksInPath().path + ":" + (try digest(source))
+        }
         return result
     }
 
