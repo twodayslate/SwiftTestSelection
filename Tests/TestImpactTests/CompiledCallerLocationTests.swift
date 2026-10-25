@@ -4,17 +4,25 @@ import Foundation
 import Testing
 @testable import TestImpact
 
-@Test func compiledCallerLocationChangeCannotHideAFailingTest() throws {
+@Test(.serialized, arguments: ["regular", "transparent", "escapedTransparent", "enum", "inferredEnum"])
+func compiledCallerLocationChangeCannotHideAFailingTest(kind: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("caller-locations-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let frameworks = platform + "/Developer/Library/Frameworks"
     let test = "Tests/LocationTests/testLine()"
+    let isEnum = kind == "enum" || kind == "inferredEnum"
+    let name = kind == "escapedTransparent" ? "`currentLine`" : "currentLine"
+    let helper = isEnum ? "enum Location { case line(Int = #line) }" :
+        (kind == "regular" ? "" : "@_transparent ") + "func \(name)(line: Int = #line) -> Int { line }"
+    let assertion = kind == "inferredEnum" ? "let location: Location = .line(); if case .line(let value) = location { XCTAssertEqual(value, 3) }" :
+        isEnum ? "if case .line(let value) = Location.line() { XCTAssertEqual(value, 3) }" :
+        "XCTAssertEqual(currentLine(), 3)"
     let source = """
     import XCTest
     class LocationTests: XCTestCase {
-        @objc func testLine() { XCTAssertEqual(currentLine(), 3) }
+        @objc func testLine() { \(assertion) }
     }
     let suite = XCTestSuite(forTestCaseClass: LocationTests.self)
     suite.run()
@@ -24,7 +32,7 @@ import Testing
     for revision in ["base", "head"] {
         let folder = root.appendingPathComponent(revision)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let sources = ["Helper.swift": "func currentLine(line: Int = #line) -> Int { line }",
+        let sources = ["Helper.swift": helper,
                        "main.swift": revision == "base" ? source : source.replacingOccurrences(of: "    @objc", with: "// comment\n    @objc")]
         for (path, text) in sources { try text.write(to: folder.appendingPathComponent(path), atomically: true, encoding: .utf8) }
         let args = ["swiftc", "-module-name", "Tests", "-g", "-Onone", "-F", frameworks, "-I", platform + "/Developer/usr/lib"] + sources.keys.sorted().map { folder.appendingPathComponent($0).path }
@@ -72,6 +80,14 @@ import Testing
     let legacyReport = select(legacy, legacy)
     #expect(legacyReport.selectedTests == [test])
     #expect(legacyReport.diagnostics.contains { $0.code == "incomplete_caller_locations" })
+    var priorVersion = graphs[0]
+    for path in priorVersion.sources.keys {
+        for i in priorVersion.sources[path]!.units.indices {
+            priorVersion.sources[path]!.units[i].locationDefaultNames = nil
+            priorVersion.sources[path]!.units[i].invocationNames = nil
+        }
+    }
+    #expect(select(priorVersion, graphs[1]).diagnostics.contains { $0.code == "incomplete_caller_locations" })
     var unbound = graphs[1]
     unbound.dependencies!.functions = unbound.dependencies!.functions.filter { !$0.value.name.hasPrefix("currentLine(") }
     #expect(select(graphs[0], unbound).selectedTests.contains(test))

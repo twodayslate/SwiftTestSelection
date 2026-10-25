@@ -148,11 +148,15 @@ Swift comparisons preserve parsed syntax, operators, strings, and regex contents
 while ignoring comments and whitespace. Location sensitivity is per expression:
 an unrelated `#line` never makes a later class header change. Bare location
 literals used as parameter defaults (as in XCTest assertion helpers) capture the
-caller's location, so moving the helper does not change its fingerprint. Compiler
-callers of source-declared defaults compare their invocation locations, including
-across source files. A shifted call can therefore select its test even if its
-syntax is unchanged. Calls with explicit arguments and ambiguous bindings remain
-conservative because dependency edges do not identify omitted argument slots. Body
+caller's location, so moving the helper does not change its fingerprint. Callers of
+source-declared defaults compare their invocation locations, including across
+source files. Syntactic callable names supplement compiler dependencies so
+mandatory inlining (such as `@_transparent`) and enum constructor lowering cannot
+hide shifted location arguments. Enum associated-value defaults use caller
+locations too. A shifted call can therefore select its test even if its
+syntax is unchanged. Calls with explicit arguments, ambiguous bindings, matching
+names in unrelated modules/overloads, and constructor aliases remain conservative because syntax and
+dependency edges do not prove the selected declaration or omitted argument slots. Body
 expressions and parenthesized/arithmetic defaults retain their evaluated location;
 `#sourceLocation` adjusts presumed file/line values, and `#column` tracks its own
 expression position.

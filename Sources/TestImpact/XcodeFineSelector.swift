@@ -37,10 +37,13 @@ public enum XcodeFineSelector {
         }
         let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.units) ?? [], by: \.key)
         let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.units), by: \.key)
-        if !diagnosticLocations, changes.contains(where: { $0.path.hasSuffix(".swift") || $0.previousPath?.hasSuffix(".swift") == true }),
-           (oldUnits.values.flatMap { $0 } + newUnits.values.flatMap { $0 }).contains(where: {
-               $0.locationDefaultKinds == nil || $0.callerLocations == nil
-           }) {
+        let sourceUnits: [SourceUnit] = oldUnits.values.flatMap { $0 } + newUnits.values.flatMap { $0 }
+        let missingCallerMetadata = sourceUnits.contains { unit in
+            unit.locationDefaultKinds == nil || unit.callerLocations == nil ||
+                unit.locationDefaultNames == nil || unit.invocationNames == nil
+        }
+        if !diagnosticLocations, missingCallerMetadata,
+           changes.contains(where: { $0.path.hasSuffix(".swift") || $0.previousPath?.hasSuffix(".swift") == true }) {
             fallback("incomplete_caller_locations", "Saved source snapshots lack caller-location metadata. Regenerate both graphs before using semantic location selection.")
         }
         let oldUnitsByFile = Dictionary(grouping: oldUnits.values.flatMap { $0 }, by: { $0.region.path })
@@ -49,8 +52,8 @@ public enum XcodeFineSelector {
         var newChanged: [SourceUnit] = []
         // A bare #line/#file default is evaluated in its caller. Source syntax
         // and dependency edges can both stay identical while that value changes.
-        // Resolve default declarations through the compiler graph, then compare
-        // only the relevant location dimensions of their direct callers.
+        // Match source invocations as well as compiler edges: transparent helpers
+        // and enum constructors can lose their call edges even under -Onone.
         let callerKinds = diagnosticLocations ? [:] : callerLocationKinds(current)
             .merging(previous.map(callerLocationKinds) ?? [:], uniquingKeysWith: { $0.union($1) })
         func comparisonFingerprint(_ unit: SourceUnit) -> String {
@@ -419,6 +422,23 @@ public enum XcodeFineSelector {
         let defaults = units.filter { !($0.locationDefaultKinds?.isEmpty ?? true) }
         guard !defaults.isEmpty else { return [:] }
         let allKinds = defaults.reduce(into: Set<String>()) { $0.formUnion($1.locationDefaultKinds ?? []) }
+        var kindsByName: [String: Set<String>] = [:]
+        for unit in defaults {
+            for (name, kinds) in unit.locationDefaultNames ?? [:] {
+                kindsByName[name, default: []].formUnion(kinds)
+            }
+        }
+        // Name matching is deliberately an over-approximation across modules,
+        // overloads, receivers and argument slots. A surviving SIL definition is
+        // not evidence that all its calls survived mandatory inlining/lowering.
+        var result: [String: Set<String>] = [:]
+        for unit in units {
+            let names = unit.invocationNames ?? []
+            guard !names.isEmpty else { continue }
+            var kinds = kindsByName["*"] ?? []
+            for name in names { kinds.formUnion(name == "*" ? allKinds : kindsByName[name] ?? []) }
+            if !kinds.isEmpty { result[unit.key, default: []].formUnion(kinds) }
+        }
         guard let graph = snapshot.dependencies else {
             return Dictionary(units.map { ($0.key, allKinds) }, uniquingKeysWith: { $0.union($1) })
         }
@@ -443,7 +463,6 @@ public enum XcodeFineSelector {
             for symbol in symbols { defaultSymbols[symbol, default: []].formUnion(kinds) }
         }
         // A missing declaration binding cannot prove absence of callers.
-        var result: [String: Set<String>] = [:]
         let sourceModules = Set(snapshot.modules.values)
         for node in graph.functions.values {
             let kinds = node.dependencies.reduce(into: Set<String>()) { $0.formUnion(defaultSymbols[$1] ?? []) }
