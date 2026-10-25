@@ -29,11 +29,22 @@ public enum XcodeFineSelector {
         }
         // Both revisions must opt into treating source locations as diagnostics.
         // Explicit macro/directive syntax remains executable under either policy.
-        let diagnosticLocations = current.mappings?.sourceLocationPolicy == .diagnostic &&
-            previous?.mappings?.sourceLocationPolicy == .diagnostic &&
-            (try? current.mappings?.validate()) != nil && (try? previous?.mappings?.validate()) != nil
+        let locationPolicy: UIFeatureMappings.SourceLocationPolicy
+        if let head = current.mappings, let base = previous?.mappings,
+           let policy = head.sourceLocationPolicy, base.sourceLocationPolicy == policy,
+           (try? head.validate()) != nil, (try? base.validate()) != nil {
+            locationPolicy = policy
+        } else {
+            locationPolicy = .semantic
+        }
         func fingerprint(_ unit: SourceUnit) -> String {
-            diagnosticLocations ? unit.syntaxFingerprint ?? unit.fingerprint : unit.fingerprint
+            switch locationPolicy {
+            case .semantic: return unit.fingerprint
+            case .diagnostic: return unit.syntaxFingerprint ?? unit.fingerprint
+            case .diagnosticLineColumn:
+                guard let files = unit.fileLocationValues else { return unit.fingerprint }
+                return SourceUnit.withLocations(files, syntax: unit.syntaxFingerprint ?? unit.fingerprint)
+            }
         }
         let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.units) ?? [], by: \.key)
         let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.units), by: \.key)
@@ -42,9 +53,9 @@ public enum XcodeFineSelector {
             unit.locationDefaultKinds == nil || unit.callerLocations == nil ||
                 unit.locationDefaultNames == nil || unit.invocationNames == nil
         }
-        if !diagnosticLocations, missingCallerMetadata,
+        if locationPolicy != .diagnostic, missingCallerMetadata,
            changes.contains(where: { $0.path.hasSuffix(".swift") || $0.previousPath?.hasSuffix(".swift") == true }) {
-            fallback("incomplete_caller_locations", "Saved source snapshots lack caller-location metadata. Regenerate both graphs before using semantic location selection.")
+            fallback("incomplete_caller_locations", "Saved source snapshots lack caller-location metadata. Regenerate both graphs before using semantic or diagnosticLineColumn location selection.")
         }
         let oldUnitsByFile = Dictionary(grouping: oldUnits.values.flatMap { $0 }, by: { $0.region.path })
         let newUnitsByFile = Dictionary(grouping: newUnits.values.flatMap { $0 }, by: { $0.region.path })
@@ -54,10 +65,11 @@ public enum XcodeFineSelector {
         // and dependency edges can both stay identical while that value changes.
         // Match source invocations as well as compiler edges: transparent helpers
         // and enum constructors can lose their call edges even under -Onone.
-        let callerKinds = diagnosticLocations ? [:] : callerLocationKinds(current)
+        let callerKinds = locationPolicy == .diagnostic ? [:] : callerLocationKinds(current)
             .merging(previous.map(callerLocationKinds) ?? [:], uniquingKeysWith: { $0.union($1) })
         func comparisonFingerprint(_ unit: SourceUnit) -> String {
-            let kinds = callerKinds[unit.key] ?? []
+            var kinds = callerKinds[unit.key] ?? []
+            if locationPolicy == .diagnosticLineColumn { kinds.subtract(["line", "column"]) }
             guard !kinds.isEmpty else { return fingerprint(unit) }
             return fingerprint(unit) + "@caller[" + kinds.sorted().map { kind in
                 let value = unit.callerLocations.map { $0[kind] ?? "" }
@@ -377,8 +389,10 @@ public enum XcodeFineSelector {
                                                 "Test-entry-only selection assumes independent tests: hidden cross-test calls or order-dependent shared state are not inferred. Explicit compiled callers remain selected.",
                                                 "Compiler graphs model the selected build configuration. External runtime behavior and generated code may require conservative fallbacks."])
         report.schemaVersion = 2
-        if diagnosticLocations {
+        if locationPolicy == .diagnostic {
             report.limitations.append("Source-location policy is diagnostic in both revisions: implicit location-value changes do not select tests. Location literals must not control application behavior; explicit macro/directive syntax and compiled dependency changes still participate.")
+        } else if locationPolicy == .diagnosticLineColumn {
+            report.limitations.append("Source-location policy is diagnosticLineColumn in both revisions: implicit line/column changes do not select tests when supported by saved evidence. Line and column values must not control application behavior; file/fileID/filePath values, explicit macro/directive syntax and compiled dependency changes remain semantic.")
         }
         if !boundaryDecisions.isEmpty {
             report.runtimeBoundaryDecisions = boundaryDecisions.sorted { ($0.target, $0.revision) < ($1.target, $1.revision) }

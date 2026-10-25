@@ -636,3 +636,101 @@ func locationAwareCommentEditsAndMarkdownContributeNoTests(comment: String) {
         }
     }
 }
+
+private func lineColumnModel(_ source: String, path: String = "Tests/UI.swift", opaque: Bool = false) -> XcodeTestGraph {
+    var graph = model(ui: source, uiPath: path)
+    if opaque {
+        let mappings = graph.mappings
+        graph = withOpaqueDependencies(graph)
+        graph.mappings = mappings
+    }
+    graph.mappings!.sourceLocationPolicy = .diagnosticLineColumn
+    graph.mappings!.ignoredDocumentation = ["*.md", "**/*.md"]
+    return graph
+}
+
+@Test(arguments: ["// docs\n", "/// docs\n", "/* docs\nmore docs */\n"])
+func lineColumnPolicyIgnoresDiagnosticPositionsInMixedChanges(comment: String) throws {
+    let source = locationAwareTests
+        .replacingOccurrences(of: "line: UInt = #line", with: "line: UInt = #line, column: Int = #column")
+        .replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "print(#line, #column, #filePath, #fileID); XCTAssertEqual(1, 1)")
+    let old = lineColumnModel(source, opaque: true)
+    let documented = comment + source.replacingOccurrences(of: "{ helper()", with: "{  helper()")
+        .replacingOccurrences(of: "{ print(", with: "{  print(")
+    let head = try GraphArchive.decode(GraphArchive.encode(lineColumnModel(documented, opaque: true)))
+    #expect(head.mappings?.sourceLocationPolicy == .diagnosticLineColumn)
+    let report = selection(head, old, paths: ["Tests/UI.swift", "AGENTS.md"])
+    #expect(report.selectedTests.isEmpty)
+    #expect(report.diagnostics.isEmpty)
+    #expect(report.ignoredChanges == ["AGENTS.md", "Tests/UI.swift"])
+    #expect(report.limitations.contains { $0.contains("diagnosticLineColumn") })
+    let mixed = documented.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")
+    let changed = selection(lineColumnModel(mixed, opaque: true), old, paths: ["Tests/UI.swift", "AGENTS.md"])
+    #expect(changed.selectedTests == ["UI/Sharing/testIndependent()"])
+    #expect(changed.diagnostics.isEmpty)
+}
+
+@Test(arguments: ["file", "filePath", "fileID"])
+func lineColumnPolicyKeepsBodyAndCallerFileMoves(macro: String) throws {
+    for caller in [false, true] {
+        let source = caller ? uiSource.replacingOccurrences(of: "func helper()", with: "func helper(file: StaticString = #\(macro), line: Int = #line, column: Int = #column)") :
+            uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "print(#line, #column); XCTAssertTrue(#\(macro).hasSuffix(\"Original.swift\"))")
+        let old = lineColumnModel(source, path: "Tests/Original.swift")
+        let head = try GraphArchive.decode(GraphArchive.encode(lineColumnModel(source, path: "Tests/Moved.swift")))
+        var move = FileChange(path: "Tests/Moved.swift")
+        move.previousPath = "Tests/Original.swift"; move.isPureMove = true
+        let report = XcodeFineSelector.select(current: head, previous: old, changes: [move], baseRevision: "base")
+        let expected = caller ? ["UI/Sharing/testOne()", "UI/Sharing/testThree()", "UI/Sharing/testTwo()"] : ["UI/Sharing/testIndependent()"]
+        #expect(report.selectedTests == expected)
+        #expect(report.diagnostics.isEmpty)
+        #expect(report.ignoredChanges.isEmpty)
+        if macro == "fileID" {
+            let directoryMove = lineColumnModel(source, path: "Moved/Original.swift")
+            #expect(selection(directoryMove, old, paths: ["Tests/Original.swift", "Moved/Original.swift"]).selectedTests.isEmpty)
+        }
+    }
+}
+
+@Test func lineColumnPolicyRequiresMatchingValidPoliciesAndRetainsLegacyEvidence() throws {
+    let source = locationAwareTests.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "print(#line, #column, #filePath)")
+    let old = lineColumnModel(source), head = lineColumnModel("// docs\n" + source)
+    for policy in [nil, .semantic, .diagnostic] as [UIFeatureMappings.SourceLocationPolicy?] {
+        var other = old; other.mappings!.sourceLocationPolicy = policy
+        #expect(!selection(head, other).selectedTests.isEmpty)
+        other = head; other.mappings!.sourceLocationPolicy = policy
+        #expect(!selection(other, old).selectedTests.isEmpty)
+    }
+    var invalid = old; invalid.mappings!.version = 2
+    #expect(!selection(head, invalid).selectedTests.isEmpty)
+    // Remove the newly added field from actual archives, as in older saved graphs.
+    func legacy(_ graph: XcodeTestGraph) throws -> XcodeTestGraph {
+        var graph = graph
+        for path in graph.sources.keys {
+            for i in graph.sources[path]!.units.indices { graph.sources[path]!.units[i].fileLocationValues = nil }
+        }
+        return try GraphArchive.decode(GraphArchive.encode(graph))
+    }
+    #expect(!selection(head, try legacy(old)).selectedTests.isEmpty)
+    #expect(!selection(try legacy(head), old).selectedTests.isEmpty)
+    #expect(!selection(try legacy(head), try legacy(old)).selectedTests.isEmpty)
+    var noCallers = old
+    for path in noCallers.sources.keys {
+        for i in noCallers.sources[path]!.units.indices { noCallers.sources[path]!.units[i].callerLocations = nil }
+    }
+    let report = selection(head, noCallers)
+    #expect(report.selectedTests == head.tests)
+    #expect(report.diagnostics.contains { $0.code == "incomplete_caller_locations" })
+}
+
+@Test func lineColumnPolicyKeepsExplicitSyntaxAndDependencyChanges() {
+    let source = uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "print(#line, #column, #filePath); XCTAssertEqual(1, 1)")
+    let old = lineColumnModel(source)
+    for (before, after) in [("#line", "#column"), ("#filePath", "#fileID"), ("XCTAssertEqual(1, 1)", "XCTAssertEqual(1, 2)")] {
+        #expect(selection(lineColumnModel(source.replacingOccurrences(of: before, with: after)), old).selectedTests == ["UI/Sharing/testIndependent()"])
+    }
+    let directed = "#sourceLocation(file: \"Generated.swift\", line: 100)\n" + source
+    #expect(!selection(lineColumnModel(directed.replacingOccurrences(of: "100", with: "200")), lineColumnModel(directed)).selectedTests.isEmpty)
+    var head = lineColumnModel("// docs\n" + source)
+    head.dependencies!.functions["UI.Sharing.testIndependent()"]!.dependencies.insert("UI.Sharing.helper()")
+    #expect(selection(head, old).selectedTests == ["UI/Sharing/testIndependent()"])
+}

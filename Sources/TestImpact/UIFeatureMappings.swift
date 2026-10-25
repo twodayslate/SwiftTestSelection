@@ -8,9 +8,9 @@ public struct UIFeatureMappings: Codable, Sendable {
         case conservative, declared
     }
     public enum SourceLocationPolicy: String, Codable, Sendable {
-        case semantic, diagnostic
+        case semantic, diagnosticLineColumn, diagnostic
     }
-    /// Opt in only when implicit location values are diagnostic, never behavior.
+    /// Opt in only when the ignored location kinds are diagnostic, never behavior.
     public var sourceLocationPolicy: SourceLocationPolicy? = nil
 
     public struct Feature: Codable, Sendable {
