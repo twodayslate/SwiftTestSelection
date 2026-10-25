@@ -14,6 +14,7 @@ final class XcodeModuleCache {
     private let derived: URL
     private let workspace: URL
     private let directory: URL
+    private let workers: Int
     private let pathRoots: [(String, String)]
     var inspectIdentityInputs: ((String, [String: String]) -> Void)?
     private var identities: [String: [String: String]] = [:]
@@ -29,10 +30,10 @@ final class XcodeModuleCache {
         // The existing cache recovery removes abandoned stage-* directories
         // after an interrupted process; never leave large orphan files in /tmp.
         let directory = cache.options.directory.appendingPathComponent("stage-module-" + UUID().uuidString)
-        let path = directory.appendingPathComponent("fragment.json")
+        let path = directory.appendingPathComponent("fragment.graph")
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try JSONEncoder().encode(fragment).write(to: path, options: .atomic)
+            try GraphArchive.encodeValue(fragment).write(to: path, options: .atomic)
             pending.append((path, identity))
         } catch { try? FileManager.default.removeItem(at: directory); throw error }
     }
@@ -48,12 +49,13 @@ final class XcodeModuleCache {
         }
         cache.progress(String(format: "Module cache final input recheck: %.3f s", Date().timeIntervalSince(start)))
         for (path, identity) in pending {
-            do { try cache.storeModule(JSONDecoder().decode(SILModule.self, from: Data(contentsOf: path)), identity: identity) }
+            do { try cache.storeModule(GraphArchive.decodeValue(SILModule.self, from: Data(contentsOf: path)), identity: identity) }
             catch { cache.progress("Module cache publication bypass: \(error)") }
         }
     }
 
-    init(cache: XcodeGraphCache, identity: [String: String], source: URL, derived: URL, workspace: URL, directory: URL? = nil) {
+    init(cache: XcodeGraphCache, identity: [String: String], source: URL, derived: URL, workspace: URL, directory: URL? = nil, workers: Int = 1) {
+        self.workers = workers
         self.cache = cache
         var context = identity
         context.removeValue(forKey: "revision")
@@ -79,10 +81,14 @@ final class XcodeModuleCache {
 
     private func normalized(_ path: String) -> String {
         // Normalize path arguments, never source contents or arbitrary flag text.
+        Self.normalized(path, roots: pathRoots)
+    }
+
+    private static func normalized(_ path: String, roots: [(String, String)]) -> String {
         for prefix in ["", "@", "-I", "-F", "-L"] {
             let value = String(path.dropFirst(prefix.count))
             guard path.hasPrefix(prefix) else { continue }
-            for (root, token) in pathRoots {
+            for (root, token) in roots {
                 if value == root || value.hasPrefix(root + "/") {
                     return prefix + token + value.dropFirst(root.count)
                 }
@@ -114,29 +120,29 @@ final class XcodeModuleCache {
             invocations[module] = arguments
         }
         guard !invocations.isEmpty else { throw ImpactError("No compiler inventory") }
-        var fileHashes: [String: String] = [:]
+        let fileHashes = CompilerInputHashes()
         func hash(_ path: String) throws -> String {
-            if let found = fileHashes[path] { return found }
-            let value: String
-            if path.hasSuffix(".hmap"),
-               let digest = try XcodeHeaderMap.digest(Data(contentsOf: URL(fileURLWithPath: path)), normalize: normalized) {
-                value = digest
-            } else {
-                value = try ArtifactFiles.digest(URL(fileURLWithPath: path))
-            }
-            fileHashes[path] = value
-            return value
+            try fileHashes.digest(path, normalize: normalized)
         }
         // Header/module-map/build-script/configuration changes can affect implicit
         // compiler inputs. Include all repository non-Swift files conservatively.
         // Even policy files may be consumed by a custom build script or macro.
         // Recompute policy separately, but conservatively invalidate these inputs.
         var sharedInputs: [String: String] = [:]
-        let files = try ArtifactFiles.manifest(at: source)
+        let files = try ArtifactFiles.manifest(at: source, workers: workers)
         // A Swift symlink can change source-region ownership with identical bytes.
         for (path, digest) in files where !path.hasSuffix(".swift") || digest.hasPrefix("symlink:") {
             sharedInputs[path] = digest
         }
+        let scanDirectory = directory, roots = pathRoots, projectModules = Set(invocations.keys)
+        let scanResults = try BoundedWork.map(invocations.sorted { $0.key < $1.key }, workers: workers) { module, original in
+            let result = Result { try XcodeDependencyInputs.scan(compiler: original[0],
+                arguments: XcodeCompilerGraph.arguments(Array(original.dropFirst())), directory: scanDirectory,
+                projectModules: projectModules, normalize: { Self.normalized($0, roots: roots) },
+                hash: { try fileHashes.digest($0, normalize: { Self.normalized($0, roots: roots) }) }) }
+            return (module, result)
+        }
+        let scans = Dictionary(uniqueKeysWithValues: scanResults)
         var localKeys: [String: String] = [:]
         var imports: [String: Set<String>] = [:]
         var availabilityQueries: [String: Set<String>] = [:]
@@ -144,11 +150,11 @@ final class XcodeModuleCache {
         var sourceLocationModules = Set<String>()
         let canImport = try NSRegularExpression(pattern: #"\bcanImport\s*\(\s*`?([A-Za-z_][A-Za-z_0-9.]*)`?"#)
         for (module, original) in invocations {
+            let arguments = XcodeCompilerGraph.arguments(Array(original.dropFirst()))
             guard original.contains("-explicit-module-build") else { throw ImpactError("\(module) has no explicit import inventory") }
             guard !original.contains(where: { ["-load-plugin-executable", "-load-plugin-library", "-external-plugin-path"].contains($0) }) else {
                 throw ImpactError("Custom compiler plugins require a complete resource-input contract: \(module)")
             }
-            let arguments = XcodeCompilerGraph.arguments(Array(original.dropFirst()))
             let lists = original.filter { $0.hasPrefix("@") }
             guard lists.count == 1 else { throw ImpactError("\(module) requires one unambiguous Swift file list") }
             let list = URL(fileURLWithPath: String(lists[0].dropFirst()))
@@ -210,8 +216,7 @@ final class XcodeModuleCache {
             // below remain safe, but may miss across build directories.
             let scanned: XcodeDependencyInputs.Inventory?
             do {
-                scanned = try XcodeDependencyInputs.scan(compiler: original[0], arguments: arguments,
-                    directory: directory, projectModules: Set(invocations.keys), normalize: normalized, hash: hash)
+                scanned = try scans[module]!.get()
             } catch {
                 scanned = nil
                 cache.progress("Module cache \(module): exact binary input identities (dependency scan unavailable: \(String(describing: error).prefix(240)))")
@@ -324,5 +329,22 @@ private final class ModuleInputConditions: SyntaxVisitor {
     override func visit(_ node: IfConfigClauseSyntax) -> SyntaxVisitorContinueKind {
         if let condition = node.condition { values.append(condition.trimmedDescription) }
         return .visitChildren
+    }
+}
+
+/// Shared across concurrent dependency scans. Hash outside the lock so independent
+/// files proceed in parallel; simultaneous first reads may duplicate work, but
+/// subsequent imports reuse the result. Each validation pass gets a fresh memo.
+private final class CompilerInputHashes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: String] = [:]
+    func digest(_ path: String, normalize: (String) -> String) throws -> String {
+        if let found = lock.withLock({ values[path] }) { return found }
+        let value: String
+        if path.hasSuffix(".hmap"), let normalized = try XcodeHeaderMap.digest(Data(contentsOf: URL(fileURLWithPath: path)), normalize: normalize) {
+            value = normalized
+        } else { value = try ArtifactFiles.digest(URL(fileURLWithPath: path)) }
+        lock.withLock { values[path] = value }
+        return value
     }
 }

@@ -36,7 +36,7 @@ private func cacheGraph() -> XcodeTestGraph {
         #expect(try cache.load(changed) == nil)
     }
     let key = try XcodeGraphCache.key(identity)
-    let dataFile = root.appendingPathComponent(key + "/graph.json")
+    let dataFile = root.appendingPathComponent(key + "/graph.bin")
     try Data("{}".utf8).write(to: dataFile)
     #expect(try cache.load(identity) == nil)
     #expect(messages.contains { $0.contains("checksum mismatch") })
@@ -102,4 +102,17 @@ private func cacheGraph() -> XcodeTestGraph {
     let b = String(decoding: try XcodeGraphCache.canonicalInventory(next), as: UTF8.self).replacingOccurrences(of: "/tmp/work-next", with: "<WORK>")
     #expect(a == b)
     #expect(a.contains("<WORK>/source"))
+}
+
+@Test func compactCacheStillReadsLegacyJSONEntries() throws {
+    let root = try cacheFixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = try XcodeGraphCache(.init(directory: root, context: "legacy"), progress: { _ in })
+    let identity = ["revision": "legacy"]
+    let entry = root.appendingPathComponent(try XcodeGraphCache.key(identity))
+    try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
+    let data = try JSONEncoder().encode(cacheGraph())
+    try data.write(to: entry.appendingPathComponent("graph.json"))
+    try JSONSerialization.data(withJSONObject: ["identity": identity, "digest": XcodeGraphCache.digest(data)]).write(to: entry.appendingPathComponent("manifest.json"))
+    #expect(try cache.load(identity)?.tests == cacheGraph().tests)
 }

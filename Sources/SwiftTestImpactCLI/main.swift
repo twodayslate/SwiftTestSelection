@@ -44,11 +44,15 @@ select --head REV --run automatically reuses its head build, then cleans it up.
 Existing Xcode builds:
   graph <Xcode options> --derived-data PATH --build-log FILE --build-settings FILE
         --xctestrun FILE --revision REVISION --output head-graph.json
+        [--sil-capture SEALED_SESSION] [--format json|binary]
+        [--discovery-cache PATH --discovery-context INPUT_DIGEST]
   select <Xcode options> --base REVISION [--head REVISION] [--merge-base]
          --base-graph FILE --head-graph FILE [--run] [--test-products PATH]
 
 Capture requires a clean checkout of the built revision and an unfiltered successful
 build-for-testing log. Keep original source/DerivedData paths until capture finishes.
+Build-time SIL input must be sealed by Scripts/capture-build.py; incomplete modules
+replay explicitly. Discovery reuse requires stable runner initialization inputs.
 Cached selection uses Git history and saved graphs only; head defaults to HEAD.
 --run with cached graphs uses test-without-building and fingerprinted products.
 --test-products relocates the intact Build/Products directory for execution.
@@ -114,6 +118,9 @@ private struct Options {
         var buildSettings: String?
         var xctestrun: String?
         var revision: String?
+        var discoveryCache: String?
+        var discoveryContext: String?
+        var silCapture: String?
         while index < arguments.count {
             let flag = arguments[index]
             index += 1
@@ -121,12 +128,15 @@ private struct Options {
             if flag == "--run" { run = true; continue }
             if flag == "--merge-base" { mergeBase = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
-            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--retain-build", "--report", "--extraction-workers"].contains(flag), index < arguments.count else {
+            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
             let value = arguments[index]
             index += 1
             switch flag {
+            case "--discovery-cache": discoveryCache = value
+            case "--discovery-context": discoveryContext = value
+            case "--sil-capture": silCapture = value
             case "--extraction-workers":
                 guard let count = Int(value), (1...8).contains(count) else { throw ImpactError("--extraction-workers must be between 1 and 8.") }
                 extractionWorkers = count
@@ -174,6 +184,16 @@ private struct Options {
             buildInputs = XcodeBuildInputs(derivedData: URL(fileURLWithPath: derivedData!), buildLog: URL(fileURLWithPath: buildLog!),
                 buildSettings: URL(fileURLWithPath: buildSettings!), xctestrun: URL(fileURLWithPath: xctestrun!), revision: revision!)
         }
+        if discoveryCache != nil || discoveryContext != nil {
+            guard buildInputs != nil, let discoveryCache, let discoveryContext, !discoveryContext.isEmpty else {
+                throw ImpactError("Discovery caching requires existing-build graph inputs, --discovery-cache and --discovery-context (fingerprint runner initialization inputs).")
+            }
+            buildInputs!.discoveryCache = XcodeAnalysisCache(directory: URL(fileURLWithPath: discoveryCache), context: discoveryContext)
+        }
+        if let silCapture {
+            guard buildInputs != nil else { throw ImpactError("--sil-capture requires existing-build graph inputs.") }
+            buildInputs!.silCapture = URL(fileURLWithPath: silCapture)
+        }
         let savedExecution = command == "run" || command == "verify-build"
         if seen.contains("--extraction-workers") && (savedExecution || baseGraph != nil || headGraph != nil) {
             throw ImpactError("--extraction-workers requires fresh Xcode graph extraction.")
@@ -200,8 +220,9 @@ private struct Options {
         }
         if command == "select" && base == nil { throw ImpactError("select requires --base REVISION.") }
         if command == "graph" && (base != nil || run || head != nil || mergeBase || fullSuite) { throw ImpactError("Comparison, execution, and full-suite options are only valid with select.") }
-        let allowed = command == "graph" ? ["json", "dot"] : ["text", "json"]
+        let allowed = command == "graph" ? ["json", "dot", "binary"] : ["text", "json"]
         if !allowed.contains(format) { throw ImpactError("Unsupported format '\(format)' for \(command).") }
+        if format == "binary" && (project == nil && workspace == nil || output == nil) { throw ImpactError("Binary graph output requires Xcode mode and --output FILE.") }
         if project != nil && workspace != nil { throw ImpactError("Choose --project or --workspace, not both.") }
         if let container = project ?? workspace {
             guard !seen.contains("--package-path") else { throw ImpactError("--package-path cannot be combined with an Xcode container.") }
@@ -279,7 +300,7 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                     "onlyTestingArguments": report.selectedTests.map { "-only-testing:" + $0 }], options: [.prettyPrinted, .sortedKeys]), to: options.output)
             } else if options.command == "graph" {
                 let graph = try options.buildInputs.map { try analysis.graph(from: $0) } ?? analysis.graph()
-                let data = options.format == "dot" ? Data(graph.dot().utf8) : try encoder.encode(graph)
+                let data = options.format == "binary" ? try GraphArchive.encode(graph) : options.format == "dot" ? Data(graph.dot().utf8) : try encoder.encode(graph)
                 try write(data, to: options.output)
             } else {
                 let headGraph = try options.headGraph.map { try XcodeAnalysis.executionGraph(at: URL(fileURLWithPath: $0)) }

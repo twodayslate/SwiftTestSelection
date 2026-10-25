@@ -156,7 +156,8 @@ public struct XcodeAnalysis {
     }
 
     func analyzeBuild(_ configuration: XcodeConfiguration, sourceRoot: URL, derived: URL,
-                      log: String, settingsData: Data, xctestrun: URL? = nil, moduleCache: XcodeModuleCache? = nil) throws -> XcodeTestGraph {
+                      log: String, settingsData: Data, xctestrun: URL? = nil, moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil,
+                      activeCompilerInputs: Set<String>? = nil) throws -> XcodeTestGraph {
         guard FileManager.default.fileExists(atPath: configuration.path.path) else {
             throw ImpactError("Xcode container does not exist: \(configuration.path.path)")
         }
@@ -167,6 +168,10 @@ public struct XcodeAnalysis {
         var classifiedLists = Set<URL>()
         var modules: [String: String] = [:]
         var sources: [String: SwiftSourceSnapshot] = [:]
+        var sourceJobs: [(String, String)] = []
+        func isActiveList(_ file: URL) -> Bool {
+            activeCompilerInputs?.contains(file.standardizedFileURL.resolvingSymlinksInPath().path) ?? true
+        }
         func sourcePaths(in list: URL, sourceDirectory: URL) throws -> Set<String> {
             let lines = try String(contentsOf: list, encoding: .utf8)
             let root = sourceRoot.standardizedFileURL.resolvingSymlinksInPath().path + "/"
@@ -184,7 +189,7 @@ public struct XcodeAnalysis {
             var paths = Set<String>()
             if let temporaryPath = entry.buildSettings["TARGET_TEMP_DIR"],
                let enumerator = FileManager.default.enumerator(at: URL(fileURLWithPath: temporaryPath), includingPropertiesForKeys: nil) {
-                for case let file as URL in enumerator where file.pathExtension == "SwiftFileList" {
+                for case let file as URL in enumerator where file.pathExtension == "SwiftFileList" && isActiveList(file) {
                     classifiedLists.insert(file.standardizedFileURL.resolvingSymlinksInPath())
                     paths.formUnion(try sourcePaths(in: file, sourceDirectory: URL(fileURLWithPath: entry.buildSettings["SRCROOT"] ?? directory.path, isDirectory: true)))
                 }
@@ -196,19 +201,19 @@ public struct XcodeAnalysis {
             targets.append(target)
             if let module = entry.buildSettings["PRODUCT_MODULE_NAME"] {
                 modules[name] = module
-                for path in paths {
-                    let text = try String(contentsOf: sourceRoot.appendingPathComponent(path), encoding: .utf8)
-                    // A file can be compiled into multiple modules. Keep each snapshot.
-                    sources[module + ":" + path] = SwiftSourceSnapshot.parse(text, path: path, module: module)
-                }
+                sourceJobs += paths.sorted().map { (module, $0) }
             }
         }
+        for (key, snapshot) in try BoundedWork.map(sourceJobs, workers: configuration.extractionWorkers, { module, path in
+            let text = try String(contentsOf: sourceRoot.appendingPathComponent(path), encoding: .utf8)
+            return (module + ":" + path, SwiftSourceSnapshot.parse(text, path: path, module: module))
+        }) { sources[key] = snapshot }
         // Scheme settings may omit transitive build targets. Preserve their
         // inputs as unclassified ownership, especially files shared with tests.
         // Otherwise a production dependency could look like test-only source.
         var unclassifiedSources = Set<String>()
         if let enumerator = FileManager.default.enumerator(at: derived, includingPropertiesForKeys: nil) {
-            for case let file as URL in enumerator where file.pathExtension == "SwiftFileList" {
+            for case let file as URL in enumerator where file.pathExtension == "SwiftFileList" && isActiveList(file) {
                 guard !classifiedLists.contains(file.standardizedFileURL.resolvingSymlinksInPath()) else { continue }
                 unclassifiedSources.formUnion(try sourcePaths(in: file, sourceDirectory: directory))
             }
@@ -244,7 +249,7 @@ public struct XcodeAnalysis {
             if let module = modules[target.name] { result[module, default: []].formUnion(target.sourceFiles) }
         }
         let extractionStart = Date()
-        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation, moduleCache: moduleCache)
+        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation, moduleCache: moduleCache, captured: captured)
         measurement("extraction", Date().timeIntervalSince(extractionStart))
         progress("Binding compiler dependencies to \(tests.count) enumerated tests…")
         let binding = AnalysisMeasurement()
@@ -259,11 +264,7 @@ public struct XcodeAnalysis {
         result.dependencies = dependencies
         result.modules = modules
         result.sources = sources
-        guard !configuration.mappingsPath.hasPrefix("/") else { throw ImpactError("--mappings must be repository-relative.") }
-        let mappingURL = sourceRoot.appendingPathComponent(configuration.mappingsPath).standardizedFileURL.resolvingSymlinksInPath()
-        guard mappingURL.path.hasPrefix(sourceRoot.standardizedFileURL.resolvingSymlinksInPath().path + "/") else {
-            throw ImpactError("Mapping file must be inside the repository.")
-        }
+        let mappingURL = try UIFeatureMappings.fileURL(path: configuration.mappingsPath, root: sourceRoot)
         if FileManager.default.fileExists(atPath: mappingURL.path) {
             do {
                 result.mappings = try JSONDecoder().decode(UIFeatureMappings.self, from: Data(contentsOf: mappingURL))

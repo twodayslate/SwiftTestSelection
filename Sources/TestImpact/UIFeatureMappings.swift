@@ -59,6 +59,15 @@ public struct UIFeatureMappings: Codable, Sendable {
         // Cycles are supported: traversal is a fixed point over a finite set.
     }
 
+    static func fileURL(path: String, root: URL) throws -> URL {
+        guard !path.hasPrefix("/") else { throw ImpactError("--mappings must be repository-relative.") }
+        let file = root.appendingPathComponent(path).standardizedFileURL.resolvingSymlinksInPath()
+        guard file.path.hasPrefix(root.standardizedFileURL.resolvingSymlinksInPath().path + "/") else {
+            throw ImpactError("Mapping file must be inside the repository.")
+        }
+        return file
+    }
+
     func selectors(for feature: Feature) -> [String] {
         (feature.tests ?? []) + (feature.fixtures ?? []).flatMap { fixtures?[$0] ?? [] }
     }

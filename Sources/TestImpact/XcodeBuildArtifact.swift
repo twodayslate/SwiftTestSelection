@@ -29,8 +29,12 @@ public struct XcodeBuildInputs: Sendable {
     public var buildSettings: URL
     public var xctestrun: URL
     public var revision: String
+    public var discoveryCache: XcodeAnalysisCache?
+    public var silCapture: URL?
 
-    public init(derivedData: URL, buildLog: URL, buildSettings: URL, xctestrun: URL, revision: String) {
+    public init(derivedData: URL, buildLog: URL, buildSettings: URL, xctestrun: URL, revision: String, discoveryCache: XcodeAnalysisCache? = nil, silCapture: URL? = nil) {
+        self.discoveryCache = discoveryCache
+        self.silCapture = silCapture
         self.derivedData = derivedData.standardizedFileURL.resolvingSymlinksInPath()
         self.buildLog = buildLog
         self.buildSettings = buildSettings
@@ -41,7 +45,8 @@ public struct XcodeBuildInputs: Sendable {
 
 extension XcodeAnalysis {
     /// Capture a graph without invoking build-for-testing. Compiler replay still
-    /// emits SIL; this is analysis compilation, not rebuilding executable products.
+    /// emits SIL unless validated build-time capture is supplied. Executable
+    /// products are never rebuilt by this operation.
     public func graph(from inputs: XcodeBuildInputs) throws -> XcodeTestGraph {
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         let revision = try GitChanges.revision(inputs.revision, at: root)
@@ -63,17 +68,55 @@ extension XcodeAnalysis {
         try ArtifactFiles.validateSettings(settings, options: options, root: root, derived: inputs.derivedData)
         try ArtifactFiles.validateTestRun(inputs.xctestrun, plan: options.testPlan, scheme: options.scheme)
         progress("Fingerprinting existing test products…")
-        let fingerprints = try ArtifactFiles.manifest(at: products)
+        let fingerprints = try ArtifactFiles.manifest(at: products, workers: options.extractionWorkers)
         let toolchain = try ArtifactFiles.toolchain(at: root)
-        var graph = try analyzeBuild(options, sourceRoot: root, derived: inputs.derivedData, log: log,
-                                     settingsData: data, xctestrun: inputs.xctestrun)
+        let sourceInputs = try ArtifactFiles.sourceInputs(log: log, directory: options.path.deletingLastPathComponent())
+        let mappingInputs = try ArtifactFiles.mappingInputs(path: options.mappingsPath, root: root)
+        let cache = try inputs.discoveryCache.map { try XcodeGraphCache($0, progress: progress) }
+        try cache?.resetWork()
+        defer { if let cache { try? FileManager.default.removeItem(at: cache.work) } }
+        var identity = try artifactContext(root: root)
+        identity["schema"] = "existing-build-discovery-1"
+        identity["revision"] = revision
+        identity["sourceRoot"] = root.path
+        identity["productsRoot"] = products.path
+        // Products can contain several runners with different enabled tests.
+        identity["xctestrun"] = inputs.xctestrun.lastPathComponent
+        identity["sourceInputs"] = try XcodeGraphCache.key(sourceInputs)
+        identity["mappingInputs"] = try XcodeGraphCache.key(mappingInputs)
+        identity["products"] = try XcodeGraphCache.key(fingerprints)
+        identity["settings"] = settingsDigest
+        identity["log"] = logDigest
+        identity["toolchain"] = toolchain
+        identity["runtimes"] = try ArtifactFiles.runtimeFingerprint(options: options, at: root)
+        identity["analyzer"] = try ArtifactFiles.digest(XcodeGraphCache.analyzerExecutable())
+        identity["discoveryContext"] = inputs.discoveryCache?.context
+        let captured = try inputs.silCapture.map { try CapturedSIL.load(at: $0, root: root, inputs: inputs,
+            logDigest: logDigest, settingsDigest: settingsDigest, products: fingerprints, toolchain: toolchain) }
+        identity["capture"] = try inputs.silCapture.map { try ArtifactFiles.digest($0.appendingPathComponent("build.json")) } ?? "replay"
+        let cached = try cache?.load(identity)
+        var graph: XcodeTestGraph
+        if let cached {
+            progress("Discovery cache hit: exact build products, source revision, settings, runtime and discovery context; reusing inventory and bound graph")
+            graph = cached
+        } else {
+            graph = try analyzeBuild(options, sourceRoot: root, derived: inputs.derivedData, log: log,
+                settingsData: data, xctestrun: inputs.xctestrun, captured: captured,
+                activeCompilerInputs: Set(sourceInputs.keys.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }))
+        }
         try ArtifactFiles.validateCheckout(root: root, revision: revision, buildLog: inputs.buildLog)
         guard try logDigest == ArtifactFiles.digest(inputs.buildLog), try settingsDigest == ArtifactFiles.digest(inputs.buildSettings) else {
             throw ImpactError("Build log or settings changed during capture; retry with stable build inputs.")
         }
-        guard try fingerprints == ArtifactFiles.manifest(at: products) else {
+        guard try fingerprints == ArtifactFiles.manifest(at: products, workers: options.extractionWorkers) else {
             throw ImpactError("Test products changed during capture; build and capture again without concurrent builds.")
         }
+        guard try sourceInputs == ArtifactFiles.sourceInputs(log: log, directory: options.path.deletingLastPathComponent()) else { throw ImpactError("Compiler source inputs changed during capture") }
+        guard try mappingInputs == ArtifactFiles.mappingInputs(path: options.mappingsPath, root: root) else {
+            throw ImpactError("UI mappings changed during capture; retry with stable inputs")
+        }
+        try captured?.validateFiles()
+        if cached == nil { try cache?.store(graph, identity: identity) }
         var context = try artifactContext(root: root)
         context["sdkAndArchitecture"] = Set(settings.map { entry in
             ["CONFIGURATION", "SDK_NAME", "PLATFORM_NAME", "ARCHS"].map { entry.buildSettings[$0] ?? "" }.joined(separator: "|")
@@ -144,7 +187,7 @@ extension XcodeAnalysis {
             throw ImpactError("Selection report does not match the captured head graph.")
         }
         let products = (productsDirectory ?? URL(fileURLWithPath: artifact.productsDirectory)).standardizedFileURL.resolvingSymlinksInPath()
-        guard try artifact.products == ArtifactFiles.manifest(at: products) else {
+        guard try artifact.products == ArtifactFiles.manifest(at: products, workers: options.extractionWorkers) else {
             throw ImpactError("Test products differ from the captured graph (missing, modified, or extra files). Restore the matching products or recapture the graph.")
         }
         guard try artifact.toolchain == ArtifactFiles.toolchain(at: root) else {
@@ -206,13 +249,14 @@ enum ArtifactFiles {
         #endif
     }
 
-    static func manifest(at root: URL) throws -> [String: String] {
+    static func manifest(at root: URL, workers: Int = 1) throws -> [String: String] {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw ImpactError("Test products directory is missing: \(root.path)")
         }
         var result: [String: String] = [:]
+        var regularFiles: [(String, URL)] = []
         let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath().path
         func walk(_ directory: URL, relative: String) throws {
             for file in try fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey, .isDirectoryKey]) {
@@ -224,12 +268,79 @@ enum ArtifactFiles {
                     }
                     result[path] = "symlink:" + (try fm.destinationOfSymbolicLink(atPath: file.path))
                 } else if values.isDirectory == true { try walk(file, relative: path + "/") }
-                else if values.isRegularFile == true { result[path] = try digest(file) }
+                else if values.isRegularFile == true { regularFiles.append((path, file)) }
                 else { throw ImpactError("Unsupported test product file: \(path)") }
             }
         }
         try walk(root, relative: "")
+        for (path, hash) in try BoundedWork.map(regularFiles, workers: workers, { ($0.0, try digest($0.1)) }) { result[path] = hash }
         guard !result.isEmpty else { throw ImpactError("Test products directory is empty.") }
+        return result
+    }
+
+    static func mappingInputs(path: String, root: URL) throws -> [String: String] {
+        let file = try UIFeatureMappings.fileURL(path: path, root: root)
+        return ["path": file.path, "contents": FileManager.default.fileExists(atPath: file.path) ? try digest(file) : "missing"]
+    }
+
+    /// Fingerprint only inputs referenced by this build's compiler commands.
+    /// DerivedData also retains lists from inactive configurations/removed targets.
+    static func sourceInputs(log: String, directory: URL) throws -> [String: String] {
+        var result: [String: String] = [:]
+        var commandDirectory = directory
+        var sources = Set<URL>()
+        func absolute(_ path: String, at directory: URL) -> URL {
+            URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: directory.path, isDirectory: true)).standardizedFileURL
+        }
+        func expand(_ arguments: [String], at directory: URL, visiting: Set<String> = []) throws -> [String] {
+            var expanded: [String] = []
+            for argument in arguments {
+                guard argument.hasPrefix("@") else { expanded.append(argument); continue }
+                let list = absolute(String(argument.dropFirst()), at: directory)
+                let canonical = list.resolvingSymlinksInPath().path
+                guard !visiting.contains(canonical), visiting.count < 64 else {
+                    throw ImpactError("Recursive compiler response file: \(list.path)")
+                }
+                result[list.path] = canonical + ":" + (try digest(list))
+                let contents = try XcodeSourceFileList.parse(String(contentsOf: list, encoding: .utf8))
+                expanded += try expand(contents, at: directory, visiting: visiting.union([canonical]))
+            }
+            return expanded
+        }
+        for raw in log.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("cd ") {
+                let paths = try XcodeSourceFileList.parse(String(line.dropFirst(3)))
+                if paths.count == 1 { commandDirectory = absolute(paths[0], at: directory) }
+            }
+            guard let marker = line.range(of: "builtin-SwiftDriver -- ") else { continue }
+            let arguments = try expand(XcodeSourceFileList.parse(String(line[marker.upperBound...])), at: commandDirectory)
+            var sourceDirectory = commandDirectory
+            if let i = arguments.lastIndex(of: "-working-directory"), i + 1 < arguments.count {
+                sourceDirectory = absolute(arguments[i + 1], at: commandDirectory)
+            }
+            var i = 1 // Skip the compiler executable.
+            while i < arguments.count {
+                let argument = arguments[i]
+                if argument == "-filelist" {
+                    guard i + 1 < arguments.count else { throw ImpactError("Missing compiler file-list operand") }
+                    let list = absolute(arguments[i + 1], at: sourceDirectory)
+                    result[list.path] = list.resolvingSymlinksInPath().path + ":" + (try digest(list))
+                    // -filelist uses literal paths, one per line, unlike @response files.
+                    for path in try String(contentsOf: list, encoding: .utf8).split(whereSeparator: \.isNewline) {
+                        sources.insert(absolute(String(path), at: sourceDirectory))
+                    }
+                    i += 2
+                } else {
+                    if argument.hasSuffix(".swift") { sources.insert(absolute(argument, at: sourceDirectory)) }
+                    i += 1
+                }
+            }
+        }
+        guard !sources.isEmpty else { throw ImpactError("Missing compiler source inventory") }
+        for source in sources {
+            result[source.path] = source.resolvingSymlinksInPath().path + ":" + (try digest(source))
+        }
         return result
     }
 

@@ -19,6 +19,10 @@ private func extractionFixture() throws -> URL {
             fcntl.flock(stream, fcntl.LOCK_EX)
             stream.write(json.dumps([module,delta])+'\n')
     event(1)
+    if module == 'C': (root/'C-started').touch()
+    if module == 'A' and (root/'require-work-conserving').exists():
+        deadline = time.monotonic() + 5
+        while not (root/'C-started').exists() and time.monotonic() < deadline: time.sleep(0.01)
     time.sleep(0.25 if module == 'A' else 0.05)
     event(-1)
     if module == 'Failure': sys.exit(42)
@@ -57,6 +61,8 @@ private func extractionLog(_ modules: [String], root: URL) -> String {
     var serial: DependencyGraph?
     for workers in [1, 2] {
         try Data().write(to: root.appendingPathComponent("events"))
+        try? FileManager.default.removeItem(at: root.appendingPathComponent("C-started"))
+        if workers == 2 { try Data().write(to: root.appendingPathComponent("require-work-conserving")) }
         var graph = XcodeCompilerGraph.extract(log: log, sourceRoot: root, directory: root, derived: root, progress: { _ in }, ownership: ["A": ["A.swift"], "B": ["B.swift"], "C": ["C.swift"]], workers: workers)
         graph.tests = ["Tests/Owner/test()": ["shared"]]
         #expect(graph.diagnostics.isEmpty)
@@ -88,12 +94,19 @@ private func extractionLog(_ modules: [String], root: URL) -> String {
         } else { serial = graph }
         let events = try String(contentsOf: root.appendingPathComponent("events"), encoding: .utf8).split(separator: "\n")
         var active = 0, peak = 0
+        var ordering: [String] = []
         for event in events {
             let values = try #require(JSONSerialization.jsonObject(with: Data(event.utf8)) as? [Any])
-            active += try #require(values[1] as? Int)
+            let module = try #require(values[0] as? String)
+            let delta = try #require(values[1] as? Int)
+            ordering.append(module + ":" + String(delta))
+            active += delta
             peak = max(peak, active)
         }
         #expect(active == 0 && peak == workers)
+        if workers == 2 {
+            #expect(try #require(ordering.firstIndex(of: "C:1")) < #require(ordering.firstIndex(of: "A:-1")))
+        }
         #expect(events.count == 6) // Repeated identical module is not recompiled.
         #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).allSatisfy { !$0.hasPrefix("impact-") })
     }

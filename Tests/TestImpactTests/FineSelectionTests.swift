@@ -478,3 +478,18 @@ private func declaredRuntimeModel(app: String = appSource, ui: String = uiSource
     #expect(UIFeatureMappings.matches("App/a?.swift", pattern: "App/*?.swift"))
     #expect(!UIFeatureMappings.matches("App/ab.swift", pattern: "App/*?.swift"))
 }
+
+@Test func indexedFineSelectionMatchesReferenceAcrossAllFixtureBoundaries() throws {
+    let before = model()
+    for (key, source) in before.sources {
+        for i in source.units.indices {
+            var after = before
+            after.sources[key]!.units[i].fingerprint += "edit"
+            let changes = [FileChange(path: source.units[i].region.path)]
+            let actual = XcodeFineSelector.select(current: after, previous: before, changes: changes, baseRevision: "base")
+            let expected = ReferenceXcodeFineSelector.select(current: after, previous: before, changes: changes, baseRevision: "base")
+            let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+            #expect(try encoder.encode(actual) == encoder.encode(expected))
+        }
+    }
+}

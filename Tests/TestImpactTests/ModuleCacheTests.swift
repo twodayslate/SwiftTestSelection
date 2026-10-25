@@ -181,7 +181,7 @@ private struct ModuleCacheFixture {
     #expect(loaded.functions["core"]?.dependencies == node.dependencies)
     #expect(loaded.functions["core"]?.uncertainties == node.uncertainties)
     #expect(loaded.dispatchTargets == fragment.dispatchTargets)
-    let path = fixture.cache.options.directory.appendingPathComponent(try XcodeGraphCache.key(identity)).appendingPathComponent("graph.json")
+    let path = fixture.cache.options.directory.appendingPathComponent(try XcodeGraphCache.key(identity)).appendingPathComponent("graph.bin")
     try Data("corrupt".utf8).write(to: path)
     #expect(try fixture.cache.loadModule(identity) == nil)
     #expect(!FileManager.default.fileExists(atPath: path.path))

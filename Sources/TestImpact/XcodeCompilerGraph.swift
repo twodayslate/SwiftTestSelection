@@ -6,13 +6,14 @@ import Foundation
 enum XcodeCompilerGraph {
     static func extract(log: String, sourceRoot: URL, directory: URL, derived: URL,
                         progress: (String) -> Void, ownership: [String: Set<String>] = [:],
-                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil) -> DependencyGraph {
+                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil) -> DependencyGraph {
         var graph = DependencyGraph()
         guard (1...8).contains(workers) else {
             graph.diagnostics.append("Extraction workers must be between 1 and 8.")
             return graph
         }
         moduleCache?.prepare(log: log)
+        captured?.diagnostics.forEach(progress)
         var seen: [String: [String]] = [:]
         var jobs: [XcodeModuleJob] = []
         // Validate inventory before scheduling; identical/ambiguous duplicates keep
@@ -41,32 +42,35 @@ enum XcodeCompilerGraph {
         let queue = OperationQueue()
         queue.maxConcurrentOperationCount = workers
         let results = jobs.map { _ in XcodeModuleResult() }
-        var cacheHits = Set<String>()
+        let access = ModuleCacheAccess(moduleCache)
+        // Only workers retain parsed fragments. Completed jobs publish small disk
+        // references, allowing the next job to start even if ordered merge waits.
+        let spool = derived.appendingPathComponent("impact-spool-" + UUID().uuidString)
+        do { try FileManager.default.createDirectory(at: spool, withIntermediateDirectories: true) }
+        catch { graph.diagnostics.append("Cannot stage compiler fragments: \(error)"); return graph }
+        defer { queue.waitUntilAllOperationsAreFinished(); try? FileManager.default.removeItem(at: spool) }
         func schedule(_ index: Int) {
-            guard index < jobs.count else { return }
             let job = jobs[index]
             let result = results[index]
-            let lookup = Date()
-            let identity = moduleCache?.identity(for: job.module)
-            var loaded: SILModule?
-            if let identity {
-                do { loaded = try moduleCache?.cache.loadModule(identity) }
-                catch { progress("Module cache bypass \(job.module): \(error)") }
-            }
-            let cached = loaded
-            if cached != nil {
-                cacheHits.insert(job.module)
-                progress(String(format: "Module cache %@: hit: compatible compiler inputs; skipped compiler and parser (%.3f s)", job.module, Date().timeIntervalSince(lookup)))
-            } else if moduleCache != nil {
-                progress(String(format: "Module cache %@: %@ (%.3f s)", job.module, identity == nil ? "bypass: unsupported input identity" : "miss: absent, incompatible or corrupt inputs", Date().timeIntervalSince(lookup)))
-            }
             queue.addOperation {
                 result.complete {
                     try cancellation.check()
-                    if let cached { return (cached, []) }
+                    let cached = access.load(job.module)
+                    let stage = spool.appendingPathComponent(String(index))
+                    func publish(_ module: SILModule) throws -> XcodeModuleFragment {
+                        if workers == 1 { return .memory(module) }
+                        try GraphArchive.encodeValue(module).write(to: stage)
+                        return .file(stage)
+                    }
+                    if let cached {
+                        return (try publish(cached), ["Module cache \(job.module): hit: compatible compiler inputs; skipped compiler and parser"], true)
+                    }
+                    if let capturedModule = try captured?.parse(module: job.module, sourceRoot: sourceRoot) {
+                        return (try publish(capturedModule), ["Captured SIL \(job.module): validated primary coverage; skipped compiler replay"], false)
+                    }
                     let output = derived.appendingPathComponent("impact-\(UUID().uuidString).sil")
                     defer { try? FileManager.default.removeItem(at: output) }
-                    let args = arguments(job.arguments) + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-o", output.path]
+                    let args = arguments(captured?.replayArguments(job.arguments) ?? job.arguments) + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-o", output.path]
                     let compilation = AnalysisMeasurement()
                     _ = try CommandRunner.run(job.compiler, args, at: directory)
                     let compiled = compilation.report("Compiled \(job.module)")
@@ -76,20 +80,23 @@ enum XcodeCompilerGraph {
                     let bytes = (try? output.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
                     try cancellation.check()
                     guard !parsed.functions.isEmpty else { throw ImpactError("No SIL functions for \(job.module)") }
-                    return (parsed, [compiled, parsing.report("Parsed \(job.module) (\(bytes) SIL bytes, \(parsed.functions.count) functions)")])
+                    let message = parsing.report("Parsed \(job.module) (\(bytes) SIL bytes, \(parsed.functions.count) functions)")
+                    return (try publish(parsed), [compiled, message], false)
                 }
             }
         }
-        for index in 0..<min(workers, jobs.count) { schedule(index) }
+        for index in 0..<(workers == 1 ? min(1, jobs.count) : jobs.count) { schedule(index) }
         var definingSymbols = Set<String>()
         var dispatch: [String: Set<String>] = [:]
         for (index, job) in jobs.enumerated() {
             let result = results[index]
-            defer { schedule(index + workers) }
+            defer { if workers == 1 && index + 1 < jobs.count { schedule(index + 1) } }
             do {
-                let (parsed, messages) = try result.take()
+                let (fragment, messages, hit) = try result.take()
+                defer { fragment.remove() }
+                let parsed = try fragment.load()
                 messages.forEach(progress)
-                if !cacheHits.contains(job.module), let identity = moduleCache?.identity(for: job.module) {
+                if !hit, let identity = moduleCache?.identity(for: job.module) {
                     do { try moduleCache?.stage(parsed, identity: identity) }
                     catch { progress("Module cache publication bypass \(job.module): \(error)") }
                 }
@@ -116,13 +123,25 @@ enum XcodeCompilerGraph {
             graph.diagnostics = ["Compiler dependency extraction failed: \(error)"]
             return graph
         }
+        resolveDispatch(&graph, tables: dispatch)
+
+        return graph
+    }
+
+    static func resolveDispatch(_ graph: inout DependencyGraph, tables: [String: Set<String>]) {
         for symbol in graph.functions.keys {
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
-                graph.functions[symbol]!.dependencies.formUnion(dispatch[declaration] ?? [])
-                if dispatch[declaration]?.isEmpty == false { graph.functions[symbol]!.resolvedDynamicDeclarations.insert(declaration) }
+                if let candidates = tables[declaration], !candidates.isEmpty {
+                    graph.functions[symbol]!.dependencies.formUnion(candidates)
+                    graph.functions[symbol]!.resolvedDynamicDeclarations.insert(declaration)
+                } else if let separator = declaration.range(of: "@witness:") {
+                    let general = String(declaration[..<separator.lowerBound])
+                    // Never turn a missing concrete table into proof of no impact.
+                    graph.functions[symbol]!.dependencies.formUnion(tables[general] ?? [])
+                    graph.functions[symbol]!.uncertainties.insert("Unresolved project dispatch: " + declaration)
+                }
             }
         }
-        return graph
     }
 
     static func arguments(_ arguments: [String]) -> [String] {
