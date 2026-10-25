@@ -313,10 +313,12 @@ checks primary-file coverage for each module. Fresh complete captures skip repla
 missing or unsupported modules explicitly replay. Previous fragments are reused
 only when the full source tree, settings, compiler, command and external context
 match. A source edit may therefore replay unchanged modules: partial capture is
-never accepted as proof that omitted code has no impact. New or incompatible
-sessions require fresh DerivedData to establish a complete compiler inventory. Compatible incremental builds ignore source lists belonging
-to inactive configurations or removed targets; changing toolchains also requires
-a new session.
+never accepted as proof that omitted code has no impact. Fresh captures replace
+superseded jobs in the active seal; older batches remain only when needed to cover
+unchanged primary files. New or incompatible sessions require fresh DerivedData
+to establish a complete compiler inventory. Compatible incremental builds ignore
+source lists belonging to inactive configurations or removed targets; changing
+toolchains also requires a new session.
 
 The wrapper seals the revision, log, settings, source fingerprints, SIL checksums
 and exact product hashes after a successful build. Failed builds invalidate the
@@ -497,16 +499,18 @@ test inventories, verifies warm-cache reuse, and checks that inactive source lis
 do not alter source ownership or block analysis. It also verifies cache invalidation
 when a gitignored mapping file is created, changed, or removed.
 
-Incremental capture and its completeness checks have a separate regression:
+Capture reuse has a fast regression and an Xcode integration check:
 
 ```sh
+python3 Scripts/capture_build_test.py
 python3 Scripts/xcode_capture_session_integration_test.py \
   --tool .build/release/swift-test-impact \
   --destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-It checks sealed incremental capture with stale inactive lists, rejection of a new
-session against existing build products, and seal invalidation after a failed build.
+These check primary coverage across batch changes, bounded active captures after
+repeated clean builds, stale inactive lists, rejection of a new session against
+existing build products, and seal invalidation after a failed build.
 
 The SIL parser also has an optimized large-input regression benchmark:
 

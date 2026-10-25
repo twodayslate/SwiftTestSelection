@@ -31,6 +31,12 @@ with tempfile.TemporaryDirectory(prefix='impact-capture-session-') as temporary:
         run(['git', 'add', '.'])
         run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', message])
 
+    def normalized(value):
+        # Swift sets encode as arrays with unspecified order.
+        if isinstance(value, dict): return {k: normalized(v) for k, v in value.items()}
+        if isinstance(value, list): return sorted(map(normalized, value), key=lambda v: json.dumps(v, sort_keys=True))
+        return value
+
     run(['git', 'init', '-q'])
     commit('Fixture')
     derived, session = root / 'derived', root / 'session'
@@ -59,6 +65,28 @@ with tempfile.TemporaryDirectory(prefix='impact-capture-session-') as temporary:
     assert len(graph['tests']) == 9 and not graph['diagnostics'] and not graph['dependencies']['diagnostics']
     assert 'Captured SIL' in result.stderr
     print('PASS fresh and incremental sealed capture ignore inactive source lists', flush=True)
+
+    # Cleaning DerivedData must replace captured jobs, not accumulate another
+    # copy of every SIL file in the active seal on each unchanged rebuild.
+    previous_manifests = set(incremental['manifests'])
+    for _ in range(2):
+        shutil.rmtree(derived)
+        run(command)
+        rebuilt = json.loads(seal.read_text())
+        assert rebuilt['inventory'] == first['inventory']
+        assert len(rebuilt['manifests']) == len(first['manifests'])
+        assert set(rebuilt['manifests']).isdisjoint(previous_manifests)
+        previous_manifests = set(rebuilt['manifests'])
+    result = run([tool, 'graph', '--project', source / 'ImpactDemo.xcodeproj', '--scheme', 'ImpactDemo',
+                  '--test-plan', 'AllTests', '--configuration', 'Debug', '--destination', args.destination,
+                  '--derived-data', derived, '--build-log', session / 'build.log', '--build-settings', session / 'settings.json',
+                  '--xctestrun', runner, '--revision', 'HEAD', '--sil-capture', session, '--format', 'json'])
+    rebuilt_graph = json.loads(result.stdout)
+    assert rebuilt_graph['tests'] == graph['tests']
+    assert normalized(rebuilt_graph['dependencies']) == normalized(graph['dependencies'])
+    assert not rebuilt_graph['diagnostics'] and not rebuilt_graph['dependencies']['diagnostics']
+    assert 'Captured SIL' in result.stderr
+    print('PASS repeated unchanged rebuilds replace superseded captures and preserve discovery', flush=True)
 
     saved = seal.read_bytes()
     changed = list(command)

@@ -61,6 +61,44 @@ def driver_inventory(log):
     return result
 
 
+def select_manifests(fresh, previous):
+    """Prefer fresh jobs, retaining older batches only for uncovered primaries.
+
+    Batch boundaries can change between builds, so matching primary sets alone
+    is insufficient. Unsupported records remain visible to the graph validator.
+    """
+    records = [(path, json.loads(path.read_text())) for path in fresh | previous]
+    records.sort(key=lambda item: (item[0] in fresh, item[1].get('started', 0), str(item[0])), reverse=True)
+    covered = {}
+    chosen = set()
+    paths = {}
+    def canonical(directory, source):
+        key = (directory, source)
+        if key not in paths: paths[key] = str((Path(directory) / source).resolve())
+        return paths[key]
+    for path, job in records:
+        arguments = job.get('arguments', [])
+        sources = set(job.get('sourceFiles', []))
+        primaries = set(job.get('primaryFiles', [])) or sources
+        optimizations = [a for a in arguments if a in ['-Onone', '-O', '-Osize', '-Ounchecked']]
+        if (job.get('status') != 'complete' or '-module-name' not in arguments
+                or arguments.index('-module-name') + 1 == len(arguments)
+                or not sources or sources != set(job.get('sources', {}))
+                or not primaries <= sources or not job.get('directory')
+                or optimizations[-1:] != ['-Onone'] or '-g' not in arguments):
+            chosen.add(path)
+            continue
+        # Never let a different module, inventory or input bytes mask a record that
+        # the graph loader needs to reject or replay.
+        key = (arguments[arguments.index('-module-name') + 1],
+               frozenset((canonical(job['directory'], s), h) for s, h in job['sources'].items()))
+        primaries = {canonical(job['directory'], s) for s in primaries}
+        if not primaries <= covered.get(key, set()):
+            chosen.add(path)
+            covered.setdefault(key, set()).update(primaries)
+    return chosen
+
+
 def run(args):
     session = args.session.resolve()
     session.mkdir(parents=True, exist_ok=True)
@@ -143,10 +181,11 @@ def build(args, session):
     # active inputs and must not invalidate this inventory.
     if not inventory: raise ValueError('No compiler inventory; use a clean build for the first session')
     log_path.write_text(log)
-    chosen = set(capture.glob('*/manifest.json')) - before
+    fresh = set(capture.glob('*/manifest.json')) - before
+    retained = set()
     if compatible and previous.get('inputIdentity') == identity:
-        chosen |= {session / p for p in previous.get('manifests', {})}
-    # Latest job for each identical primary set wins on a no-op/incremental build.
+        retained = {session / p for p in previous.get('manifests', {})}
+    chosen = select_manifests(fresh, retained)
     manifests = {str(p.relative_to(session)): digest(p) for p in sorted(chosen)}
     products = manifest(args.derived_data.resolve() / 'Build/Products')
     seal = dict(schemaVersion=1, root=str(root), revision=revision, toolchain=toolchain,
