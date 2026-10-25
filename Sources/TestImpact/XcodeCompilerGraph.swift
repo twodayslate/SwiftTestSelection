@@ -57,7 +57,8 @@ enum XcodeCompilerGraph {
                     try cancellation.check()
                     let cached = access.load(job.module)
                     let stage = spool.appendingPathComponent(String(index))
-                    func publish(_ module: SILModule) throws -> XcodeModuleFragment {
+                    func publish(_ fragment: SILModule) throws -> XcodeModuleFragment {
+                        let module = try SILOwnership.resolve(fragment, module: job.module, compiler: job.compiler, directory: directory)
                         if workers == 1 { return .memory(module) }
                         try GraphArchive.encodeValue(module).write(to: stage)
                         return .file(stage)
@@ -102,7 +103,8 @@ enum XcodeCompilerGraph {
                     catch { progress("Module cache publication bypass \(job.module): \(error)") }
                 }
                 for (symbol, node) in parsed.functions {
-                    let isDefinition = node.regions.contains { ownership[job.module]?.contains($0.path) == true }
+                    // Imported bodies can point into files also compiled by this module.
+                    let isDefinition = !(parsed.importedSymbols?.contains(symbol) ?? false) && node.regions.contains { ownership[job.module]?.contains($0.path) == true }
                     if isDefinition || !definingSymbols.contains(symbol) && (graph.functions[symbol] == nil || !node.regions.isEmpty && graph.functions[symbol]!.regions.isEmpty) {
                         graph.functions[symbol] = node
                     }

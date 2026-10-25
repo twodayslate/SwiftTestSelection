@@ -459,7 +459,42 @@ scans; selection does not need a coverage baseline.
 
 The adapter builds with `xcodebuild build-for-testing`, reads source ownership from compiler file lists, and replays supported `builtin-SwiftDriver` commands to emit SIL with debug locations. It parses source declarations with SwiftParser and compares syntax structure without trivia, while retaining literal contents and checking compiled dependency changes. It discovers exact enabled IDs with `test-without-building -enumerate-tests`. Discovery launches test runners and may require UI automation permissions; test bodies run only with `--run`. Enumeration errors are fatal even if Xcode exits successfully. Known empty XCTest base classes are excluded from the executable inventory.
 
-Requires macOS, Swift 6+, Xcode test enumeration (Xcode 15+), and a configured scheme/destination. The adapter preserves project signing settings. Compiler-driver output and SIL are version-sensitive; extraction failures and multiple distinct compiler invocations for one module produce fallback diagnostics. The default workflow uses temporary DerivedData and rebuilds both revisions, which can cost more than a small suite; the existing-build workflow above reuses captured graphs and products. Selected runs retain `.xcresult` bundles under `.build/test-impact-results` beside the project/workspace. Validation covers Xcode 26.6 on an iOS 26.2 simulator. macOS UI execution, physical devices, and other Apple platforms are not yet validated for fine-grained selection.
+A scheme's `-showBuildSettings` output can omit implicitly built local Swift
+packages and embedded app extensions. **No additional ownership build setting or
+explicit scheme entry is required for those dependencies.** Keep normal target
+and package dependencies configured so `build-for-testing` compiles them, use the
+same scheme/plan/configuration/destination for the build and settings export, and
+preserve the full build log and its compiler file lists. A clean build or a fresh
+DerivedData directory is important: an incremental log can omit unchanged modules.
+
+For modules omitted by scheme settings, the tool pairs each supported
+`builtin-SwiftDriver` invocation's `-module-name` with its `.SwiftFileList`, then
+parses in-repository sources under that module. JSON represents these owners as
+`Compiler module: <name>` with product type `compiler-module`. A file compiled by
+several modules retains a separate semantic snapshot for each module. Imported
+SIL bodies retain their external linkage so shared source paths cannot overwrite
+the defining module or its feature mappings. For source-bearing `shared` bodies
+(including `@_alwaysEmitIntoClient`), the compiler's adjacent `swift-demangle`
+resolves the declaration module, including extension ownership. Resolution is
+batched per module and cached; unfamiliar symbol contexts produce an explicit
+conservative fallback. These records prove compiler
+ownership, not a test target's identity or runtime isolation; they do not enable
+the UI or non-UI runtime uncertainty exemptions.
+Explicit UI feature mappings and unresolved-dependency fallbacks still apply.
+
+Conflicting module/list claims, missing or inactive inputs, unsupported response
+files, and modules containing only generated build inputs produce explicit
+ownership diagnostics and conservative selection, whether DerivedData is inside
+or outside the checkout. Mixed modules retain their repository snapshots and list
+generated/external inputs in `unsupportedSourceInputs`.
+Semantic changes in those modules produce an `unsupported_source_ownership`
+fallback; unrelated resolved test-method edits remain eligible for narrowing.
+Entirely external packages, including `DerivedData/SourcePackages/checkouts`,
+are not treated as repository source boundaries.
+Regenerate saved graphs to acquire this ownership metadata; supplying old graphs
+cannot recover missing snapshots from SIL alone.
+
+Requires macOS, Swift 6+, Xcode test enumeration (Xcode 15+), and a configured scheme/destination. The adapter preserves project signing settings. Compiler-driver output and SIL are version-sensitive; extraction failures and multiple distinct compiler invocations for one module produce fallback diagnostics. The default workflow uses temporary DerivedData and rebuilds both revisions, which can cost more than a small suite; the existing-build workflow above reuses captured graphs and products. Selected runs retain `.xcresult` bundles under `.build/test-impact-results` beside the project/workspace. Validation covers Xcode 26.6 and 27.0 on an iOS 26.2 simulator. macOS UI execution, physical devices, and other Apple platforms are not yet validated for fine-grained selection.
 
 `graph` accepts the same container/build/mapping options and `--format json|dot`. Xcode JSON uses `analysisKind: "xcode-sil-and-ui-mappings"` and includes source snapshots, compiled dependencies, exact tests, ownership, and mappings. DOT currently shows compiled source ownership; the JSON `dependencies` graph contains function edges. No inferred compiler edge claims to cross the UI automation process boundary.
 
@@ -585,6 +620,22 @@ This builds the fixture, checks that different `.xctestrun` files retain their o
 test inventories, verifies warm-cache reuse, and checks that inactive source lists
 do not alter source ownership or block analysis. It also verifies cache invalidation
 when a gitignored mapping file is created, changed, or removed.
+
+Compiler ownership omitted by scheme settings has a real Xcode integration check:
+
+```sh
+python3 Scripts/xcode_transitive_ownership_integration_test.py \
+  --tool .build/release/swift-test-impact \
+  --destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  --output /tmp/transitive-ownership.json
+```
+
+It generates the `XcodeTransitive` fixture from `XcodeUITests`, adding a local
+package and two embedded extensions without adding them to the scheme. It checks
+base/head snapshots, a source compiled into multiple modules, isolated production
+edits, mixed documentation and test edits, warm/fresh parity, and selected execution
+from verified retained products. This fixture does not replace the consumer's
+full-run comparison and performance gate before CI adoption.
 
 Capture reuse has a fast regression and an Xcode integration check:
 

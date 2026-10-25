@@ -4,6 +4,11 @@
 import Foundation
 
 public struct SILModule: Codable, Sendable {
+    /// Bodies imported from another module; source locations alone cannot prove
+    /// definition ownership when multiple modules compile the same file.
+    public var importedSymbols: Set<String>? = nil
+    /// Shared bodies whose declaration owner may need demangling.
+    public var sharedSymbols: Set<String>? = nil
     public var functions: [String: FunctionNode]
     public var dispatchTargets: [String: Set<String>]
     /// Concrete imported conformances, keyed by emitting module and declaration.
@@ -132,8 +137,10 @@ public enum SILParser {
             self.module = module
             self.root = sourceRoot.standardizedFileURL.resolvingSymlinksInPath().path + "/"
         }
-        var result: SILModule { SILModule(functions: functions, dispatchTargets: tables, externalWitnesses: externalWitnesses) }
+        var result: SILModule { SILModule(importedSymbols: importedSymbols, sharedSymbols: sharedSymbols, functions: functions, dispatchTargets: tables, externalWitnesses: externalWitnesses) }
 
+        var importedSymbols = Set<String>()
+        var sharedSymbols = Set<String>()
         var functions: [String: FunctionNode] = [:]
         var tables: [String: Set<String>] = [:]
         var externalWitnesses: [String: Set<String>] = [:]
@@ -190,6 +197,10 @@ public enum SILParser {
                 }
                 if line.hasPrefix("sil "), line.hasSuffix("{"),
                    let match = Pattern.groups(Expressions.function, in: line) {
+                    if line.split(separator: " ", maxSplits: 2)[1].hasSuffix("_external") {
+                        importedSymbols.insert(match[0])
+                    }
+                    if line.split(separator: " ", maxSplits: 2)[1] == "shared" { sharedSymbols.insert(match[0]) }
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
                     // Canonical capture can retain source parameter names (e.g.
                     // Element), while replay usually spells them τ_0_0. A local
