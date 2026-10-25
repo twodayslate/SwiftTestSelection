@@ -5,20 +5,39 @@ import Foundation
 import Testing
 @testable import TestImpact
 
-@Test func compiledNestedSuperclassLookupRespectsLexicalShadowing() throws {
+@Test(arguments: [false, true])
+func compiledNestedSuperclassLookupRespectsLexicalShadowing(qualified: Bool) throws {
     try assertOverrideSelection(app: """
     import Foundation
     extension NSObject { @objc func projectHelper() {} }
     class Parent { func isEqual(_ object: Any?) -> Bool { true } }
     enum Scope {
         class Parent: NSObject {}
-        class Local: Parent {
+        class Local: \(qualified ? "Scope.Parent" : "Parent") {
             override func isEqual(_ object: Any?) -> Bool { false }
         }
     }
     func compare(_ value: NSObject) -> Bool { value.isEqual(nil) }
     """, call: "_ = compare(Scope.Local())", scope: "Scope.Local", kind: "function",
         caller: "compare(_:)", implementation: "Scope.Local.isEqual(_:)")
+}
+
+@Test func compiledInheritedNestedSuperclassRetainsConservativeSelection() throws {
+    try assertOverrideSelection(app: """
+    import Foundation
+    extension NSObject { @objc func projectHelper() {} }
+    enum Container { class Parent { func isEqual(_ object: Any?) -> Bool { true } } }
+    class RealContainer { class Parent: NSObject {} }
+    enum Scope {
+        class Container: RealContainer {}
+        class Local: Container.Parent {
+            override func isEqual(_ object: Any?) -> Bool { false }
+        }
+    }
+    func compare(_ value: NSObject) -> Bool { value.isEqual(nil) }
+    """, call: "_ = compare(Scope.Local())", scope: "Scope.Local", kind: "function",
+        caller: "compare(_:)", implementation: "Scope.Local.isEqual(_:)",
+        unresolvedDeclaration: "NSObject.isEqual")
 }
 
 @Test func compiledRequiredInitializersReachSubclassThroughMetatype() throws {
@@ -62,7 +81,8 @@ func nestedAliasShadowsModuleClassWithoutGuessingItsSuperclass(qualified: Bool) 
 }
 
 private func assertOverrideSelection(app: String, call: String, scope: String, kind: String,
-                                     caller: String, implementation: String) throws {
+                                     caller: String, implementation: String,
+                                     unresolvedDeclaration: String? = nil) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("override-resolution-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -92,7 +112,12 @@ private func assertOverrideSelection(app: String, call: String, scope: String, k
     let entry = try #require(graph.functions.values.first { $0.name == caller })
     let implementations = Set(graph.functions.values.filter { $0.name == implementation }.map(\.id))
     #expect(!implementations.isEmpty)
-    #expect(graph.dependencyPath(from: [entry.id], to: implementations) != nil)
+    if let unresolvedDeclaration {
+        #expect(entry.uncertainties.contains("Unresolved project dispatch: " + unresolvedDeclaration + " (incomplete override ancestry)"))
+    } else {
+        #expect(graph.dependencyPath(from: [entry.id], to: implementations) != nil)
+        #expect(!entry.uncertainties.contains { $0.contains("incomplete override ancestry") })
+    }
     var before = XcodeTestGraph(targets: [
         .init(name: "App", productType: "com.apple.product-type.framework", sourceFiles: ["App.swift"]),
         .init(name: "Tests", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: ["Tests.swift"])
@@ -103,5 +128,12 @@ private func assertOverrideSelection(app: String, call: String, scope: String, k
     after.sources["Fixture:App.swift"]!.units[unit].fingerprint += "edit"
     let report = XcodeFineSelector.select(current: after, previous: before, changes: [FileChange(path: "App.swift")], baseRevision: "base")
     #expect(report.selectedTests == [testsIDs[0]])
-    #expect(report.explanations.contains { $0.test == testsIDs[0] && $0.kind == "dependency" })
+    if let unresolvedDeclaration {
+        #expect(report.explanations.contains {
+            $0.test == testsIDs[0] && $0.kind == "fallback" &&
+                $0.reason.contains("Unresolved project dispatch: " + unresolvedDeclaration + " (incomplete override ancestry)")
+        })
+    } else {
+        #expect(report.explanations.contains { $0.test == testsIDs[0] && $0.kind == "dependency" })
+    }
 }

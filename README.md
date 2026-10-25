@@ -345,6 +345,9 @@ fallback for matching member dispatches rather than proof of no impact.
 Superclass lookup checks enclosing scopes before module-level names. Required
 initializer implementations participate in dispatch binding even when Swift does
 not spell them with `override`.
+A nearer nominal qualifier also shadows outer types. If its nested superclass
+member is inherited and cannot be resolved by the source index, matching callers
+remain selected with an explicit incomplete-ancestry fallback.
 Regenerate older saved graphs to acquire this ownership metadata; legacy snapshots
 retain their conservative classification.
 

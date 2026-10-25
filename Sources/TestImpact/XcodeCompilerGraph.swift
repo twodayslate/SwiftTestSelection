@@ -168,6 +168,11 @@ enum XcodeCompilerGraph {
             SwiftSourceSnapshot.nominalTypeName(spelling).map { (spelling, $0) }
         })
         let typeAliases = Set(sources.values.flatMap { $0.typeAliases ?? [] })
+        let nominalTypes = Set(sources.values.flatMap { file in
+            file.units.filter { $0.kind == "type" }.map {
+                String($0.key.prefix { $0 != ":" }) + "." + $0.scope
+            }
+        })
         func containsAlias(_ name: String) -> Bool {
             typeAliases.contains(name) || name.indices.contains {
                 name[$0] == "." && typeAliases.contains(String(name[..<$0]))
@@ -177,10 +182,17 @@ enum XcodeCompilerGraph {
             // Swift resolves an unqualified name from its enclosing scopes
             // outward. A module-level class must not hide a nested superclass.
             var scope = owner.split(separator: ".").dropLast()
+            let qualifier = parent.firstIndex(of: ".").map { String(parent[..<$0]) }
             while !scope.isEmpty {
-                let candidate = scope.joined(separator: ".") + "." + parent
+                let prefix = scope.joined(separator: ".") + "."
+                let candidate = prefix + parent
                 if containsAlias(candidate) { return ([], false) }
                 if superclasses[candidate] != nil { return ([candidate], true) }
+                // A nearer nominal qualifier shadows outer names even if its
+                // member is inherited and absent from this declaration index.
+                // Keep that ancestry unknown instead of choosing an unrelated
+                // outer class with the same qualified spelling.
+                if let qualifier, nominalTypes.contains(prefix + qualifier) { return ([], false) }
                 scope = scope.dropLast()
             }
             if containsAlias(parent) { return ([], false) }

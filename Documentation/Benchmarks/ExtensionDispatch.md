@@ -39,6 +39,16 @@ recorded even without an `override` modifier. Compiled regressions verify a path
 to the actual nested override and required initializer, then check that an edit
 selects its caller and leaves an unrelated test out.
 
+Nominal qualifiers also stop outward lookup when a nested member is absent from
+the source index. A compiled fixture defines `Scope.Container: RealContainer`,
+where `RealContainer.Parent: NSObject`, alongside an unrelated outer
+`Container.Parent`. Editing the override in `Scope.Local: Container.Parent`
+selects its caller with an explicit incomplete-ancestry fallback and excludes
+an unrelated test. The index does not resolve inherited nested members; it must
+not substitute the outer class and silently omit the affected test. Direct
+nested superclass references retain their compiled dependency paths with both
+unqualified and qualified spellings.
+
 ## Saved consumer comparison
 
 Release validation on the existing ChainOfCustody graph (124,013 functions, 2,000
@@ -89,7 +99,7 @@ candidates; it does not claim complete type-alias or external-framework hierarch
 resolution. The compiled generic-superclass case has no such diagnostic and
 selects only its caller. Full-suite behavioral validation remains separate.
 
-Review-fix validation after rebasing onto `4e36974` (main): all 133 release tests passed, including both compiled
+Review-fix validation after rebasing onto `4e36974` (main): all 134 release tests passed, including both compiled
 override cases, nested nominal-name parsing, unresolved ancestry, trailing
 protocol conformances, missing-implementation/super-call checks, lexical
-shadowing, required initializer dispatch, and the capture tests merged in #28.
+shadowing (including inherited nested members), required initializer dispatch, and the capture tests merged in #28.
