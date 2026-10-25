@@ -63,7 +63,13 @@ enum XcodeSourceOwnership {
                     // also compiles inputs with no repository semantic boundary.
                     // The selector must retain a fallback for edits to that module.
                     if repositoryFiles.isEmpty {
-                        if files.contains(where: { $0.path.hasPrefix(root) }) { throw ImpactError("Generated source ownership is unsupported") }
+                        // External packages can also compile generated resource
+                        // accessors. A checkout source establishes that external
+                        // boundary; generated inputs alone do not.
+                        let hasPackageSources = files.contains { $0.path.hasPrefix(generatedRoot + "SourcePackages/checkouts/") }
+                        if !hasPackageSources && files.contains(where: { $0.path.hasPrefix(generatedRoot) }) {
+                            throw ImpactError("Generated source ownership is unsupported")
+                        }
                         classifiedLists.insert(list)
                         continue
                     }

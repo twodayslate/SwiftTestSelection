@@ -10,6 +10,7 @@ public enum GraphArchive {
     private struct Envelope: Codable {
         var metadata: Data
         var graph: PackedGraph?
+        var importedSymbols: Set<String>? = nil
         var dispatch: [String: Set<String>]?
         var externalWitnesses: [String: Set<String>]? = nil
     }
@@ -101,7 +102,7 @@ public enum GraphArchive {
             let packed = graph.dependencies.map(PackedGraph.init); graph.dependencies = nil
             envelope = try Envelope(metadata: JSONEncoder().encode(graph), graph: packed)
         } else if let module = value as? SILModule {
-            envelope = Envelope(metadata: Data(), graph: PackedGraph(DependencyGraph(functions: module.functions)), dispatch: module.dispatchTargets, externalWitnesses: module.externalWitnesses)
+            envelope = Envelope(metadata: Data(), graph: PackedGraph(DependencyGraph(functions: module.functions)), importedSymbols: module.importedSymbols, dispatch: module.dispatchTargets, externalWitnesses: module.externalWitnesses)
         } else { return try JSONEncoder().encode(value) }
         let encoder = PropertyListEncoder(); encoder.outputFormat = .binary
         let payload = try encoder.encode(envelope)
@@ -121,7 +122,7 @@ public enum GraphArchive {
             return graph as! T
         }
         if type == SILModule.self, let packed = envelope.graph, let dispatch = envelope.dispatch {
-            return try SILModule(functions: packed.unpack().functions, dispatchTargets: dispatch, externalWitnesses: envelope.externalWitnesses) as! T
+            return try SILModule(importedSymbols: envelope.importedSymbols, functions: packed.unpack().functions, dispatchTargets: dispatch, externalWitnesses: envelope.externalWitnesses) as! T
         }
         throw ImpactError("Unsupported compact graph payload")
     }

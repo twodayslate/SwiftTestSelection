@@ -143,3 +143,36 @@ private final class OwnershipFixture {
     #expect(f.unsupportedInputs == ["Core": ["<DerivedData>/Generated.swift"]])
     #expect(f.classified.count == 1)
 }
+
+@Test(arguments: [false, true])
+func generatedOnlyOwnershipIsIndependentOfDerivedDataLocation(external: Bool) throws {
+    let f = try OwnershipFixture()
+    let source = external ? f.root.appendingPathComponent("Checkout") : f.root
+    try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+    let list = try f.invocation("Generated", paths: ["DerivedData/Build/Intermediates.noindex/Generated.swift"])
+    var targets: [XcodeTarget] = [], modules: [String: String] = [:], unsupported: [String: [String]] = [:]
+    var classified = Set<URL>(), diagnostics: [String] = []
+    func recover() {
+        XcodeSourceOwnership.recover(log: f.log, sourceRoot: source, derived: f.derived, activeInputs: nil,
+            targets: &targets, modules: &modules, listOwners: [:], unsupportedInputs: &unsupported,
+            classifiedLists: &classified, diagnostics: &diagnostics)
+    }
+    recover()
+    #expect(diagnostics == ["Compiler source ownership unavailable for Generated: Generated source ownership is unsupported"])
+    #expect(classified.isEmpty && targets.isEmpty)
+
+    // A normal remote Swift package checkout inside DerivedData is still external.
+    try f.derived.appendingPathComponent("SourcePackages/checkouts/Package/Sources/Value.swift").path
+        .write(to: list, atomically: true, encoding: .utf8)
+    diagnostics = []
+    recover()
+    #expect(diagnostics.isEmpty && classified == [list] && targets.isEmpty)
+
+    // Resource-bearing external packages also compile generated accessors.
+    try ["SourcePackages/checkouts/Package/Sources/Value.swift", "Build/Intermediates.noindex/DerivedSources/resource_bundle_accessor.swift"]
+        .map { f.derived.appendingPathComponent($0).path }.joined(separator: "\n")
+        .write(to: list, atomically: true, encoding: .utf8)
+    classified = []
+    recover()
+    #expect(diagnostics.isEmpty && classified == [list] && targets.isEmpty)
+}

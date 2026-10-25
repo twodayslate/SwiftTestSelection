@@ -102,7 +102,8 @@ enum XcodeCompilerGraph {
                     catch { progress("Module cache publication bypass \(job.module): \(error)") }
                 }
                 for (symbol, node) in parsed.functions {
-                    let isDefinition = node.regions.contains { ownership[job.module]?.contains($0.path) == true }
+                    // Imported bodies can point into files also compiled by this module.
+                    let isDefinition = !(parsed.importedSymbols?.contains(symbol) ?? false) && node.regions.contains { ownership[job.module]?.contains($0.path) == true }
                     if isDefinition || !definingSymbols.contains(symbol) && (graph.functions[symbol] == nil || !node.regions.isEmpty && graph.functions[symbol]!.regions.isEmpty) {
                         graph.functions[symbol] = node
                     }

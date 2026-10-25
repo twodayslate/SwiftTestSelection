@@ -471,18 +471,22 @@ For modules omitted by scheme settings, the tool pairs each supported
 `builtin-SwiftDriver` invocation's `-module-name` with its `.SwiftFileList`, then
 parses in-repository sources under that module. JSON represents these owners as
 `Compiler module: <name>` with product type `compiler-module`. A file compiled by
-several modules retains a separate semantic snapshot for each module. These
-records prove compiler ownership, not a test target's identity or runtime
-isolation; they do not enable the UI or non-UI runtime uncertainty exemptions.
+several modules retains a separate semantic snapshot for each module. Imported
+SIL bodies retain their external linkage so shared source paths cannot overwrite
+the defining module or its feature mappings. These records prove compiler
+ownership, not a test target's identity or runtime isolation; they do not enable
+the UI or non-UI runtime uncertainty exemptions.
 Explicit UI feature mappings and unresolved-dependency fallbacks still apply.
 
 Conflicting module/list claims, missing or inactive inputs, unsupported response
-files, and generated-only repository ownership produce explicit ownership
-diagnostics and conservative selection. Mixed modules retain their repository
-snapshots and list generated/external inputs in `unsupportedSourceInputs`.
+files, and modules containing only generated build inputs produce explicit
+ownership diagnostics and conservative selection, whether DerivedData is inside
+or outside the checkout. Mixed modules retain their repository snapshots and list
+generated/external inputs in `unsupportedSourceInputs`.
 Semantic changes in those modules produce an `unsupported_source_ownership`
 fallback; unrelated resolved test-method edits remain eligible for narrowing.
-Entirely external packages are not treated as repository source boundaries.
+Entirely external packages, including `DerivedData/SourcePackages/checkouts`,
+are not treated as repository source boundaries.
 Regenerate saved graphs to acquire this ownership metadata; supplying old graphs
 cannot recover missing snapshots from SIL alone.
 
