@@ -17,20 +17,64 @@ enum SILOwnership {
             : "swift-demangle"
         let output = try CommandRunner.run(demangler, ["--expand", "--tree-only"], at: directory,
             input: Data((symbols.joined(separator: "\n") + "\n").utf8)).text
-        let owners = declarationOwners(output)
+        let owners = ownerships(output)
+        var adapters: [String: String] = [:]
         for symbol in symbols {
             guard let owner = owners[symbol] else {
                 throw ImpactError("Cannot resolve defining module for client-emitted SIL symbol \(symbol)")
             }
             if result.importedSymbols == nil { result.importedSymbols = [] }
-            if owner != module { result.importedSymbols!.insert(symbol) }
+            switch owner {
+            case .declaration(let owner):
+                if owner != module { result.importedSymbols!.insert(symbol) }
+            case .adapter:
+                // These type-only symbols have no lexical declaration owner. Keep
+                // each emitter's body/edges separate, including runtime uncertainty.
+                // Their debug locations identify a conversion site, not a shared
+                // source declaration that every user of the adapter depends on.
+                adapters[symbol] = symbol + "@emitted:" + module
+            }
+        }
+        if !adapters.isEmpty {
+            let adapterSymbols = Set(adapters.keys)
+            func renamed(_ symbols: Set<String>) -> Set<String> {
+                guard !symbols.isDisjoint(with: adapterSymbols) else { return symbols }
+                return Set(symbols.map { adapters[$0] ?? $0 })
+            }
+            for symbol in Array(result.functions.keys) {
+                var node = result.functions[symbol]!
+                guard adapters[symbol] != nil || !node.dependencies.isDisjoint(with: adapterSymbols)
+                    || node.compilerReferences.map({ !$0.isDisjoint(with: adapterSymbols) }) == true else { continue }
+                node.dependencies = renamed(node.dependencies)
+                node.compilerReferences = node.compilerReferences.map(renamed)
+                if let local = adapters[symbol] {
+                    result.functions.removeValue(forKey: symbol)
+                    node.id = local
+                    node.regions = []
+                }
+                result.functions[node.id] = node
+            }
+            result.dispatchTargets = result.dispatchTargets.mapValues(renamed)
+            result.importedSymbols = result.importedSymbols.map(renamed)
         }
         // Resolved provenance is already in importedSymbols. Cache hits need no
         // demangler process; raw parser fragments retain the pending inventory.
         return result
     }
 
+    private enum Ownership {
+        case declaration(String)
+        case adapter
+    }
+
     static func declarationOwners(_ output: String) -> [String: String] {
+        ownerships(output).compactMapValues {
+            if case .declaration(let owner) = $0 { return owner }
+            return nil
+        }
+    }
+
+    private static func ownerships(_ output: String) -> [String: Ownership] {
         let contexts: Set<String> = ["Global", "Static", "Function", "Variable", "Subscript",
             "Getter", "Setter", "ReadAccessor", "ModifyAccessor", "Allocator", "Constructor",
             "Destructor", "Deallocator", "DefaultArgumentInitializer", "ExplicitClosure", "ImplicitClosure", "Structure", "Class", "Enum", "Protocol", "Extension"]
@@ -46,15 +90,28 @@ enum SILOwnership {
                 return owner
             }
         }
-        func owner(_ nodes: [Node]) -> String? {
+        func owner(_ nodes: [Node]) -> Ownership? {
             guard nodes.first?.value == "kind=Global" else { return nil }
+            // Validate the wrapper's direct children. Never descend through the
+            // function signature or actor type looking for a declaration module.
+            if nodes.count > 1, nodes[1].depth == 1,
+               nodes[1].value == "kind=ReabstractionThunkHelperWithGlobalActor" {
+                let children = nodes.enumerated().filter { $0.element.depth == 2 }
+                guard nodes.filter({ $0.depth == 1 }).count == 1,
+                      children.map({ $0.element.value }) == ["kind=ReabstractionThunkHelper", "kind=Type"] else { return nil }
+                let helper = children[0].offset, actor = children[1].offset
+                let signatures = nodes[(helper + 1)..<actor].filter { $0.depth == 3 }
+                guard signatures.count == 2, signatures.allSatisfy({ $0.value == "kind=Type" }),
+                      actor + 1 < nodes.count, nodes[actor + 1].depth == 3 else { return nil }
+                return .adapter
+            }
             var index = 0, depth = 0
             while index < nodes.count {
                 let node = nodes[index]
                 guard node.depth == depth else { return nil }
-                // Dynamic dispatch is an attribute preceding the declaration.
-                if depth == 1 && node.value == "kind=DynamicAttribute" { index += 1; continue }
-                if let module = node.module { return module }
+                // These attributes precede, but do not own, the declaration.
+                if depth == 1 && ["kind=DynamicAttribute", "kind=ObjCAttribute"].contains(node.value) { index += 1; continue }
+                if let module = node.module { return .declaration(module) }
                 if node.value == "kind=ProtocolWitness" {
                     index += 1
                     guard index < nodes.count, nodes[index].depth == depth + 1,
@@ -70,7 +127,7 @@ enum SILOwnership {
                             modules.append(child)
                         }
                     }
-                    return modules.count == 1 ? modules[0].module : nil
+                    return modules.count == 1 ? modules[0].module.map(Ownership.declaration) : nil
                 }
                 // Follow only the declaration's first-child context. A module
                 // found in parameter/result types is not its defining module.
@@ -79,7 +136,7 @@ enum SILOwnership {
             }
             return nil
         }
-        var owners: [String: String] = [:]
+        var owners: [String: Ownership] = [:]
         var symbol: String?, nodes: [Node] = []
         func finish() {
             if let symbol, let module = owner(nodes) { owners[symbol] = module }
