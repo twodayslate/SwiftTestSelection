@@ -82,3 +82,27 @@ import Testing
         #expect(node.uncertainties == ["Unresolved project dispatch: Owner.missing"])
     }
 }
+
+@Test func asciiFastPathsPreserveUnicodeWhitespaceEscapedPathsAndMalformedLocations() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let path = root.appendingPathComponent("Café\\\"😀.swift").path
+    let escaped = path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+    let text = """
+    \u{a0}// Example.run(), loc "\(escaped)":1:1\u{a0}
+    \u{a0}sil hidden @unicode : $@convention(thin) () -> () {\u{a0}
+      %0 = function_ref @callback : $@convention(thin) () -> (), loc "\(escaped)":2:1
+      %1 = convert_function %0 : $@convention(thin) () -> ()
+      %2 = convert_escape_to_noescape %1 : $@convention(thin) () -> ()
+      %3 = apply %2() : $@convention(thin) () -> (), loc "\(escaped)":999999999999999999999999:1
+      %4 = global_value @value : $Int, loc "\(escaped)":0:1
+    \u{2003}} // end sil function 'unicode'\u{2003}
+    """
+    let parsed = SILParser.parse(text, module: "Tests", sourceRoot: root)
+    let node = try #require(parsed.functions["unicode"])
+    #expect(node.name == "Example.run()")
+    #expect(node.dependencies == ["callback"])
+    #expect(node.regions == [.init(path: "Café\\\"😀.swift", startLine: 1, endLine: 2)])
+    #expect(node.uncertainties == ["Global state access", "Shared state access"])
+}

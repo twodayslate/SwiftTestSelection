@@ -1,0 +1,73 @@
+{
+  "referenceRevision": "ee2fa9c30b3e68661f05ce2b9aecc0b769005da3",
+  "inputBytes": 150077071,
+  "inputSHA256": "1ba4105ccfaa7bcdc67421b5a770dd080257da19506f05640da84aed255f768c",
+  "measurements": [
+    {
+      "seconds": 22.358675417,
+      "functions": 13609,
+      "digest": "f0f9fc3e398ce384743fa48ddd92bfb1187fb0423fa68e6be1bcb06eee025a08",
+      "mode": "reference",
+      "iteration": 1,
+      "peakRSSBytes": 30425088,
+      "peakFootprintBytes": 26165752
+    },
+    {
+      "seconds": 5.870108083,
+      "functions": 13609,
+      "digest": "f0f9fc3e398ce384743fa48ddd92bfb1187fb0423fa68e6be1bcb06eee025a08",
+      "mode": "candidate",
+      "iteration": 1,
+      "peakRSSBytes": 30982144,
+      "peakFootprintBytes": 26231288
+    },
+    {
+      "seconds": 23.22708325,
+      "functions": 13609,
+      "digest": "f0f9fc3e398ce384743fa48ddd92bfb1187fb0423fa68e6be1bcb06eee025a08",
+      "mode": "reference",
+      "iteration": 2,
+      "peakRSSBytes": 30408704,
+      "peakFootprintBytes": 26198520
+    },
+    {
+      "seconds": 5.809963042,
+      "functions": 13609,
+      "digest": "f0f9fc3e398ce384743fa48ddd92bfb1187fb0423fa68e6be1bcb06eee025a08",
+      "mode": "candidate",
+      "iteration": 2,
+      "peakRSSBytes": 30965760,
+      "peakFootprintBytes": 26214904
+    },
+    {
+      "seconds": 23.9975355,
+      "functions": 13609,
+      "digest": "f0f9fc3e398ce384743fa48ddd92bfb1187fb0423fa68e6be1bcb06eee025a08",
+      "mode": "reference",
+      "iteration": 3,
+      "peakRSSBytes": 30474240,
+      "peakFootprintBytes": 26149344
+    },
+    {
+      "seconds": 5.72163,
+      "functions": 13609,
+      "digest": "f0f9fc3e398ce384743fa48ddd92bfb1187fb0423fa68e6be1bcb06eee025a08",
+      "mode": "candidate",
+      "iteration": 3,
+      "peakRSSBytes": 30982144,
+      "peakFootprintBytes": 26231288
+    }
+  ],
+  "date": "2026-10-24",
+  "hardware": "Apple M5, 32 GiB",
+  "toolchain": "Xcode 26.6 / Swift 6.3.3",
+  "inputModule": "ChainOfCustodyTests",
+  "inputDescription": "One complete 150,077,071-byte frontend SIL fragment from consumer revision 1f0e37b69458200227c584d9a4563b5391948cdf, captured with Xcode 27.0",
+  "caveat": "Local alternating runs; a separate selection-validation process overlapped. Compilation and graph digest verification are excluded from the parsing interval. Peak memory includes digest verification.",
+  "allFragmentParity": {
+    "fragments": 414,
+    "totalBytes": 1404070178,
+    "seconds": 272.061270833,
+    "matched": true
+  }
+}

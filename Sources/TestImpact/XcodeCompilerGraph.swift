@@ -5,12 +5,18 @@ import Foundation
 
 enum XcodeCompilerGraph {
     static func extract(log: String, sourceRoot: URL, directory: URL, derived: URL,
-                        progress: (String) -> Void, ownership: [String: Set<String>] = [:], moduleCache: XcodeModuleCache? = nil) -> DependencyGraph {
+                        progress: (String) -> Void, ownership: [String: Set<String>] = [:],
+                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil) -> DependencyGraph {
         var graph = DependencyGraph()
+        guard (1...8).contains(workers) else {
+            graph.diagnostics.append("Extraction workers must be between 1 and 8.")
+            return graph
+        }
         moduleCache?.prepare(log: log)
         var seen: [String: [String]] = [:]
-        var definingSymbols = Set<String>()
-        var dispatch: [String: Set<String>] = [:]
+        var jobs: [XcodeModuleJob] = []
+        // Validate inventory before scheduling; identical/ambiguous duplicates keep
+        // their original behavior regardless of worker completion order.
         for line in log.components(separatedBy: .newlines) {
             guard let marker = line.range(of: "builtin-SwiftDriver -- ") else { continue }
             do {
@@ -27,51 +33,83 @@ enum XcodeCompilerGraph {
                     continue
                 }
                 seen[module] = invocation
-                progress("Extracting Xcode SIL dependencies: \(module)…")
-                let identity = moduleCache?.identity(for: module)
-                let lookup = Date()
-                var cached: SILModule?
-                if let identity {
-                    do { cached = try moduleCache?.cache.loadModule(identity) }
-                    catch { progress("Module cache bypass \(module): \(error)") }
-                }
-                let parsed: SILModule
-                if let cached {
-                    progress(String(format: "Module cache %@: hit: compatible compiler inputs; skipped compiler and parser (%.3f s)", module, Date().timeIntervalSince(lookup)))
-                    parsed = cached
-                } else {
-                    if moduleCache != nil {
-                        progress(String(format: "Module cache %@: %@ (%.3f s)", module, identity == nil ? "bypass: unsupported input identity" : "miss: absent, incompatible or corrupt inputs", Date().timeIntervalSince(lookup)))
-                    }
+                jobs.append(XcodeModuleJob(module: module, compiler: compiler, arguments: Array(invocation.dropFirst())))
+            } catch { graph.diagnostics.append("Compiler dependency extraction failed: \(error)") }
+        }
+        if seen.isEmpty { graph.diagnostics.append("No supported SwiftDriver invocations found in Xcode build output.") }
+        progress("Extracting \(jobs.count) Xcode modules with \(workers) worker(s)…")
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = workers
+        let results = jobs.map { _ in XcodeModuleResult() }
+        var cacheHits = Set<String>()
+        func schedule(_ index: Int) {
+            guard index < jobs.count else { return }
+            let job = jobs[index]
+            let result = results[index]
+            let lookup = Date()
+            let identity = moduleCache?.identity(for: job.module)
+            var loaded: SILModule?
+            if let identity {
+                do { loaded = try moduleCache?.cache.loadModule(identity) }
+                catch { progress("Module cache bypass \(job.module): \(error)") }
+            }
+            let cached = loaded
+            if cached != nil {
+                cacheHits.insert(job.module)
+                progress(String(format: "Module cache %@: hit: compatible compiler inputs; skipped compiler and parser (%.3f s)", job.module, Date().timeIntervalSince(lookup)))
+            } else if moduleCache != nil {
+                progress(String(format: "Module cache %@: %@ (%.3f s)", job.module, identity == nil ? "bypass: unsupported input identity" : "miss: absent, incompatible or corrupt inputs", Date().timeIntervalSince(lookup)))
+            }
+            queue.addOperation {
+                result.complete {
+                    try cancellation.check()
+                    if let cached { return (cached, []) }
                     let output = derived.appendingPathComponent("impact-\(UUID().uuidString).sil")
                     defer { try? FileManager.default.removeItem(at: output) }
-                    let args = arguments(Array(invocation.dropFirst())) + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-o", output.path]
+                    let args = arguments(job.arguments) + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-o", output.path]
                     let compilation = AnalysisMeasurement()
-                    _ = try CommandRunner.run(compiler, args, at: directory)
-                    progress(compilation.report("Compiled \(module)"))
+                    _ = try CommandRunner.run(job.compiler, args, at: directory)
+                    let compiled = compilation.report("Compiled \(job.module)")
+                    try cancellation.check()
                     let parsing = AnalysisMeasurement()
-                    parsed = try SILParser.parse(file: output, module: module, sourceRoot: sourceRoot)
+                    let parsed = try SILParser.parse(file: output, module: job.module, sourceRoot: sourceRoot)
                     let bytes = (try? output.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                    progress(parsing.report("Parsed \(module) (\(bytes) SIL bytes, \(parsed.functions.count) functions)"))
-                    if parsed.functions.isEmpty { throw ImpactError("No SIL functions for \(module)") }
-                    if let identity {
-                        do { try moduleCache?.stage(parsed, identity: identity) }
-                        catch { progress("Module cache publication bypass \(module): \(error)") }
-                    }
+                    try cancellation.check()
+                    guard !parsed.functions.isEmpty else { throw ImpactError("No SIL functions for \(job.module)") }
+                    return (parsed, [compiled, parsing.report("Parsed \(job.module) (\(bytes) SIL bytes, \(parsed.functions.count) functions)")])
+                }
+            }
+        }
+        for index in 0..<min(workers, jobs.count) { schedule(index) }
+        var definingSymbols = Set<String>()
+        var dispatch: [String: Set<String>] = [:]
+        for (index, job) in jobs.enumerated() {
+            let result = results[index]
+            defer { schedule(index + workers) }
+            do {
+                let (parsed, messages) = try result.take()
+                messages.forEach(progress)
+                if !cacheHits.contains(job.module), let identity = moduleCache?.identity(for: job.module) {
+                    do { try moduleCache?.stage(parsed, identity: identity) }
+                    catch { progress("Module cache publication bypass \(job.module): \(error)") }
                 }
                 for (symbol, node) in parsed.functions {
-                    let isDefinition = node.regions.contains { ownership[module]?.contains($0.path) == true }
+                    let isDefinition = node.regions.contains { ownership[job.module]?.contains($0.path) == true }
                     if isDefinition || !definingSymbols.contains(symbol) && (graph.functions[symbol] == nil || !node.regions.isEmpty && graph.functions[symbol]!.regions.isEmpty) {
                         graph.functions[symbol] = node
                     }
                     if isDefinition { definingSymbols.insert(symbol) }
                 }
                 for (declaration, symbols) in parsed.dispatchTargets { dispatch[declaration, default: []].formUnion(symbols) }
-            } catch {
-                graph.diagnostics.append("Compiler dependency extraction failed: \(error)")
-            }
+            } catch { graph.diagnostics.append("Compiler dependency extraction failed: \(job.module): \(error)") }
         }
-        if seen.isEmpty { graph.diagnostics.append("No supported SwiftDriver invocations found in Xcode build output.") }
+        queue.waitUntilAllOperationsAreFinished()
+        if cancellation.isCancelled {
+            // Never expose a partially merged success on cooperative cancellation.
+            graph = DependencyGraph()
+            graph.diagnostics = ["Compiler dependency extraction cancelled; a full selection is required."]
+            return graph
+        }
         do { try moduleCache?.finish(log: log) }
         catch {
             graph = DependencyGraph()
@@ -128,56 +166,86 @@ enum XcodeCompilerGraph {
                 }
             }
         }
+        // Preserve every matching symbol, including thunks and duplicate names.
+        var entries: [String: [String: Set<String>]] = [:]
+        var hooks: [String: [String: Set<String>]] = [:]
+        let hookPrefixes = ["setUp(", "setUpWithError(", "tearDown(", "tearDownWithError(",
+                            "init(", "__allocating_init(", "deinit", "__deallocating_deinit"]
+        for node in graph.functions.values where !node.regions.isEmpty {
+            entries[node.module, default: [:]][node.name, default: []].insert(node.id)
+            let variablePrefix = "variable initialization expression of "
+            let variable = node.name.hasPrefix(variablePrefix)
+            let name = variable ? String(node.name.dropFirst(variablePrefix.count)) :
+                node.name.hasPrefix("static ") ? String(node.name.dropFirst(7)) : node.name
+            // Every dotted prefix is considered, preserving nested-type and
+            // variable-initializer prefix semantics of the original matcher.
+            for dot in name.indices where name[dot] == "." {
+                let suffix = name[name.index(after: dot)...]
+                if variable || hookPrefixes.contains(where: { suffix.hasPrefix($0) }) {
+                    hooks[node.module, default: [:]][String(name[..<dot]), default: []].insert(node.id)
+                }
+            }
+        }
+        struct ClassBinding {
+            var classes: [String: Set<String>]
+            var hooks: Set<String>
+            var diagnostics: [String]
+        }
+        var bindings: [String: ClassBinding] = [:]
         for test in tests {
             let parts = test.split(separator: "/").map(String.init)
             if parts.count == 2, let module = modules[parts[0]], parts[1].hasSuffix(")") {
-                graph.tests[test] = Set(graph.functions.values.filter { $0.module == module && $0.name == parts[1] && !$0.regions.isEmpty }.map(\.id))
+                graph.tests[test] = entries[module]?[parts[1]] ?? []
                 continue
             }
             guard parts.count == 3, let module = modules[parts[0]] else {
                 graph.tests[test] = []
                 continue
             }
-            var classes: [String: Set<String>] = [module: [parts[1]]]
-            var visited = Set<String>()
-            var queue = [module + "." + parts[1]]
-            while let key = queue.popLast() {
-                guard visited.insert(key).inserted else { continue }
-                let definingModule = String(key.prefix { $0 != "." })
-                for parent in inheritance[key] ?? [] {
-                    if ["XCTestCase", "XCTest.XCTestCase", "NSObject", "Foundation.NSObject"].contains(parent) { continue }
-                    let local = definingModule + "." + parent
-                    let candidates = inheritance[local] != nil ? [local] : inheritance.keys.filter { $0 == parent || $0.hasSuffix("." + parent) }
-                    if candidates.isEmpty {
-                        graph.testDiagnostics[test, default: []].append("Cannot resolve inherited lifecycle/fixture type: " + parent)
-                    }
-                    for candidate in candidates {
-                        let parentModule = String(candidate.prefix { $0 != "." })
-                        let parentClass = String(candidate.dropFirst(parentModule.count + 1))
-                        classes[parentModule, default: []].insert(parentClass)
-                        queue.append(candidate)
+            let classKey = module + "." + parts[1]
+            let binding: ClassBinding
+            if let cached = bindings[classKey] { binding = cached }
+            else {
+                var classes: [String: Set<String>] = [module: [parts[1]]]
+                var diagnostics: [String] = []
+                var visited = Set<String>()
+                var queue = [classKey]
+                while let key = queue.popLast() {
+                    guard visited.insert(key).inserted else { continue }
+                    let definingModule = String(key.prefix { $0 != "." })
+                    for parent in inheritance[key] ?? [] {
+                        if ["XCTestCase", "XCTest.XCTestCase", "NSObject", "Foundation.NSObject"].contains(parent) { continue }
+                        let local = definingModule + "." + parent
+                        let candidates = inheritance[local] != nil ? [local] : inheritance.keys.filter { $0 == parent || $0.hasSuffix("." + parent) }
+                        if candidates.isEmpty {
+                            diagnostics.append("Cannot resolve inherited lifecycle/fixture type: " + parent)
+                        }
+                        for candidate in candidates {
+                            let parentModule = String(candidate.prefix { $0 != "." })
+                            let parentClass = String(candidate.dropFirst(parentModule.count + 1))
+                            classes[parentModule, default: []].insert(parentClass)
+                            queue.append(candidate)
+                        }
                     }
                 }
+                var roots = Set<String>()
+                for (owner, names) in classes {
+                    for name in names { roots.formUnion(hooks[owner]?[name] ?? []) }
+                }
+                binding = ClassBinding(classes: classes, hooks: roots, diagnostics: diagnostics)
+                bindings[classKey] = binding
+            }
+            if !binding.diagnostics.isEmpty {
+                graph.testDiagnostics[test, default: []].append(contentsOf: binding.diagnostics)
             }
             let method = parts[2].contains("(") ? parts[2] : parts[2] + "()"
-            let entries = graph.functions.values.filter { node in
-                !node.regions.isEmpty && (classes[node.module] ?? []).contains { node.name == $0 + "." + method }
+            var roots = Set<String>()
+            for (owner, names) in binding.classes {
+                for name in names { roots.formUnion(entries[owner]?[name + "." + method] ?? []) }
             }
-            graph.tests[test] = Set(entries.map(\.id))
-            // Hooks and initializers are roots of this class and its ancestors,
-            // not of every test in the module. Ordinary inherited helpers are
-            // reached through SIL references and dispatch tables.
-            if !entries.isEmpty {
-                let hooks = graph.functions.values.filter { node in
-                    guard !node.regions.isEmpty else { return false }
-                    return (classes[node.module] ?? []).contains { cls in
-                        ["setUp(", "setUpWithError(", "tearDown(", "tearDownWithError(", "init(", "__allocating_init(", "deinit", "__deallocating_deinit"].contains {
-                            node.name == cls + "." + $0 || node.name.hasPrefix(cls + "." + $0) || node.name.hasPrefix("static " + cls + "." + $0)
-                        } || node.name.hasPrefix("variable initialization expression of " + cls + ".")
-                    }
-                }
-                graph.tests[test]!.formUnion(hooks.map(\.id))
-            }
+            // Hooks belong only to tests with a known entry, as before.
+            if !roots.isEmpty { roots.formUnion(binding.hooks) }
+            graph.tests[test] = roots
         }
     }
 }

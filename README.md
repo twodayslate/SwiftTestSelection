@@ -565,6 +565,32 @@ or checksum-mismatched retained bundles on either side of the comparison. It als
 checks that manual captures and completed bundles remain selectable without
 products. This regression invokes no real Xcode commands or test bodies.
 
+### Bounded Xcode extraction
+
+`--extraction-workers N` bounds concurrent compiler/parser jobs during fresh Xcode
+analysis, including capture from existing builds. The default is **1**; values
+from 1 through 8 are accepted. Start with 2 only after measuring your runner's
+memory. This setting does not change the normal executable build or test execution.
+Saved-graph selection needs no extraction workers.
+
+Fragments merge in original compiler-invocation order, preserving ownership and
+cross-module dispatch. At most N jobs/results are in flight, so an early slow
+module cannot accumulate every later parsed module in memory. Each job owns a
+unique temporary SIL file, removed on success or failure. Worker failures remain
+explicit conservative graph diagnostics.
+
+Library clients can call `analysis.extractionCancellation.cancel()`. Cancellation
+is cooperative: queued jobs skip work, running compiler/parser jobs drain and
+clean up, and the result carries a full-selection diagnostic with no partial
+function graph. A hard process kill cannot run cleanup; the enclosing analysis
+scratch directory remains subject to its existing lifecycle.
+
+See `Scripts/benchmark_xcode_extraction.py` and the opt-in
+`xcodeExtractionBenchmark` test for repeated release measurements with compiler
+children included in sampled process-tree RSS. RSS sums double-count shared pages;
+they are not physical-footprint peaks. Larger worker counts are not assumed to
+scale linearly.
+
 ### Reusing module fragments on a changed revision
 
 `--analysis-cache` also reuses compatible parsed module fragments after a new

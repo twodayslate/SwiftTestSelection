@@ -66,7 +66,7 @@ public enum SILParser {
         var knownValues = Set<String>()
 
         func location(_ line: String) -> SourceRegion? {
-            guard line.contains("loc "), let fields = Pattern.groups(Expressions.location, in: line),
+            guard line.containsASCII("loc "), let fields = Pattern.groups(Expressions.location, in: line),
                   let lineNumber = Int(fields[1]), lineNumber > 0 else { return nil }
             let rawPath = fields[0].replacingOccurrences(of: #"\""#, with: "\"")
                 .replacingOccurrences(of: #"\\"#, with: "\\")
@@ -95,7 +95,7 @@ public enum SILParser {
         }
 
         func consume(_ raw: String) {
-            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let line = raw.trimmingSILWhitespace()
             if current == nil {
                 if line.hasPrefix("// "), !line.hasPrefix("// Isolation:") {
                     let name = String(line.dropFirst(3))
@@ -110,7 +110,7 @@ public enum SILParser {
                     if let pendingLocation { addLocation(pendingLocation) }
                     pendingName = ""
                     pendingLocation = nil
-                } else if line.contains("#"), let match = Pattern.groups(Expressions.dispatch, in: line) {
+                } else if line.containsASCII("#"), let match = Pattern.groups(Expressions.dispatch, in: line) {
                     let key = match[0].components(separatedBy: "!")[0]
                     tables[key, default: []].insert(match[1])
                 }
@@ -128,31 +128,69 @@ public enum SILParser {
             if let found = location(line) { addLocation(found) }
             if line.hasPrefix("//") { return }
 
-            if line.contains("function_ref "), let match = Pattern.groups(Expressions.reference, in: line) {
+            if line.containsASCII("function_ref "), let match = Pattern.groups(Expressions.reference, in: line) {
                 knownValues.insert(match[0])
                 current!.dependencies.insert(match[1])
             }
-            if line.contains("_method"), let match = Pattern.groups(Expressions.method, in: line) {
+            if line.containsASCII("_method"), let match = Pattern.groups(Expressions.method, in: line) {
                 if let value = Pattern.groups(Expressions.value, in: line)?.first { knownValues.insert(value) }
                 current!.dynamicDeclarations.insert(match[1].components(separatedBy: "!")[0])
                 current!.uncertainties.insert("Dynamic dispatch: \(match[0]) \(match[1])")
             }
             // Retain dependency flow through common function-value conversions.
-            if line.contains(" = "), let match = Pattern.groups(Expressions.conversion, in: line), knownValues.contains(match[1]) {
+            if line.containsASCII(" = "), let match = Pattern.groups(Expressions.conversion, in: line), knownValues.contains(match[1]) {
                 knownValues.insert(match[0])
             }
-            if line.contains("apply "), let match = Pattern.groups(Expressions.apply, in: line), !knownValues.contains(match[0]) {
+            if line.containsASCII("apply "), let match = Pattern.groups(Expressions.apply, in: line), !knownValues.contains(match[0]) {
                 current!.uncertainties.insert("Indirect function invocation")
             }
-            if line.contains("global_addr ") || line.contains("global_value ") {
+            if line.containsASCII("global_addr ") || line.containsASCII("global_value ") {
                 current!.uncertainties.insert("Global state access")
             }
-            if line.contains("global_addr ") || line.contains("global_value ") || line.contains("ref_element_addr ") {
+            if line.containsASCII("global_addr ") || line.containsASCII("global_value ") || line.containsASCII("ref_element_addr ") {
                 current!.uncertainties.insert("Shared state access")
             }
-            if line.contains("builtin \""), line.contains("RawPointer") {
+            if line.containsASCII("builtin \""), line.containsASCII("RawPointer") {
                 current!.uncertainties.insert("Raw pointer operation")
             }
         }
+    }
+}
+
+// SIL keywords are ASCII. Avoid Foundation's Unicode substring-search machinery
+// on every instruction; Unicode source paths and identifiers stay intact.
+private extension String {
+    func containsASCII(_ token: StaticString) -> Bool {
+        token.withUTF8Buffer { needle in
+            let bytes = utf8
+            guard let first = needle.first else { return true }
+            for start in bytes.indices where bytes[start] == first {
+                var cursor = start
+                var matched = true
+                for byte in needle {
+                    guard cursor != bytes.endIndex, bytes[cursor] == byte else { matched = false; break }
+                    bytes.formIndex(after: &cursor)
+                }
+                if matched {
+                    // Preserve Foundation matching at a Unicode grapheme edge.
+                    // Ordinary SIL instruction tokens stay on the byte fast path.
+                    if cursor != bytes.endIndex, bytes[cursor] >= 128 {
+                        return contains(String(decoding: needle, as: UTF8.self))
+                    }
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    func trimmingSILWhitespace() -> String {
+        let bytes = utf8
+        func isSpace(_ byte: UInt8) -> Bool { byte == 32 || (9...13).contains(byte) }
+        let trimmed = bytes.drop(while: isSpace).reversed().drop(while: isSpace).reversed()
+        // Preserve Foundation's handling of non-ASCII whitespace at either edge.
+        if let first = trimmed.first, first >= 128 { return trimmingCharacters(in: .whitespacesAndNewlines) }
+        if let last = trimmed.last, last >= 128 { return trimmingCharacters(in: .whitespacesAndNewlines) }
+        return String(decoding: trimmed, as: UTF8.self)
     }
 }
