@@ -5,8 +5,8 @@ import Foundation
 import Testing
 @testable import TestImpact
 
-/// Opt-in investigation harness. Captured fragments are never accepted by the
-/// production CLI; completeness/provenance validation is a separate requirement.
+/// Opt-in graph comparison, separate from production capture provenance.
+/// Experimental outputs cannot authorize execution of retained products.
 @Test func buildTimeCaptureProbe() throws {
     let env = ProcessInfo.processInfo.environment
     guard let configPath = env["IMPACT_CAPTURE_PROBE"] else { return }
@@ -15,14 +15,12 @@ import Testing
     let root = try url("root")
     var reference: XcodeTestGraph
     if let saved = config["reference"] {
-        reference = try JSONDecoder().decode(XcodeTestGraph.self, from: Data(contentsOf: URL(fileURLWithPath: saved)))
+        reference = try GraphArchive.decode(Data(contentsOf: URL(fileURLWithPath: saved)))
     } else {
         let options = XcodeConfiguration(container: .project, path: try url("project"), scheme: try #require(config["scheme"]), destination: try #require(config["destination"]), testPlan: config["plan"])
         let analyzer = XcodeAnalysis(options: options, progress: { print($0) })
         reference = try analyzer.analyzeBuild(options, sourceRoot: root, derived: try url("derived"), log: String(contentsOf: try url("log"), encoding: .utf8), settingsData: Data(contentsOf: try url("settings")))
     }
-    let original = try #require(reference.dependencies)
-    try #require(!original.functions.isEmpty && original.diagnostics.isEmpty, "Reference extraction must succeed before comparing captures")
     var graph = DependencyGraph()
     var tables: [String: Set<String>] = [:]
     let directory = try url("capture")
@@ -35,6 +33,21 @@ import Testing
     var fragments = 0
     var bytes = 0
     func announce(_ message: String) { FileHandle.standardOutput.write(Data((message + "\n").utf8)) }
+    if let logPath = config["referenceLog"] {
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("capture-reference-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        var fresh = XcodeCompilerGraph.extract(log: try String(contentsOfFile: logPath, encoding: .utf8),
+            sourceRoot: root, directory: root, derived: scratch, progress: announce, ownership: ownership)
+        XcodeCompilerGraph.bind(tests: reference.tests, modules: reference.modules, sources: reference.sources, graph: &fresh)
+        reference.dependencies = fresh
+        reference.buildArtifact = nil
+        if let output = config["referenceGraph"] { try GraphArchive.encode(reference).write(to: URL(fileURLWithPath: output)) }
+    }
+    let original = try #require(reference.dependencies)
+    try #require(!original.functions.isEmpty && original.diagnostics.isEmpty, "Reference extraction must succeed before comparing captures")
+    var moduleFiles: [String: [URL]] = [:]
+    var checkedInputs: [String: String] = [:]
     let start = Date()
     for folder in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).sorted(by: { $0.path < $1.path }) {
         let manifest = folder.appendingPathComponent("manifest.json")
@@ -45,46 +58,43 @@ import Testing
         let index = try #require(arguments.firstIndex(of: "-module-name"))
         let module = arguments[index + 1]
         let prefix = root.standardizedFileURL.resolvingSymlinksInPath().path + "/"
-        for source in (info["sources"] as? [String: String] ?? [:]).keys {
+        for (source, hash) in try #require(info["sources"] as? [String: String]) {
+            if let previous = checkedInputs[source] { try #require(previous == hash, "Conflicting captured source bytes") }
+            else {
+                let actual = try ArtifactFiles.digest(URL(fileURLWithPath: source))
+                try #require(actual == hash, "Captured source changed: \(source)")
+                checkedInputs[source] = hash
+            }
             let absolute = URL(fileURLWithPath: source).standardizedFileURL.resolvingSymlinksInPath().path
             if absolute.hasPrefix(prefix) { ownership[module, default: []].insert(String(absolute.dropFirst(prefix.count))) }
         }
         for filename in info["silFiles"] as? [String] ?? ["output.sil"] {
             let sil = folder.appendingPathComponent(filename)
-            let parsed = try SILParser.parse(file: sil, module: module, sourceRoot: root)
+            let checksum = try ArtifactFiles.digest(sil)
+            try #require((info["silSHA256"] as? [String: String])?[filename] == checksum, "Captured SIL changed: \(sil.path)")
             bytes += (try sil.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
             fragments += 1
-            for (symbol, node) in parsed.functions {
-                if var existing = graph.functions[symbol] {
-                    // Union fragments conservatively, preferring the owning module's
-                    // definition for identity. Never drop edges from another fragment.
-                    let owns = node.regions.contains { ownership[module]?.contains($0.path) == true }
-                    if owns || existing.regions.isEmpty && !node.regions.isEmpty {
-                        let old = existing
-                        existing = node
-                        existing.dependencies.formUnion(old.dependencies)
-                        existing.dynamicDeclarations.formUnion(old.dynamicDeclarations)
-                        existing.uncertainties.formUnion(old.uncertainties)
-                        existing.regions = Array(Set(old.regions + node.regions))
-                    } else {
-                        existing.dependencies.formUnion(node.dependencies)
-                        existing.dynamicDeclarations.formUnion(node.dynamicDeclarations)
-                        existing.uncertainties.formUnion(node.uncertainties)
-                        existing.regions = Array(Set(existing.regions + node.regions))
-                    }
-                    graph.functions[symbol] = existing
-                } else { graph.functions[symbol] = node }
-            }
-            for (key, values) in parsed.dispatchTargets { tables[key, default: []].formUnion(values) }
+            moduleFiles[module, default: []].append(sil)
         }
     }
     try #require(fragments > 0)
-    for symbol in graph.functions.keys {
-        for declaration in graph.functions[symbol]!.dynamicDeclarations {
-            graph.functions[symbol]!.dependencies.formUnion(tables[declaration] ?? [])
-            if tables[declaration]?.isEmpty == false { graph.functions[symbol]!.resolvedDynamicDeclarations.insert(declaration) }
+    // Use the production per-module fragment merger and the same ownership rule
+    // as compiler replay. A global union would invent cross-module dependencies.
+    let capture = CapturedSIL(modules: moduleFiles, fingerprints: [:], diagnostics: [])
+    var definitions = Set<String>()
+    for module in moduleFiles.keys.sorted() {
+        let fragment = try capture.parse(module: module, sourceRoot: root)
+        let parsed = try #require(fragment)
+        for (id, node) in parsed.functions {
+            let owns = node.regions.contains { ownership[module]?.contains($0.path) == true }
+            if owns || !definitions.contains(id) && (graph.functions[id] == nil || !node.regions.isEmpty && graph.functions[id]!.regions.isEmpty) {
+                graph.functions[id] = node
+            }
+            if owns { definitions.insert(id) }
         }
+        for (key, values) in parsed.dispatchTargets { tables[key, default: []].formUnion(values) }
     }
+    XcodeCompilerGraph.resolveDispatch(&graph, tables: tables)
     let parseSeconds = Date().timeIntervalSince(start)
     announce("Captured parse: \(fragments) fragments, \(bytes) bytes, \(parseSeconds) s")
     let bindingStart = Date()
@@ -103,8 +113,9 @@ import Testing
         let missingEdges = old.dependencies.subtracting(new.dependencies)
         let addedEdges = new.dependencies.subtracting(old.dependencies)
         let uncertaintyChanged = old.uncertainties != new.uncertainties
-        if !missingEdges.isEmpty || !addedEdges.isEmpty || Set(old.regions) != Set(new.regions) || uncertaintyChanged || old.module != new.module || old.name != new.name {
-            differingFunctions.append(["symbol": id, "name": old.name, "missingEdges": missingEdges.sorted(), "addedEdges": addedEdges.sorted(), "regionsEqual": Set(old.regions) == Set(new.regions), "uncertaintiesEqual": !uncertaintyChanged, "moduleEqual": old.module == new.module, "nameEqual": old.name == new.name])
+        let dispatchChanged = old.dynamicDeclarations != new.dynamicDeclarations || old.resolvedDynamicDeclarations != new.resolvedDynamicDeclarations
+        if !missingEdges.isEmpty || !addedEdges.isEmpty || Set(old.regions) != Set(new.regions) || uncertaintyChanged || dispatchChanged || old.module != new.module || old.name != new.name {
+            differingFunctions.append(["symbol": id, "name": old.name, "missingEdges": missingEdges.sorted(), "addedEdges": addedEdges.sorted(), "regionsEqual": Set(old.regions) == Set(new.regions), "uncertaintiesEqual": !uncertaintyChanged, "oldUncertainties": old.uncertainties.sorted(), "newUncertainties": new.uncertainties.sorted(), "oldDispatch": old.dynamicDeclarations.sorted(), "newDispatch": new.dynamicDeclarations.sorted(), "oldResolvedDispatch": old.resolvedDynamicDeclarations.sorted(), "newResolvedDispatch": new.resolvedDynamicDeclarations.sorted(), "moduleEqual": old.module == new.module, "nameEqual": old.name == new.name])
         }
     }
     var selectionDifferences: [[String: Any]] = []
@@ -127,18 +138,26 @@ import Testing
             oldHead.sources[key]!.units[index].fingerprint += "probe-edit"
             newHead.sources[key]!.units[index].fingerprint += "probe-edit"
             let change = FileChange(path: snapshot.units[index].region.path)
-            let expected = XcodeSelector.select(current: oldHead, previous: reference, changes: [change], baseRevision: "probe")
-            let actual = XcodeSelector.select(current: newHead, previous: captured, changes: [change], baseRevision: "probe")
-            if expected.selectedTests != actual.selectedTests || expected.fullRunReasons != actual.fullRunReasons {
-                selectionDifferences.append(["unit": snapshot.units[index].key, "expected": expected.selectedTests, "actual": actual.selectedTests, "expectedFallbacks": expected.fullRunReasons, "actualFallbacks": actual.fullRunReasons])
+            for mixedDocumentation in [false, true] {
+                let changes = [change] + (mixedDocumentation ? [FileChange(path: "README.md")] : [])
+                let expected = XcodeSelector.select(current: oldHead, previous: reference, changes: changes, baseRevision: "probe")
+                let actual = XcodeSelector.select(current: newHead, previous: captured, changes: changes, baseRevision: "probe")
+                let added = Set(actual.selectedTests).subtracting(expected.selectedTests).sorted()
+                let omitted = Set(expected.selectedTests).subtracting(actual.selectedTests).sorted()
+                if !added.isEmpty || !omitted.isEmpty || expected.fullRunReasons != actual.fullRunReasons {
+                    selectionDifferences.append(["unit": snapshot.units[index].key, "mixedDocumentation": mixedDocumentation,
+                        "added": added, "omitted": omitted, "expectedFallbacks": expected.fullRunReasons, "actualFallbacks": actual.fullRunReasons])
+                }
+                selectionSamples.append(["path": change.path, "line": snapshot.units[index].region.startLine,
+                    "mixedDocumentation": mixedDocumentation, "referenceCount": expected.selectedTests.count,
+                    "captureCount": actual.selectedTests.count, "added": added, "omitted": omitted])
             }
             checked += 1
             fileChecked += 1
-            selectionSamples.append(["path": change.path, "line": snapshot.units[index].region.startLine, "referenceCount": expected.selectedTests.count, "captureCount": actual.selectedTests.count])
             announce("Compared edit \(checked)/\(selectionLimit): \(change.path):\(snapshot.units[index].region.startLine)")
         }
     }
-    let result: [String: Any] = ["fragments": fragments, "silBytes": bytes, "referenceFunctions": original.functions.count, "capturedFunctions": graph.functions.count, "tests": reference.tests.count, "missingProjectFunctions": missing, "rootParity": original.tests == graph.tests, "selectionsChecked": checked, "selectionDifferences": selectionDifferences, "diagnostics": graph.diagnostics, "differingFunctions": differingFunctions, "parseSeconds": parseSeconds, "bindingSeconds": bindingSeconds, "selectionValidationSeconds": Date().timeIntervalSince(selectionStart), "selectionSamples": selectionSamples]
+    let result: [String: Any] = ["fragments": fragments, "silBytes": bytes, "referenceFunctions": original.functions.count, "capturedFunctions": graph.functions.count, "tests": reference.tests.count, "missingProjectFunctions": missing, "rootParity": original.tests == graph.tests, "selectionsChecked": selectionSamples.count, "selectionDifferences": selectionDifferences, "diagnostics": graph.diagnostics, "differingFunctions": differingFunctions, "parseSeconds": parseSeconds, "bindingSeconds": bindingSeconds, "selectionValidationSeconds": Date().timeIntervalSince(selectionStart), "selectionSamples": selectionSamples]
     try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: try url("output"))
     announce("CAPTURE RESULT: \(checked) selections, \(selectionDifferences.count) differences, \(missing.count) missing project functions, roots equal: \(original.tests == graph.tests)")
 }

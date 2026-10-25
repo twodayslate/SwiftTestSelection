@@ -43,6 +43,7 @@ public enum SILParser {
         static let method = try! NSRegularExpression(pattern: #"\b(class_method|super_method|witness_method|objc_method|objc_super_method)\b.*#([^\s:]+)"#)
         static let witnessType = try! NSRegularExpression(pattern: #"\bwitness_method \$([\w.]+),"#)
         static let witnessTable = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+)* ([\w.]+): [\w.]+ module [\w]+ \{"#)
+        static let genericSignature = try! NSRegularExpression(pattern: #"<([^<>]+)>"#)
         static let value = try! NSRegularExpression(pattern: #"^(%[\w]+) ="#)
         static let conversion = try! NSRegularExpression(pattern: #"(%[\w]+) = (?:thin_to_thick_function|convert_function|convert_escape_to_noescape|copy_value|move_value|begin_borrow|partial_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
         static let apply = try! NSRegularExpression(pattern: #"\b(?:apply|try_apply|begin_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
@@ -67,6 +68,7 @@ public enum SILParser {
         var locations: [String: ClosedRange<Int>] = [:]
         var knownValues = Set<String>()
         var witnessType: String?
+        var genericParameters = Set<String>()
 
         func location(_ line: String) -> SourceRegion? {
             guard line.containsASCII("loc "), let fields = Pattern.groups(Expressions.location, in: line),
@@ -111,6 +113,20 @@ public enum SILParser {
                 if line.hasPrefix("sil "), line.hasSuffix("{"),
                    let match = Pattern.groups(Expressions.function, in: line) {
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
+                    // Canonical capture can retain source parameter names (e.g.
+                    // Element), while replay usually spells them τ_0_0. A local
+                    // nominal type may have the same name; it is not that receiver.
+                    genericParameters = []
+                    for signature in Expressions.genericSignature.matches(in: line, range: NSRange(line.startIndex..., in: line)) {
+                        guard let range = Range(signature.range(at: 1), in: line) else { continue }
+                        let parameters = line[range].components(separatedBy: " where ")[0]
+                        for parameter in parameters.split(separator: ",") {
+                            var name = parameter.trimmingCharacters(in: .whitespaces)
+                            if name.hasPrefix("each ") { name = String(name.dropFirst(5)) }
+                            name = name.components(separatedBy: ":")[0].trimmingCharacters(in: .whitespaces)
+                            genericParameters.insert(name)
+                        }
+                    }
                     locations = [:]
                     knownValues = []
                     if let pendingLocation { addLocation(pendingLocation) }
@@ -145,7 +161,7 @@ public enum SILParser {
                 // Narrow only a concrete nominal receiver. Generic, existential,
                 // compound and unfamiliar forms retain the broad candidate set.
                 if match[0] == "witness_method", let type = Pattern.groups(Expressions.witnessType, in: line)?.first,
-                   !type.contains("τ_"), !["Self", "T", "U", "V"].contains(type) {
+                   !type.contains("τ_"), !["Self", "T", "U", "V"].contains(type), !genericParameters.contains(type.components(separatedBy: ".")[0]) {
                     declaration += "@witness:" + type
                 }
                 current!.dynamicDeclarations.insert(declaration)
