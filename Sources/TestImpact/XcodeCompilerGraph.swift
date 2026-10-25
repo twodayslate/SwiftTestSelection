@@ -112,7 +112,11 @@ enum XcodeCompilerGraph {
                 }
                 for (declaration, symbols) in parsed.dispatchTargets { dispatch[declaration, default: []].formUnion(symbols) }
                 for (key, owners) in parsed.externalWitnesses ?? [:] { externalWitnesses[key, default: []].formUnion(owners) }
-            } catch { graph.diagnostics.append("Compiler dependency extraction failed: \(job.module): \(error)") }
+            } catch {
+                let diagnostic = "Compiler dependency extraction failed: \(job.module): \(error)"
+                graph.diagnostics.append(diagnostic)
+                progress(diagnostic)
+            }
         }
         queue.waitUntilAllOperationsAreFinished()
         if cancellation.isCancelled {

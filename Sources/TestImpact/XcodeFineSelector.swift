@@ -247,15 +247,7 @@ public enum XcodeFineSelector {
                 // Runtime dispatch to known project declarations is represented by
                 // candidate SIL edges. Opaque function values and raw pointers are
                 // not proof of absence; conservatively include their callers.
-                let uncertain = Set(graph.functions.values.filter { node in
-                    node.uncertainties.contains {
-                        // Imported implementations can call project overrides or
-                        // type-erased conformances even without project debug
-                        // locations. Ownership alone does not close that edge.
-                        $0.hasPrefix("Imported conformance:") || !node.regions.isEmpty &&
-                        ($0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:"))
-                    }
-                }.map(\.id))
+                let uncertain = Set(graph.functions.values.filter(\.hasOpaqueRuntimeDependency).map(\.id))
                 let uncertainPaths = index.paths(to: uncertain)
                 var boundedTargets: [String: TestRuntimeBoundary] = [:]
                 let peer = revision == "base" ? current : previous
@@ -317,12 +309,7 @@ public enum XcodeFineSelector {
             var featurePaths: [String: [String]] = [:]
             var coveredChanges = Set<String>()
             var mappedTests = Set<String>()
-            let opaqueProduction = declaredUIRuntime ? Set<String>() : Set(graph.functions.values.filter { node in
-                node.uncertainties.contains {
-                    $0.hasPrefix("Imported conformance:") || !node.regions.isEmpty &&
-                    ($0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:"))
-                }
-            }.map(\.id))
+            let opaqueProduction = declaredUIRuntime ? Set<String>() : Set(graph.functions.values.filter(\.hasOpaqueRuntimeDependency).map(\.id))
             let opaquePaths = index.paths(to: opaqueProduction)
             let mappingIndex = MappingIndex(mappings, snapshot: snapshot, graph: graph, index: index)
             if revision == "head" { headMappingIndex = mappingIndex }

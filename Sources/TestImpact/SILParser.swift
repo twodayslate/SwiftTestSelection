@@ -235,6 +235,16 @@ public enum SILParser {
                 knownValues.insert(match[0])
                 current!.dependencies.insert(match[1])
             }
+            if line.containsASCII(" = keypath ") {
+                // Key paths carry getter/setter and captured-index equality/hash
+                // functions without function_ref instructions. Keep those escaped
+                // references, including their helpers' dependencies/uncertainty.
+                let text = line as NSString
+                for match in Expressions.function.matches(in: line, range: NSRange(location: 0, length: text.length)) {
+                    current!.dependencies.insert(text.substring(with: match.range(at: 1)))
+                }
+                current!.uncertainties.insert("Key path access")
+            }
             if line.containsASCII("_method"), let match = Pattern.groups(Expressions.method, in: line) {
                 if let value = Pattern.groups(Expressions.value, in: line)?.first { knownValues.insert(value) }
                 var declaration = match[1].components(separatedBy: "!")[0]

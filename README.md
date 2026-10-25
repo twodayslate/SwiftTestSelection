@@ -547,9 +547,18 @@ several modules retains a separate semantic snapshot for each module. Imported
 SIL bodies retain their external linkage so shared source paths cannot overwrite
 the defining module or its feature mappings. For source-bearing `shared` bodies
 (including `@_alwaysEmitIntoClient`), the compiler's adjacent `swift-demangle`
-resolves the declaration module, including extension ownership. Resolution is
-batched per module and cached; unfamiliar symbol contexts produce an explicit
-conservative fallback. These records prove compiler
+resolves the declaration module, including extension and protocol-conformance
+ownership. Objective-C async closure wrappers retain their enclosing declaration's
+owner. Type-only global-actor reabstraction and key-path equality/hash adapters have no declaration owner:
+their bodies remain separate per emitting module, with dependencies and runtime
+uncertainty intact. Key-path instructions retain embedded accessor and index-helper
+references as compiler edges, plus conservative key-path uncertainty.
+Their incidental conversion-site debug locations are not
+shared source declarations. Their persisted per-module identities keep opaque
+runtime dependencies eligible for conservative selection even without source
+regions, including when loading saved graphs. Resolution is batched per module and cached;
+unfamiliar symbol contexts produce an explicit conservative fallback.
+These records prove compiler
 ownership, not a test target's identity or runtime isolation; they do not enable
 the UI or non-UI runtime uncertainty exemptions.
 Explicit UI feature mappings and unresolved-dependency fallbacks still apply.
@@ -648,6 +657,11 @@ let exitCode = try analysis.run(report)
 For Xcode, construct `XcodeConfiguration(container:path:scheme:destination:configuration:testPlan:)` and pass it to `XcodeAnalysis(options:)`. Its `graph()`, `select(base:head:mergeBase:fullSuite:)`, and `run(_:)` methods parallel the SwiftPM API. Set `mappingsPath` on the configuration to override the mapping file. `XcodeFineSelector` accepts populated Xcode graphs and structured changes directly without subprocesses. Legacy graphs without compiler data retain target-level fallback behavior. For existing Xcode builds, use `graph(from: XcodeBuildInputs)`, `select(base:head:mergeBase:fullSuite:baseGraph:headGraph:)`, and `run(_:using:productsDirectory:)`. The optional `XcodeTestGraph.buildArtifact` stores capture metadata; cached selection requires it.
 
 ## Validation
+
+See [issue #39 validation](Documentation/Issue39Validation.md) for fresh
+real-project graphs, source-location policy and cache comparisons, measured time
+and memory, and execution of the single selected UI test. The report also records
+remaining conservative selections and limits on CI rollout evidence.
 
 ```sh
 swift test

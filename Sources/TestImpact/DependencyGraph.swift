@@ -26,12 +26,31 @@ public struct FunctionNode: Codable, Sendable {
     public var regions: [SourceRegion]
     /// Includes function values passed as callbacks, not only immediate calls.
     public var dependencies: Set<String>
-    /// Exact SIL function_ref edges (including escaped callbacks), before broad
-    /// dispatch candidates are added. Nil means legacy/unknown edge provenance.
+    /// Exact SIL function_ref and key-path function edges (including escaped
+    /// callbacks), before broad dispatch candidates are added. Nil means legacy
+    /// or unknown edge provenance.
     public var compilerReferences: Set<String>? = nil
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>
+
+    /// SILOwnership gives emitted adapters a persistent per-module identity but
+    /// removes conversion-site locations, which are not source declarations.
+    /// Keep that provenance separate from location-based change attribution.
+    /// Reading the existing identity also preserves uncertainty in older archives.
+    var hasProjectRuntimeContext: Bool {
+        !regions.isEmpty || id.hasSuffix("@emitted:" + module)
+    }
+
+    var hasOpaqueRuntimeDependency: Bool {
+        uncertainties.contains {
+            // Imported implementations can call project code even without local
+            // debug locations. Known ownership does not close that runtime edge.
+            $0.hasPrefix("Imported conformance:") || hasProjectRuntimeContext &&
+            ($0 == "Indirect function invocation" || $0 == "Raw pointer operation" ||
+             $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:"))
+        }
+    }
 
     public init(
         id: String, module: String, name: String, regions: [SourceRegion] = [],
