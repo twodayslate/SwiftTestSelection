@@ -35,6 +35,77 @@ public enum SILParser {
         return state.result
     }
 
+    /// Read binders from the function-type prefix only. Type applications in
+    /// parameters/results (Array<Element>) do not declare generic parameters.
+    /// Unknown/truncated syntax disables concrete narrowing for this function.
+    static func genericParameters(in header: String) -> Set<String>? {
+        guard let marker = header.range(of: ": $") else { return nil }
+        var cursor = marker.upperBound
+        var names = Set<String>()
+        func skipWhitespace() {
+            while cursor < header.endIndex, header[cursor].isWhitespace { cursor = header.index(after: cursor) }
+        }
+        func group(_ open: Character, _ close: Character) -> Substring? {
+            let start = header.index(after: cursor)
+            var depth = 1, quoted = false, escaped = false
+            cursor = start
+            while cursor < header.endIndex {
+                let character = header[cursor]
+                if quoted {
+                    if escaped { escaped = false }
+                    else if character == "\\" { escaped = true }
+                    else if character == "\"" { quoted = false }
+                } else if character == "\"" { quoted = true }
+                else if character == open { depth += 1 }
+                else if character == close && !(close == ">" && header[header.index(before: cursor)] == "-") {
+                    depth -= 1
+                    if depth == 0 {
+                        let contents = header[start..<cursor]
+                        cursor = header.index(after: cursor)
+                        return contents
+                    }
+                }
+                cursor = header.index(after: cursor)
+            }
+            return nil
+        }
+        while cursor < header.endIndex {
+            skipWhitespace()
+            guard cursor < header.endIndex else { return nil }
+            switch header[cursor] {
+            case "@":
+                cursor = header.index(after: cursor)
+                let start = cursor
+                while cursor < header.endIndex, header[cursor].isLetter || header[cursor].isNumber || header[cursor] == "_" {
+                    cursor = header.index(after: cursor)
+                }
+                guard cursor != start else { return nil }
+                if cursor < header.endIndex, header[cursor] == "(" {
+                    guard group("(", ")") != nil else { return nil }
+                }
+            case "<":
+                guard let signature = group("<", ">") else { return nil }
+                let binders = signature.components(separatedBy: " where ")[0]
+                var depth = 0
+                let parameters = binders.split { character in
+                    if character == "<" { depth += 1 }
+                    else if character == ">" { depth -= 1 }
+                    return character == "," && depth == 0
+                }
+                for parameter in parameters {
+                    var name = parameter.trimmingCharacters(in: .whitespaces)
+                    if name.hasPrefix("each ") { name = String(name.dropFirst(5)) }
+                    name = name.components(separatedBy: ":")[0].trimmingCharacters(in: .whitespaces)
+                    guard !name.isEmpty, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return nil }
+                    names.insert(name)
+                }
+            case "(": return names
+            default: return nil
+            }
+        }
+        return nil
+    }
+
     private enum Expressions {
         static let location = try! NSRegularExpression(pattern: #"\bloc (?:\* )?"((?:[^"\\]|\\.)+)":([0-9]+):[0-9]+"#)
         static let function = try! NSRegularExpression(pattern: #"@([^\s:]+)\s*:"#)
@@ -67,6 +138,7 @@ public enum SILParser {
         var locations: [String: ClosedRange<Int>] = [:]
         var knownValues = Set<String>()
         var witnessType: String?
+        var genericParameters: Set<String>?
 
         func location(_ line: String) -> SourceRegion? {
             guard line.containsASCII("loc "), let fields = Pattern.groups(Expressions.location, in: line),
@@ -111,6 +183,10 @@ public enum SILParser {
                 if line.hasPrefix("sil "), line.hasSuffix("{"),
                    let match = Pattern.groups(Expressions.function, in: line) {
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
+                    // Canonical capture can retain source parameter names (e.g.
+                    // Element), while replay usually spells them τ_0_0. A local
+                    // nominal type may have the same name; it is not that receiver.
+                    genericParameters = SILParser.genericParameters(in: line)
                     locations = [:]
                     knownValues = []
                     if let pendingLocation { addLocation(pendingLocation) }
@@ -145,8 +221,11 @@ public enum SILParser {
                 // Narrow only a concrete nominal receiver. Generic, existential,
                 // compound and unfamiliar forms retain the broad candidate set.
                 if match[0] == "witness_method", let type = Pattern.groups(Expressions.witnessType, in: line)?.first,
-                   !type.contains("τ_"), !["Self", "T", "U", "V"].contains(type) {
+                   !type.contains("τ_"), !["Self", "T", "U", "V"].contains(type), genericParameters?.contains(type.components(separatedBy: ".")[0]) == false {
                     declaration += "@witness:" + type
+                }
+                if match[0] == "witness_method", genericParameters == nil {
+                    current!.uncertainties.insert("Unresolved project dispatch: " + declaration)
                 }
                 current!.dynamicDeclarations.insert(declaration)
                 current!.uncertainties.insert("Dynamic dispatch: \(match[0]) \(match[1])")

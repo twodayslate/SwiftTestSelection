@@ -1,0 +1,667 @@
+{
+  "addedCandidatePaths": [
+    {
+      "captureOpaquePath": [
+        {
+          "name": "DomainTests.cloudEnvironmentHandoffCannotDrainUntilFullyStaged()",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 142,
+              "path": "ChainOfCustodyTests/CloudEnvironmentHandoffPersistenceTests.swift",
+              "startLine": 91
+            }
+          ],
+          "symbol": "$s19ChainOfCustodyTests06DomainD0V50cloudEnvironmentHandoffCannotDrainUntilFullyStagedyyF",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffRuntimeState.init(checkpoint:recoveryLedger:)",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 632,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 607
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore35CloudEnvironmentHandoffRuntimeStateV10checkpoint14recoveryLedgerAcA0efG10CheckpointVSg_AA0efg8RecoveryL0VtcfC",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffRuntimeState.restore(_:)",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 654,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 634
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore35CloudEnvironmentHandoffRuntimeStateV7restoreyyAA0efG10CheckpointVF",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffCheckpoint.hasCurrentAssetClassification.getter",
+          "nextEdgeAdded": true,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 43,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 37
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore33CloudEnvironmentHandoffCheckpointV29hasCurrentAssetClassificationSbvg",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffDestinationRecordPolicy.assetClassificationVersion.unsafeMutableAddressor",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [
+            "Global state access",
+            "Shared state access"
+          ],
+          "regions": [
+            {
+              "endLine": 128,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffAssets.swift",
+              "startLine": 128
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore46CloudEnvironmentHandoffDestinationRecordPolicyO26assetClassificationVersionSivau",
+          "uncertainties": [
+            "Shared state access",
+            "Global state access"
+          ]
+        }
+      ],
+      "referenceOpaquePath": [],
+      "test": "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCannotDrainUntilFullyStaged()"
+    },
+    {
+      "captureOpaquePath": [
+        {
+          "name": "DomainTests.cloudEnvironmentHandoffCheckpointSurvivesRelaunch()",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 502,
+              "path": "ChainOfCustodyTests/CloudEnvironmentHandoffPersistenceTests.swift",
+              "startLine": 433
+            }
+          ],
+          "symbol": "$s19ChainOfCustodyTests06DomainD0V49cloudEnvironmentHandoffCheckpointSurvivesRelaunchyyKF",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffRuntimeState.init(checkpoint:recoveryLedger:)",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 632,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 607
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore35CloudEnvironmentHandoffRuntimeStateV10checkpoint14recoveryLedgerAcA0efG10CheckpointVSg_AA0efg8RecoveryL0VtcfC",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffRuntimeState.restore(_:)",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 654,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 634
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore35CloudEnvironmentHandoffRuntimeStateV7restoreyyAA0efG10CheckpointVF",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffCheckpoint.hasCurrentAssetClassification.getter",
+          "nextEdgeAdded": true,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 43,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 37
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore33CloudEnvironmentHandoffCheckpointV29hasCurrentAssetClassificationSbvg",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffDestinationRecordPolicy.assetClassificationVersion.unsafeMutableAddressor",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [
+            "Global state access",
+            "Shared state access"
+          ],
+          "regions": [
+            {
+              "endLine": 128,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffAssets.swift",
+              "startLine": 128
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore46CloudEnvironmentHandoffDestinationRecordPolicyO26assetClassificationVersionSivau",
+          "uncertainties": [
+            "Shared state access",
+            "Global state access"
+          ]
+        }
+      ],
+      "referenceOpaquePath": [],
+      "test": "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCheckpointSurvivesRelaunch()"
+    },
+    {
+      "captureOpaquePath": [
+        {
+          "name": "DomainTests.handoffRuntimeResetPreservesAcknowledgementsUntilAccountPurge()",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 231,
+              "path": "ChainOfCustodyTests/CloudEnvironmentHandoffPersistenceTests.swift",
+              "startLine": 190
+            }
+          ],
+          "symbol": "$s19ChainOfCustodyTests06DomainD0V61handoffRuntimeResetPreservesAcknowledgementsUntilAccountPurgeyyF",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffRuntimeState.init(checkpoint:recoveryLedger:)",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 632,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 607
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore35CloudEnvironmentHandoffRuntimeStateV10checkpoint14recoveryLedgerAcA0efG10CheckpointVSg_AA0efg8RecoveryL0VtcfC",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffRuntimeState.restore(_:)",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 654,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 634
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore35CloudEnvironmentHandoffRuntimeStateV7restoreyyAA0efG10CheckpointVF",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffCheckpoint.hasCurrentAssetClassification.getter",
+          "nextEdgeAdded": true,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 43,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 37
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore33CloudEnvironmentHandoffCheckpointV29hasCurrentAssetClassificationSbvg",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffDestinationRecordPolicy.assetClassificationVersion.unsafeMutableAddressor",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [
+            "Global state access",
+            "Shared state access"
+          ],
+          "regions": [
+            {
+              "endLine": 128,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffAssets.swift",
+              "startLine": 128
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore46CloudEnvironmentHandoffDestinationRecordPolicyO26assetClassificationVersionSivau",
+          "uncertainties": [
+            "Shared state access",
+            "Global state access"
+          ]
+        }
+      ],
+      "referenceOpaquePath": [],
+      "test": "ChainOfCustodyTests/DomainTests/handoffRuntimeResetPreservesAcknowledgementsUntilAccountPurge()"
+    },
+    {
+      "captureOpaquePath": [
+        {
+          "name": "DomainTests.legacyFullyStagedHandoffRecalculatesOwnerTargets()",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 527,
+              "path": "ChainOfCustodyTests/CloudEnvironmentHandoffPersistenceTests.swift",
+              "startLine": 504
+            }
+          ],
+          "symbol": "$s19ChainOfCustodyTests06DomainD0V48legacyFullyStagedHandoffRecalculatesOwnerTargetsyyF",
+          "uncertainties": []
+        },
+        {
+          "name": "closure #3 in DomainTests.legacyFullyStagedHandoffRecalculatesOwnerTargets()",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [],
+          "symbol": "$s19ChainOfCustodyTests06DomainD0V48legacyFullyStagedHandoffRecalculatesOwnerTargetsyyFSb0abC4Core016CloudEnvironmentI10CheckpointVXEfU1_",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffCheckpoint.requiresOwnerTargetRecalculationBeforeDrain.getter",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 59,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 53
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore33CloudEnvironmentHandoffCheckpointV43requiresOwnerTargetRecalculationBeforeDrainSbvg",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffCheckpoint.resumePhase.getter",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 51,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 45
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore33CloudEnvironmentHandoffCheckpointV11resumePhaseAC0J0Ovg",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffCheckpoint.hasCurrentAssetClassification.getter",
+          "nextEdgeAdded": true,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 43,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffModels.swift",
+              "startLine": 37
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore33CloudEnvironmentHandoffCheckpointV29hasCurrentAssetClassificationSbvg",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudEnvironmentHandoffDestinationRecordPolicy.assetClassificationVersion.unsafeMutableAddressor",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [
+            "Global state access",
+            "Shared state access"
+          ],
+          "regions": [
+            {
+              "endLine": 128,
+              "path": "ChainOfCustodyCore/Data/CloudEnvironmentHandoffAssets.swift",
+              "startLine": 128
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore46CloudEnvironmentHandoffDestinationRecordPolicyO26assetClassificationVersionSivau",
+          "uncertainties": [
+            "Shared state access",
+            "Global state access"
+          ]
+        }
+      ],
+      "referenceOpaquePath": [],
+      "test": "ChainOfCustodyTests/DomainTests/legacyFullyStagedHandoffRecalculatesOwnerTargets()"
+    },
+    {
+      "captureOpaquePath": [
+        {
+          "name": "PairingNoteTagMigrationTests.holderCatalogUploadsRemainCompatibleWithOlderCustodians()",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 132,
+              "path": "ChainOfCustodyTests/PairingNoteTagMigrationTests.swift",
+              "startLine": 121
+            }
+          ],
+          "symbol": "$s19ChainOfCustodyTests023PairingNoteTagMigrationD0V55holderCatalogUploadsRemainCompatibleWithOlderCustodiansyyF",
+          "uncertainties": []
+        },
+        {
+          "name": "closure #12 in PairingNoteTagMigrationTests.holderCatalogUploadsRemainCompatibleWithOlderCustodians()",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [],
+          "regions": [],
+          "symbol": "$s19ChainOfCustodyTests023PairingNoteTagMigrationD0V55holderCatalogUploadsRemainCompatibleWithOlderCustodiansyyFSb0abC4Core18CloudKitRepositoryCm_SiS2btXEfU10_",
+          "uncertainties": []
+        },
+        {
+          "name": "static CloudKitRepository.supportsNoteTagUpload(protocolVersion:includesCatalog:includesReferences:)",
+          "nextEdgeAdded": true,
+          "referenceUncertainties": [],
+          "regions": [
+            {
+              "endLine": 3352,
+              "path": "ChainOfCustodyCore/Data/CloudKitRepository.swift",
+              "startLine": 3345
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore18CloudKitRepositoryC21supportsNoteTagUpload15protocolVersion15includesCatalog0N10ReferencesSbSi_S2btFZ",
+          "uncertainties": []
+        },
+        {
+          "name": "CloudSyncProtocol.pairingNoteTagCatalogVersion.unsafeMutableAddressor",
+          "nextEdgeAdded": false,
+          "referenceUncertainties": [
+            "Global state access",
+            "Shared state access"
+          ],
+          "regions": [
+            {
+              "endLine": 22,
+              "path": "ChainOfCustodyCore/Domain/Models.swift",
+              "startLine": 22
+            }
+          ],
+          "symbol": "$s18ChainOfCustodyCore17CloudSyncProtocolO28pairingNoteTagCatalogVersionSivau",
+          "uncertainties": [
+            "Shared state access",
+            "Global state access"
+          ]
+        }
+      ],
+      "referenceOpaquePath": [],
+      "test": "ChainOfCustodyTests/PairingNoteTagMigrationTests/holderCatalogUploadsRemainCompatibleWithOlderCustodians()"
+    }
+  ],
+  "analyzerCommit": "e8993c8",
+  "bindingSeconds": 0.2507699728012085,
+  "captureProvenance": "Archived, unsealed prototype; source/SIL hashes checked; seven verified empty fragments excluded only in investigation harness",
+  "capturedFunctions": 124013,
+  "consumerRevision": "1f0e37b69458200227c584d9a4563b5391948cdf",
+  "diagnostics": [],
+  "differingFunctionCounts": {
+    "dependencies": 834,
+    "dispatchOrResolution": 1008,
+    "name": 0,
+    "owningModule": 13,
+    "regions": 14,
+    "total": 1060,
+    "uncertainties": 928
+  },
+  "excludedArchivedEmptyFragments": [
+    "20b6934a-ef95-45a8-bbd2-58f20be258ee/output.sil",
+    "2bdf81fc-eed9-4fd6-8ec4-104f473f1284/output-0.sil",
+    "2bdf81fc-eed9-4fd6-8ec4-104f473f1284/output-1.sil",
+    "2bdf81fc-eed9-4fd6-8ec4-104f473f1284/output-2.sil",
+    "4f6ac92c-76f4-425c-aeab-916aed6a01e8/output-2.sil",
+    "5e679fdd-0a1f-491e-9092-0a10c287d6a2/output-2.sil",
+    "97fb6a33-1a72-40d8-b18e-4f3cb1d3843c/output-2.sil"
+  ],
+  "fragments": 414,
+  "missingProjectFunctions": [],
+  "parseSeconds": 58.1768079996109,
+  "referenceFunctions": 124013,
+  "representativeFieldDifferences": [
+    {
+      "addedEdges": [
+        "$s18ChainOfCustodyCore17CloudSyncProtocolO28pairingNoteTagCatalogVersionSivau",
+        "$s18ChainOfCustodyCore17CloudSyncProtocolO33canonicalNoteTagReferencesVersionSivau"
+      ],
+      "missingEdges": [],
+      "moduleEqual": true,
+      "name": "static CloudKitRepository.supportsNoteTagUpload(protocolVersion:includesCatalog:includesReferences:)",
+      "nameEqual": true,
+      "newDispatch": [],
+      "newResolvedDispatch": [],
+      "newUncertainties": [],
+      "oldDispatch": [],
+      "oldResolvedDispatch": [],
+      "oldUncertainties": [],
+      "regionsEqual": true,
+      "symbol": "$s18ChainOfCustodyCore18CloudKitRepositoryC21supportsNoteTagUpload15protocolVersion15includesCatalog0N10ReferencesSbSi_S2btFZ",
+      "uncertaintiesEqual": true
+    },
+    {
+      "addedEdges": [
+        "$sSo18UIApplicationStateVSQSCSQ2eeoiySbx_xtFZTW"
+      ],
+      "missingEdges": [
+        "$ss2eeoiySbx_xtSYRzSQ8RawValueRpzlF"
+      ],
+      "moduleEqual": true,
+      "name": "ChainOfCustodyApp.init()",
+      "nameEqual": true,
+      "newDispatch": [
+        "Equatable.\"==\"@witness:UIApplication.State",
+        "FileManager.`default`",
+        "FileManager.temporaryDirectory",
+        "ProcessInfo.environment",
+        "ProcessInfo.processInfo",
+        "UIApplication.applicationState",
+        "UIApplication.shared",
+        "UIView.setAnimationsEnabled",
+        "UserDefaults.removeObject",
+        "UserDefaults.set",
+        "UserDefaults.standard"
+      ],
+      "newResolvedDispatch": [
+        "Equatable.\"==\"@witness:UIApplication.State"
+      ],
+      "newUncertainties": [
+        "Dynamic dispatch: objc_method FileManager.`default`!getter.foreign",
+        "Dynamic dispatch: objc_method FileManager.temporaryDirectory!getter.foreign",
+        "Dynamic dispatch: objc_method ProcessInfo.environment!getter.foreign",
+        "Dynamic dispatch: objc_method ProcessInfo.processInfo!getter.foreign",
+        "Dynamic dispatch: objc_method UIApplication.applicationState!getter.foreign",
+        "Dynamic dispatch: objc_method UIApplication.shared!getter.foreign",
+        "Dynamic dispatch: objc_method UIView.setAnimationsEnabled!foreign",
+        "Dynamic dispatch: objc_method UserDefaults.removeObject!foreign",
+        "Dynamic dispatch: objc_method UserDefaults.set!foreign",
+        "Dynamic dispatch: objc_method UserDefaults.standard!getter.foreign",
+        "Dynamic dispatch: witness_method Equatable.\"==\"",
+        "Shared state access"
+      ],
+      "oldDispatch": [
+        "FileManager.`default`",
+        "FileManager.temporaryDirectory",
+        "ProcessInfo.environment",
+        "ProcessInfo.processInfo",
+        "UIApplication.applicationState",
+        "UIApplication.shared",
+        "UIView.setAnimationsEnabled",
+        "UserDefaults.removeObject",
+        "UserDefaults.set",
+        "UserDefaults.standard"
+      ],
+      "oldResolvedDispatch": [],
+      "oldUncertainties": [
+        "Dynamic dispatch: objc_method FileManager.`default`!getter.foreign",
+        "Dynamic dispatch: objc_method FileManager.temporaryDirectory!getter.foreign",
+        "Dynamic dispatch: objc_method ProcessInfo.environment!getter.foreign",
+        "Dynamic dispatch: objc_method ProcessInfo.processInfo!getter.foreign",
+        "Dynamic dispatch: objc_method UIApplication.applicationState!getter.foreign",
+        "Dynamic dispatch: objc_method UIApplication.shared!getter.foreign",
+        "Dynamic dispatch: objc_method UIView.setAnimationsEnabled!foreign",
+        "Dynamic dispatch: objc_method UserDefaults.removeObject!foreign",
+        "Dynamic dispatch: objc_method UserDefaults.set!foreign",
+        "Dynamic dispatch: objc_method UserDefaults.standard!getter.foreign",
+        "Shared state access"
+      ],
+      "regionsEqual": true,
+      "symbol": "$s14ChainOfCustody0abC3AppVACycfC",
+      "uncertaintiesEqual": false
+    },
+    {
+      "addedEdges": [
+        "$s18ChainOfCustodyCore46CloudEnvironmentHandoffDestinationRecordPolicyO26assetClassificationVersionSivau"
+      ],
+      "missingEdges": [],
+      "moduleEqual": true,
+      "name": "CloudEnvironmentHandoffCheckpoint.hasCurrentAssetClassification.getter",
+      "nameEqual": true,
+      "newDispatch": [],
+      "newResolvedDispatch": [],
+      "newUncertainties": [],
+      "oldDispatch": [],
+      "oldResolvedDispatch": [],
+      "oldUncertainties": [],
+      "regionsEqual": true,
+      "symbol": "$s18ChainOfCustodyCore33CloudEnvironmentHandoffCheckpointV29hasCurrentAssetClassificationSbvg",
+      "uncertaintiesEqual": true
+    },
+    {
+      "addedEdges": [
+        "$s18ChainOfCustodyCore19CloudKitEnvironmentOSQAASQ2eeoiySbx_xtFZTW"
+      ],
+      "missingEdges": [],
+      "moduleEqual": true,
+      "name": "static CloudEnvironmentHandoffPlanner.handoffOwnerPairingIDs(plannedOwnerPairingIDs:sourceJournalPairingIDs:previousEnvironment:sourceEnvironment:currentEnvironment:)",
+      "nameEqual": true,
+      "newDispatch": [
+        "Equatable.\"==\"@witness:CloudKitEnvironment"
+      ],
+      "newResolvedDispatch": [
+        "Equatable.\"==\"@witness:CloudKitEnvironment"
+      ],
+      "newUncertainties": [
+        "Dynamic dispatch: witness_method Equatable.\"==\""
+      ],
+      "oldDispatch": [],
+      "oldResolvedDispatch": [],
+      "oldUncertainties": [],
+      "regionsEqual": true,
+      "symbol": "$s18ChainOfCustodyCore30CloudEnvironmentHandoffPlannerO22handoffOwnerPairingIDs07plannedjkL0013sourceJournalkL008previousF00nF007currentF0Shy10Foundation4UUIDVGAM_AmA0e3KitF0OSgApOtFZ",
+      "uncertaintiesEqual": false
+    }
+  ],
+  "rootParity": true,
+  "selectionDifferences": [
+    {
+      "actualFallbacks": [],
+      "added": [
+        "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCannotDrainUntilFullyStaged()",
+        "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCheckpointSurvivesRelaunch()",
+        "ChainOfCustodyTests/DomainTests/handoffRuntimeResetPreservesAcknowledgementsUntilAccountPurge()",
+        "ChainOfCustodyTests/DomainTests/legacyFullyStagedHandoffRecalculatesOwnerTargets()",
+        "ChainOfCustodyTests/PairingNoteTagMigrationTests/holderCatalogUploadsRemainCompatibleWithOlderCustodians()"
+      ],
+      "expectedFallbacks": [],
+      "mixedDocumentation": false,
+      "omitted": [],
+      "unit": "ChainOfCustody:SharingPeopleUITestView:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"row\"):3:row|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"name\"):4:name|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"role\"):4:role|colon:1::|optionalType[identifierType[identifier(\"ParticipantRole\"):15:ParticipantRole]|postfixQuestionMark:1:?]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"isOwner\"):7:isOwner|colon:1::|identifierType[identifier(\"Bool\"):4:Bool]|initializerClause[equal:1:=|booleanLiteralExpr[keyword(SwiftSyntax.Keyword.false):5:false]]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"isCurrentUser\"):13:isCurrentUser|colon:1::|identifierType[identifier(\"Bool\"):4:Bool]|initializerClause[equal:1:=|booleanLiteralExpr[keyword(SwiftSyntax.Keyword.false):5:false]]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"status\"):6:status|colon:1::|memberType[identifierType[identifier(\"CKShare\"):7:CKShare]|period:1:.|identifier(\"ParticipantAcceptanceStatus\"):27:ParticipantAcceptanceStatus]|initializerClause[equal:1:=|memberAccessExpr[period:1:.|declReferenceExpr[identifier(\"accepted\"):8:accepted]]]]]|rightParen:1:)]|returnClause[arrow:2:->|someOrAnyType[keyword(SwiftSyntax.Keyword.some):4:some|identifierType[identifier(\"View\"):4:View]]]]]"
+    },
+    {
+      "actualFallbacks": [],
+      "added": [
+        "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCannotDrainUntilFullyStaged()",
+        "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCheckpointSurvivesRelaunch()",
+        "ChainOfCustodyTests/DomainTests/handoffRuntimeResetPreservesAcknowledgementsUntilAccountPurge()",
+        "ChainOfCustodyTests/DomainTests/legacyFullyStagedHandoffRecalculatesOwnerTargets()",
+        "ChainOfCustodyTests/PairingNoteTagMigrationTests/holderCatalogUploadsRemainCompatibleWithOlderCustodians()"
+      ],
+      "expectedFallbacks": [],
+      "mixedDocumentation": true,
+      "omitted": [],
+      "unit": "ChainOfCustody:SharingPeopleUITestView:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"row\"):3:row|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"name\"):4:name|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"role\"):4:role|colon:1::|optionalType[identifierType[identifier(\"ParticipantRole\"):15:ParticipantRole]|postfixQuestionMark:1:?]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"isOwner\"):7:isOwner|colon:1::|identifierType[identifier(\"Bool\"):4:Bool]|initializerClause[equal:1:=|booleanLiteralExpr[keyword(SwiftSyntax.Keyword.false):5:false]]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"isCurrentUser\"):13:isCurrentUser|colon:1::|identifierType[identifier(\"Bool\"):4:Bool]|initializerClause[equal:1:=|booleanLiteralExpr[keyword(SwiftSyntax.Keyword.false):5:false]]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"status\"):6:status|colon:1::|memberType[identifierType[identifier(\"CKShare\"):7:CKShare]|period:1:.|identifier(\"ParticipantAcceptanceStatus\"):27:ParticipantAcceptanceStatus]|initializerClause[equal:1:=|memberAccessExpr[period:1:.|declReferenceExpr[identifier(\"accepted\"):8:accepted]]]]]|rightParen:1:)]|returnClause[arrow:2:->|someOrAnyType[keyword(SwiftSyntax.Keyword.some):4:some|identifierType[identifier(\"View\"):4:View]]]]]"
+    }
+  ],
+  "selectionSamples": [
+    {
+      "added": [
+        "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCannotDrainUntilFullyStaged()",
+        "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCheckpointSurvivesRelaunch()",
+        "ChainOfCustodyTests/DomainTests/handoffRuntimeResetPreservesAcknowledgementsUntilAccountPurge()",
+        "ChainOfCustodyTests/DomainTests/legacyFullyStagedHandoffRecalculatesOwnerTargets()",
+        "ChainOfCustodyTests/PairingNoteTagMigrationTests/holderCatalogUploadsRemainCompatibleWithOlderCustodians()"
+      ],
+      "captureCount": 1890,
+      "line": 43,
+      "mixedDocumentation": false,
+      "omitted": [],
+      "path": "ChainOfCustody/App/SharingPeopleUITestView.swift",
+      "referenceCount": 1885
+    },
+    {
+      "added": [
+        "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCannotDrainUntilFullyStaged()",
+        "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCheckpointSurvivesRelaunch()",
+        "ChainOfCustodyTests/DomainTests/handoffRuntimeResetPreservesAcknowledgementsUntilAccountPurge()",
+        "ChainOfCustodyTests/DomainTests/legacyFullyStagedHandoffRecalculatesOwnerTargets()",
+        "ChainOfCustodyTests/PairingNoteTagMigrationTests/holderCatalogUploadsRemainCompatibleWithOlderCustodians()"
+      ],
+      "captureCount": 1890,
+      "line": 43,
+      "mixedDocumentation": true,
+      "omitted": [],
+      "path": "ChainOfCustody/App/SharingPeopleUITestView.swift",
+      "referenceCount": 1885
+    },
+    {
+      "added": [],
+      "captureCount": 1,
+      "line": 8,
+      "mixedDocumentation": false,
+      "omitted": [],
+      "path": "ChainOfCustodyTests/NoteCommentsTests.swift",
+      "referenceCount": 1
+    },
+    {
+      "added": [],
+      "captureCount": 1,
+      "line": 8,
+      "mixedDocumentation": true,
+      "omitted": [],
+      "path": "ChainOfCustodyTests/NoteCommentsTests.swift",
+      "referenceCount": 1
+    },
+    {
+      "added": [],
+      "captureCount": 1,
+      "line": 6,
+      "mixedDocumentation": false,
+      "omitted": [],
+      "path": "ChainOfCustodyUITests/SharingPeopleUITests.swift",
+      "referenceCount": 1
+    },
+    {
+      "added": [],
+      "captureCount": 1,
+      "line": 6,
+      "mixedDocumentation": true,
+      "omitted": [],
+      "path": "ChainOfCustodyUITests/SharingPeopleUITests.swift",
+      "referenceCount": 1
+    }
+  ],
+  "selectionValidationSeconds": 33.21020495891571,
+  "selectionsChecked": 6,
+  "silBytes": 1404070178,
+  "tests": 2000,
+  "totalComparisonSeconds": 395.267
+}

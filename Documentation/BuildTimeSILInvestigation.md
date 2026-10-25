@@ -3,7 +3,8 @@
 This records the original investigation for #11. Opt-in integration is now available
 through `Scripts/capture-build.py` and `graph --sil-capture`; see the
 [current workflow](../README.md#build-time-sil-capture-opt-in) and
-[validation results](Benchmarks/FastSelection.md). The measurements below describe
+[validation results](Benchmarks/FastSelection.md) and
+[dispatch follow-up](Benchmarks/CaptureDispatch.md). The measurements below describe
 the prototype. Universal normal-build/replay equivalence remains unproven; keep
 capture opt-in and validate against full runs before using it as a CI gate.
 
@@ -39,7 +40,7 @@ DEVELOPER_DIR=/Applications/Xcode-27.0.0.app/Contents/Developer \
 
 For an isolated Xcode experiment, run `prepare_sil_capture.py --compiler /absolute/path/to/swiftc --output /new/session/path`. Apply the printed environment and append the printed flags to the existing `OTHER_SWIFT_FLAGS`, preserving `$(inherited)`. Capture an unfiltered successful full build-for-testing log. Run `validate_sil_capture.py --capture SESSION/capture --expected-build-log BUILD.log` before attempting a graph comparison. The directory must be new for each build; this prototype has no incremental fragment cache.
 
-The opt-in release test `buildTimeCaptureProbe` reads a JSON configuration from `IMPACT_CAPTURE_PROBE`. Supply `root`, `capture`, `output` and `capturedGraph`. A `reference` path uses a saved XcodeTestGraph; alternatively supply `project`, `scheme`, `plan`, `destination`, `derived`, `log` and `settings` to enumerate the fixture and generate the replay reference. Optional `selectionPaths` is a `|`-separated list of path substrings, and `selectionLimit` limits simulated edits (default 20). `selectionLimitPerFile` distributes a small sample across files. Both limits must be positive. When using a build log captured through the wrapper, retain its `IMPACT_REAL_SWIFTC` environment so replay queries can pass through that wrapper. The reference must have nonempty functions and no extraction errors. The harness reports differences; a passing harness run means the experiment ran, not that its reported differences are acceptable for production.
+The opt-in release test `buildTimeCaptureProbe` reads a JSON configuration from `IMPACT_CAPTURE_PROBE`. Supply `root`, `capture`, `output` and `capturedGraph`. A `reference` path uses a saved XcodeTestGraph; alternatively supply `project`, `scheme`, `plan`, `destination`, `derived`, `log` and `settings` to enumerate the fixture and generate the replay reference. Optional `selectionPaths` is a `|`-separated list of path substrings, and `selectionLimit` limits simulated edits (default 20). `selectionLimitPerFile` distributes a small sample across files. Both limits must be positive. When using a build log captured through the wrapper, retain its `IMPACT_REAL_SWIFTC` environment so replay queries can pass through that wrapper. Optional `referenceLog` regenerates replay dependencies with the current parser while retaining the saved inventory; its compiler inputs must belong to `root`. `referenceGraph` saves that refreshed reference. An investigation-only `archivedEmptyFragments` list (`|`-separated relative paths) can explicitly exclude verified function/table-empty prototype fragments; it does not relax production capture validation. Each selected function is compared both alone and with a README edit, reporting exact added and omitted identifiers. The reference must have nonempty functions and no extraction errors. The harness reports differences; a passing harness run means the experiment ran, not that its reported differences are acceptable for production.
 
 ## Completeness and provenance boundary
 
