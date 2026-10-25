@@ -162,30 +162,51 @@ expressions and parenthesized/arithmetic defaults retain their evaluated locatio
 `#sourceLocation` adjusts presumed file/line values, and `#column` tracks its own
 expression position.
 
-By default, actual location-value changes remain semantic. A project whose
-source-location literals are exclusively diagnostic can explicitly opt out in
-**both** revisions of `.swift-test-selection.json`:
+By default, actual location-value changes remain semantic. Choose a policy in
+`.swift-test-selection.json` only when the values it ignores are diagnostic and
+never control application or test behavior:
+
+| `sourceLocationPolicy` | Implicit line/column changes | File identity changes (`#file`, `#fileID`, `#filePath`) |
+| --- | --- | --- |
+| `semantic` (default) | Select affected tests | Select affected tests |
+| `diagnosticLineColumn` | Ignore with sufficient saved evidence | Select affected tests |
+| `diagnostic` | Ignore with sufficient saved evidence | Ignore with sufficient saved evidence |
+
+Use `diagnosticLineColumn` when line and column values are diagnostic but file
+paths locate repository sources or snapshot fixtures. The policy preserves file
+identity in body expressions and caller-evaluated defaults, including when a file
+is renamed or a declaration moves between existing files. `#fileID` retains its
+module/filename identity; a directory-only move with the same identity adds no
+tests solely for that literal. `#filePath` remains sensitive to the path.
+
+Opt in to the **same valid policy in both revisions**:
 
 ```json
 {
   "version": 1,
-  "sourceLocationPolicy": "diagnostic",
+  "sourceLocationPolicy": "diagnosticLineColumn",
   "ignoredDocumentation": ["*.md", "**/*.md"],
   "features": []
 }
 ```
 
 Add these fields to the existing mapping file, preserving feature mappings and
-runtime contracts. This policy makes comment-only edits select no tests even
-when comments shift a body-level `#line` or a caller-evaluated location default, and prevents documentation in a mixed
-change from adding candidates through location values. It must not be used when
-those values control application behavior. Explicit macro/directive edits,
-literal contents, operator changes, and compiled dependency changes still count.
-The default `sourceLocationPolicy` is `semantic`; a one-sided opt-in also retains
-semantic comparison. Unresolved ownership remains conservative. Regenerate saved
-graphs for the new fingerprints. Under the semantic policy, saved snapshots
-without caller metadata request a full run with `incomplete_caller_locations`;
-legacy snapshots also cannot prove diagnostic-only location differences.
+runtime contracts. Under `diagnosticLineColumn`, comment/doc-comment and whitespace
+shifts of diagnostic line/column values add no candidates, including in mixed
+executable-code/documentation changes and caller-evaluated defaults. Explicit
+macro/directive edits, literal contents, operator changes, and compiled dependency
+changes still count. The broader `diagnostic` option also ignores implicit file
+identity changes and must not be used for semantic fixture paths.
+
+Missing, one-sided, mismatched, or invalid opt-ins retain semantic comparison.
+Introduce the policy before relying on it for later PR comparisons; both retained
+graphs must carry that policy. Unresolved ownership remains conservative.
+Regenerate saved graphs to capture the new body file-location evidence. With
+`diagnosticLineColumn`, older snapshots lacking that evidence keep their original
+semantic body fingerprints and may select extra tests for comments. Under either
+`semantic` or `diagnosticLineColumn`, snapshots without caller metadata request a
+full run with `incomplete_caller_locations`. Legacy evidence is never treated as
+proof that a file identity change is harmless.
 
 ### Non-UI runtime boundaries (opt-in)
 

@@ -68,13 +68,15 @@ func compiledCallerLocationChangeCannotHideAFailingTest(kind: String) throws {
         #expect(report.diagnostics.isEmpty)
         #expect(report.ignoredChanges.isEmpty)
     }
-    var diagnostic = graphs
-    for i in diagnostic.indices {
-        diagnostic[i].mappings = UIFeatureMappings(features: [])
-        diagnostic[i].mappings!.sourceLocationPolicy = .diagnostic
+    for policy in [UIFeatureMappings.SourceLocationPolicy.diagnostic, .diagnosticLineColumn] {
+        var diagnostic = graphs
+        for i in diagnostic.indices {
+            diagnostic[i].mappings = UIFeatureMappings(features: [])
+            diagnostic[i].mappings!.sourceLocationPolicy = policy
+        }
+        #expect(select(diagnostic[0], diagnostic[1]).selectedTests.isEmpty)
+        #expect(select(graphs[0], diagnostic[1]).selectedTests == [test])
     }
-    #expect(select(diagnostic[0], diagnostic[1]).selectedTests.isEmpty)
-    #expect(select(graphs[0], diagnostic[1]).selectedTests == [test])
     // Saved graphs without caller positions cannot prove that a shifted call is safe.
     var legacy = graphs[0]
     for path in legacy.sources.keys {

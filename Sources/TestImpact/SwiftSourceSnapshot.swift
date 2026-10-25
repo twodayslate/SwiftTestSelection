@@ -17,6 +17,9 @@ public struct SourceUnit: Codable, Sendable {
     /// Present only when evaluated location literals add meaning beyond syntax.
     /// Older graphs lack this evidence and keep their conservative fingerprint.
     public var syntaxFingerprint: String? = nil
+    /// Evaluated file/fileID/filePath literals, excluding caller defaults. An
+    /// empty array proves there are none; nil keeps legacy snapshots conservative.
+    public var fileLocationValues: [String]? = nil
     /// Bare source-location defaults declared in this unit. Callers, rather than
     /// the declaration, supply these values.
     public var locationDefaultKinds: Set<String>? = nil
@@ -28,6 +31,11 @@ public struct SourceUnit: Codable, Sendable {
     /// source-location default. Separate dimensions avoid line-only changes
     /// affecting callers of a file-only default.
     public var callerLocations: [String: String]? = nil
+
+    static func withLocations(_ values: [String], syntax: String) -> String {
+        values.isEmpty ? syntax : syntax + "@locations[" +
+            values.map { "\($0.utf8.count):" + $0 }.joined(separator: "|") + "]"
+    }
 }
 
 public struct SwiftSourceSnapshot: Codable, Sendable {
@@ -207,14 +215,14 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             let calls = callerInfo(node)
             let syntax = fingerprint(node)
             let values = locationValues(node)
-            let semantic = values.isEmpty ? syntax : syntax + "@locations[" +
-                values.map { "\($0.utf8.count):" + $0 }.joined(separator: "|") + "]"
+            let semantic = SourceUnit.withLocations(values, syntax: syntax)
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
                 kind: kind, scope: scope.joined(separator: "."),
                 region: SourceRegion(path: path, startLine: start, endLine: end),
                 syntaxFingerprint: semantic == syntax ? nil : syntax,
+                fileLocationValues: values.filter { !$0.hasPrefix("line:") && !$0.hasPrefix("column:") },
                 locationDefaultKinds: defaults,
                 locationDefaultNames: defaultNames, invocationNames: calls.names,
                 callerLocations: calls.locations))
