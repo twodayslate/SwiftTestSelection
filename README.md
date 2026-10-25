@@ -554,7 +554,9 @@ their bodies remain separate per emitting module, with dependencies and runtime
 uncertainty intact. Key-path instructions retain embedded accessor and index-helper
 references as compiler edges, plus conservative key-path uncertainty.
 Their incidental conversion-site debug locations are not
-shared source declarations. Resolution is batched per module and cached;
+shared source declarations. Their persisted per-module identities keep opaque
+runtime dependencies eligible for conservative selection even without source
+regions, including when loading saved graphs. Resolution is batched per module and cached;
 unfamiliar symbol contexts produce an explicit conservative fallback.
 These records prove compiler
 ownership, not a test target's identity or runtime isolation; they do not enable

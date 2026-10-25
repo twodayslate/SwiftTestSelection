@@ -94,6 +94,7 @@ import Testing
         #expect(hit.functions[local]?.dependencies == node.dependencies)
         #expect(hit.functions[local]?.uncertainties == node.uncertainties)
         #expect(hit.functions[local]?.regions.isEmpty == true)
+        try checkGeneratedAdapterSelection(node)
     }
     // Identical adapter manglings emitted by different modules cannot overwrite
     // each other's dependencies or be attributed to Foundation/Swift.MainActor.

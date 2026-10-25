@@ -34,6 +34,24 @@ public struct FunctionNode: Codable, Sendable {
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>
 
+    /// SILOwnership gives emitted adapters a persistent per-module identity but
+    /// removes conversion-site locations, which are not source declarations.
+    /// Keep that provenance separate from location-based change attribution.
+    /// Reading the existing identity also preserves uncertainty in older archives.
+    var hasProjectRuntimeContext: Bool {
+        !regions.isEmpty || id.hasSuffix("@emitted:" + module)
+    }
+
+    var hasOpaqueRuntimeDependency: Bool {
+        uncertainties.contains {
+            // Imported implementations can call project code even without local
+            // debug locations. Known ownership does not close that runtime edge.
+            $0.hasPrefix("Imported conformance:") || hasProjectRuntimeContext &&
+            ($0 == "Indirect function invocation" || $0 == "Raw pointer operation" ||
+             $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:"))
+        }
+    }
+
     public init(
         id: String, module: String, name: String, regions: [SourceRegion] = [],
         dependencies: Set<String> = [], uncertainties: Set<String> = [],
