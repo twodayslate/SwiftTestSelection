@@ -13,6 +13,7 @@ func sharedSourceImportsPreserveDefiningModuleAndFeatureMappings(attribute: Stri
     defer { try? FileManager.default.removeItem(at: root) }
     let source = root.appendingPathComponent("Shared.swift")
     try """
+    import Foundation
     #if SECOND
     import First
     public func invoke() -> Int { First.value() + First.Box().extensionValue() + First.Box().count + First.Box()[0] + First.make()() }
@@ -23,6 +24,7 @@ func sharedSourceImportsPreserveDefiningModuleAndFeatureMappings(attribute: Stri
     \(attribute) public func value() -> Int { helper() }
     @usableFromInline internal func helper() -> Int { 1 }
     @_alwaysEmitIntoClient public func make() -> () -> Int { { 1 } }
+    public class Child: NSObject {}
     public struct Box {
         @_alwaysEmitIntoClient public init(_ x: Int = 1) {}
         @_alwaysEmitIntoClient public var count: Int { 1 }
@@ -122,6 +124,12 @@ func sharedSourceImportsPreserveDefiningModuleAndFeatureMappings(attribute: Stri
           kind=Module, text="ExtensionOwner"
           kind=Structure
             kind=Module, text="TypeOwner"
+    Demangling for dynamicConstructor
+    kind=Global
+      kind=DynamicAttribute
+      kind=Constructor
+        kind=Class
+          kind=Module, text="DynamicOwner"
     Demangling for unknown
     kind=Global
       kind=UnknownContext
@@ -132,7 +140,7 @@ func sharedSourceImportsPreserveDefiningModuleAndFeatureMappings(attribute: Stri
         kind=Type
           kind=Module, text="NotAnOwner"
     """
-    #expect(SILOwnership.declarationOwners(output) == ["function": "Owner", "extension": "ExtensionOwner"])
+    #expect(SILOwnership.declarationOwners(output) == ["function": "Owner", "extension": "ExtensionOwner", "dynamicConstructor": "DynamicOwner"])
 }
 
 @Test func unresolvedClientOwnershipProducesExtractionDiagnostic() throws {

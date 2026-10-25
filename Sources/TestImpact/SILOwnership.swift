@@ -46,6 +46,9 @@ enum SILOwnership {
             let node = String(line.dropFirst(indent))
             guard indent == depth * 2, node.hasPrefix("kind="),
                   depth != 0 || node == "kind=Global" else { symbol = nil; continue }
+            // Dynamic dispatch is an attribute preceding the declaration under
+            // Global, not its context. Do not search arbitrary sibling subtrees.
+            if depth == 1 && node == "kind=DynamicAttribute" { continue }
             if node.hasPrefix("kind=Module, text=") {
                 // The demangler prints quoted strings; reject unknown encodings.
                 let quoted = String(node.dropFirst("kind=Module, text=".count))
