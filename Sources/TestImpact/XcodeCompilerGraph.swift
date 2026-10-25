@@ -154,34 +154,161 @@ enum XcodeCompilerGraph {
             result.merge(file.inheritance) { Array(Set($0 + $1)) }
         }
         let projectTypes = Set(sources.values.flatMap { $0.units.filter { $0.kind == "type" }.map(\.scope) })
+        let projectMembers = Set(sources.values.flatMap { $0.dispatchMembers ?? [] })
         // Index the exact prefixes used by the conservative dispatch matcher.
         // Re-scanning every function for every unresolved declaration is quadratic
         // on large XCTest targets. Store only prefixes present in declarations.
         let declarations = Set(graph.functions.values.flatMap(\.dynamicDeclarations))
+        // Imported Objective-C methods have no project Swift vtable slot. A
+        // dispatch through the base class must still reach declared overrides.
+        let superclasses = sources.values.reduce(into: [String: [String]]()) { result, file in
+            result.merge(file.superclasses ?? file.inheritance) { Array(Set($0 + $1)) }
+        }
+        let nominalParents = Dictionary(uniqueKeysWithValues: Set(superclasses.values.flatMap { $0 }).compactMap { spelling in
+            SwiftSourceSnapshot.nominalTypeName(spelling).map { (spelling, $0) }
+        })
+        let typeAliases = Set(sources.values.flatMap { $0.typeAliases ?? [] })
+        let nominalTypes = Set(sources.values.flatMap { file in
+            file.units.filter { $0.kind == "type" }.map {
+                String($0.key.prefix { $0 != ":" }) + "." + $0.scope
+            }
+        })
+        func containsAlias(_ name: String) -> Bool {
+            typeAliases.contains(name) || name.indices.contains {
+                name[$0] == "." && typeAliases.contains(String(name[..<$0]))
+            }
+        }
+        func resolveSuperclass(_ parent: String, of owner: String) -> (candidates: [String], complete: Bool) {
+            // Swift resolves an unqualified name from its enclosing scopes
+            // outward. A module-level class must not hide a nested superclass.
+            var scope = owner.split(separator: ".").dropLast()
+            let qualifier = parent.firstIndex(of: ".").map { String(parent[..<$0]) }
+            while !scope.isEmpty {
+                let enclosingType = scope.joined(separator: ".")
+                let prefix = enclosingType + "."
+                let candidate = prefix + parent
+                if containsAlias(candidate) { return ([], false) }
+                if superclasses[candidate] != nil { return ([candidate], true) }
+                // A nearer nominal qualifier shadows outer names even if its
+                // member is inherited and absent from this declaration index.
+                // Keep that ancestry unknown instead of choosing an unrelated
+                // outer class with the same qualified spelling.
+                if let qualifier, nominalTypes.contains(prefix + qualifier) { return ([], false) }
+                // Inherited members of the enclosing class precede outer
+                // lexical scopes too. This includes unqualified nested classes,
+                // aliases, and the first component of a qualified name. Their
+                // absence from the declaration index does not prove absence
+                // from the inherited scope, so do not accept an outer match.
+                if let parents = superclasses[enclosingType], !parents.isEmpty { return ([], false) }
+                scope = scope.dropLast()
+            }
+            if containsAlias(parent) { return ([], false) }
+            if superclasses[parent] != nil { return ([parent], true) }
+            let candidates = superclasses.keys.filter { $0.hasSuffix("." + parent) }
+            // Imports are not resolved by this index. Retain possible imported
+            // classes without treating a same-named class as proof of ancestry.
+            return (candidates, candidates.isEmpty)
+        }
+        let declarationsByMember = Dictionary(grouping: declarations, by: { $0.split(separator: ".").last.map(String.init) ?? $0 })
+        var overrides: [String: Set<String>] = [:]
+        var unresolvedOverrideDeclarations = Set<String>()
+        var ancestorCache: [String: (names: Set<String>, complete: Bool)] = [:]
+        for member in sources.values.flatMap({ $0.dispatchOverrides ?? [] }) {
+            guard let dot = member.lastIndex(of: "."), let moduleEnd = member.firstIndex(of: ".") else { continue }
+            let owner = String(member[..<dot]), method = String(member[member.index(after: dot)...])
+            let implementation = String(member[member.index(after: moduleEnd)...])
+            let ancestors: (names: Set<String>, complete: Bool)
+            if let cached = ancestorCache[owner] { ancestors = cached }
+            else {
+                var names = Set<String>(), visited = Set<String>(), pending = [owner]
+                var complete = true
+                while let type = pending.popLast() {
+                    guard visited.insert(type).inserted else { continue }
+                    guard let parents = superclasses[type] else { complete = false; continue }
+                    for spelling in parents {
+                        guard let parent = nominalParents[spelling] else { complete = false; continue }
+                        names.insert(parent)
+                        let resolution = resolveSuperclass(parent, of: type)
+                        let candidates = resolution.candidates
+                        if !resolution.complete { complete = false }
+                        for candidate in candidates {
+                            names.insert(String(candidate.dropFirst(candidate.prefix { $0 != "." }.count + 1)))
+                            pending.append(candidate)
+                        }
+                        // SIL omits an imported type's module qualifier.
+                        if candidates.isEmpty, let separator = parent.firstIndex(of: ".") {
+                            names.insert(String(parent[parent.index(after: separator)...]))
+                        }
+                        // The same SDK roots are recognized by test binding.
+                        // Other external/aliased bases have unknown ancestors.
+                        if candidates.isEmpty {
+                            if ["XCTestCase", "XCTest.XCTestCase"].contains(parent) { names.insert("NSObject") }
+                            else if !["NSObject", "Foundation.NSObject"].contains(parent) { complete = false }
+                        }
+                    }
+                }
+                ancestors = (names, complete); ancestorCache[owner] = ancestors
+            }
+            let knownDeclarations = Set(ancestors.names.map { $0 + "." + method }).union([implementation])
+            if !ancestors.complete {
+                unresolvedOverrideDeclarations.formUnion(Set(declarationsByMember[method] ?? []).subtracting(knownDeclarations))
+            }
+            for ancestor in ancestors.names where declarations.contains(ancestor + "." + method) {
+                overrides[ancestor + "." + method, default: []].insert(implementation)
+            }
+        }
+        let overrideNames = Set(overrides.values.flatMap { $0 })
+        let implementationNames = declarations.union(overrideNames)
         var implementations: [String: Set<String>] = [:]
         for node in graph.functions.values where !node.regions.isEmpty {
-            for index in node.name.indices {
-                let character = node.name[index]
+            let name = node.name.hasPrefix("static ") ? String(node.name.dropFirst(7)) : node.name
+            for index in name.indices {
+                let character = name[index]
                 if character == "." || character == "(" {
-                    let prefix = String(node.name[..<index])
-                    if declarations.contains(prefix) { implementations[prefix, default: []].insert(node.id) }
+                    let prefix = String(name[..<index])
+                    if (node.name.hasPrefix("static ") ? overrideNames : implementationNames).contains(prefix) { implementations[prefix, default: []].insert(node.id) }
                 }
             }
         }
         for symbol in graph.functions.keys {
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
-                let type = declaration.components(separatedBy: ".").first ?? declaration
-                if projectTypes.contains(type), !graph.functions[symbol]!.resolvedDynamicDeclarations.contains(declaration) {
+                // Super dispatch cannot target a descendant override, even when
+                // that descendant's ancestry is only partially known.
+                let checkOverrides = overrides[declaration] != nil || unresolvedOverrideDeclarations.contains(declaration)
+                let dispatches = checkOverrides ? graph.functions[symbol]!.uncertainties.filter {
+                    $0.hasPrefix("Dynamic dispatch:") && ($0.hasSuffix(" " + declaration) || $0.contains(" " + declaration + "!"))
+                } : []
+                let onlySuper = !dispatches.isEmpty && dispatches.allSatisfy {
+                    $0.hasPrefix("Dynamic dispatch: super_method ") || $0.hasPrefix("Dynamic dispatch: objc_super_method ")
+                }
+                if unresolvedOverrideDeclarations.contains(declaration) && !onlySuper {
+                    graph.functions[symbol]!.uncertainties.insert("Unresolved project dispatch: " + declaration + " (incomplete override ancestry)")
+                }
+                var overrideCandidates = Set<String>()
+                if let members = overrides[declaration] {
+                    for implementation in onlySuper ? [] : members {
+                        if let candidates = implementations[implementation], !candidates.isEmpty {
+                            overrideCandidates.formUnion(candidates)
+                        } else {
+                            graph.functions[symbol]!.uncertainties.insert("Unresolved project dispatch: " + declaration)
+                        }
+                    }
+                }
+                graph.functions[symbol]!.dependencies.formUnion(overrideCandidates)
+                if !graph.functions[symbol]!.resolvedDynamicDeclarations.contains(declaration) {
                     // Objective-C entry points (including XCTest initializers)
                     // may have no Swift vtable slot. Include all matching
                     // compiled implementations rather than dropping the edge.
-                    let candidates = implementations[declaration] ?? []
+                    let candidates = (implementations[declaration] ?? []).union(overrideCandidates)
                     if !candidates.isEmpty {
                         graph.functions[symbol]!.dependencies.formUnion(candidates)
                         graph.functions[symbol]!.resolvedDynamicDeclarations.insert(declaration)
                         continue
                     }
-                    graph.functions[symbol]!.uncertainties.insert("Unresolved project dispatch: " + declaration)
+                    let ownedType = declaration.indices.contains { declaration[$0] == "." && projectTypes.contains(String(declaration[..<$0])) }
+                    if ownedType || projectMembers.contains(declaration) {
+                        graph.functions[symbol]!.uncertainties.insert("Unresolved project dispatch: " + declaration)
+                    }
                 }
             }
         }

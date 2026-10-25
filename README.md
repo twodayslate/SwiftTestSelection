@@ -334,6 +334,26 @@ Concrete witness dispatch keeps the receiver's conformance (for example,
 Generic, existential and unsupported receiver forms remain conservative. Missing
 concrete witness tables produce explicit unresolved-dependency handling.
 
+Source snapshots distinguish project type declarations from extensions of imported
+types. An `extension XCTestCase` helper owns that member, not unrelated framework
+initializers. Missing project members still produce conservative dispatch
+diagnostics, and compiled helpers and lifecycle overrides remain dependencies.
+Specialized superclass references such as `Parent<Int>` resolve through `Parent`,
+including qualified and nested types. Unresolved override ancestry (for example,
+a type alias the source index cannot resolve) produces an explicit conservative
+fallback for matching member dispatches rather than proof of no impact.
+Superclass lookup checks enclosing scopes before module-level names. Required
+initializer implementations participate in dispatch binding even when Swift does
+not spell them with `override`.
+A nearer nominal qualifier also shadows outer types. If its nested superclass
+member is inherited and cannot be resolved by the source index, matching callers
+remain selected with an explicit incomplete-ancestry fallback.
+Unqualified names and qualifiers inherited by an enclosing class receive the
+same fallback before lookup can accept an outer type. Direct declarations in the
+current scope still take precedence.
+Regenerate older saved graphs to acquire this ownership metadata; legacy snapshots
+retain their conservative classification.
+
 The original [investigation](Documentation/BuildTimeSILInvestigation.md) records
 prototype measurements and remaining normal-build/replay differences.
 
