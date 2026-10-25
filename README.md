@@ -348,6 +348,9 @@ not spell them with `override`.
 A nearer nominal qualifier also shadows outer types. If its nested superclass
 member is inherited and cannot be resolved by the source index, matching callers
 remain selected with an explicit incomplete-ancestry fallback.
+Unqualified names and qualifiers inherited by an enclosing class receive the
+same fallback before lookup can accept an outer type. Direct declarations in the
+current scope still take precedence.
 Regenerate older saved graphs to acquire this ownership metadata; legacy snapshots
 retain their conservative classification.
 

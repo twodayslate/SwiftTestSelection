@@ -55,6 +55,63 @@ func compiledNestedSuperclassLookupRespectsLexicalShadowing(qualified: Bool) thr
         caller: "make(_:_:)", implementation: "Local.init(coder:)")
 }
 
+@Test(arguments: [false, true], [false, true])
+func compiledInheritedUnqualifiedSuperclassRetainsConservativeSelection(alias: Bool, nested: Bool) throws {
+    try assertOverrideSelection(app: """
+    import Foundation
+    extension NSObject { @objc func projectHelper() {} }
+    class Parent { func isEqual(_ object: Any?) -> Bool { true } }
+    class RealContainer {
+        \(alias ? "typealias Parent = NSObject" : "class Parent: NSObject {}")
+    }
+    class Scope: RealContainer {
+        \(nested ? "enum Inner {" : "")
+        class Local: Parent {
+            override func isEqual(_ object: Any?) -> Bool { false }
+        }
+        \(nested ? "}" : "")
+    }
+    func compare(_ value: NSObject) -> Bool { value.isEqual(nil) }
+    """, call: "_ = compare(Scope.\(nested ? "Inner." : "")Local())",
+        scope: "Scope.\(nested ? "Inner." : "")Local", kind: "function",
+        caller: "compare(_:)", implementation: "Scope.\(nested ? "Inner." : "")Local.isEqual(_:)",
+        unresolvedDeclaration: "NSObject.isEqual")
+}
+
+@Test func compiledInheritedQualifierRetainsConservativeSelection() throws {
+    try assertOverrideSelection(app: """
+    import Foundation
+    extension NSObject { @objc func projectHelper() {} }
+    enum Container { class Parent { func isEqual(_ object: Any?) -> Bool { true } } }
+    class RealContainer { enum Container { class Parent: NSObject {} } }
+    class Scope: RealContainer {
+        class Local: Container.Parent {
+            override func isEqual(_ object: Any?) -> Bool { false }
+        }
+    }
+    func compare(_ value: NSObject) -> Bool { value.isEqual(nil) }
+    """, call: "_ = compare(Scope.Local())", scope: "Scope.Local", kind: "function",
+        caller: "compare(_:)", implementation: "Scope.Local.isEqual(_:)",
+        unresolvedDeclaration: "NSObject.isEqual")
+}
+
+@Test func compiledDirectNestedSuperclassWinsBeforeEnclosingInheritance() throws {
+    try assertOverrideSelection(app: """
+    import Foundation
+    extension NSObject { @objc func projectHelper() {} }
+    class Parent { func isEqual(_ object: Any?) -> Bool { true } }
+    class RealContainer {}
+    class Scope: RealContainer {
+        class Parent: NSObject {}
+        class Local: Parent {
+            override func isEqual(_ object: Any?) -> Bool { false }
+        }
+    }
+    func compare(_ value: NSObject) -> Bool { value.isEqual(nil) }
+    """, call: "_ = compare(Scope.Local())", scope: "Scope.Local", kind: "function",
+        caller: "compare(_:)", implementation: "Scope.Local.isEqual(_:)")
+}
+
 @Test(arguments: [false, true])
 func nestedAliasShadowsModuleClassWithoutGuessingItsSuperclass(qualified: Bool) {
     let text = qualified ? """

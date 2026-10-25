@@ -184,7 +184,8 @@ enum XcodeCompilerGraph {
             var scope = owner.split(separator: ".").dropLast()
             let qualifier = parent.firstIndex(of: ".").map { String(parent[..<$0]) }
             while !scope.isEmpty {
-                let prefix = scope.joined(separator: ".") + "."
+                let enclosingType = scope.joined(separator: ".")
+                let prefix = enclosingType + "."
                 let candidate = prefix + parent
                 if containsAlias(candidate) { return ([], false) }
                 if superclasses[candidate] != nil { return ([candidate], true) }
@@ -193,6 +194,12 @@ enum XcodeCompilerGraph {
                 // Keep that ancestry unknown instead of choosing an unrelated
                 // outer class with the same qualified spelling.
                 if let qualifier, nominalTypes.contains(prefix + qualifier) { return ([], false) }
+                // Inherited members of the enclosing class precede outer
+                // lexical scopes too. This includes unqualified nested classes,
+                // aliases, and the first component of a qualified name. Their
+                // absence from the declaration index does not prove absence
+                // from the inherited scope, so do not accept an outer match.
+                if let parents = superclasses[enclosingType], !parents.isEmpty { return ([], false) }
                 scope = scope.dropLast()
             }
             if containsAlias(parent) { return ([], false) }

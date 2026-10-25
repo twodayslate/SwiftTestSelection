@@ -49,6 +49,15 @@ not substitute the outer class and silently omit the affected test. Direct
 nested superclass references retain their compiled dependency paths with both
 unqualified and qualified spellings.
 
+Lookup also stops before leaving an enclosing class with unresolved inherited
+members. Compiled fixtures cover `Scope: RealContainer` containing `Local: Parent`,
+where `Parent` is an inherited nested class or type alias that shadows a top-level
+class. Both direct and deeper lexical nesting select the caller with an explicit
+incomplete-ancestry fallback. Another fixture covers an inherited qualifier in
+`Local: Container.Parent`. A directly declared nested superclass continues to
+resolve precisely even when the enclosing class has a superclass. This remains
+conservative source lookup: inherited member absence is not proven by the index.
+
 ## Saved consumer comparison
 
 Release validation on the existing ChainOfCustody graph (124,013 functions, 2,000
@@ -99,7 +108,7 @@ candidates; it does not claim complete type-alias or external-framework hierarch
 resolution. The compiled generic-superclass case has no such diagnostic and
 selects only its caller. Full-suite behavioral validation remains separate.
 
-Review-fix validation after rebasing onto `4e36974` (main): all 134 release tests passed, including both compiled
+Review-fix validation after rebasing onto `4e36974` (main): all 137 release tests passed, including both compiled
 override cases, nested nominal-name parsing, unresolved ancestry, trailing
 protocol conformances, missing-implementation/super-call checks, lexical
-shadowing (including inherited nested members), required initializer dispatch, and the capture tests merged in #28.
+shadowing (including unqualified inherited members, aliases, qualifiers, and deeper nesting), required initializer dispatch, and the capture tests merged in #28.
