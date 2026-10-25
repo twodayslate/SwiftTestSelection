@@ -231,6 +231,8 @@ commands to emit SIL and initializes runners to enumerate tests. It requires mor
 than binaries or dSYMs. The capture fingerprints the complete `Build/Products`
 directory, including the `.xctestrun`, and records the revision, toolchain, build
 context, and input digests. SHA-256 file hashing uses bounded chunks.
+This supported workflow does not consume SIL retained by the build; see
+[build-time SIL capture](#build-time-sil-capture-experimental) for that separate experiment.
 
 Produce a base graph the same way on the base commit (for PRs, the resolved merge
 base), using matching build options/toolchain. Then select and execute:
@@ -277,6 +279,38 @@ Cache graphs by commit, artifact schema/tool version, toolchain, container, sche
 plan, configuration, SDK/architectures, destination, and mapping configuration.
 Retain conservative diagnostics in reports; cache reuse does not improve graph or
 mapping completeness. Validate selected runs against full runs before using a CI gate.
+
+### Build-time SIL capture (experimental)
+
+**Capturing complete, validated SIL during build-for-testing would eliminate
+separate compiler replay.** An ordinary build-for-testing does not automatically
+retain the SIL this tool needs; the experimental wrapper adds that output to
+normal compilation.
+
+| Workflow | Dependency extraction |
+| --- | --- |
+| Supported existing-build capture | Build-for-testing → replay compiler commands to emit SIL → parse graphs |
+| Experimental build-time capture | Build-for-testing also emits SIL → validate captured fragments → parse graphs |
+
+Parsing, test enumeration, dependency binding and test selection are still
+required. Build-time emission uses Xcode's existing compilation concurrency
+across modules. Saved parsed graphs or compatible module fragments can avoid
+repeated parsing as well.
+
+The scripts in `Scripts/Experimental` demonstrate capture, but **the supported
+CLI does not yet accept captured SIL as a replacement for replay**. Production
+integration still needs:
+
+- Complete incremental inventories: unchanged files emit no new fragments, so
+  their previous fragments must be validated and retained, or extraction must
+  fall back explicitly.
+- Provenance tying fragments to the exact revision, compiler inputs and test
+  products used for selection and execution.
+- Correct handling of the dispatch and dependency differences observed between
+  normal-build SIL and replayed SIL; interchangeable graphs are not yet proven.
+
+See the [build-time SIL investigation](Documentation/BuildTimeSILInvestigation.md)
+for the prototype, measurements, limitations and implementation follow-ups.
 
 ### Xcode implementation and requirements
 
@@ -415,7 +449,7 @@ runs are still required before relying on production-change selection as a CI ga
 
 ## Next work
 
-- Add automatic cache lookup and eviction; Xcode graphs can currently be cached explicitly with build provenance.
+- Integrate [build-time SIL capture](#build-time-sil-capture-experimental) after incremental completeness, provenance and dispatch correctness are enforced.
 - Extend precise declaration mapping to more language constructs and SwiftPM.
 - Improve dispatch, initializer, callback, and test-argument modeling.
 - Expand compiler-version, Swift Testing, external inheritance, and resource modeling coverage.
@@ -444,7 +478,8 @@ head each get an independently validated entry containing their compiler graph,
 source snapshots, mapping policies, and complete enabled test inventory. Warm
 entries do not build, enumerate tests, or extract SIL. Xcode still resolves build
 settings with locked package versions before lookup. New revisions receive fresh
-builds and analyses; cross-revision reuse of individual modules is not supported.
+builds and test discovery, while [compatible module fragments](#reusing-module-fragments-on-a-changed-revision)
+can be reused across revisions to skip their compiler replay and parsing.
 
 The key includes repository identity, exact revision, graph/cache schema, the
 analyzer executable's SHA-256 (so changing upstream versions invalidates it),
