@@ -56,4 +56,13 @@ import Testing
     let empty = XcodeFineSelector.select(current: base, previous: base, changes: [], baseRevision: "source-replay")
     #expect(empty.selectedTests.isEmpty)
     try write(empty, "empty")
+    var testOnly = base
+    let testFile = "ChainOfCustodyUITests/PairingNotesUITests.swift"
+    let key = "ChainOfCustodyUITests:" + testFile
+    let method = "testSortsNotesAndHidesUtilitiesWhileSearching"
+    let index = try #require(testOnly.sources[key]?.units.firstIndex { $0.kind == "function" && $0.key.contains(method) })
+    testOnly.sources[key]!.units[index].fingerprint += "controlled-test-body-edit"
+    let oneMethod = XcodeFineSelector.select(current: testOnly, previous: base, changes: [.init(path: testFile)], baseRevision: "source-replay")
+    #expect(oneMethod.selectedTests == ["ChainOfCustodyUITests/PairingNotesSearchAndSortUITests/" + method + "()"])
+    try write(oneMethod, "test-method")
 }

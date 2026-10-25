@@ -198,8 +198,13 @@ The SIL reader also recognizes compiler-emitted concrete imported-conformance
 declarations, such as UUID/Date equality witnesses. Proofs are scoped to the
 emitting module and retained in cached fragments. Existing project witness tables
 win; missing, ambiguous, generic, unsupported, or project-owned declarations
-remain conservative. This is not a Foundation allowlist and does not ignore
-shared state or escaped callbacks.
+remain conservative. An external declaration proves ownership, not absence of
+callbacks (for example NSObject overrides or type-erased equality). Without an
+implementation summary it retains runtime uncertainty; only a validated boundary
+can exclude unrelated changes. This is not a Foundation allowlist and does not
+ignore shared state or escaped callbacks.
+
+See [the issue #29 validation](Documentation/Issue29Validation.md) for the real-project comparison, exact identifiers, execution evidence, and remaining consumer CI gate.
 
 ### Diagnostics and fallback policy
 

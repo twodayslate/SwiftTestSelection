@@ -66,3 +66,34 @@ func importedWitnessProofFailsClosed(reason: String) {
     #expect(graph.functions["caller"]?.dependencies == ["candidate"])
     #expect(graph.functions["caller"]!.uncertainties.contains { $0.hasPrefix("Unresolved project dispatch:") })
 }
+
+@Test(arguments: ["NSObject", "AnyHashable", "UUID", "Date"], [true, false])
+func importedConformanceOwnershipAloneDoesNotExcludeProjectBehavior(type: String, sourceBearing: Bool) {
+    let path = "App.swift"
+    var old = XcodeTestGraph(targets: [
+        .init(name: "App", productType: "com.apple.product-type.framework", sourceFiles: [path]),
+        .init(name: "Tests", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: ["Tests.swift"])
+    ], tests: ["Tests/Equality/testValue()"])
+    old.modules = ["App": "App", "Tests": "Tests"]
+    old.sources["App:App.swift"] = SwiftSourceSnapshot.parse("func projectEquality() -> Bool { true }", path: path, module: "App")
+    let declaration = "Equatable.\"==\"@witness:" + type
+    old.dependencies = DependencyGraph(functions: [
+        "changed": .init(id: "changed", module: "App", name: "projectEquality()", regions: [.init(path: path, startLine: 1, endLine: 1)]),
+        "test": .init(id: "test", module: "Tests", name: "Equality.testValue()", regions: [.init(path: "Tests.swift", startLine: 1, endLine: 1)], dynamicDeclarations: [declaration])
+    ], tests: [old.tests[0]: ["test"]])
+    XcodeCompilerGraph.resolveDispatch(&old.dependencies!, tables: [:], externalWitnesses: ["Tests:Equatable@witness:" + type: ["SDK"]])
+    #expect(old.dependencies!.functions["test"]!.resolvedDynamicDeclarations.contains(declaration))
+    if !sourceBearing {
+        var helper = old.dependencies!.functions["test"]!
+        helper.id = "sdk-helper"; helper.module = "SDK"; helper.regions = []
+        old.dependencies!.functions[helper.id] = helper
+        old.dependencies!.functions["test"]!.dependencies = [helper.id]
+        old.dependencies!.functions["test"]!.uncertainties = []
+        old.dependencies!.functions["test"]!.dynamicDeclarations = []
+    }
+    var head = old
+    head.sources["App:App.swift"] = SwiftSourceSnapshot.parse("func projectEquality() -> Bool { false }", path: path, module: "App")
+    let report = XcodeFineSelector.select(current: head, previous: old, changes: [.init(path: path)], baseRevision: "base")
+    #expect(report.selectedTests == old.tests)
+    #expect(report.diagnostics.contains { $0.code == "unresolved_dependency" && $0.message.contains("Imported conformance:") })
+}

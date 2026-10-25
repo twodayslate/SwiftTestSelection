@@ -145,8 +145,10 @@ enum XcodeCompilerGraph {
                     if let owners = externalWitnesses[graph.functions[symbol]!.module + ":" + key], owners.count == 1, owners.isDisjoint(with: localModules) {
                         // The compiler, not a Foundation/type-name allowlist,
                         // establishes the concrete conformance's external owner.
-                        // Like a direct external function_ref, this is a resolved
-                        // imported implementation, not a missing project table.
+                        // This resolves ownership, not the implementation body.
+                        // SDK classes/type erasers may call project overrides or
+                        // conformances: retain runtime uncertainty until a valid
+                        // closed-module boundary can exclude the changed module.
                         graph.functions[symbol]!.resolvedDynamicDeclarations.insert(declaration)
                         graph.functions[symbol]!.uncertainties.insert("Imported conformance: " + key + " module " + owners.first!)
                         continue

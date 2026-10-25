@@ -199,7 +199,13 @@ public enum XcodeFineSelector {
                 // candidate SIL edges. Opaque function values and raw pointers are
                 // not proof of absence; conservatively include their callers.
                 let uncertain = Set(graph.functions.values.filter { node in
-                    !node.regions.isEmpty && node.uncertainties.contains { $0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:") }
+                    node.uncertainties.contains {
+                        // Imported implementations can call project overrides or
+                        // type-erased conformances even without project debug
+                        // locations. Ownership alone does not close that edge.
+                        $0.hasPrefix("Imported conformance:") || !node.regions.isEmpty &&
+                        ($0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:"))
+                    }
                 }.map(\.id))
                 let uncertainPaths = index.paths(to: uncertain)
                 var boundedTargets: [String: TestRuntimeBoundary] = [:]
@@ -237,7 +243,10 @@ public enum XcodeFineSelector {
                            changedModules.isDisjoint(with: boundary.modules) {
                             bounded[boundary.target, default: []].append(test)
                         } else {
-                            fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test); no validated boundary excludes changed modules [\(changedModules.sorted().joined(separator: ", "))]: \(graph.functions[path.last!]!.uncertainties.sorted().joined(separator: "; "))", tests: [test])
+                            let uncertainty = graph.functions[path.last!]!.uncertainties
+                            let missingImplementation = uncertainty.contains { $0.hasPrefix("Imported conformance:") }
+                                ? " Imported conformance ownership is known; its implementation body/runtime effects are unavailable." : ""
+                            fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test); no validated boundary excludes changed modules [\(changedModules.sorted().joined(separator: ", "))]: \(uncertainty.sorted().joined(separator: "; "))" + missingImplementation, tests: [test])
                         }
                     }
                 }
@@ -258,7 +267,7 @@ public enum XcodeFineSelector {
             var coveredChanges = Set<String>()
             var mappedTests = Set<String>()
             let opaqueProduction = declaredUIRuntime ? Set<String>() : Set(graph.functions.values.filter { node in
-                !node.regions.isEmpty && node.uncertainties.contains { $0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:") }
+                !node.regions.isEmpty && node.uncertainties.contains { $0 == "Indirect function invocation" || $0 == "Raw pointer operation" || $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:") || $0.hasPrefix("Imported conformance:") }
             }.map(\.id))
             let opaquePaths = index.paths(to: opaqueProduction)
             let mappingIndex = MappingIndex(mappings, snapshot: snapshot, graph: graph, index: index)
