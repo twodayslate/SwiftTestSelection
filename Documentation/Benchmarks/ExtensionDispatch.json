@@ -9,5 +9,37 @@
   "beforeSelected": 1440,
   "remainingDiagnostics": 1418,
   "removed": [],
-  "sourceRevision": "1f0e37b69458200227c584d9a4563b5391948cdf"
+  "sourceRevision": "1f0e37b69458200227c584d9a4563b5391948cdf",
+  "genericSuperclassValidation": {
+    "added": [
+      "ChainOfCustodySnapshotTests/NoteMediaGeometryTests/testThumbnailAndPlayerContentCannotChangeReservedFrame()",
+      "ChainOfCustodyTests/CalendarCategoryNotificationTests/legacyPreferencesPreserveExistingAlertsAndOptInToNewOnes()",
+      "ChainOfCustodyTests/CalendarSymbolPersistenceTests/legacyRecordsDecodeWithoutCustomSymbols()",
+      "ChainOfCustodyTests/DomainTests/assignmentDecodesLegacyOrMissingTitle()",
+      "ChainOfCustodyTests/DomainTests/assignmentDecodesMissingLegacyBehaviorWithSafeDefaults()",
+      "ChainOfCustodyTests/DomainTests/assignmentDecodesMissingLegacyInstructions()",
+      "ChainOfCustodyTests/DomainTests/assignmentDecodesMissingLegacyRecurrenceAsOneTime()",
+      "ChainOfCustodyTests/DomainTests/assignmentReminderUsesConfiguredLeadTimeAndOldRecordsDefaultToOneHour()",
+      "ChainOfCustodyTests/DomainTests/handoffRequiresAllNonSubmissionAssets()",
+      "ChainOfCustodyTests/DomainTests/legacyMeritOfferDecodesWithSafeMediaDefaults()",
+      "ChainOfCustodyTests/DomainTests/legacyRecognitionEntriesDecodeAsAdditions()",
+      "ChainOfCustodyTests/DomainTests/repairFillsIncompleteDivergentTagThumbnailAssets()",
+      "ChainOfCustodyTests/NotificationPolicyTests/legacyPreferencesPreserveOptOutsAndDefaultToNeutralPreviews()",
+      "ChainOfCustodyTests/PairingNotesTests/futureDescriptorAndTagMetadataRoundTripOpaqueValues()",
+      "ChainOfCustodyTests/ReleaseRequestSyncTests/legacyRequestsDecodeWithoutReasonEditMetadata()",
+      "ChainOfCustodyTests/ScheduleWindowTests/allDayWindowsWithoutTimeZoneMetadataRemainDecodable()",
+      "ChainOfCustodyTests/ScheduleWindowTests/windowsWithoutBoundaryMetadataRemainDecodable()",
+      "ChainOfCustodyTests/SessionTimingTests/legacyPauseWithoutResumePreferenceKeepsAutomaticBehavior()",
+      "ChainOfCustodyTests/SessionTimingTests/legacySessionWithoutRecurringActionsStillDecodes()"
+    ],
+    "afterInitializerFallbackTests": 0,
+    "afterSelected": 1464,
+    "beforeInitializerFallbackTests": 145,
+    "beforeSelected": 1445,
+    "remainingDiagnostics": 1440,
+    "removed": [],
+    "sourceRevision": "1f0e37b69458200227c584d9a4563b5391948cdf",
+    "referenceGraphSHA256": "8c453ef17b7d71dcbd3a76d96a660f3d58682d20e2791c9ae60216fb738c6300",
+    "referenceGraphFile": "issue11-consumer-graph.json"
+  }
 }

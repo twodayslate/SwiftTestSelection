@@ -22,6 +22,26 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     public var dispatchMembers: Set<String>? = nil
     /// Module-qualified class/member names explicitly declared with override.
     public var dispatchOverrides: Set<String>? = nil
+    /// First inherited type for each class, excluding trailing conformances.
+    /// Older snapshots fall back to the broader inheritance inventory.
+    public var superclasses: [String: [String]]? = nil
+
+    /// Match specialized superclass references to their nominal declarations.
+    /// Parse the type so nested arguments, function types and qualification do
+    /// not get confused with the enclosing type's name.
+    static func nominalTypeName(_ spelling: String) -> String? {
+        let tree = Parser.parse(source: "typealias ImpactSuperclass = " + spelling)
+        guard !tree.hasError, tree.statements.count == 1,
+              let declaration = tree.statements.first?.item.as(TypeAliasDeclSyntax.self) else { return nil }
+        func name(_ type: TypeSyntax) -> String? {
+            if let identifier = type.as(IdentifierTypeSyntax.self) { return identifier.name.text }
+            if let member = type.as(MemberTypeSyntax.self), let base = name(member.baseType) {
+                return base + "." + member.name.text
+            }
+            return nil
+        }
+        return name(declaration.initializer.value)
+    }
 
     public static func parse(_ text: String, path: String, module: String) -> Self {
         let tree = Parser.parse(source: text)
@@ -29,6 +49,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         var result = Self(units: [], inheritance: [:], diagnostics: [])
         result.dispatchMembers = []
         result.dispatchOverrides = []
+        result.superclasses = [:]
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
         let tokens = Array(tree.tokens(viewMode: .sourceAccurate))
         let locationNames: Set<String> = ["line", "column", "file", "fileID", "filePath", "sourceLocation"]
@@ -80,6 +101,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
                 add(header, header: header, kind: "type", scope: names)
                 result.inheritance[module + "." + names.joined(separator: "."), default: []] += value.inheritanceClause?.inheritedTypes.map { $0.type.trimmedDescription } ?? []
+                result.superclasses![module + "." + names.joined(separator: "."), default: []] += value.inheritanceClause?.inheritedTypes.first.map { [$0.type.trimmedDescription] } ?? []
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(ProtocolDeclSyntax.self) {
                 let names = scope + [value.name.text]

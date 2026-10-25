@@ -18,7 +18,8 @@ import Testing
     #expect(graph.functions["caller"]?.uncertainties == ["Unresolved project dispatch: XCTestCase.helper", "Unresolved project dispatch: LocalTests.missingCallback"])
 }
 
-@Test func compiledXCTestExtensionKeepsHelperAndLifecycleSelectionPrecise() throws {
+@Test(arguments: [false, true])
+func compiledXCTestExtensionKeepsHelperAndLifecycleSelectionPrecise(genericSuperclass: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("extension-dispatch-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -26,8 +27,8 @@ import Testing
     func unrelatedProduction() -> Int { 1 }
     import Foundation
     extension NSObject { @objc func projectHelper() {} }
-    class Parent: Foundation.NSObject {}
-    class Local: Parent { override func isEqual(_ object: Any?) -> Bool { false } }
+    class Parent\(genericSuperclass ? "<T>" : ""): Foundation.NSObject {}
+    class Local: \(genericSuperclass ? "Fixture.Parent<[String: [Int]]>" : "Parent") { override func isEqual(_ object: Any?) -> Bool { false } }
     func compare(_ object: NSObject) -> Bool { object.isEqual(nil) }
     """
     let tests = """
@@ -83,6 +84,52 @@ import Testing
     let overrides = Set(dependencies.functions.values.filter { $0.name == "Local.isEqual(_:)" }.map(\.id))
     let compare = try #require(dependencies.functions.values.first { $0.name == "compare(_:)" })
     #expect(dependencies.dependencyPath(from: [compare.id], to: overrides) != nil)
+    #expect(!compare.uncertainties.contains { $0.hasPrefix("Unresolved project dispatch:") })
+}
+
+@Test func superclassNominalNamesPreserveQualificationAndEraseArguments() {
+    #expect(SwiftSourceSnapshot.nominalTypeName("Parent<Int>") == "Parent")
+    #expect(SwiftSourceSnapshot.nominalTypeName("Module.Outer<[String: Int]>.Inner<(Int) -> [String]>") == "Module.Outer.Inner")
+    #expect(SwiftSourceSnapshot.nominalTypeName("Parent<Int") == nil)
+    #expect(SwiftSourceSnapshot.nominalTypeName("any Protocol") == nil)
+}
+
+@Test func unresolvedOverrideAncestryRetainsExplicitFallback() {
+    // Type aliases are valid Swift, but not resolved by the nominal source index.
+    let source = SwiftSourceSnapshot.parse("""
+    class Parent<T>: NSObject {}
+    typealias ParentAlias = Parent<Int>
+    class Child: ParentAlias {
+        override func isEqual(_ object: Any?) -> Bool { false }
+    }
+    """, path: "App.swift", module: "App")
+    var graph = DependencyGraph(functions: [
+        "call": FunctionNode(id: "call", module: "Tests", name: "call()", dynamicDeclarations: ["NSObject.isEqual"]),
+        "unrelated": FunctionNode(id: "unrelated", module: "Tests", name: "unrelated()", dynamicDeclarations: ["NSObject.init"]),
+        "super": FunctionNode(id: "super", module: "App", name: "Direct.isEqual(_:)",
+            uncertainties: ["Dynamic dispatch: objc_super_method NSObject.isEqual!foreign"], dynamicDeclarations: ["NSObject.isEqual"]),
+        "override": FunctionNode(id: "override", module: "App", name: "Child.isEqual(_:)",
+            regions: [.init(path: "App.swift", startLine: 4, endLine: 4)])
+    ])
+    XcodeCompilerGraph.bind(tests: [], modules: [:], sources: ["App:App.swift": source], graph: &graph)
+    #expect(graph.functions["call"]?.uncertainties.contains("Unresolved project dispatch: NSObject.isEqual (incomplete override ancestry)") == true)
+    #expect(graph.functions["unrelated"]?.uncertainties.isEmpty == true)
+    #expect(graph.functions["super"]?.uncertainties.contains { $0.hasPrefix("Unresolved project dispatch:") } == false)
+}
+
+@Test func protocolConformancesDoNotMakeOverrideAncestryIncomplete() {
+    let source = SwiftSourceSnapshot.parse("""
+    protocol Marker {}
+    class Child: NSObject, Marker {
+        override func isEqual(_ object: Any?) -> Bool { false }
+    }
+    """, path: "App.swift", module: "App")
+    #expect(source.superclasses?["App.Child"] == ["NSObject"])
+    var graph = DependencyGraph(functions: [
+        "unrelated": FunctionNode(id: "unrelated", module: "Tests", name: "unrelated()", dynamicDeclarations: ["Other.isEqual"])
+    ])
+    XcodeCompilerGraph.bind(tests: [], modules: [:], sources: ["App:App.swift": source], graph: &graph)
+    #expect(graph.functions["unrelated"]?.uncertainties.isEmpty == true)
 }
 
 @Test func missingOverridesStayConservativeWithoutRedirectingSuperCalls() {

@@ -20,6 +20,17 @@ base declarations to their available implementations and preserves uncertainty
 when those implementations are missing. Super calls retain their ancestor target,
 so framework initializers do not acquire subclass-override cycles.
 
+The generic-superclass regression runs the same compiled fixture through both
+`Parent` and `Fixture.Parent<[String: [Int]]>`. The source index parses nominal
+type names and removes specialization arguments before walking ancestry. In both
+cases an override edit selects only its caller, without an unresolved-dispatch
+fallback. Trailing protocol conformances do not become superclass links.
+
+Ancestry that cannot be resolved (including an unsupported type alias) retains an
+explicit `incomplete override ancestry` diagnostic for matching member dispatches.
+Known XCTest/NSObject ancestry and super calls keep their precise behavior. This
+is conservative handling, not type-alias resolution.
+
 ## Saved consumer comparison
 
 Release validation on the existing ChainOfCustody graph (124,013 functions, 2,000
@@ -54,5 +65,22 @@ IMPACT_EXTENSION_OUTPUT=/tmp/extension-results.json \
 swift test -c release --filter consumerExtensionDispatchProbe
 ```
 
-Review-fix validation: all 124 release tests passed, including the compiled
-override regression and the missing-implementation/super-call checks.
+## Generic-superclass follow-up
+
+A separate saved-input check of `issue11-consumer-graph.json` at the same consumer
+source revision selects **1,464 tests versus 1,445** in its saved baseline: 19
+additional conservative candidates and no omissions. The incorrect XCTestCase
+initializer classification remains absent (145 affected tests before, zero after).
+The source fingerprints were verified before rebinding. These counts compare
+against this saved baseline, not the previous PR head. Its SHA-256 and exact added identifiers are recorded
+under `genericSuperclassValidation` in the raw results.
+
+The ancestry fallback deliberately retains callers of matching dispatches when
+an override's superclass chain cannot be established. This can add conservative
+candidates; it does not claim complete type-alias or external-framework hierarchy
+resolution. The compiled generic-superclass case has no such diagnostic and
+selects only its caller. Full-suite behavioral validation remains separate.
+
+Review-fix validation: all 127 release tests passed, including both compiled
+override cases, nested nominal-name parsing, unresolved ancestry, trailing
+protocol conformances, and missing-implementation/super-call checks.

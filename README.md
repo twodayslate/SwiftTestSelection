@@ -338,6 +338,10 @@ Source snapshots distinguish project type declarations from extensions of import
 types. An `extension XCTestCase` helper owns that member, not unrelated framework
 initializers. Missing project members still produce conservative dispatch
 diagnostics, and compiled helpers and lifecycle overrides remain dependencies.
+Specialized superclass references such as `Parent<Int>` resolve through `Parent`,
+including qualified and nested types. Unresolved override ancestry (for example,
+a type alias the source index cannot resolve) produces an explicit conservative
+fallback for matching member dispatches rather than proof of no impact.
 Regenerate older saved graphs to acquire this ownership metadata; legacy snapshots
 retain their conservative classification.
 

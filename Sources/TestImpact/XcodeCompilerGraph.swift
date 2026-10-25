@@ -161,23 +161,34 @@ enum XcodeCompilerGraph {
         let declarations = Set(graph.functions.values.flatMap(\.dynamicDeclarations))
         // Imported Objective-C methods have no project Swift vtable slot. A
         // dispatch through the base class must still reach declared overrides.
+        let superclasses = sources.values.reduce(into: [String: [String]]()) { result, file in
+            result.merge(file.superclasses ?? file.inheritance) { Array(Set($0 + $1)) }
+        }
+        let nominalParents = Dictionary(uniqueKeysWithValues: Set(superclasses.values.flatMap { $0 }).compactMap { spelling in
+            SwiftSourceSnapshot.nominalTypeName(spelling).map { (spelling, $0) }
+        })
+        let declarationsByMember = Dictionary(grouping: declarations, by: { $0.split(separator: ".").last.map(String.init) ?? $0 })
         var overrides: [String: Set<String>] = [:]
-        var ancestorCache: [String: Set<String>] = [:]
+        var unresolvedOverrideDeclarations = Set<String>()
+        var ancestorCache: [String: (names: Set<String>, complete: Bool)] = [:]
         for member in sources.values.flatMap({ $0.dispatchOverrides ?? [] }) {
             guard let dot = member.lastIndex(of: "."), let moduleEnd = member.firstIndex(of: ".") else { continue }
             let owner = String(member[..<dot]), method = String(member[member.index(after: dot)...])
             let implementation = String(member[member.index(after: moduleEnd)...])
-            let ancestors: Set<String>
+            let ancestors: (names: Set<String>, complete: Bool)
             if let cached = ancestorCache[owner] { ancestors = cached }
             else {
                 var names = Set<String>(), visited = Set<String>(), pending = [owner]
+                var complete = true
                 while let type = pending.popLast() {
                     guard visited.insert(type).inserted else { continue }
                     let module = String(type.prefix { $0 != "." })
-                    for parent in inheritance[type] ?? [] {
+                    guard let parents = superclasses[type] else { complete = false; continue }
+                    for spelling in parents {
+                        guard let parent = nominalParents[spelling] else { complete = false; continue }
                         names.insert(parent)
                         let local = module + "." + parent
-                        let candidates = inheritance[local] != nil ? [local] : inheritance.keys.filter { $0 == parent || $0.hasSuffix("." + parent) }
+                        let candidates = superclasses[local] != nil ? [local] : superclasses.keys.filter { $0 == parent || $0.hasSuffix("." + parent) }
                         for candidate in candidates {
                             names.insert(String(candidate.dropFirst(candidate.prefix { $0 != "." }.count + 1)))
                             pending.append(candidate)
@@ -186,11 +197,21 @@ enum XcodeCompilerGraph {
                         if candidates.isEmpty, let separator = parent.firstIndex(of: ".") {
                             names.insert(String(parent[parent.index(after: separator)...]))
                         }
+                        // The same SDK roots are recognized by test binding.
+                        // Other external/aliased bases have unknown ancestors.
+                        if candidates.isEmpty {
+                            if ["XCTestCase", "XCTest.XCTestCase"].contains(parent) { names.insert("NSObject") }
+                            else if !["NSObject", "Foundation.NSObject"].contains(parent) { complete = false }
+                        }
                     }
                 }
-                ancestors = names; ancestorCache[owner] = names
+                ancestors = (names, complete); ancestorCache[owner] = ancestors
             }
-            for ancestor in ancestors where declarations.contains(ancestor + "." + method) {
+            let knownDeclarations = Set(ancestors.names.map { $0 + "." + method }).union([implementation])
+            if !ancestors.complete {
+                unresolvedOverrideDeclarations.formUnion(Set(declarationsByMember[method] ?? []).subtracting(knownDeclarations))
+            }
+            for ancestor in ancestors.names where declarations.contains(ancestor + "." + method) {
                 overrides[ancestor + "." + method, default: []].insert(implementation)
             }
         }
@@ -209,16 +230,20 @@ enum XcodeCompilerGraph {
         }
         for symbol in graph.functions.keys {
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
+                // Super dispatch cannot target a descendant override, even when
+                // that descendant's ancestry is only partially known.
+                let checkOverrides = overrides[declaration] != nil || unresolvedOverrideDeclarations.contains(declaration)
+                let dispatches = checkOverrides ? graph.functions[symbol]!.uncertainties.filter {
+                    $0.hasPrefix("Dynamic dispatch:") && ($0.hasSuffix(" " + declaration) || $0.contains(" " + declaration + "!"))
+                } : []
+                let onlySuper = !dispatches.isEmpty && dispatches.allSatisfy {
+                    $0.hasPrefix("Dynamic dispatch: super_method ") || $0.hasPrefix("Dynamic dispatch: objc_super_method ")
+                }
+                if unresolvedOverrideDeclarations.contains(declaration) && !onlySuper {
+                    graph.functions[symbol]!.uncertainties.insert("Unresolved project dispatch: " + declaration + " (incomplete override ancestry)")
+                }
                 var overrideCandidates = Set<String>()
                 if let members = overrides[declaration] {
-                    // A super call targets the ancestor implementation, not its
-                    // descendants. Do not introduce override cycles at super.init.
-                    let dispatches = graph.functions[symbol]!.uncertainties.filter {
-                        $0.hasPrefix("Dynamic dispatch:") && ($0.hasSuffix(" " + declaration) || $0.contains(" " + declaration + "!"))
-                    }
-                    let onlySuper = !dispatches.isEmpty && dispatches.allSatisfy {
-                        $0.hasPrefix("Dynamic dispatch: super_method ") || $0.hasPrefix("Dynamic dispatch: objc_super_method ")
-                    }
                     for implementation in onlySuper ? [] : members {
                         if let candidates = implementations[implementation], !candidates.isEmpty {
                             overrideCandidates.formUnion(candidates)
