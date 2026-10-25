@@ -1,0 +1,241 @@
+{
+  "date": "2026-10-24",
+  "hardware": "Apple M5, 32 GiB",
+  "macOS": "26.6.1",
+  "xcode": "27.0",
+  "swift": "6.4",
+  "consumerRevision": "1f0e37b69458200227c584d9a4563b5391948cdf",
+  "consumerTests": 2000,
+  "baseline": {
+    "seconds": 125.09284075,
+    "exitCode": 0,
+    "sampledPeakCompilerAndDriverRSSBytes": 5030952960,
+    "maxObservedProcesses": 12,
+    "samples": 331,
+    "samplingDelaySeconds": 0.1,
+    "averageSampleIntervalSeconds": 0.3779239959728097,
+    "memoryCaveat": "RSS sum counts shared pages repeatedly; excludes persistent services without DerivedData in arguments."
+  },
+  "capture": {
+    "seconds": 158.561296417,
+    "exitCode": 0,
+    "sampledPeakCompilerAndDriverRSSBytes": 5297307648,
+    "maxObservedProcesses": 24,
+    "samples": 332,
+    "memoryCaveat": "RSS sum counts shared pages repeatedly; excludes persistent services without DerivedData in arguments.",
+    "samplingDelaySeconds": 0.1,
+    "averageSampleIntervalSeconds": 0.47759426631626506
+  },
+  "comparisonCaveat": "Single local pair with warm SDK/package caches. Selection validation overlapped both builds; not a controlled CI speedup measurement.",
+  "cleanBuildCapture": {
+    "frontendJobs": 79,
+    "fragments": 414,
+    "modules": 10,
+    "silBytes": 1404070178,
+    "maxCompilerJobPeakRSSBytes": 2332082176
+  },
+  "objectCodeComparison": {
+    "objects": 417,
+    "differences": []
+  },
+  "graphComparison": {
+    "bindingSeconds": 0.22512400150299072,
+    "capturedFunctions": 124013,
+    "diagnostics": [],
+    "fragments": 414,
+    "missingProjectFunctions": [],
+    "parseSeconds": 51.96626102924347,
+    "referenceFunctions": 124013,
+    "rootParity": true,
+    "selectionSamples": [
+      {
+        "captureCount": 1824,
+        "line": 43,
+        "path": "ChainOfCustody/App/SharingPeopleUITestView.swift",
+        "referenceCount": 1819
+      },
+      {
+        "captureCount": 1,
+        "line": 8,
+        "path": "ChainOfCustodyTests/NoteCommentsTests.swift",
+        "referenceCount": 1
+      },
+      {
+        "captureCount": 1,
+        "line": 6,
+        "path": "ChainOfCustodyUITests/SharingPeopleUITests.swift",
+        "referenceCount": 1
+      }
+    ],
+    "selectionsChecked": 3,
+    "selectionValidationSeconds": 560.2449709177017,
+    "silBytes": 1404070178,
+    "tests": 2000,
+    "differingFunctions": 1029,
+    "selectionDifferences": [
+      {
+        "path": "ChainOfCustody/App/SharingPeopleUITestView.swift",
+        "referenceCount": 1819,
+        "captureCount": 1824,
+        "omitted": 0,
+        "added": [
+          "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCannotDrainUntilFullyStaged()",
+          "ChainOfCustodyTests/DomainTests/cloudEnvironmentHandoffCheckpointSurvivesRelaunch()",
+          "ChainOfCustodyTests/DomainTests/handoffRuntimeResetPreservesAcknowledgementsUntilAccountPurge()",
+          "ChainOfCustodyTests/DomainTests/legacyFullyStagedHandoffRecalculatesOwnerTargets()",
+          "ChainOfCustodyTests/PairingNoteTagMigrationTests/holderCatalogUploadsRemainCompatibleWithOlderCustodians()"
+        ]
+      }
+    ],
+    "fieldDifferenceCounts": {
+      "regions": 15,
+      "module": 8,
+      "dependencies": 829,
+      "dynamicDeclarations": 928,
+      "resolvedDynamicDeclarations": 928,
+      "uncertainties": 928
+    },
+    "sampledPhysicalFootprintMiB": 754.7,
+    "sampledProcessPeakGiB": 2.0,
+    "timingContext": "Release comparison build combines PR13 and PR14. Three source fingerprint edits, each compared with two selector runs; not normal single-selection latency. Peak includes both graphs and JSON serialization."
+  },
+  "fixtureComparison": {
+    "bindingSeconds": 0.002174973487854004,
+    "capturedFunctions": 158,
+    "diagnostics": [],
+    "differingFunctions": [],
+    "fragments": 6,
+    "missingProjectFunctions": [],
+    "parseSeconds": 0.068215012550354,
+    "referenceFunctions": 158,
+    "rootParity": true,
+    "selectionDifferences": [],
+    "selectionSamples": [
+      {
+        "captureCount": 4,
+        "line": 7,
+        "path": "CheckoutUITests/CheckoutUITests.swift",
+        "referenceCount": 4
+      },
+      {
+        "captureCount": 1,
+        "line": 10,
+        "path": "CheckoutUITests/CheckoutUITests.swift",
+        "referenceCount": 1
+      },
+      {
+        "captureCount": 1,
+        "line": 13,
+        "path": "CheckoutUITests/CheckoutUITests.swift",
+        "referenceCount": 1
+      },
+      {
+        "captureCount": 1,
+        "line": 16,
+        "path": "CheckoutUITests/CheckoutUITests.swift",
+        "referenceCount": 1
+      },
+      {
+        "captureCount": 1,
+        "line": 19,
+        "path": "CheckoutUITests/CheckoutUITests.swift",
+        "referenceCount": 1
+      },
+      {
+        "captureCount": 3,
+        "line": 22,
+        "path": "CheckoutUITests/CheckoutUITests.swift",
+        "referenceCount": 3
+      },
+      {
+        "captureCount": 1,
+        "line": 30,
+        "path": "CheckoutUITests/CheckoutUITests.swift",
+        "referenceCount": 1
+      },
+      {
+        "captureCount": 2,
+        "line": 36,
+        "path": "CheckoutUITests/CheckoutUITests.swift",
+        "referenceCount": 2
+      },
+      {
+        "captureCount": 2,
+        "line": 39,
+        "path": "CheckoutUITests/CheckoutUITests.swift",
+        "referenceCount": 2
+      },
+      {
+        "captureCount": 1,
+        "line": 45,
+        "path": "CheckoutUITests/CheckoutUITests.swift",
+        "referenceCount": 1
+      },
+      {
+        "captureCount": 1,
+        "line": 48,
+        "path": "CheckoutUITests/CheckoutUITests.swift",
+        "referenceCount": 1
+      },
+      {
+        "captureCount": 7,
+        "line": 10,
+        "path": "App/App.swift",
+        "referenceCount": 7
+      },
+      {
+        "captureCount": 9,
+        "line": 31,
+        "path": "App/App.swift",
+        "referenceCount": 9
+      },
+      {
+        "captureCount": 9,
+        "line": 38,
+        "path": "App/App.swift",
+        "referenceCount": 9
+      },
+      {
+        "captureCount": 9,
+        "line": 4,
+        "path": "App/Common.swift",
+        "referenceCount": 9
+      },
+      {
+        "captureCount": 2,
+        "line": 4,
+        "path": "App/Notes.swift",
+        "referenceCount": 2
+      },
+      {
+        "captureCount": 7,
+        "line": 4,
+        "path": "App/Sharing.swift",
+        "referenceCount": 7
+      },
+      {
+        "captureCount": 1,
+        "line": 8,
+        "path": "UnitTests/ProductionTests.swift",
+        "referenceCount": 1
+      },
+      {
+        "captureCount": 1,
+        "line": 11,
+        "path": "UnitTests/ProductionTests.swift",
+        "referenceCount": 1
+      }
+    ],
+    "selectionsChecked": 19,
+    "selectionValidationSeconds": 0.0289459228515625,
+    "silBytes": 477992,
+    "tests": 9
+  },
+  "completeness": {
+    "complete": true,
+    "fragments": 414,
+    "modules": 10,
+    "diagnostics": [],
+    "provenanceValidated": false
+  }
+}
