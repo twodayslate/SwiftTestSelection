@@ -47,7 +47,12 @@ let package = Package(name: "LocalCore", platforms: [.iOS(.v16)],
     targets: [.target(name: "LocalCore")])
 ''')
     write('LocalCore/Sources/LocalCore/Value.swift', 'public func packageValue() -> Int { 40 + 2 }\n')
-    write('Shared/ExtensionValue.swift', 'func extensionValue() -> Int { 20 + 2 }\n')
+    write('Shared/ExtensionValue.swift', '''protocol ExtensionValue { func value() -> Int }
+struct ConcreteExtensionValue: ExtensionValue {
+    func value() -> Int { 20 + 2 }
+}
+func extensionValue() -> Int { ConcreteExtensionValue().value() }
+''')
     embed = phase('PBXCopyFilesBuildPhase', dstPath='', dstSubfolderSpec=13, name='Embed App Extensions')
     existing(0xD)['buildPhases'].append(embed)
     for name, point in [('ShareExtension', 'com.apple.share-services'), ('ActionExtension', 'com.apple.ui-services')]:

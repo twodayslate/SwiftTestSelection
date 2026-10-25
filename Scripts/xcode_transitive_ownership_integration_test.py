@@ -61,6 +61,8 @@ try:
             assert module + ':' + path in graph['sources'], (module, graph['sources'].keys())
         for module in ['ShareExtension', 'ActionExtension', 'UnitTests']:
             assert module + ':Shared/ExtensionValue.swift' in graph['sources']
+            assert any(node['module'] == module and 'protocol witness for ExtensionValue.value()' in node['name']
+                       for node in graph['dependencies']['functions'].values()), (module, 'missing protocol witness')
         assert not any(t['name'] == 'Unclassified build inputs' for t in graph['targets']), graph['targets']
 
     # Retain both graphs, proving both revisions have semantic snapshots. This

@@ -34,34 +34,70 @@ enum SILOwnership {
         let contexts: Set<String> = ["Global", "Static", "Function", "Variable", "Subscript",
             "Getter", "Setter", "ReadAccessor", "ModifyAccessor", "Allocator", "Constructor",
             "Destructor", "Deallocator", "DefaultArgumentInitializer", "ExplicitClosure", "ImplicitClosure", "Structure", "Class", "Enum", "Protocol", "Extension"]
-        var owners: [String: String] = [:]
-        var symbol: String?, depth = 0
-        for line in output.components(separatedBy: .newlines) {
-            if line.hasPrefix("Demangling for ") {
-                symbol = String(line.dropFirst("Demangling for ".count)); depth = 0
-                continue
+        struct Node {
+            var depth: Int
+            var value: String
+
+            var module: String? {
+                guard value.hasPrefix("kind=Module, text=") else { return nil }
+                let quoted = String(value.dropFirst("kind=Module, text=".count))
+                guard let data = quoted.data(using: .utf8),
+                      let owner = try? JSONDecoder().decode(String.self, from: data), !owner.isEmpty else { return nil }
+                return owner
             }
-            guard let current = symbol else { continue }
-            let indent = line.prefix { $0 == " " }.count
-            let node = String(line.dropFirst(indent))
-            guard indent == depth * 2, node.hasPrefix("kind="),
-                  depth != 0 || node == "kind=Global" else { symbol = nil; continue }
-            // Dynamic dispatch is an attribute preceding the declaration under
-            // Global, not its context. Do not search arbitrary sibling subtrees.
-            if depth == 1 && node == "kind=DynamicAttribute" { continue }
-            if node.hasPrefix("kind=Module, text=") {
-                // The demangler prints quoted strings; reject unknown encodings.
-                let quoted = String(node.dropFirst("kind=Module, text=".count))
-                if let data = quoted.data(using: .utf8), let owner = try? JSONDecoder().decode(String.self, from: data), !owner.isEmpty {
-                    owners[current] = owner
+        }
+        func owner(_ nodes: [Node]) -> String? {
+            guard nodes.first?.value == "kind=Global" else { return nil }
+            var index = 0, depth = 0
+            while index < nodes.count {
+                let node = nodes[index]
+                guard node.depth == depth else { return nil }
+                // Dynamic dispatch is an attribute preceding the declaration.
+                if depth == 1 && node.value == "kind=DynamicAttribute" { index += 1; continue }
+                if let module = node.module { return module }
+                if node.value == "kind=ProtocolWitness" {
+                    index += 1
+                    guard index < nodes.count, nodes[index].depth == depth + 1,
+                          nodes[index].value == "kind=ProtocolConformance" else { return nil }
+                    // The conformance's direct Module child owns the witness.
+                    // Its type and protocol children can refer to other modules,
+                    // particularly for retroactive conformances.
+                    let conformanceDepth = nodes[index].depth
+                    var modules: [Node] = []
+                    for child in nodes.dropFirst(index + 1) {
+                        if child.depth <= conformanceDepth { break }
+                        if child.depth == conformanceDepth + 1 && child.value.hasPrefix("kind=Module") {
+                            modules.append(child)
+                        }
+                    }
+                    return modules.count == 1 ? modules[0].module : nil
                 }
-                symbol = nil
-            } else if contexts.contains(String(node.dropFirst("kind=".count))) {
                 // Follow only the declaration's first-child context. A module
                 // found in parameter/result types is not its defining module.
-                depth += 1
-            } else { symbol = nil }
+                guard contexts.contains(String(node.value.dropFirst("kind=".count))) else { return nil }
+                index += 1; depth += 1
+            }
+            return nil
         }
+        var owners: [String: String] = [:]
+        var symbol: String?, nodes: [Node] = []
+        func finish() {
+            if let symbol, let module = owner(nodes) { owners[symbol] = module }
+        }
+        for line in output.components(separatedBy: .newlines) {
+            if line.hasPrefix("Demangling for ") {
+                finish()
+                symbol = String(line.dropFirst("Demangling for ".count))
+                nodes.removeAll(keepingCapacity: true)
+                continue
+            }
+            guard symbol != nil, !line.isEmpty else { continue }
+            let indent = line.prefix { $0 == " " }.count
+            let value = String(line.dropFirst(indent))
+            guard indent.isMultiple(of: 2), value.hasPrefix("kind=") else { symbol = nil; continue }
+            nodes.append(Node(depth: indent / 2, value: value))
+        }
+        finish()
         return owners
     }
 }
