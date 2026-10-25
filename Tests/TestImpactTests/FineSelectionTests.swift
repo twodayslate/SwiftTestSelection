@@ -510,3 +510,33 @@ func importedSDKHelperWithoutLocationsPreservesUIRuntimePolicy(policy: UIFeature
         }
     }
 }
+
+@Test func compilerOnlyOwnershipDoesNotEnableUIRuntimeExemptions() {
+    var old = declaredRuntimeModel()
+    var current = declaredRuntimeModel(app: appSource.replacingOccurrences(of: "sharing() -> Int { common() }", with: "sharing() -> Int { common() + 1 }"))
+    for index in old.targets.indices where old.targets[index].name == "App" {
+        old.targets[index].productType = XcodeSourceOwnership.productType
+        current.targets[index].productType = XcodeSourceOwnership.productType
+    }
+    let report = selection(current, old, paths: ["App/Features.swift"])
+    #expect(Set(report.selectedTests) == Set(old.tests))
+    #expect(!report.diagnostics.contains { $0.code == "unclassified_change" })
+    #expect(report.diagnostics.contains { $0.code == "unresolved_dependency" || $0.code == "unresolved_feature_dependency" })
+}
+
+@Test func unsupportedCompilerInputsFallBackForModuleChangesButPreserveUnrelatedEntryEdits() throws {
+    var old = model()
+    old.unsupportedSourceInputs = ["App": ["<DerivedData>/Generated.swift"]]
+    var current = model(app: appSource.replacingOccurrences(of: "42", with: "43"))
+    current.unsupportedSourceInputs = old.unsupportedSourceInputs
+    let report = selection(current, old, paths: ["App/Features.swift"])
+    #expect(report.selectedTests == old.tests)
+    #expect(report.diagnostics.contains { $0.code == "unsupported_source_ownership" })
+    #expect(!report.diagnostics.contains { $0.code == "unclassified_change" })
+    var testOnly = model(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)"))
+    testOnly.unsupportedSourceInputs = old.unsupportedSourceInputs
+    let precise = selection(testOnly, old)
+    #expect(precise.selectedTests == ["UI/Sharing/testIndependent()"])
+    #expect(precise.diagnostics.isEmpty)
+    #expect(try GraphArchive.decode(GraphArchive.encode(old)).unsupportedSourceInputs == old.unsupportedSourceInputs)
+}

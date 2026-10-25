@@ -31,6 +31,10 @@ public struct XcodeTestGraph: Codable, Sendable {
     public var diagnostics: [String]
     public var dependencies: DependencyGraph?
     public var sources: [String: SwiftSourceSnapshot] = [:]
+    /// Compiler-owned modules with generated/external inputs outside repository
+    /// semantic snapshots. Module edits remain conservative without invalidating
+    /// independently resolved test-entry edits in other modules.
+    public var unsupportedSourceInputs: [String: [String]]? = nil
     public var modules: [String: String] = [:]
     public var mappings: UIFeatureMappings?
     public var runtimeInventory: XcodeRuntimeInventory? = nil

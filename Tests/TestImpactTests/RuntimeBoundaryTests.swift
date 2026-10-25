@@ -214,3 +214,13 @@ func runtimeInventoryScopesUnsupportedUnitTargets(failure: String) throws {
         }
     }
 }
+
+@Test func compilerOnlyOwnershipDoesNotEnableNonUIRuntimeExemptions() {
+    var old = boundaryFixture()
+    old.targets[0].productType = XcodeSourceOwnership.productType
+    let report = XcodeFineSelector.select(current: labelEdit(old), previous: old,
+        changes: [.init(path: "App.swift")], baseRevision: "base")
+    #expect(Set(report.selectedTests) == Set(old.tests))
+    #expect(!report.diagnostics.contains { $0.code == "unclassified_change" })
+    #expect(report.runtimeBoundaryDecisions?.isEmpty ?? true)
+}

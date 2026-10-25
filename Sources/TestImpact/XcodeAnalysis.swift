@@ -166,9 +166,10 @@ public struct XcodeAnalysis {
         var targets: [XcodeTarget] = []
         var diagnostics: [String] = []
         var classifiedLists = Set<URL>()
+        var listOwners: [URL: Set<String>] = [:]
+        var unsupportedInputs: [String: [String]] = [:]
         var modules: [String: String] = [:]
         var sources: [String: SwiftSourceSnapshot] = [:]
-        var sourceJobs: [(String, String)] = []
         func isActiveList(_ file: URL) -> Bool {
             activeCompilerInputs?.contains(file.standardizedFileURL.resolvingSymlinksInPath().path) ?? true
         }
@@ -190,7 +191,9 @@ public struct XcodeAnalysis {
             if let temporaryPath = entry.buildSettings["TARGET_TEMP_DIR"],
                let enumerator = FileManager.default.enumerator(at: URL(fileURLWithPath: temporaryPath), includingPropertiesForKeys: nil) {
                 for case let file as URL in enumerator where file.pathExtension == "SwiftFileList" && isActiveList(file) {
-                    classifiedLists.insert(file.standardizedFileURL.resolvingSymlinksInPath())
+                    let resolvedList = file.standardizedFileURL.resolvingSymlinksInPath()
+                    classifiedLists.insert(resolvedList)
+                    listOwners[resolvedList, default: []].insert(name)
                     paths.formUnion(try sourcePaths(in: file, sourceDirectory: URL(fileURLWithPath: entry.buildSettings["SRCROOT"] ?? directory.path, isDirectory: true)))
                 }
             }
@@ -201,15 +204,20 @@ public struct XcodeAnalysis {
             targets.append(target)
             if let module = entry.buildSettings["PRODUCT_MODULE_NAME"] {
                 modules[name] = module
-                sourceJobs += paths.sorted().map { (module, $0) }
             }
+        }
+        XcodeSourceOwnership.recover(log: log, sourceRoot: sourceRoot, derived: derived, activeInputs: activeCompilerInputs,
+            targets: &targets, modules: &modules, listOwners: listOwners, unsupportedInputs: &unsupportedInputs, classifiedLists: &classifiedLists, diagnostics: &diagnostics)
+        let sourceJobs = targets.flatMap { target -> [(String, String)] in
+            guard let module = modules[target.name] else { return [] }
+            return target.sourceFiles.sorted().map { (module, $0) }
         }
         for (key, snapshot) in try BoundedWork.map(sourceJobs, workers: configuration.extractionWorkers, { module, path in
             let text = try String(contentsOf: sourceRoot.appendingPathComponent(path), encoding: .utf8)
             return (module + ":" + path, SwiftSourceSnapshot.parse(text, path: path, module: module))
         }) { sources[key] = snapshot }
-        // Scheme settings may omit transitive build targets. Preserve their
-        // inputs as unclassified ownership, especially files shared with tests.
+        // Preserve active lists that neither settings nor compiler invocations
+        // could classify, especially files shared with tests.
         // Otherwise a production dependency could look like test-only source.
         var unclassifiedSources = Set<String>()
         if let enumerator = FileManager.default.enumerator(at: derived, includingPropertiesForKeys: nil) {
@@ -263,6 +271,7 @@ public struct XcodeAnalysis {
         var result = XcodeTestGraph(targets: targets, tests: tests, diagnostics: Array(Set(diagnostics)).sorted())
         result.dependencies = dependencies
         result.modules = modules
+        result.unsupportedSourceInputs = unsupportedInputs
         result.sources = sources
         result.runtimeInventory = XcodeRuntimeInventory.capture(log: log, settings: settings)
         let mappingURL = try UIFeatureMappings.fileURL(path: configuration.mappingsPath, root: sourceRoot)

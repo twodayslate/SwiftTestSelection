@@ -136,6 +136,12 @@ public enum XcodeFineSelector {
         }
         for (revision, optionalGraph, units) in [("base", previous, oldChanged), ("head", Optional(current), newChanged)] {
             guard let snapshot = optionalGraph, let graph = snapshot.dependencies else { continue }
+            let changedModules = Set(units.map { String($0.key.prefix { $0 != ":" }) })
+            for module in changedModules.sorted() {
+                if let inputs = snapshot.unsupportedSourceInputs?[module], !inputs.isEmpty {
+                    fallback("unsupported_source_ownership", "Changed module \(module) also compiles inputs without a repository semantic boundary: " + inputs.joined(separator: ", "))
+                }
+            }
             let index = DependencyIndex(graph)
             var affected = Set<String>()
             var productionUnits: [SourceUnit] = []
@@ -377,14 +383,14 @@ public enum XcodeFineSelector {
 
     private static func isProductionOrTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
         let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
-        return (!owners.isEmpty && owners.allSatisfy { !$0.isTest }) || isTestEntry(unit, in: snapshot)
+        return (!owners.isEmpty && owners.allSatisfy { !$0.isTest && $0.productType != XcodeSourceOwnership.productType }) || isTestEntry(unit, in: snapshot)
     }
 
     private static func isProduction(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
         let module = String(unit.key.prefix { $0 != ":" })
         let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
         return snapshot.runtimeInventory?.imports[module] != nil && !owners.isEmpty &&
-            owners.allSatisfy { !$0.isTest && snapshot.modules[$0.name] == module }
+            owners.allSatisfy { !$0.isTest && $0.productType != XcodeSourceOwnership.productType && snapshot.modules[$0.name] == module }
     }
 
     private static func isTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
