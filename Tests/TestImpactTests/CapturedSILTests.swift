@@ -115,3 +115,24 @@ import Testing
     #expect(throws: ImpactError.self) { try ArtifactFiles.sourceInputs(log: log, directory: root) }
     #expect(throws: ImpactError.self) { try ArtifactFiles.sourceInputs(log: "", directory: root) }
 }
+
+@Test func mappingFingerprintTracksExistenceContentsAndResolvedPath() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("GeneratedMappings.json")
+    let missing = try ArtifactFiles.mappingInputs(path: file.lastPathComponent, root: root)
+    try Data(#"{"version":1,"features":[]}"#.utf8).write(to: file)
+    let first = try ArtifactFiles.mappingInputs(path: file.lastPathComponent, root: root)
+    #expect(first != missing)
+    try Data("invalid JSON".utf8).write(to: file)
+    #expect(try ArtifactFiles.mappingInputs(path: file.lastPathComponent, root: root) != first)
+    try FileManager.default.removeItem(at: file)
+    #expect(try ArtifactFiles.mappingInputs(path: file.lastPathComponent, root: root) == missing)
+    let target = root.appendingPathComponent("Target.json")
+    try Data(#"{"version":1,"features":[]}"#.utf8).write(to: target)
+    try FileManager.default.createSymbolicLink(at: file, withDestinationURL: target)
+    #expect(try ArtifactFiles.mappingInputs(path: file.lastPathComponent, root: root) != first)
+    #expect(throws: ImpactError.self) { try ArtifactFiles.mappingInputs(path: "../outside.json", root: root) }
+    #expect(throws: ImpactError.self) { try ArtifactFiles.mappingInputs(path: file.path, root: root) }
+}

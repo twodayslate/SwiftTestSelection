@@ -59,8 +59,10 @@ with tempfile.TemporaryDirectory(prefix='impact-discovery-') as temporary:
               '--derived-data', derived, '--build-log', log, '--build-settings', settings,
               '--revision', 'HEAD', '--format', 'json']
 
-    def graph(runner, cached=True):
+    def graph(runner, cached=True, mappings=None):
         command = [*common, '--xctestrun', runner]
+        if mappings is not None:
+            command += ['--mappings', mappings]
         if cached:
             command += ['--discovery-cache', root / 'cache', '--discovery-context', 'fixture']
         result = run(command)
@@ -95,6 +97,26 @@ with tempfile.TemporaryDirectory(prefix='impact-discovery-') as temporary:
     warm, messages = graph(original)
     assert warm['tests'] == full['tests'] and 'Discovery cache hit:' in messages
     print('PASS stale inactive source list does not block analysis or invalidate discovery', flush=True)
+    # Gitignored/generated policy remains a first-class analysis input.
+    mapping_name = 'GeneratedMappings.json'
+    with (source / '.git/info/exclude').open('a') as exclude:
+        exclude.write('\n' + mapping_name + '\n')
+    mapping = source / mapping_name
+    absent, _ = graph(original, mappings=mapping_name)
+    assert absent.get('mappings') is None
+    for selector in ['CheckoutUITests/SharingUITests', 'CheckoutUITests/NotesUITests']:
+        policy = dict(version=1, features=[dict(name='sharing', sources=['App/Sharing.swift'], tests=[selector])])
+        mapping.write_text(json.dumps(policy))
+        assert not run(['git', 'status', '--porcelain', '--untracked-files=all']).stdout
+        changed, messages = graph(original, mappings=mapping_name)
+        assert changed['mappings'] == policy and 'Discovery cache hit:' not in messages
+        warm, messages = graph(original, mappings=mapping_name)
+        assert warm['mappings'] == policy and 'Discovery cache hit:' in messages
+    mapping.unlink()
+    removed, _ = graph(original, mappings=mapping_name)
+    assert removed.get('mappings') is None
+    print('PASS mapping creation, edits, and removal never reuse stale policy', flush=True)
+
     # Missing active inputs must still fail, even on a warm cache.
     active = source / 'UnitTests/ProductionTests.swift'
     saved = active.read_bytes()

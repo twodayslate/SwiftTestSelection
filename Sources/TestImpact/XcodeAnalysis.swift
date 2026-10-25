@@ -264,11 +264,7 @@ public struct XcodeAnalysis {
         result.dependencies = dependencies
         result.modules = modules
         result.sources = sources
-        guard !configuration.mappingsPath.hasPrefix("/") else { throw ImpactError("--mappings must be repository-relative.") }
-        let mappingURL = sourceRoot.appendingPathComponent(configuration.mappingsPath).standardizedFileURL.resolvingSymlinksInPath()
-        guard mappingURL.path.hasPrefix(sourceRoot.standardizedFileURL.resolvingSymlinksInPath().path + "/") else {
-            throw ImpactError("Mapping file must be inside the repository.")
-        }
+        let mappingURL = try UIFeatureMappings.fileURL(path: configuration.mappingsPath, root: sourceRoot)
         if FileManager.default.fileExists(atPath: mappingURL.path) {
             do {
                 result.mappings = try JSONDecoder().decode(UIFeatureMappings.self, from: Data(contentsOf: mappingURL))

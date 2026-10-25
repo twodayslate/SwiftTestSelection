@@ -313,8 +313,10 @@ checks primary-file coverage for each module. Fresh complete captures skip repla
 missing or unsupported modules explicitly replay. Previous fragments are reused
 only when the full source tree, settings, compiler, command and external context
 match. A source edit may therefore replay unchanged modules: partial capture is
-never accepted as proof that omitted code has no impact. Changing build settings
-or toolchains may require a new session and clean build.
+never accepted as proof that omitted code has no impact. New or incompatible
+sessions require fresh DerivedData to establish a complete compiler inventory. Compatible incremental builds ignore source lists belonging
+to inactive configurations or removed targets; changing toolchains also requires
+a new session.
 
 The wrapper seals the revision, log, settings, source fingerprints, SIL checksums
 and exact product hashes after a successful build. Failed builds invalidate the
@@ -350,7 +352,8 @@ Existing-build graph capture also accepts:
 This reuses the **inventory and entire bound analysis**, saving enumeration,
 parsing and binding when the products, source revision and compiler source inputs,
 selected `.xctestrun`, log, settings, destination, plan, toolchain, simulator runtime,
-analyzer and capture seal match exactly. Source fingerprints follow the supplied
+analyzer, mapping-file contents/existence, and capture seal match exactly. This
+includes gitignored or generated mapping files. Source fingerprints follow the supplied
 build log’s compiler invocations; stale source lists from inactive configurations
 in DerivedData are ignored, while missing active inputs remain errors. A changed or new test, changed products or discovery context
 misses the cache. The context must cover external data and runner initialization
@@ -491,7 +494,19 @@ python3 Scripts/xcode_discovery_cache_integration_test.py \
 
 This builds the fixture, checks that different `.xctestrun` files retain their own
 test inventories, verifies warm-cache reuse, and checks that inactive source lists
-do not alter source ownership or block analysis.
+do not alter source ownership or block analysis. It also verifies cache invalidation
+when a gitignored mapping file is created, changed, or removed.
+
+Incremental capture and its completeness checks have a separate regression:
+
+```sh
+python3 Scripts/xcode_capture_session_integration_test.py \
+  --tool .build/release/swift-test-impact \
+  --destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
+
+It checks sealed incremental capture with stale inactive lists, rejection of a new
+session against existing build products, and seal invalidation after a failed build.
 
 The SIL parser also has an optimized large-input regression benchmark:
 

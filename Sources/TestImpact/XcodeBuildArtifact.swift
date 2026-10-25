@@ -71,6 +71,7 @@ extension XcodeAnalysis {
         let fingerprints = try ArtifactFiles.manifest(at: products, workers: options.extractionWorkers)
         let toolchain = try ArtifactFiles.toolchain(at: root)
         let sourceInputs = try ArtifactFiles.sourceInputs(log: log, directory: options.path.deletingLastPathComponent())
+        let mappingInputs = try ArtifactFiles.mappingInputs(path: options.mappingsPath, root: root)
         let cache = try inputs.discoveryCache.map { try XcodeGraphCache($0, progress: progress) }
         try cache?.resetWork()
         defer { if let cache { try? FileManager.default.removeItem(at: cache.work) } }
@@ -82,6 +83,7 @@ extension XcodeAnalysis {
         // Products can contain several runners with different enabled tests.
         identity["xctestrun"] = inputs.xctestrun.lastPathComponent
         identity["sourceInputs"] = try XcodeGraphCache.key(sourceInputs)
+        identity["mappingInputs"] = try XcodeGraphCache.key(mappingInputs)
         identity["products"] = try XcodeGraphCache.key(fingerprints)
         identity["settings"] = settingsDigest
         identity["log"] = logDigest
@@ -110,6 +112,9 @@ extension XcodeAnalysis {
             throw ImpactError("Test products changed during capture; build and capture again without concurrent builds.")
         }
         guard try sourceInputs == ArtifactFiles.sourceInputs(log: log, directory: options.path.deletingLastPathComponent()) else { throw ImpactError("Compiler source inputs changed during capture") }
+        guard try mappingInputs == ArtifactFiles.mappingInputs(path: options.mappingsPath, root: root) else {
+            throw ImpactError("UI mappings changed during capture; retry with stable inputs")
+        }
         try captured?.validateFiles()
         if cached == nil { try cache?.store(graph, identity: identity) }
         var context = try artifactContext(root: root)
@@ -271,6 +276,11 @@ enum ArtifactFiles {
         for (path, hash) in try BoundedWork.map(regularFiles, workers: workers, { ($0.0, try digest($0.1)) }) { result[path] = hash }
         guard !result.isEmpty else { throw ImpactError("Test products directory is empty.") }
         return result
+    }
+
+    static func mappingInputs(path: String, root: URL) throws -> [String: String] {
+        let file = try UIFeatureMappings.fileURL(path: path, root: root)
+        return ["path": file.path, "contents": FileManager.default.fileExists(atPath: file.path) ? try digest(file) : "missing"]
     }
 
     /// Fingerprint only inputs referenced by this build's compiler commands.

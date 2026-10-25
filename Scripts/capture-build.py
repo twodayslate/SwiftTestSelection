@@ -70,6 +70,9 @@ def run(args):
 
 
 def build(args, session):
+    # Record this before showBuildSettings can create build metadata. A first
+    # partial build cannot establish a complete inventory from its log alone.
+    had_build = (args.derived_data.resolve() / 'Build').exists()
     container = (args.project or args.workspace).resolve()
     root = Path(output(['git', 'rev-parse', '--show-toplevel'], cwd=container.parent).strip()).resolve()
     if session.is_relative_to(root): raise ValueError('Keep the session outside the source checkout')
@@ -100,12 +103,15 @@ def build(args, session):
     command += ['OTHER_SWIFT_FLAGS=$(inherited) ' + ' '.join(shlex.quote(v) for v in setup['additionalSwiftFlags'])]
     settings_path = session / 'settings.json'
     settings = subprocess.check_output(command + ['-showBuildSettings', '-json'], cwd=root, env=env)
-    settings_path.write_bytes(settings)
     identity = dict(tree=tree, context=args.context, toolchain=toolchain, settings=hashlib.sha256(settings).hexdigest(), command=command)
     seal_path = session / 'build.json'
     previous = json.loads(seal_path.read_text()) if seal_path.exists() else {}
+    compatible = previous.get('root') == str(root) and all(previous.get('inputIdentity', {}).get(k) == identity[k] for k in ['toolchain', 'settings', 'command', 'context'])
+    if had_build and not compatible:
+        raise ValueError('No compatible complete compiler inventory; use fresh DerivedData for a new or incompatible session')
     # Invalidate the old seal before the first build mutation, including failures.
     seal_path.unlink(missing_ok=True)
+    settings_path.write_bytes(settings)
     log_path = session / 'build.log'
     with log_path.open('wb') as log:
         result = subprocess.run(command, cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -118,7 +124,6 @@ def build(args, session):
     drivers = driver_inventory(log)
     # Xcode's no-op/partial build omits unchanged SwiftDriver jobs. Carry forward
     # invocations only under the same compiler, settings, root and build command.
-    compatible = previous.get('root') == str(root) and all(previous.get('inputIdentity', {}).get(k) == identity[k] for k in ['toolchain', 'settings', 'command', 'context'])
     if compatible:
         for module, invocation in previous.get('drivers', {}).items():
             if module not in drivers:
@@ -128,15 +133,14 @@ def build(args, session):
     for module, invocation in drivers.items():
         sources = []
         for arg in invocation:
-            if arg.startswith('@'): sources += shlex.split(Path(arg[1:]).read_text())
+            if arg.startswith('@'): sources += shlex.split((root / arg[1:]).read_text())
             elif arg.endswith('.swift'): sources.append(arg)
-        inventory[module] = sorted({str(Path(p).resolve()) for p in sources if p.endswith('.swift')})
+        inventory[module] = sorted({str((root / p).resolve(strict=True)) for p in sources if p.endswith('.swift')})
         if not inventory[module]: raise ValueError('Empty module inventory: ' + module)
-    # Require all on-disk compiler source inventories, including transitive modules.
-    known = set().union(*(set(v) for v in inventory.values())) if inventory else set()
-    for filelist in args.derived_data.rglob('*.SwiftFileList'):
-        files = {str(Path(p).resolve()) for p in shlex.split(filelist.read_text()) if p.endswith('.swift')}
-        if not files.issubset(known): raise ValueError('Incomplete compiler inventory; clean build needed: ' + str(filelist))
+    # The first build starts with fresh DerivedData; subsequent builds merge
+    # compatible retained invocations with the current log. Unrelated on-disk
+    # lists from inactive configurations or deleted targets are not evidence of
+    # active inputs and must not invalidate this inventory.
     if not inventory: raise ValueError('No compiler inventory; use a clean build for the first session')
     log_path.write_text(log)
     chosen = set(capture.glob('*/manifest.json')) - before
