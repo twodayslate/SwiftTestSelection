@@ -32,7 +32,7 @@ enum RetainedXcodeBuild {
     }
 
     static func publish(graph: inout XcodeTestGraph, revision: String, context: [String: String], toolchain: String,
-                        workspace: URL, settings: Data, log: String, inputIdentity: [String: String]) throws -> URL {
+                        workspace: URL, settings: Data, inputIdentity: [String: String]) throws -> URL {
         let products = workspace.appendingPathComponent("DerivedData/Build/Products")
         let runs = try FileManager.default.contentsOfDirectory(at: products, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "xctestrun" }
@@ -41,7 +41,6 @@ enum RetainedXcodeBuild {
         let settingsFile = workspace.appendingPathComponent("build-settings.json")
         let logFile = workspace.appendingPathComponent("build.log")
         try settings.write(to: settingsFile, options: .atomic)
-        try Data(log.utf8).write(to: logFile, options: .atomic)
         var context = context
         let decoded = try JSONDecoder().decode([XcodeBuildSettings].self, from: settings)
         context["sdkAndArchitecture"] = Set(decoded.map { entry in

@@ -299,8 +299,13 @@ extension XcodeAnalysis {
             events.append(.init(phase: "cache", revision: revision, seconds: 0, detail: found == nil ? "miss: incompatible or absent entry; fresh build required" : "hit: no build, enumeration or extraction"))
             if let found, !keepBuild { return found }
             if found != nil { progress("Reusing head analysis; building its executable products once for retention.") }
+            let buildLog = keepBuild ? workspace.appendingPathComponent("build.log") : nil
+            if let buildLog {
+                try settings.write(to: workspace.appendingPathComponent("build-settings.json"), options: .atomic)
+                progress("Full build log (retained on failure): \(buildLog.path)")
+            }
             let build = try timed("build", revision: revision) {
-                try CommandRunner.run("xcodebuild", args, at: options.path.deletingLastPathComponent())
+                try CommandRunner.run("xcodebuild", args, at: options.path.deletingLastPathComponent(), combinedLog: buildLog)
             }
             var measured = self
             measured.measurement = { phase, seconds in
@@ -315,7 +320,7 @@ extension XcodeAnalysis {
             if keepBuild {
                 retainedGraphPath = try timed("retainBuild", revision: revision) {
                     try RetainedXcodeBuild.publish(graph: &result, revision: revision, context: context,
-                        toolchain: toolchain, workspace: workspace, settings: settings, log: build.text,
+                        toolchain: toolchain, workspace: workspace, settings: settings,
                         inputIdentity: identity)
                 }.path
             }

@@ -23,8 +23,9 @@ import Testing
     var graph = XcodeTestGraph(targets: [], tests: ["UI/Suite/testOne()"])
     graph.dependencies = DependencyGraph()
     let settings = Data(#"[{"buildSettings":{"CONFIGURATION":"Debug","SDK_NAME":"sdk","PLATFORM_NAME":"simulator","ARCHS":"arm64"}}]"#.utf8)
+    try Data("build".utf8).write(to: bundle.appendingPathComponent("build.log"))
     let graphFile = try RetainedXcodeBuild.publish(graph: &graph, revision: "head", context: ["testPlan": "All"], toolchain: "swift",
-        workspace: bundle, settings: settings, log: "build", inputIdentity: ["revision": "head", "dependencyLock": "pin"])
+        workspace: bundle, settings: settings, inputIdentity: ["revision": "head", "dependencyLock": "pin"])
     let loaded = try RetainedXcodeBuild.load(from: graphFile)
     #expect(loaded.buildArtifact?.revision == "head")
     #expect(loaded.buildArtifact?.products["Test.xctest"] != nil)
