@@ -7,7 +7,11 @@ fixes a related safety gap: canonical SIL retains arbitrary generic parameter
 names, not only `T`, `U`, `V`, or `Self`. A generic `Element` must not be resolved
 as an unrelated concrete type named `Element`.
 
-The parser reads generic parameters from each SIL function signature and keeps
+The parser reads balanced generic declarations from the function-type prefix,
+stopping before parameter and result types. Nested constraints such as
+`Element.Element == Array<Int>` retain the generic `Element`; a concrete
+`Array<ComparisonResult>` parameter does not declare a generic parameter. Unknown
+signature syntax retains an explicit unresolved-dispatch diagnostic. It keeps
 those receivers, including their associated types, conservative. It retains the
 broad witness candidate set and explicit dynamic-dispatch uncertainty when no
 concrete receiver is established. It does not perform interprocedural generic
@@ -17,7 +21,8 @@ specialization or remove unknown edges to improve selected-test counts.
 
 `Fixtures/BuildTimeDispatch` contains `UIApplication.State` equality, three
 unrelated Equatable types, a generic parameter that shadows the concrete
-`Element`, and an associated-type equality. The test produces canonical SIL as
+`Element`, an associated-type equality, a nested collection constraint, and concrete
+equality inside an array parameter. The test produces canonical SIL as
 an additional output of object compilation and separately replays whole-module
 `-emit-sil`, with `-Onone -g` in both cases. No test bodies are executed.
 
@@ -61,14 +66,14 @@ production validation rule was relaxed for this experiment.
 
 ## Results and intentional differences
 
-The release suite passed all 121 tests. The new compiler fixture passed with both
+The release suite passed all 122 tests. The new compiler fixture passed with both
 Xcode 26.6 / Swift 6.3.3 and Xcode 27 / Swift 6.4. The existing object-capture
 regression also passed on Xcode 26.6 with identical object machine code and the
 expected executable result.
 
 Both large graphs contain 124,013 functions and identical roots for 2,000 tests;
 no source-bearing reference function is missing. Source-bearing differences are:
-834 dependency sets, 1,005 dispatch/resolution sets, 928 uncertainty sets,
+834 dependency sets, 1,008 dispatch/resolution sets, 928 uncertainty sets,
 14 region sets, and 13 owning-module values (1,060 functions total; categories
 overlap). Names all match. These graphs are not byte-for-byte or semantically
 identical, and this sample does not certify every differing function.
@@ -92,7 +97,7 @@ identical, and this sample does not certify every differing function.
 
 | Simulated edit | Replay | Capture | Identifier comparison |
 | --- | ---: | ---: | --- |
-| `SharingPeopleUITestView.swift:43` | 1,868 | 1,873 | Five added, none omitted |
+| `SharingPeopleUITestView.swift:43` | 1,885 | 1,890 | Five added, none omitted |
 | `NoteCommentsTests.swift:8` | 1 | 1 | Exact match |
 | `SharingPeopleUITests.swift:6` | 1 | 1 | Exact match |
 
@@ -108,12 +113,17 @@ These are conservative static-state fallbacks, not the unrelated concrete
 Equatable edges reported for the app initializer. All identifiers and inspected
 paths are preserved in [the result summary](CaptureDispatch.json).
 
-The capture parse/hash checks took 53.04 seconds, binding 0.20 seconds, and the six
-selection comparisons 22.30 seconds in this local release run. These exclude the
-293.76-second initial replay/comparison attempt, which saved the replay graph and
-then rejected an empty archived fragment. They are not an end-to-end capture or
-CI benchmark. The earlier investigation used a different selector/parser, so its
-1,819/1,824 counts must not be treated as a direct before/after performance claim.
+The corrected parser also exposes missing concrete witness tables that the former
+regex masked by treating types such as `UUID` and `Date` inside containers as
+generic parameters. The existing resolver now retains explicit missing-table
+uncertainty for those calls. Both production-edit totals are 17 higher than the
+previous review snapshot; this fix does not claim a reduction in suite size.
+
+The capture parse/hash checks took 58.18 seconds, binding 0.25 seconds, and the six
+selection comparisons 33.21 seconds. The complete saved-input comparison, including
+fresh compiler replay, took 395.27 seconds in this local release run. These are not
+end-to-end capture/build or CI performance measurements. Earlier investigation
+counts used different parser/selector versions and are not a speedup baseline.
 
 The known concrete-dispatch regression and the named-generic safety gap are
 covered. Remaining conservative generic/global-state behavior is deliberate,
