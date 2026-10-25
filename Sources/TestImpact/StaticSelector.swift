@@ -106,7 +106,8 @@ public enum StaticSelector {
 
             if !changes.isEmpty {
                 let uncertain = Set(graph.functions.values.filter {
-                    !$0.regions.isEmpty && !$0.uncertainties.isEmpty
+                    (!$0.regions.isEmpty && !$0.uncertainties.isEmpty) ||
+                    $0.uncertainties.contains { $0.hasPrefix("Imported conformance:") }
                 }.map(\.id))
                 for test in allTests.sorted() {
                     if let path = graph.dependencyPath(from: graph.tests[test] ?? [], to: uncertain) {

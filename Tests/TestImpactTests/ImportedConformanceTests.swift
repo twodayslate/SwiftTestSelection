@@ -96,4 +96,8 @@ func importedConformanceOwnershipAloneDoesNotExcludeProjectBehavior(type: String
     let report = XcodeFineSelector.select(current: head, previous: old, changes: [.init(path: path)], baseRevision: "base")
     #expect(report.selectedTests == old.tests)
     #expect(report.diagnostics.contains { $0.code == "unresolved_dependency" && $0.message.contains("Imported conformance:") })
+    let packageReport = StaticSelector.select(current: head.dependencies!, previous: old.dependencies!, changes: [.init(path: path)], baseRevision: "base")
+    #expect(packageReport.selectedTests == old.tests)
+    #expect(packageReport.fullRunReasons.isEmpty)
+    #expect(packageReport.explanations.contains { $0.reason.hasPrefix("Conservative selection: Imported conformance:") })
 }
