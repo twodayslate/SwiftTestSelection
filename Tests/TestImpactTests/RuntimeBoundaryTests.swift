@@ -137,7 +137,10 @@ func invalidBoundaryCannotSuppressFallback(failure: String) {
     #expect(missing.unavailableModules?["Core"]?.contains("Missing") == true)
     var badHost = settings
     badHost[2].buildSettings["TEST_HOST"] = "/unresolved/App"
-    #expect(!XcodeRuntimeInventory.capture(log: log, settings: badHost).diagnostics.isEmpty)
+    let badHostInventory = XcodeRuntimeInventory.capture(log: log, settings: badHost)
+    #expect(badHostInventory.diagnostics.isEmpty)
+    #expect(badHostInventory.unavailableTargets?["Hosted"]?.contains("Cannot resolve test host") == true)
+    #expect(badHostInventory.requiredModules(for: "Hosted") == nil)
     #expect(!XcodeRuntimeInventory.capture(log: "", settings: settings).diagnostics.isEmpty)
 }
 
@@ -157,5 +160,57 @@ func boundaryDistinguishesDispatchCandidatesFromCompilerReferences(kind: String)
         #expect(!report.diagnostics.contains { $0.code == "invalid_runtime_boundary" })
     } else {
         #expect(report.diagnostics.contains { $0.code == "invalid_runtime_boundary" })
+    }
+}
+
+@Test(arguments: ["bridgingHeader", "missingMap", "unresolvedHost", "duplicateTarget", "missingModule", "transitiveImport", "missingTargetName"])
+func runtimeInventoryScopesUnsupportedUnitTargets(failure: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("boundary-isolation-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    var lines: [String] = []
+    for (module, dependencies) in ["Core": failure == "transitiveImport" ? ["Hosted"] : ["Foundation"],
+                                   "App": ["Core"], "Tests": ["Core"], "Hosted": ["Core"]] {
+        let directory = root.appendingPathComponent(module)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !(module == "Hosted" && failure == "missingMap") {
+            let rows = dependencies.map { ["moduleName": $0, "modulePath": "/" + $0 + ".swiftmodule"] }
+            try JSONSerialization.data(withJSONObject: rows).write(to: directory.appendingPathComponent(module + "-dependencies-1.json"))
+        }
+        let bridged = module == "Hosted" && ["bridgingHeader", "transitiveImport"].contains(failure)
+        lines.append("builtin-SwiftDriver -- swiftc -module-name \(module) -explicit-module-build -output-file-map \(directory.path)/outputs.json" + (bridged ? " -import-objc-header Bridge.h" : ""))
+    }
+    var settings: [XcodeBuildSettings] = ["Tests", "Hosted"].map {
+        .init(buildSettings: ["PRODUCT_TYPE": "com.apple.product-type.bundle.unit-test", "TARGET_NAME": $0, "PRODUCT_MODULE_NAME": $0, "TEST_HOST": ""])
+    }
+    switch failure {
+    case "unresolvedHost": settings[1].buildSettings["TEST_HOST"] = "/unresolved/App"
+    case "duplicateTarget": settings.append(settings[1])
+    case "missingModule": settings[1].buildSettings.removeValue(forKey: "PRODUCT_MODULE_NAME")
+    case "missingTargetName": settings[1].buildSettings.removeValue(forKey: "TARGET_NAME")
+    default: break
+    }
+    // Duplicate or bad records cannot be accepted depending on settings order.
+    for ordered in [settings, Array(settings.reversed())] {
+        var old = boundaryFixture()
+        old.runtimeInventory = XcodeRuntimeInventory.capture(log: lines.joined(separator: "\n"), settings: ordered)
+        old.mappings!.testRuntimeBoundaries!.append(.init(target: "Hosted", modules: ["Hosted", "Core"], rationale: "Hostless core-only test module."))
+        let archived = try GraphArchive.decode(GraphArchive.encode(old))
+        #expect(archived.runtimeInventory?.unavailableTargets == old.runtimeInventory?.unavailableTargets)
+        let report = XcodeFineSelector.select(current: labelEdit(archived), previous: archived,
+            changes: [.init(path: "App.swift")], baseRevision: "base")
+        #expect(archived.runtimeInventory?.requiredModules(for: "Hosted") == nil)
+        let independent = !["transitiveImport", "missingTargetName"].contains(failure)
+        #expect((archived.runtimeInventory?.requiredModules(for: "Tests") == ["Tests", "Core"]) == independent)
+        #expect(Set(report.selectedTests) == (independent ? ["Hosted/Labels/testLabel()"] : Set(old.tests)))
+        #expect(report.diagnostics.contains { $0.code == "invalid_runtime_boundary" && $0.tests == ["Hosted/Labels/testLabel()"] })
+        if independent {
+            #expect(archived.runtimeInventory?.diagnostics.isEmpty == true)
+            #expect(archived.runtimeInventory?.unavailableTargets?["Hosted"] != nil)
+            #expect(report.runtimeBoundaryDecisions?.allSatisfy { $0.target == "Tests" } == true)
+            #expect(report.runtimeBoundaryDecisions?.count == 2)
+        } else {
+            #expect(report.runtimeBoundaryDecisions == nil)
+        }
     }
 }

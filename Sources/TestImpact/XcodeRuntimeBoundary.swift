@@ -22,6 +22,7 @@ public struct XcodeRuntimeInventory: Codable, Sendable {
     public var hosts: [String: Set<String>]
     public var diagnostics: [String]
     public var unavailableModules: [String: String]? = nil
+    public var unavailableTargets: [String: String]? = nil
 
     public init(imports: [String: Set<String>], hosts: [String: Set<String>], diagnostics: [String] = []) {
         self.imports = imports; self.hosts = hosts; self.diagnostics = diagnostics
@@ -58,29 +59,40 @@ public struct XcodeRuntimeInventory: Codable, Sendable {
                 } catch { unavailable[module] = String(describing: error) }
             }
             var hosts: [String: Set<String>] = [:]
-            for entry in settings where entry.buildSettings["PRODUCT_TYPE"] == "com.apple.product-type.bundle.unit-test" {
-                let values = entry.buildSettings
-                guard let target = values["TARGET_NAME"], let module = values["PRODUCT_MODULE_NAME"], imports[module] != nil else {
-                    throw ImpactError("Missing test target compiler inventory")
-                }
-                var roots: Set<String> = [module]
-                if let host = values["TEST_HOST"], !host.isEmpty {
-                    let path = URL(fileURLWithPath: host).standardizedFileURL.path
-                    let owners = settings.filter { candidate in
-                        guard let directory = candidate.buildSettings["TARGET_BUILD_DIR"],
-                              let executable = candidate.buildSettings["EXECUTABLE_PATH"] else { return false }
-                        return URL(fileURLWithPath: directory).appendingPathComponent(executable).standardizedFileURL.path == path
+            var unavailableTargets: [String: String] = [:]
+            let testSettings = settings.filter { $0.buildSettings["PRODUCT_TYPE"] == "com.apple.product-type.bundle.unit-test" }
+            // Without a target name we cannot scope the failure safely. All other
+            // host/import failures belong to the identified test target only.
+            guard testSettings.allSatisfy({ !($0.buildSettings["TARGET_NAME"] ?? "").isEmpty }) else {
+                throw ImpactError("Missing test target name")
+            }
+            for (target, entries) in Dictionary(grouping: testSettings, by: { $0.buildSettings["TARGET_NAME"]! }) {
+                do {
+                    guard entries.count == 1 else { throw ImpactError("Ambiguous test host inventory: \(target)") }
+                    let values = entries[0].buildSettings
+                    guard let module = values["PRODUCT_MODULE_NAME"], imports[module] != nil else {
+                        let reason = values["PRODUCT_MODULE_NAME"].flatMap { unavailable[$0] } ?? "Missing test target compiler inventory"
+                        throw ImpactError(reason)
                     }
-                    guard owners.count == 1, let hostModule = owners[0].buildSettings["PRODUCT_MODULE_NAME"], imports[hostModule] != nil else {
-                        throw ImpactError("Cannot resolve test host for \(target)")
+                    var roots: Set<String> = [module]
+                    if let host = values["TEST_HOST"], !host.isEmpty {
+                        let path = URL(fileURLWithPath: host).standardizedFileURL.path
+                        let owners = settings.filter { candidate in
+                            guard let directory = candidate.buildSettings["TARGET_BUILD_DIR"],
+                                  let executable = candidate.buildSettings["EXECUTABLE_PATH"] else { return false }
+                            return URL(fileURLWithPath: directory).appendingPathComponent(executable).standardizedFileURL.path == path
+                        }
+                        guard owners.count == 1, let hostModule = owners[0].buildSettings["PRODUCT_MODULE_NAME"], imports[hostModule] != nil else {
+                            throw ImpactError("Cannot resolve test host for \(target)")
+                        }
+                        roots.insert(hostModule)
                     }
-                    roots.insert(hostModule)
-                }
-                guard hosts[target] == nil else { throw ImpactError("Ambiguous test host inventory: \(target)") }
-                hosts[target] = roots
+                    hosts[target] = roots
+                } catch { unavailableTargets[target] = String(describing: error) }
             }
             var result = Self(imports: imports, hosts: hosts)
             result.unavailableModules = unavailable
+            result.unavailableTargets = unavailableTargets
             return result
         } catch {
             return Self(imports: [:], hosts: [:], diagnostics: ["Runtime boundary inventory unavailable: \(error)"])
@@ -106,7 +118,7 @@ public struct XcodeRuntimeInventory: Codable, Sendable {
     }
 
     func requiredModules(for target: String) -> Set<String>? {
-        guard diagnostics.isEmpty, let roots = hosts[target], !roots.isEmpty else { return nil }
+        guard diagnostics.isEmpty, unavailableTargets?[target] == nil, let roots = hosts[target], !roots.isEmpty else { return nil }
         var modules = roots, pending = Array(roots)
         while let module = pending.popLast() {
             guard let dependencies = imports[module] else { return nil }
@@ -128,6 +140,9 @@ public struct RuntimeBoundaryDecision: Codable, Sendable {
 
 extension TestRuntimeBoundary {
     func validationFailure(in snapshot: XcodeTestGraph) -> String? {
+        if let reason = snapshot.runtimeInventory?.unavailableTargets?[target] {
+            return "Runtime boundary inventory unavailable for \(target): \(reason)"
+        }
         guard let targetInfo = snapshot.targets.first(where: { $0.name == target }), targetInfo.isTest, !targetInfo.isUITest,
               let ownModule = snapshot.modules[target], modules.contains(ownModule),
               let inventory = snapshot.runtimeInventory, inventory.diagnostics.isEmpty,

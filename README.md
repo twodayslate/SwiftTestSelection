@@ -176,8 +176,11 @@ Graphs lacking the edge provenance needed to make that distinction fall back. Mi
 ambiguous, unsupported, or contradictory evidence produces an
 `invalid_runtime_boundary` fallback. Old saved graphs without that inventory
 cannot establish isolation. Bridging headers are unsupported for a boundary's
-module closure; an unrelated UI module's bridging header does not invalidate a
-complete hostless boundary.
+module closure; an unrelated test target’s bridging header, missing import map,
+or unresolved host does not invalidate a complete hostless boundary. These failures
+are recorded per target and retain conservative selection for the affected target.
+Missing target identities or an ambiguous compiler inventory still invalidate the
+whole runtime inventory.
 
 Only production changes **entirely outside** that validated module closure can
 exclude its runtime-uncertainty fallback. Direct dependency selections always
