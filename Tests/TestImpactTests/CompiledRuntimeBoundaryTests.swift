@@ -46,8 +46,9 @@ import Testing
     policy.testRuntimeBoundaries = [.init(target: "CoreTests", modules: ["CoreTests", "Core"], rationale: "Independent hostless executable; no loading or communication with LabelApp.")]
     model.mappings = policy
     var head = model
-    head.sources["LabelApp:LabelApp.swift"] = SwiftSourceSnapshot.parse("public func label() -> String { \"Alphabetical\" }", path: "LabelApp.swift", module: "LabelApp")
-    try "public func label() -> String { \"Alphabetical\" }".write(to: root.appendingPathComponent("LabelApp.swift"), atomically: true, encoding: .utf8)
+    let changedLabel = try String(contentsOf: root.appendingPathComponent("LabelApp.swift"), encoding: .utf8).replacingOccurrences(of: "A to Z", with: "Alphabetical")
+    head.sources["LabelApp:LabelApp.swift"] = SwiftSourceSnapshot.parse(changedLabel, path: "LabelApp.swift", module: "LabelApp")
+    try changedLabel.write(to: root.appendingPathComponent("LabelApp.swift"), atomically: true, encoding: .utf8)
     let headArguments = ["swiftc", "-module-name", "LabelApp", "-g", "-Onone", root.appendingPathComponent("LabelApp.swift").path]
     _ = try CommandRunner.run("xcrun", headArguments + ["-emit-library", "-emit-module", "-o", "libLabelApp.dylib"], at: root)
     let headSIL = root.appendingPathComponent("Head.sil")

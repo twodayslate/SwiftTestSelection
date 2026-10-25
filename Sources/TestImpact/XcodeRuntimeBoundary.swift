@@ -146,12 +146,21 @@ extension TestRuntimeBoundary {
         guard !tests.isEmpty, tests.allSatisfy({
             graph.tests[$0]?.isEmpty == false && (graph.testDiagnostics[$0]?.isEmpty ?? true)
         }) else { return "Missing test entries or lifecycle evidence for \(target)" }
+        let knownModules = Set(snapshot.modules.values).union(inventory.imports.keys)
+            .union(inventory.unavailableModules?.keys ?? [:].keys).sorted()
+        func owner(_ node: FunctionNode) -> String? {
+            if !node.regions.isEmpty { return node.module }
+            // Compiler-generated witness thunks can have no debug source range.
+            // Recognize only an exact Swift nominal module prefix; SDK symbols
+            // and unfamiliar manglings remain unclassified, never guessed.
+            return knownModules.first { node.id.hasPrefix("$s" + String($0.utf8.count) + $0) }
+        }
         var visited = Set(tests.flatMap { graph.tests[$0] ?? [] }), pending = visited.sorted().reversed().map { $0 }
         while let symbol = pending.popLast() {
             guard let node = graph.functions[symbol] else { continue }
             for dependency in node.dependencies.sorted() {
-                if let destination = graph.functions[dependency], !destination.regions.isEmpty,
-                   !modules.contains(destination.module) {
+                if let destination = graph.functions[dependency], let destinationModule = owner(destination),
+                   !modules.contains(destinationModule) {
                     guard let references = node.compilerReferences else {
                         return "Missing compiler-reference provenance for \(target): \(node.module).\(node.name)"
                     }

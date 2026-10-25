@@ -22,3 +22,5 @@ public struct ProjectValue: Equatable {
 public func compare(_ uuid: UUID?, _ date: Date?) -> Bool {
     uuid == UUID(uuidString: "00000000-0000-0000-0000-000000000000") && date == Date(timeIntervalSince1970: 0)
 }
+public enum CoreState: Int { case one = 1 }
+public func readRaw<T: RawRepresentable>(_ value: T) -> T.RawValue { value.rawValue }

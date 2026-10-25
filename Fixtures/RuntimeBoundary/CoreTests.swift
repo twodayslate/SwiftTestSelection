@@ -11,6 +11,7 @@ final class CoreCase: ParentCase {
     @objc func testIndependent() {
         XCTAssertTrue(compare(UUID(uuidString: "00000000-0000-0000-0000-000000000000"), Date(timeIntervalSince1970: 0)))
         XCTAssertEqual(escapedCallback(), 3)
+        XCTAssertEqual(readRaw(CoreState.one), 1)
         let object: ProjectBase = ProjectOverride()
         XCTAssertEqual(object.value(), 3)
         XCTAssertEqual(NSObject().importedExtension(), 3)
