@@ -33,10 +33,14 @@ before refreshing ownership metadata. The comparison removes only the stale
 | Result | Before | After |
 | --- | ---: | ---: |
 | Tests carrying the incorrect initializer fallback | 145 | 0 |
-| Total selected tests | 1,440 | 1,440 |
-| Added or omitted selected identifiers | — | 0 |
+| Total selected tests | 1,440 | 1,442 |
+| Added / omitted selected identifiers | — | 2 / 0 |
 
-Other runtime uncertainty still selects these tests. This is evidence that the
+The override-aware review fix adds two conservative candidates:
+`DomainTests/handoffRequiresAllNonSubmissionAssets()` and
+`DomainTests/repairFillsIncompleteDivergentTagThumbnailAssets()` in
+`ChainOfCustodyTests`. No selected identifier was omitted. Other runtime
+uncertainty still selects the tests previously carrying the initializer diagnostic. This is evidence that the
 specific diagnostic is fixed, not a claim of reduced suite size or full-run
 behavioral validation. Older saved graphs keep conservative legacy ownership until
 regenerated.
@@ -49,3 +53,6 @@ IMPACT_EXTENSION_SOURCE=/path/to/source \
 IMPACT_EXTENSION_OUTPUT=/tmp/extension-results.json \
 swift test -c release --filter consumerExtensionDispatchProbe
 ```
+
+Review-fix validation: all 124 release tests passed, including the compiled
+override regression and the missing-implementation/super-call checks.
