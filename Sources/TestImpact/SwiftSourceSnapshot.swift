@@ -4,6 +4,9 @@
 import Foundation
 import SwiftParser
 import SwiftSyntax
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 
 public struct SourceUnit: Codable, Sendable {
     public var key: String
@@ -14,6 +17,13 @@ public struct SourceUnit: Codable, Sendable {
     /// Present only when evaluated location literals add meaning beyond syntax.
     /// Older graphs lack this evidence and keep their conservative fingerprint.
     public var syntaxFingerprint: String? = nil
+    /// Bare source-location defaults declared in this unit. Callers, rather than
+    /// the declaration, supply these values.
+    public var locationDefaultKinds: Set<String>? = nil
+    /// Invocation token locations, compared only for compiler callers of a
+    /// source-location default. Separate dimensions avoid line-only changes
+    /// affecting callers of a file-only default.
+    public var callerLocations: [String: String]? = nil
 }
 
 public struct SwiftSourceSnapshot: Codable, Sendable {
@@ -64,21 +74,66 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             if let token = node.as(TokenSyntax.self) { return "\(token.tokenKind):\(token.text.utf8.count):\(token.text)" }
             return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(fingerprint).joined(separator: "|") + "]"
         }
+        let locationNames: Set<String> = ["line", "column", "file", "fileID", "filePath"]
+        func bareDefault(_ macro: MacroExpansionExprSyntax) -> Bool {
+            macro.parent?.is(InitializerClauseSyntax.self) == true &&
+                macro.parent?.parent?.is(FunctionParameterSyntax.self) == true
+        }
+        func locationValue(_ name: String, at position: AbsolutePosition) -> String {
+            let location = locations.location(for: position)
+            switch name {
+            case "line": return String(location.presumedLine)
+            case "column": return String(location.column)
+            case "fileID": return module + "/" + (location.presumedFile.split(separator: "/").last.map(String.init) ?? "")
+            default: return location.presumedFile
+            }
+        }
+        func callerLocations(_ node: Syntax) -> [String: String] {
+            var offsets = Set<Int>()
+            func record(_ tokens: TokenSequence) {
+                offsets.formUnion(tokens.map { $0.positionAfterSkippingLeadingTrivia.utf8Offset })
+            }
+            func visit(_ node: Syntax) {
+                if let call = node.as(FunctionCallExprSyntax.self) {
+                    record(call.calledExpression.tokens(viewMode: .sourceAccurate))
+                    for token in [call.leftParen, call.rightParen].compactMap({ $0 }) {
+                        offsets.insert(token.positionAfterSkippingLeadingTrivia.utf8Offset)
+                    }
+                } else if let call = node.as(SubscriptCallExprSyntax.self) {
+                    record(call.calledExpression.tokens(viewMode: .sourceAccurate))
+                    offsets.insert(call.leftSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
+                    offsets.insert(call.rightSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
+                } else if let attribute = node.as(AttributeSyntax.self) {
+                    record(attribute.tokens(viewMode: .sourceAccurate))
+                }
+                for child in node.children(viewMode: .sourceAccurate) { visit(child) }
+            }
+            visit(node)
+            guard !offsets.isEmpty else { return [:] }
+            let positions = offsets.sorted().map { AbsolutePosition(utf8Offset: $0) }
+            return Dictionary(uniqueKeysWithValues: locationNames.map { name in
+                let values = positions.map {
+                    let value = locationValue(name, at: $0)
+                    return "\(value.utf8.count):" + value
+                }.joined(separator: "|")
+                #if canImport(CryptoKit)
+                // Keep archive size bounded even for large generated functions.
+                return (name, Data(SHA256.hash(data: Data(values.utf8))).base64EncodedString())
+                #else
+                return (name, values)
+                #endif
+            })
+        }
         func locationValues(_ node: Syntax) -> [String] {
             var values: [String] = []
             for token in node.tokens(viewMode: .sourceAccurate) where token.tokenKind == .pound {
                 guard let macro = token.parent?.as(MacroExpansionExprSyntax.self) else { continue }
                 // Bare parameter defaults use the caller's location. Parenthesized
                 // or arithmetic defaults use the declaration's location instead.
-                if macro.parent?.is(InitializerClauseSyntax.self) == true &&
-                    macro.parent?.parent?.is(FunctionParameterSyntax.self) == true { continue }
-                let location = locations.location(for: macro.positionAfterSkippingLeadingTrivia)
-                switch macro.macroName.text {
-                case "line": values.append("line:\(location.presumedLine)")
-                case "column": values.append("column:\(location.column)")
-                case "file", "filePath": values.append("file:\(location.presumedFile)")
-                case "fileID": values.append("fileID:\(module)/\(location.presumedFile.split(separator: "/").last ?? "")")
-                default: break
+                if bareDefault(macro) { continue }
+                let name = macro.macroName.text
+                if locationNames.contains(name) {
+                    values.append(name + ":" + locationValue(name, at: macro.positionAfterSkippingLeadingTrivia))
                 }
             }
             return values
@@ -110,6 +165,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             let start = locations.location(for: node.positionAfterSkippingLeadingTrivia).line
             let end = locations.location(for: node.endPositionBeforeTrailingTrivia).line
+            let defaults = Set(node.tokens(viewMode: .sourceAccurate).compactMap { token -> String? in
+                guard token.tokenKind == .pound,
+                      let macro = token.parent?.as(MacroExpansionExprSyntax.self),
+                      bareDefault(macro), locationNames.contains(macro.macroName.text) else { return nil }
+                return macro.macroName.text
+            })
             let syntax = fingerprint(node)
             let values = locationValues(node)
             let semantic = values.isEmpty ? syntax : syntax + "@locations[" +
@@ -119,7 +180,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 fingerprint: semantic,
                 kind: kind, scope: scope.joined(separator: "."),
                 region: SourceRegion(path: path, startLine: start, endLine: end),
-                syntaxFingerprint: semantic == syntax ? nil : syntax))
+                syntaxFingerprint: semantic == syntax ? nil : syntax,
+                locationDefaultKinds: defaults,
+                callerLocations: callerLocations(node)))
         }
         func walk(_ node: Syntax, scope: [String]) {
             if let item = node.as(CodeBlockItemSyntax.self), !item.item.is(DeclSyntax.self) {

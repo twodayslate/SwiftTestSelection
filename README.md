@@ -148,7 +148,11 @@ Swift comparisons preserve parsed syntax, operators, strings, and regex contents
 while ignoring comments and whitespace. Location sensitivity is per expression:
 an unrelated `#line` never makes a later class header change. Bare location
 literals used as parameter defaults (as in XCTest assertion helpers) capture the
-caller's location, so moving the helper does not change its fingerprint. Body
+caller's location, so moving the helper does not change its fingerprint. Compiler
+callers of source-declared defaults compare their invocation locations, including
+across source files. A shifted call can therefore select its test even if its
+syntax is unchanged. Calls with explicit arguments and ambiguous bindings remain
+conservative because dependency edges do not identify omitted argument slots. Body
 expressions and parenthesized/arithmetic defaults retain their evaluated location;
 `#sourceLocation` adjusts presumed file/line values, and `#column` tracks its own
 expression position.
@@ -168,14 +172,15 @@ source-location literals are exclusively diagnostic can explicitly opt out in
 
 Add these fields to the existing mapping file, preserving feature mappings and
 runtime contracts. This policy makes comment-only edits select no tests even
-when comments shift a body-level `#line`, and prevents documentation in a mixed
+when comments shift a body-level `#line` or a caller-evaluated location default, and prevents documentation in a mixed
 change from adding candidates through location values. It must not be used when
 those values control application behavior. Explicit macro/directive edits,
 literal contents, operator changes, and compiled dependency changes still count.
 The default `sourceLocationPolicy` is `semantic`; a one-sided opt-in also retains
 semantic comparison. Unresolved ownership remains conservative. Regenerate saved
-graphs for the new fingerprints; legacy snapshots cannot prove diagnostic-only
-location differences.
+graphs for the new fingerprints. Under the semantic policy, saved snapshots
+without caller metadata request a full run with `incomplete_caller_locations`;
+legacy snapshots also cannot prove diagnostic-only location differences.
 
 ### Non-UI runtime boundaries (opt-in)
 

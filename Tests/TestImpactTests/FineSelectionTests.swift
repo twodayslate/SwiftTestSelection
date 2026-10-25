@@ -579,14 +579,14 @@ private func locationModel(_ source: String, diagnostic: Bool = false) -> XcodeT
 
 @Test(arguments: ["// line comment\n", "/* block\n comment */\n", "/// Documentation\n"])
 func locationAwareCommentEditsAndMarkdownContributeNoTests(comment: String) {
-    let old = locationModel(locationAwareTests)
+    let old = locationModel(locationAwareTests, diagnostic: true)
     let documented = comment + locationAwareTests.replacingOccurrences(of: "class Notes", with: comment + "class Notes")
     for paths in [["Tests/UI.swift"], ["Tests/UI.swift", "AGENTS.md", "docs/guide.md"]] {
-        #expect(selection(locationModel(documented), old, paths: paths).selectedTests.isEmpty)
+        #expect(selection(locationModel(documented, diagnostic: true), old, paths: paths).selectedTests.isEmpty)
     }
     let code = locationAwareTests.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")
     let mixed = comment + code.replacingOccurrences(of: "class Notes", with: comment + "class Notes")
-    #expect(selection(locationModel(mixed), old).selectedTests == selection(locationModel(code), old).selectedTests)
+    #expect(selection(locationModel(mixed, diagnostic: true), old).selectedTests == selection(locationModel(code, diagnostic: true), old).selectedTests)
 }
 
 @Test func diagnosticLocationPolicyRequiresBothRevisionsAndKeepsExplicitSyntax() throws {
@@ -608,4 +608,31 @@ func locationAwareCommentEditsAndMarkdownContributeNoTests(comment: String) {
     let restored = try GraphArchive.decode(GraphArchive.encode(current))
     #expect(restored.mappings?.sourceLocationPolicy == .diagnostic)
     #expect(selection(restored, old).selectedTests.isEmpty)
+}
+
+@Test func callerLocationDefaultsSelectOnlyShiftedCompilerCallers() throws {
+    let expected = ["UI/Sharing/testOne()", "UI/Sharing/testThree()", "UI/Sharing/testTwo()"]
+    for macro in ["line", "column", "filePath", "fileID"] {
+        let source = uiSource.replacingOccurrences(of: "func helper()", with: "func helper(location: Any = #\(macro))")
+        let base = model(ui: source)
+        let shifted = macro == "line" ? "// docs\n" + source :
+            macro == "column" ? source.replacingOccurrences(of: "{ helper()", with: "{  helper()") : source
+        let path = macro.hasPrefix("file") ? "Moved/Other.swift" : "Tests/UI.swift"
+        let head = model(ui: shifted, uiPath: path)
+        for reversed in [false, true] {
+            let (before, after) = reversed ? (head, base) : (base, head)
+            let report = selection(try GraphArchive.decode(GraphArchive.encode(after)), before,
+                paths: ["Tests/UI.swift", path])
+            #expect(report.selectedTests == expected, "\(macro): \(report.selectedTests)")
+        }
+        // Moving the declaration, without moving any caller, changes no value.
+        let movedHelper = source.replacingOccurrences(of: "    func helper", with: "\n    func helper")
+        #expect(selection(model(ui: movedHelper), base).selectedTests.isEmpty)
+        if macro.hasPrefix("file") {
+            #expect(selection(model(ui: "// docs\n" + source), base).selectedTests.isEmpty)
+        }
+        if macro == "fileID" {
+            #expect(selection(model(ui: source, uiPath: "Moved/UI.swift"), base, paths: ["Moved/UI.swift"]).selectedTests.isEmpty)
+        }
+    }
 }
