@@ -128,6 +128,31 @@ in the JSON. In particular, #278 did not select its two historical media failure
 has not been established by this validation. This is not a full-suite equivalence result or approval to enable a
 CI selection gate; that broader consumer rollout validation remains separate.
 
+## Post-review selection regression
+
+Review identified that clearing an adapter's incidental source regions also
+disabled location-gated runtime uncertainty. Commit `8552255` separates those
+decisions: the persisted per-module adapter identity keeps its opaque dependencies
+eligible for conservative selection, without treating conversion sites as changed
+declarations. Existing JSON and compact archives already preserve that identity,
+so they receive the corrected behavior without a graph migration.
+
+A compiled actor-adapter reproduction now selects the affected caller with an
+`unresolved_dependency` diagnostic while the adapter still has no source regions.
+Regression coverage exercises unit-test fallback, UI-feature fallback, untouched
+test exclusion, JSON/compact round trips, and validated runtime contracts. The
+complete release suite now passes all 187 tests on both Xcode 26.6 and 27.0.
+
+All four original graph pairs were replayed with the corrected selector under all
+three location policies. Selected identifiers, execution arguments, and mapping
+coverage remain unchanged, including #293's single selected method in diagnostic
+modes. The consumer report validator passes against the original independently
+validated UI inventory. This follow-up reuses the verified graphs; it does not
+claim new builds or new test-body execution. The original fresh-build measurements
+and execution evidence above remain attributed to their recorded revision.
+See [review-fix evidence](Issue39ReviewFixValidation.json) for graph hashes, policy
+outcomes, diagnostics, and the compiled-helper reproduction.
+
 ## Repeat the comparison
 
 In a disposable consumer checkout, recreate a normalized original base/head pair

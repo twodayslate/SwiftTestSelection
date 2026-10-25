@@ -1,0 +1,218 @@
+{
+  "implementationRevision": "85522559816ddf98d9b18f5444096bb10d91aa88",
+  "validation": "Selection-only replay of the original verified graphs; no rebuild or test execution",
+  "packageReleaseTests": {
+    "Xcode26.6": 187,
+    "Xcode27.0": 187
+  },
+  "compiledAdapterReproduction": [
+    "Real compiled helper: thunk for @escaping @callee_guaranteed (@in_guaranteed Date) -> (@owned String) with global actor constraint MainActor regions: 0 uncertainties: [\"Indirect function invocation\"]",
+    "restoreRegion false selected [\"Tests/Callbacks/testCallback()\"] diagnostics [\"unresolved_dependency\"]",
+    "restoreRegion true selected [\"Tests/Callbacks/testCallback()\"] diagnostics [\"unresolved_dependency\"]"
+  ],
+  "cases": [
+    {
+      "pr": 293,
+      "graphSHA256": {
+        "baseGraph": "e2ba63b35b01b6123a5ce4469ddfcd4e336507b43869cead0e70e0e69434ffa9",
+        "headGraph": "df54d54fe3e8e83357193617668f66667ea8d5808d32d873db6b574ce6759d68"
+      },
+      "policies": {
+        "semantic": {
+          "selected": 1899,
+          "total": 1972,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {
+            "unresolved_dependency": 1900
+          },
+          "runtimeBoundaryDecisions": 0,
+          "reportSHA256": "a443eaa0bf9eadeb34015095f598c7367850e5640d5f33fa4dc6abf36add8ed7"
+        },
+        "diagnosticLineColumn": {
+          "selected": 1,
+          "total": 1972,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {},
+          "runtimeBoundaryDecisions": 0,
+          "reportSHA256": "4008f1b0979f0664b34d6645abbf08f8c9eeb4db87b35f4ba49b539d0b3febb5"
+        },
+        "diagnostic": {
+          "selected": 1,
+          "total": 1972,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {},
+          "runtimeBoundaryDecisions": 0,
+          "reportSHA256": "b3c39176340f498f5acdd34b3b0671511b00f559e8e1f9808371f5ce2b5fae09"
+        }
+      }
+    },
+    {
+      "pr": 296,
+      "graphSHA256": {
+        "baseGraph": "b5a212bbd7d3e6960cae7c37db20d73909a04415cd15796f35e97c7c9d5e3892",
+        "headGraph": "0122f1f9b32f7ffa1ff25c601dbe2ea088ffe2454ed60273de46fdbd73a6c54e"
+      },
+      "policies": {
+        "semantic": {
+          "selected": 2000,
+          "total": 2000,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {
+            "unmapped_production_boundary": 10,
+            "unresolved_dependency": 1927,
+            "unresolved_feature_dependency": 38,
+            "unsupported_source_ownership": 1
+          },
+          "runtimeBoundaryDecisions": 0,
+          "reportSHA256": "d9e817356a5056dcb37dac478805c44f4870b8bfc8b67548821139c15c611430"
+        },
+        "diagnosticLineColumn": {
+          "selected": 2000,
+          "total": 2000,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {
+            "unmapped_production_boundary": 4,
+            "unresolved_dependency": 1927,
+            "unresolved_feature_dependency": 38,
+            "unsupported_source_ownership": 1
+          },
+          "runtimeBoundaryDecisions": 0,
+          "reportSHA256": "d0cf99414ee08bcbe375474accd2c24bdb247f5c9b46cdaa964eaafdb388b68d"
+        },
+        "diagnostic": {
+          "selected": 2000,
+          "total": 2000,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {
+            "unmapped_production_boundary": 4,
+            "unresolved_dependency": 1927,
+            "unresolved_feature_dependency": 38,
+            "unsupported_source_ownership": 1
+          },
+          "runtimeBoundaryDecisions": 0,
+          "reportSHA256": "ad0184eb2ef28115b00ca282bfbd2a4646cd18555c7f4dfef3252c486a7b532b"
+        }
+      }
+    },
+    {
+      "pr": 294,
+      "graphSHA256": {
+        "baseGraph": "78a4459ba8bec1ca90d06fc13bf8c79070f3ec886919ccafcc90aca25b98c4cb",
+        "headGraph": "e745c490a8962afb75a47f0e8cd2e953113decad2c104af6aad4e36f14cb64ca"
+      },
+      "policies": {
+        "semantic": {
+          "selected": 1898,
+          "total": 1969,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {
+            "unmapped_production_boundary": 5,
+            "unresolved_dependency": 1898,
+            "unresolved_feature_dependency": 38
+          },
+          "runtimeBoundaryDecisions": 0,
+          "reportSHA256": "fbe777aefe4bb230b2eb5639b1fa81fbab33ec3ad7fabb2794eb778435f52744"
+        },
+        "diagnosticLineColumn": {
+          "selected": 1898,
+          "total": 1969,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {
+            "unmapped_production_boundary": 5,
+            "unresolved_dependency": 1898,
+            "unresolved_feature_dependency": 38
+          },
+          "runtimeBoundaryDecisions": 0,
+          "reportSHA256": "bfbae42e1f8ae5885498cb9661cee4ff002d078792c152ed97fad090c01d488f"
+        },
+        "diagnostic": {
+          "selected": 1898,
+          "total": 1969,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {
+            "unmapped_production_boundary": 5,
+            "unresolved_dependency": 1898,
+            "unresolved_feature_dependency": 38
+          },
+          "runtimeBoundaryDecisions": 0,
+          "reportSHA256": "36d3740f1e2228b4437f9f862dbce0e8221080743e43e6acac9accf48020d8b3"
+        }
+      }
+    },
+    {
+      "pr": 278,
+      "graphSHA256": {
+        "baseGraph": "1927b40f6dab235bc70373583e0828165511dd7b09ea1d6657f6b2a5805e819b",
+        "headGraph": "0257120450222f9722a17f08bc58fbde680ee6b1baf73c3564b54cf6c9c7976f"
+      },
+      "policies": {
+        "semantic": {
+          "selected": 458,
+          "total": 1935,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {
+            "unresolved_dependency": 439
+          },
+          "runtimeBoundaryDecisions": 2,
+          "reportSHA256": "78cad65e39ea8fc54e8279dde3415b31fa99358ec59bbb506b9a08ae397b903a"
+        },
+        "diagnosticLineColumn": {
+          "selected": 458,
+          "total": 1935,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {
+            "unresolved_dependency": 439
+          },
+          "runtimeBoundaryDecisions": 2,
+          "reportSHA256": "a7ba0cb41199b1b95185a86337f37757fded983b10d0f870d7bbb4e2575d27ed"
+        },
+        "diagnostic": {
+          "selected": 458,
+          "total": 1935,
+          "selectedTestsUnchanged": true,
+          "onlyTestingArgumentsUnchanged": true,
+          "mappingCoverageUnchanged": true,
+          "consumerNormalization": "passed",
+          "diagnosticCounts": {
+            "unresolved_dependency": 439
+          },
+          "runtimeBoundaryDecisions": 2,
+          "reportSHA256": "9573af19509d9bbb9f160e5ce8721650431ecafc794df76ee034d3ed3e375a15"
+        }
+      }
+    }
+  ]
+}
