@@ -65,7 +65,9 @@ public struct XcodeAnalysis {
         return try analyze(options, sourceRoot: root)
     }
 
-    public func select(base: String, head: String? = nil, mergeBase: Bool = false, fullSuite: Bool = false, cache: XcodeAnalysisCache? = nil, retainingBuildAt: URL? = nil, cachedBasePolicy: XcodeCachedBasePolicy = .build, headOnly: Bool = false) throws -> ImpactReport {
+    public func select(base: String, head: String? = nil, mergeBase: Bool = false, fullSuite: Bool = false, cache: XcodeAnalysisCache? = nil, retainingBuildAt: URL? = nil, cachedBasePolicy: XcodeCachedBasePolicy = .build, headOnly: Bool = false, selectionScopes: SelectionScopes? = nil) throws -> ImpactReport {
+        if selectionScopes != nil && !headOnly { throw ImpactError("Selection scopes require head-only analysis") }
+        try selectionScopes?.validate()
         if headOnly {
             guard head != nil, options.buildTimeSILHelper != nil, retainingBuildAt != nil, cachedBasePolicy == .build else {
                 throw ImpactError("Head-only analysis requires a committed head, build-time SIL, retained products, and no cached-base policy.")
@@ -79,7 +81,7 @@ public struct XcodeAnalysis {
             let scratch = cache == nil ? try temporaryDirectory() : nil
             defer { if let scratch { try? FileManager.default.removeItem(at: scratch) } }
             let cache = cache ?? XcodeAnalysisCache(directory: scratch!, context: "uncached-" + UUID().uuidString, maximumBytes: 1)
-            return try selectCached(base: base, head: head, mergeBase: mergeBase, fullSuite: fullSuite, cache: cache, retainingBuildAt: retainingBuildAt, cachedBasePolicy: cachedBasePolicy, headOnly: headOnly)
+            return try selectCached(base: base, head: head, mergeBase: mergeBase, fullSuite: fullSuite, cache: cache, retainingBuildAt: retainingBuildAt, cachedBasePolicy: cachedBasePolicy, headOnly: headOnly, selectionScopes: selectionScopes)
         }
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         guard options.path.path.hasPrefix(root.path + "/") else { throw ImpactError("Xcode container must be inside the Git repository.") }

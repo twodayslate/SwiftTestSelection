@@ -28,6 +28,7 @@ public struct ImpactReport: Codable, Sendable {
     public var buildArtifactPath: String?
     public var analysisEvents: [XcodeAnalysisEvent]?
     public var analysisMode: String? = nil
+    public var selectionScopes: [ScopedImpactReport]? = nil
     public var comparisonMode: String?
     public var onlyTestingArguments: [String]?
     public var diagnostics: [SelectionDiagnostic] = []

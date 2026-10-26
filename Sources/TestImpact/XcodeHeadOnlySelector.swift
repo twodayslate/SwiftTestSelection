@@ -43,7 +43,7 @@ struct XcodeHeadOnlySources {
 /// This does not delegate to the two-graph selector with a synthetic previous.
 enum XcodeHeadOnlySelector {
     static func select(current: XcodeTestGraph, source: XcodeHeadOnlySources, changes: [FileChange],
-                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil) -> ImpactReport {
+                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = []) -> ImpactReport {
         let inventory = Set(current.tests)
         func target(_ test: String) -> String { String(test.prefix { $0 != "/" }) }
         let uiTargets = Set(current.targets.filter(\.isUITest).map(\.name))
@@ -82,12 +82,14 @@ enum XcodeHeadOnlySelector {
         let paths = Set(changes.map(\.path))
         let old = Dictionary(grouping: source.base.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
         let new = Dictionary(grouping: current.sources.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
+        let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries)
         var changed: [SourceUnit] = []
         var semanticPaths = Set<String>()
         for key in Set(old.keys).union(new.keys).sorted() {
             let before = old[key] ?? [], after = new[key] ?? []
             guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() else { continue }
             semanticPaths.formUnion((before + after).map { $0.region.path })
+            if excludedKeys.contains(key) { continue }
             guard before.count == 1, after.count == 1, let a = before.first, let b = after.first,
                   a.kind == "function", b.kind == "function", a.region.path == b.region.path else {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \((before + after).first?.region.path ?? key)")

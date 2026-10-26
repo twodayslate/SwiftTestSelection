@@ -1391,3 +1391,32 @@ ownership and diagnostic ordering. Extra staging I/O is the tradeoff; start with
 1–2 workers on memory-constrained CI runners and measure your project.
 
 See [release measurements and validation](Documentation/Benchmarks/FastSelection.md).
+
+### Independent selection scopes for execution tiers
+
+Head-only selection accepts `--selection-scopes /absolute/path/scopes.json`:
+
+```json
+{"version":1,"scopes":[{"name":"regression-support","paths":["AppUITests/Helpers.swift"],"excludedTestEntries":[]}]}
+```
+
+Each scope queries the **same captured head graph** against Git base syntax for
+only those changed paths. It adds no build, SIL extraction, or baseline graph.
+The primary report still describes the complete review diff. Additional results
+appear in `selectionScopes`, each with its request, ordinary report diagnostics,
+resolved revisions, and the same retained build identity. Paths must belong to
+the actual review diff; an empty scope selects no tests from changes.
+
+A consumer can run Base tests from the full report and regression tests from a
+helper/fixture scope. Scope-local uncertainty remains conservative, including
+structural edits and opaque runtime calls. Whole-review fallback from an unrelated
+production change is not injected into a scope. These results describe selection
+policy, not proof that omitted changes cannot affect deferred regression tests.
+
+`excludedTestEntries` lists edited test entries the consumer executes separately.
+Their bodies do not become change roots in a helper scope when compiler evidence
+proves they are independent entries. Entries consumed by other tests remain roots.
+Only provide entries your policy already executes. This does not exclude helpers,
+lifecycle methods, resources, or global build/graph uncertainty. Validate scope
+identity and candidates against the primary report, and use `verify-build` before
+executing retained products. Missing scopes must not be treated as empty coverage.

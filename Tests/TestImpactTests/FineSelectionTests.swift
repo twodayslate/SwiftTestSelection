@@ -963,3 +963,67 @@ func headOnlyNestedOpaqueResultsRequireFallback(result: String) throws {
     #expect(report.selectedTests.count == 5)
     #expect(report.diagnostics.contains { $0.code == "head_only_unsupported_body" })
 }
+
+@Test func headOnlySelectionScopesSeparateHelperImpactFromWholeReviewFallback() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("scoped-impact-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("Tests"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("App"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    func git(_ args: [String]) throws -> String { try CommandRunner.run("git", args, at: root).text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    try uiSource.write(to: root.appendingPathComponent("Tests/UI.swift"), atomically: true, encoding: .utf8)
+    try appSource.write(to: root.appendingPathComponent("App/Features.swift"), atomically: true, encoding: .utf8)
+    try JSONEncoder().encode(headOnlyModel().mappings!).write(to: root.appendingPathComponent(".swift-test-selection.json"))
+    _ = try git(["init", "-q"]); _ = try git(["config", "user.email", "test@example.invalid"]); _ = try git(["config", "user.name", "Test"])
+    _ = try git(["add", "."]); _ = try git(["commit", "-qm", "base"]); let base = try git(["rev-parse", "HEAD"])
+    let ui = uiSource.replacingOccurrences(of: "XCTAssertEqual(2, 2)", with: "XCTAssertEqual(2, 3)")
+        .replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 9)")
+    try ui.write(to: root.appendingPathComponent("Tests/UI.swift"), atomically: true, encoding: .utf8)
+    try "struct AddedProduction {}".write(to: root.appendingPathComponent("App/New.swift"), atomically: true, encoding: .utf8)
+    _ = try git(["add", "."]); _ = try git(["commit", "-qm", "head"]); let head = try git(["rev-parse", "HEAD"])
+    var current = headOnlyModel(ui: ui)
+    current.sources = ["UI:Tests/UI.swift": current.sources["Tests/UI.swift"]!, "App:App/Features.swift": current.sources["App/Features.swift"]!,
+                       "App:App/New.swift": SwiftSourceSnapshot.parse("struct AddedProduction {}", path: "App/New.swift", module: "App")]
+    current.targets[1].sourceFiles.insert("App/New.swift")
+    let changes = try GitChanges.readComparison(base: base, head: head, at: root)
+    let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: base, root: root, mappingPath: ".swift-test-selection.json")
+    let primary = XcodeHeadOnlySelector.select(current: current, source: source, changes: changes, baseRevision: base)
+    #expect(primary.selectedTests == current.tests)
+    let request = SelectionScopes(scopes: [.init(name: "helpers", paths: ["Tests/UI.swift"], excludedTestEntries: ["UI/Sharing/testIndependent()"]), .init(name: "empty", paths: [])])
+    let reports = try XcodeHeadOnlySelector.scopedReports(current: current, requests: request, changes: changes, baseRevision: base,
+        headRevision: head, root: root, mappingPath: ".swift-test-selection.json", documentation: [], buildEvidenceFailure: nil)
+    #expect(reports[0].report.selectedTests == ["UI/Sharing/testOne()", "UI/Sharing/testThree()", "UI/Sharing/testTwo()"])
+    #expect(reports[0].report.changedFiles == ["Tests/UI.swift"])
+    #expect(reports[0].report.fullRunReasons.isEmpty)
+    #expect(reports[0].report.headRevision == head)
+    #expect(reports[1].report.selectedTests.isEmpty)
+    #expect(primary.selectedTests == current.tests)
+    var combined = primary; combined.selectionScopes = reports
+    let decoded = try JSONDecoder().decode(ImpactReport.self, from: JSONEncoder().encode(combined))
+    #expect(decoded.selectionScopes?.first?.report.selectedTests == reports[0].report.selectedTests)
+    #expect(throws: (any Error).self) {
+        try XcodeHeadOnlySelector.scopedReports(current: current, requests: .init(scopes: [.init(name: "bad", paths: ["Unchanged.swift"])]),
+            changes: changes, baseRevision: base, headRevision: head, root: root, mappingPath: ".swift-test-selection.json", documentation: [], buildEvidenceFailure: nil)
+    }
+    current.dependencies!.functions["UI.Notes.testNotes()"]!.uncertainties.insert("Indirect function invocation")
+    let uncertain = try XcodeHeadOnlySelector.scopedReports(current: current, requests: request, changes: changes, baseRevision: base,
+        headRevision: head, root: root, mappingPath: ".swift-test-selection.json", documentation: [], buildEvidenceFailure: nil)
+    #expect(uncertain[0].report.selectedTests.contains("UI/Notes/testNotes()"))
+    #expect(uncertain[0].report.diagnostics.contains { $0.code == "head_only_runtime_uncertainty" })
+}
+
+@Test func headOnlyScopeDoesNotExcludeTestEntriesUsedAsHelpers() {
+    let old = headOnlyModel()
+    var current = headOnlyModel(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 9)"))
+    current.dependencies!.functions["UI.Notes.testNotes()"]!.dependencies.insert("UI.Sharing.testIndependent()")
+    let result = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: old.mappings),
+        changes: [.init(path: "Tests/UI.swift")], baseRevision: "base", excludedTestEntries: ["UI/Sharing/testIndependent()"])
+    #expect(result.selectedTests == ["UI/Notes/testNotes()", "UI/Sharing/testIndependent()"])
+}
+
+@Test func headOnlyScopeValidationRejectsAmbiguousAndEscapingInputs() {
+    for request in [SelectionScopes(version: 2, scopes: []), .init(scopes: [.init(name: "same", paths: []), .init(name: "same", paths: [])]),
+                    .init(scopes: [.init(name: "scope", paths: ["../outside"])]), .init(scopes: [.init(name: "scope", paths: ["/absolute"])]),
+                    .init(scopes: [.init(name: "scope", paths: ["a", "a"])])] {
+        #expect(throws: (any Error).self) { try request.validate() }
+    }
+}

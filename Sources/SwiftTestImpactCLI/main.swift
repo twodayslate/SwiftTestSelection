@@ -39,6 +39,7 @@ Head-only selection without baseline artifacts or a persistent cache:
   select <Xcode options> --base REV --head REV --merge-base --head-only
          --build-time-sil HELPER --retain-build NEW_DIRECTORY
 Compares native Git source syntax; unsupported changes broaden explicitly.
+  --selection-scopes FILE adds scoped reports from the same captured head graph.
 
 Retain the analyzed head for execution after selection exits:
   select <Xcode options> --base REV --head REV --retain-build NEW_DIRECTORY
@@ -103,6 +104,7 @@ private struct Options {
     var retainedBuild: String?
     var reportPath: String?
     var headOnly = false
+    var selectionScopes: SelectionScopes?
     var cachedBasePolicy: XcodeCachedBasePolicy = .build
     var cachePath: String?
     var cacheContext: String?
@@ -141,12 +143,13 @@ private struct Options {
             if flag == "--merge-base" { mergeBase = true; continue }
             if flag == "--head-only" { headOnly = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
-            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--cached-base-policy", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture", "--build-time-sil"].contains(flag), index < arguments.count else {
+            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--cached-base-policy", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture", "--build-time-sil", "--selection-scopes"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
             let value = arguments[index]
             index += 1
             switch flag {
+            case "--selection-scopes": selectionScopes = try JSONDecoder().decode(SelectionScopes.self, from: Data(contentsOf: URL(fileURLWithPath: value)))
             case "--discovery-cache": discoveryCache = value
             case "--discovery-context": discoveryContext = value
             case "--sil-capture": silCapture = value
@@ -195,6 +198,8 @@ private struct Options {
                 throw ImpactError("Analysis caching requires Xcode select, --head, --analysis-cache and --cache-context; cannot combine with saved graph inputs.")
             }
         }
+        if selectionScopes != nil && !headOnly { throw ImpactError("--selection-scopes requires --head-only") }
+        try selectionScopes?.validate()
         if headOnly {
             guard command == "select", head != nil, buildTimeSIL != nil, retainedBuild != nil || run,
                   project != nil || workspace != nil, baseGraph == nil, headGraph == nil, cachedBasePolicy == .build else {
@@ -348,7 +353,7 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                         fullSuite: options.fullSuite, baseGraph: baseGraph, headGraph: headGraph)
                 } else {
                     report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite,
-                        cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) }, retainingBuildAt: retained, cachedBasePolicy: options.cachedBasePolicy, headOnly: options.headOnly)
+                        cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) }, retainingBuildAt: retained, cachedBasePolicy: options.cachedBasePolicy, headOnly: options.headOnly, selectionScopes: options.selectionScopes)
                 }
                 let data = options.format == "json" ? try encoder.encode(report) : Data(render(report).utf8)
                 try write(data, to: options.output)
