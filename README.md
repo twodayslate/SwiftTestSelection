@@ -421,7 +421,9 @@ mapping completeness. Validate selected runs against full runs before using a CI
 
 ### Build-time SIL capture (opt-in)
 
-Cached/retained selection can now own capture for both revisions:
+Cached/retained selection can own capture for both revisions. To limit a PR job
+to one executable build, use the [cache-only baseline policy](#limit-pr-jobs-to-one-executable-build)
+with a baseline produced by main's ordinary build.
 
 ```sh
 swift-test-impact select \
