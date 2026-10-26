@@ -180,4 +180,92 @@ func generatedDocumentationEvidenceProtectsBuildInputs(scenario: String) throws 
     let boundary = try f.boundary()
     #expect(boundary.repositoryInputFiles?["Docs/Guide.md"] != nil)
     #expect(boundary.documentationInputs?.contains("Docs/Guide.md") == (scenario == "documentation"))
+    if scenario != "documentation" {
+        let reasons = try #require(boundary.documentationBlockers?["Docs/Guide.md"])
+        #expect(reasons.contains { $0.contains(scenario == "script" ? "/bin/sh" : "Docs") })
+    }
+}
+
+@Test(arguments: ["copypng", "xcstringstool", "metal", "metallib"],
+      ["unrelated", "input", "directory", "argument", "impostor", "wrongXcode", "missingToolchain", "script"])
+func standardXcodeTasksPreserveDocumentationPrecision(tool: String, scenario: String) throws {
+    let f = try EvidenceFixture()
+    try f.write("documentation", to: f.root.appendingPathComponent("AGENTS.md"))
+    let developer = "/Applications/Xcode.app/Contents/Developer"
+    let metal = ["metal", "metallib"].contains(tool)
+    let installed = metal ? "/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v1/Metal.xctoolchain/usr/bin/" + tool : developer + "/usr/bin/" + tool
+    var executable = installed
+    if scenario == "impostor" { executable = developer + "/CustomTools/" + tool }
+    if scenario == "wrongXcode" { executable = "/Applications/OtherXcode.app/Contents/Developer/usr/bin/" + tool }
+    var commands = f.commands
+    commands["standard-task"] = ["tool": "shell", "args": [executable, scenario == "argument" ? "AGENTS.md" : "resource"],
+        "inputs": scenario == "input" ? ["AGENTS.md"] : scenario == "directory" ? [f.root.path] : [metal ? "Resources/value.air" : "Resources/value.txt"]]
+    if scenario == "script" { commands["custom-script"] = ["tool": "shell", "args": ["/bin/sh", "build.sh"]] }
+    try f.save(commands: commands)
+    var lookups: [String] = []
+    let evidence = try XcodeBuildEvidence(log: f.log, root: f.root, derived: f.derived, resolveMetalTool: { name, activeDeveloper in
+        #expect(activeDeveloper == developer)
+        lookups.append(name)
+        return scenario == "missingToolchain" ? nil : installed
+    })
+    let boundary = try evidence.boundary(file: f.generated, module: "Core", list: f.list, arguments: f.args,
+        repositoryInputs: XcodeBuildEvidence.repositoryInputs(root: f.root, derived: f.derived))
+    let excluded = scenario == "unrelated" || (scenario == "missingToolchain" && !metal)
+    #expect(boundary.documentationInputs == (excluded ? ["AGENTS.md"] : []))
+    #expect((boundary.documentationBlockers?["AGENTS.md"] != nil) == !excluded)
+    #expect(lookups.count == (metal ? 1 : 0))
+    if ["impostor", "wrongXcode"].contains(scenario) {
+        #expect(boundary.documentationBlockers?["AGENTS.md"]?.contains { $0.contains(executable) && $0.contains("standard-task") } == true)
+    }
+}
+
+/// Optional integration with Xcode's installed (potentially cryptex-mounted)
+/// toolchain. The table above remains deterministic on machines without Metal.
+@Test func installedAppleMetalProvenance() throws {
+    guard let developer = ProcessInfo.processInfo.environment["IMPACT_METAL_DEVELOPER"] else { return }
+    let metal = try #require(XcodeBuildEvidence.installedMetalTool("metal", developer: developer))
+    let f = try EvidenceFixture()
+    try f.write("documentation", to: f.root.appendingPathComponent("AGENTS.md"))
+    var commands = f.commands
+    let deps = f.derived.appendingPathComponent("example.dat")
+    try f.write("dependencies: Shaders/example.metal\n", to: deps)
+    commands["CompileMetalFile"] = ["tool": "shell", "args": [metal, "-c", "-MT", "dependencies", "-MF", deps.path, "Shaders/example.metal"],
+        "inputs": ["Shaders/example.metal"], "deps": [deps.path], "deps-style": "makefile"]
+    try f.save(commands: commands)
+    var arguments = f.args
+    arguments[0] = developer + "/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    #expect(try f.boundary(arguments: arguments).documentationInputs == ["AGENTS.md"])
+}
+
+@Test(arguments: ["unrelated", "includedMarkdown", "missing", "malformed", "changed", "unsupportedInvocation"])
+func metalIncludesAreSealedBuildInputs(scenario: String) throws {
+    let f = try EvidenceFixture()
+    try f.write("documentation", to: f.root.appendingPathComponent("Docs/Guide.md"))
+    let deps = f.derived.appendingPathComponent("shader.dat")
+    let included = scenario == "includedMarkdown" ? "../Docs/Guide.md" : "shader.metal"
+    if scenario != "missing" { try f.write(scenario == "malformed" ? "unknown format" : "dependencies: " + included + "\n", to: deps) }
+    var commands = f.commands
+    commands["CompileMetalFile"] = ["tool": "shell", "args": ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal", "-c", "-MT", "dependencies", "-MF", deps.path],
+        "inputs": ["shader.metal"], "deps": [deps.path], "deps-style": "makefile", "working-directory": f.root.appendingPathComponent("Shaders").path]
+    if scenario == "unsupportedInvocation" {
+        commands["CompileMetalFile"]?["args"] = ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal", "-E", "shader.metal"]
+        commands["CompileMetalFile"]?.removeValue(forKey: "deps")
+    }
+    try f.save(commands: commands)
+    let evidence = try f.evidence(), boundary = try f.boundary()
+    #expect(boundary.documentationInputs == (["unrelated", "changed"].contains(scenario) ? ["Docs/Guide.md"] : []))
+    if scenario == "includedMarkdown" {
+        #expect(boundary.documentationBlockers?["Docs/Guide.md"]?.contains { $0.contains("CompileMetalFile") && $0.contains("../Docs/Guide.md") } == true)
+    }
+    if scenario == "changed" {
+        try f.write("dependencies: ../Docs/Guide.md\n", to: deps)
+        #expect(throws: ImpactError.self) { try evidence.validate(log: f.log, boundaries: [boundary]) }
+    }
+}
+
+@Test func metalMakefileDependenciesHandleEscapesAndRejectUnknownSyntax() {
+    #expect(XcodeBuildEvidence.metalDependencies("dependencies: /path/with\\ space/a.metal \\\n/path/Guide.md\n") == ["/path/with space/a.metal", "/path/Guide.md"])
+    for text in ["dependencies:", "wrong: file", "dependencies: file\nsecond: other", "dependencies: $(FILE)", "dependencies: file # comment", "dependencies: file\\"] {
+        #expect(XcodeBuildEvidence.metalDependencies(text) == nil)
+    }
 }

@@ -657,8 +657,19 @@ conservatively fingerprints repository non-Swift files and package manifests.
 An `ignoredDocumentation` pattern present in both revisions also applies to these
 fingerprints when the active build evidence proves the Markdown file is outside
 build inputs. Markdown resources, directory inputs, and files referenced by build
-commands remain protected. Unknown shell tools prevent this exclusion because
-they may consume undeclared inputs. Older graphs with only opaque fingerprints
+commands remain protected. Standard `copypng` and `xcstringstool` tasks are
+recognized at their exact locations in the active compiler's Xcode installation.
+External Metal tools must match `xcrun --toolchain com.apple.dt.toolchain.Metal
+--find metal` (or `metallib`) using that Xcode and a clean environment. A matching
+executable basename elsewhere is insufficient. These tools' declared inputs and
+arguments still participate in the Markdown checks. Metal compilation also
+requires its emitted makefile dependency list; included Markdown is protected,
+and missing or unsupported dependency evidence keeps the conservative fallback.
+Dependency files are fingerprinted alongside the active build metadata.
+Unknown shell tools prevent this exclusion because they may consume undeclared
+inputs. Each boundary's `documentationBlockers` records the exact command/input;
+selection emits `documentation_exclusion_blocked` when a changed Markdown file
+cannot be excluded. Older graphs with only opaque fingerprints
 remain conservative; regenerate both graphs to obtain the per-file evidence.
 Proven reference-only `.pbxproj` edits accompanying pure file moves are also
 excluded from the repository fingerprint comparison. Generated content, generator

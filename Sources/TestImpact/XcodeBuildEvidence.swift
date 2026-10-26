@@ -15,6 +15,7 @@ public struct GeneratedSourceBoundary: Codable, Sendable, Equatable {
     // Optional for archive compatibility; old opaque seals remain conservative.
     public var repositoryInputFiles: [String: String]? = nil
     public var documentationInputs: [String]? = nil
+    public var documentationBlockers: [String: [String]]? = nil
     public var sourceLocations: [String]? = nil
     public var generatorInputs: [String: String]? = nil
 }
@@ -36,6 +37,7 @@ struct XcodeBuildEvidence {
     private let inputs: [String: String]
     private let pathRoots: [(String, String)]
     private let captured: CapturedSIL?
+    private let resolveMetalTool: (String, String) -> String?
 
     private func canonical(_ path: String) -> String { URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path }
 
@@ -45,6 +47,14 @@ struct XcodeBuildEvidence {
         var env: [String: String]?
         var inputs: [String]?
         var outputs: [String]?
+        var deps: [String]?
+        var depsStyle: String?
+        var workingDirectory: String?
+        enum CodingKeys: String, CodingKey {
+            case tool, args, env, inputs, outputs, deps
+            case depsStyle = "deps-style", workingDirectory = "working-directory"
+        }
+        var isMetal: Bool { args?.first.map { ["metal", "metallib"].contains(URL(fileURLWithPath: $0).lastPathComponent) } ?? false }
     }
     private struct Manifest: Decodable { var commands: [String: Command] }
 
@@ -61,11 +71,23 @@ struct XcodeBuildEvidence {
     }
 
     static func fingerprints(log: String) throws -> [String: String] {
-        try Dictionary(uniqueKeysWithValues: files(log: log).map { ($0.path, try ArtifactFiles.digest($0)) })
+        let metadata = try files(log: log)
+        var result = try Dictionary(uniqueKeysWithValues: metadata.map { ($0.path, try ArtifactFiles.digest($0)) })
+        if let manifest = metadata.first {
+            let commands = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifest)).commands
+            for command in commands.values where command.isMetal {
+                for path in command.deps ?? [] where path.hasPrefix("/") && FileManager.default.fileExists(atPath: path) {
+                    result[path] = try ArtifactFiles.digest(URL(fileURLWithPath: path))
+                }
+            }
+        }
+        return result
     }
 
-    init(log: String, root: URL, derived: URL, captured: CapturedSIL? = nil) throws {
+    init(log: String, root: URL, derived: URL, captured: CapturedSIL? = nil,
+         resolveMetalTool: @escaping (String, String) -> String? = XcodeBuildEvidence.installedMetalTool) throws {
         self.captured = captured
+        self.resolveMetalTool = resolveMetalTool
         self.root = root.standardizedFileURL.resolvingSymlinksInPath()
         self.derived = derived.standardizedFileURL.resolvingSymlinksInPath()
         pathRoots = [(derived, "<DerivedData>"), (root, "<Source>")].flatMap { url, token in
@@ -190,34 +212,120 @@ struct XcodeBuildEvidence {
         // Physical #filePath values are semantic, even though artifact locations
         // use stable logical paths. Never normalize literals inside source text.
         let repositoryFiles = try repositoryInputFiles ?? Self.repositoryInputFiles(root: root, derived: derived)
+        let documentation = documentationEvidence(files: repositoryFiles, compiler: arguments.first ?? "")
         return GeneratedSourceBoundary(module: module, logicalPath: normalized(file.path), contentDigest: try ArtifactFiles.digest(file),
             generatorIdentity: identity, repositoryInputs: repositoryInputs,
-            repositoryInputFiles: repositoryFiles, documentationInputs: documentationInputs(files: repositoryFiles, compiler: arguments.first ?? ""),
+            repositoryInputFiles: repositoryFiles, documentationInputs: documentation.allowed, documentationBlockers: documentation.blockers,
             sourceLocations: snapshot.units.flatMap { $0.fileLocationValues ?? [] }.sorted(), generatorInputs: generatorInputs)
     }
 
-    /// A declared documentation policy cannot hide a resource or an input to a
-    /// build task. Unknown shell tools may read undeclared inputs, so their
-    /// presence prevents documentation exclusions for this build.
-    private func documentationInputs(files: [String: String], compiler: String) -> [String] {
-        let developer = compiler.range(of: "/Toolchains/").map { String(compiler[..<$0.lowerBound]) + "/" }
-        let xcodeTools: Set<String> = ["actool", "ibtool", "clang", "clang++", "clang-stat-cache", "swiftc",
-            "appintentsmetadataprocessor", "appintentsnltrainingprocessor", "embeddedBinaryValidationUtility", "lipo", "tapi"]
-        for command in commands.values where command.tool == "shell" {
-            guard let executable = command.args?.first,
-                  ["/usr/bin/touch", "/usr/bin/derq"].contains(executable) ||
-                    (developer.map { executable.hasPrefix($0) } == true && xcodeTools.contains(URL(fileURLWithPath: executable).lastPathComponent)) else { return [] }
+    /// Resolve only Apple's installed Metal toolchain, using the active compiler's
+    /// Xcode and a clean environment (no PATH/TOOLCHAINS/xcrun overrides). Never
+    /// execute a manifest-provided binary to discover its provenance.
+    static func installedMetalTool(_ name: String, developer: String) -> String? {
+        guard ["metal", "metallib"].contains(name), developer.hasPrefix("/") else { return nil }
+        guard let result = try? CommandRunner.run("/usr/bin/env", ["-i", "DEVELOPER_DIR=" + developer,
+            "PATH=/usr/bin:/bin", "/usr/bin/xcrun", "--toolchain", "com.apple.dt.toolchain.Metal", "--find", name],
+            at: URL(fileURLWithPath: "/"), allowFailure: true), result.status == 0 else { return nil }
+        let path = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path.hasPrefix("/"), !path.contains("\n"), path.hasSuffix(".xctoolchain/usr/bin/" + name) else { return nil }
+        return path
+    }
+
+    /// Exact Xcode tool locations, not a developer-directory prefix plus basename.
+    /// Downloaded Metal tools live outside Xcode; they must match xcrun's explicit
+    /// Apple Metal toolchain lookup. An unknown task still blocks exclusions.
+    private func documentationEvidence(files: [String: String], compiler: String) -> (allowed: [String], blockers: [String: [String]]) {
+        let developer = compiler.range(of: "/Toolchains/").map { String(compiler[..<$0.lowerBound]) }
+        var supported = Set(["/usr/bin/touch", "/usr/bin/derq"].map(canonical))
+        if let developer, developer.hasPrefix("/") {
+            let developerTools = ["actool", "ibtool", "copypng", "xcstringstool", "embeddedBinaryValidationUtility"]
+            let toolchainTools = ["clang", "clang++", "clang-stat-cache", "swiftc", "appintentsmetadataprocessor",
+                                  "appintentsnltrainingprocessor", "lipo", "tapi", "metal", "metallib"]
+            supported.formUnion(developerTools.map { canonical(developer + "/usr/bin/" + $0) })
+            supported.formUnion(toolchainTools.map { canonical(developer + "/Toolchains/XcodeDefault.xctoolchain/usr/bin/" + $0) })
+            let metalNames = Set(commands.values.filter { $0.tool == "shell" }.compactMap { $0.args?.first }
+                .filter { !supported.contains(canonical($0)) }.map { URL(fileURLWithPath: $0).lastPathComponent })
+                .intersection(["metal", "metallib"])
+            for name in metalNames.sorted() {
+                if let path = resolveMetalTool(name, developer) { supported.insert(canonical(path)) }
+            }
         }
-        let consumed = commands.values.flatMap { $0.inputs ?? [] }.filter { !$0.hasPrefix("<") }.map {
-            canonical(URL(fileURLWithPath: $0, relativeTo: URL(fileURLWithPath: root.path, isDirectory: true)).path)
+        let ordered = commands.sorted { $0.key < $1.key }
+        var unknown = ordered.compactMap { key, command -> String? in
+            guard command.tool == "shell" else { return nil }
+            if let executable = command.args?.first, executable.hasPrefix("/"), supported.contains(canonical(executable)) { return nil }
+            return "Unrecognized shell task \(normalized(key)): \(normalized(command.args?.first ?? "<missing executable>"))"
         }
-        let arguments = commands.values.flatMap { $0.args ?? [] }
-        return files.keys.filter { path in
-            guard path.hasSuffix(".md") else { return false }
+        func inputPath(_ input: String, _ command: Command) -> String {
+            let directory = command.workingDirectory.map { URL(fileURLWithPath: $0, relativeTo: root) } ?? root
+            return canonical(URL(fileURLWithPath: input, relativeTo: directory.appendingPathComponent("", isDirectory: true)).path)
+        }
+        var inputRows = ordered.flatMap { key, command in
+            (command.inputs ?? []).filter { !$0.hasPrefix("<") }.map { (key, $0, inputPath($0, command)) }
+        }
+        for (key, command) in ordered where command.tool == "shell" && command.isMetal {
+            let args = command.args ?? []
+            let dependencies = command.deps ?? []
+            if args.contains("-c") || !dependencies.isEmpty {
+                // Includes need not appear in the manifest's direct inputs. Read
+                // the compiler's makefile dependencies, which are also sealed by
+                // fingerprints(log:) for capture/discovery/retained validation.
+                let mf = args.firstIndex(of: "-MF"), mt = args.firstIndex(of: "-MT")
+                guard command.depsStyle == "makefile", dependencies.count == 1,
+                      let mf, mf + 1 < args.count, dependencies == [args[mf + 1]],
+                      let mt, mt + 1 < args.count, args[mt + 1] == "dependencies",
+                      let path = dependencies.first, path.hasPrefix("/"),
+                      let text = try? String(contentsOfFile: path, encoding: .utf8),
+                      let paths = Self.metalDependencies(text) else {
+                    unknown.append("Unresolved Metal dependencies for task \(normalized(key)): \(dependencies.map(normalized).joined(separator: ", "))")
+                    continue
+                }
+                inputRows += paths.map { (key, $0, inputPath($0, command)) }
+            } else {
+                let inputs = (command.inputs ?? []).filter { !$0.hasPrefix("<") }
+                if inputs.isEmpty || !inputs.allSatisfy({ $0.hasSuffix(".air") }) {
+                    unknown.append("Unsupported Metal invocation for task \(normalized(key)): \(args.map(normalized).joined(separator: " "))")
+                }
+            }
+        }
+        let argumentRows = ordered.flatMap { key, command in (command.args ?? []).map { (key, $0, normalized($0)) } }
+        // Retain the exact task/input responsible for a denied exclusion in the
+        // graph, so a mixed documentation diff explains its conservative fallback.
+        var blockers: [String: [String]] = [:], allowed: [String] = []
+        for path in files.keys.sorted() where path.hasSuffix(".md") {
             let absolute = canonical(root.appendingPathComponent(path).path)
-            return !consumed.contains { absolute == $0 || absolute.hasPrefix($0 + "/") } &&
-                !arguments.contains { normalized($0).contains("<Source>/" + path) || $0.contains(path) }
-        }.sorted()
+            var reasons = unknown
+            for (key, input, consumed) in inputRows where absolute == consumed || absolute.hasPrefix(consumed + "/") {
+                reasons.append("Task \(normalized(key)) consumes input \(normalized(input))")
+            }
+            for (key, argument, normalizedArgument) in argumentRows where normalizedArgument.contains("<Source>/" + path) || argument.contains(path) {
+                reasons.append("Task \(normalized(key)) references argument \(normalizedArgument)")
+            }
+            if reasons.isEmpty { allowed.append(path) }
+            else { blockers[path] = Array(Set(reasons)).sorted() }
+        }
+        return (allowed, blockers)
+    }
+
+    /// Xcode Metal emits one `-MT dependencies` makefile rule. Reject unknown
+    /// syntax rather than accidentally treating an unparsed include as unused.
+    static func metalDependencies(_ text: String) -> [String]? {
+        let text = text.replacingOccurrences(of: "\\\r\n", with: " ").replacingOccurrences(of: "\\\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.hasPrefix("dependencies:") else { return nil }
+        var paths: [String] = [], token = "", escaped = false
+        for character in text.dropFirst("dependencies:".count) {
+            if escaped { token.append(character); escaped = false }
+            else if character == "\\" { escaped = true }
+            else if character == ":" || character == "$" || character == "#" { return nil }
+            else if character.isWhitespace {
+                if !token.isEmpty { paths.append(token); token = "" }
+            } else { token.append(character) }
+        }
+        guard !escaped else { return nil }
+        if !token.isEmpty { paths.append(token) }
+        return paths.isEmpty ? nil : paths
     }
 
     /// Non-Swift inputs include resource membership/content, package manifests

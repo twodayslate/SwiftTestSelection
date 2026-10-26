@@ -421,3 +421,20 @@ func generatedBoundariesHonorProvenProjectReferenceMoves(scenario: String) throw
     else if scenario == "mixed" { #expect(report.selectedTests == ["Tests/Other/testOther()"]) }
     else { #expect(Set(report.selectedTests) == Set(current.tests)) }
 }
+
+@Test func documentationBlockersSurviveArchivesAndExplainFallback() throws {
+    var old = mixedBoundaryFixture(), current = mixedBoundaryFixture("assert(false)")
+    func boundary(_ digest: String) throws -> GeneratedSourceBoundary {
+        let files = ["AGENTS.md": digest]
+        return GeneratedSourceBoundary(module: "App", logicalPath: "<DerivedData>/generated.swift", contentDigest: "same",
+            generatorIdentity: "same", repositoryInputs: try XcodeGraphCache.key(files), repositoryInputFiles: files,
+            documentationInputs: [], documentationBlockers: ["AGENTS.md": ["Unrecognized shell task custom-script: /bin/sh"]])
+    }
+    old.generatedSourceBoundaries = ["App": [try boundary("old")]]
+    current.generatedSourceBoundaries = ["App": [try boundary("new")]]
+    let archived = try GraphArchive.decode(GraphArchive.encode(current))
+    let report = XcodeFineSelector.select(current: archived, previous: old,
+        changes: [.init(path: "UI.swift"), .init(path: "AGENTS.md")], baseRevision: "base")
+    #expect(Set(report.selectedTests) == Set(current.tests))
+    #expect(report.diagnostics.contains { $0.code == "documentation_exclusion_blocked" && $0.message.contains("custom-script: /bin/sh") })
+}
