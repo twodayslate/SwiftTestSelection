@@ -34,7 +34,7 @@ done
 
 binary="$stage/package/bin/swift-test-impact"
 xcrun lipo -create "$stage/arm64" "$stage/x86_64" -output "$binary"
-xcrun lipo -verify_arch arm64 x86_64 "$binary"
+xcrun lipo "$binary" -verify_arch arm64 x86_64
 xcrun strip -S "$binary"
 # Ad-hoc signing preserves Apple Silicon execution after lipo/strip. It is not
 # Developer ID signing or notarization and requires no secrets on the runner.
