@@ -926,3 +926,40 @@ private func headOnlySelection(_ current: XcodeTestGraph, old: XcodeTestGraph = 
     #expect(report.selectedTests.isEmpty)
     #expect(report.ignoredChanges == ["Tests/Empty.swift"])
 }
+
+@Test(arguments: ["XCTAssertEqual(2, 2)", "XCTAssertEqual(3, 3)"])
+func headOnlyMixedProductionAndTestInfrastructureKeepRuntimeFallback(expression: String) {
+    let uiEdit = uiSource.replacingOccurrences(of: expression, with: "XCTAssertEqual(2, 4)")
+    let appEdit = appSource.replacingOccurrences(of: "func sharing() -> Int { common() }", with: "func sharing() -> Int { common() + 1 }")
+    func withIndirectUI(_ ui: String, _ app: String) -> XcodeTestGraph {
+        var value = headOnlyModel(ui: ui, app: app)
+        value.dependencies!.functions["UI.Notes.testNotes()"]!.uncertainties.insert("Indirect function invocation")
+        return value
+    }
+    let helper = headOnlySelection(withIndirectUI(uiEdit, appSource))
+    let mixed = headOnlySelection(withIndirectUI(uiEdit, appEdit), paths: ["Tests/UI.swift", "App/Features.swift"])
+    #expect(helper.selectedTests.contains("UI/Notes/testNotes()"))
+    #expect(Set(mixed.selectedTests).isSuperset(of: helper.selectedTests))
+    #expect(mixed.diagnostics.contains { $0.code == "head_only_runtime_uncertainty" && $0.tests.contains("UI/Notes/testNotes()") })
+
+    // An app-only change, or one mixed with a proven independent test entry,
+    // still uses the declared UI feature contract to exclude unrelated tests.
+    let production = headOnlySelection(withIndirectUI(uiSource, appEdit), paths: ["App/Features.swift"])
+    let entry = headOnlySelection(withIndirectUI(uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)"), appEdit),
+        paths: ["Tests/UI.swift", "App/Features.swift"])
+    #expect(production.selectedTests.count == 4)
+    #expect(entry.selectedTests == production.selectedTests)
+    #expect(entry.diagnostics.isEmpty)
+}
+
+@Test(arguments: ["some Equatable", "(some Equatable)?", "(some Equatable, Int)", "[some Equatable]", "[String: some Equatable]", "(any Equatable)?"])
+func headOnlyNestedOpaqueResultsRequireFallback(result: String) throws {
+    let before = "func common() -> \(result) { fatalError(\"before\") }"
+    let after = before.replacingOccurrences(of: "before", with: "after")
+    let snapshot = SwiftSourceSnapshot.parse(after, path: "App/Features.swift", module: "App")
+    #expect(snapshot.diagnostics.isEmpty)
+    #expect(try #require(snapshot.units.first).headOnlyBodySupported == false)
+    let report = headOnlySelection(headOnlyModel(app: after), old: headOnlyModel(app: before), paths: ["App/Features.swift"])
+    #expect(report.selectedTests.count == 5)
+    #expect(report.diagnostics.contains { $0.code == "head_only_unsupported_body" })
+}

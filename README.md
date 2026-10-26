@@ -943,9 +943,13 @@ The supported-change model is deliberately narrower than two-graph analysis:
 New tests are included through the structural-change fallback; deleted tests are
 absent from the head inventory. UI mappings remain user-declared contracts, not
 measured coverage. Ordinary bodies with attributes other than `@MainActor` or an
-opaque result type are conservatively unsupported. This also applies to attributes
+opaque result type (including one nested in an optional, tuple or generic type)
+are conservatively unsupported. This also applies to attributes
 on enclosing types: an attached macro can synthesize other declarations from a
 changed body. Test-entry selection retains the existing test-independence assumption.
+Declared UI feature mappings narrow runtime uncertainty only when all changed
+bodies belong to production code or proven test entries. Mixed helper or lifecycle
+edits retain their runtime fallbacks even when a mapped app feature also changes.
 
 Native Swift tokens preserve strings, regex literals, operators and directives.
 With `sourceLocationPolicy: "diagnosticLineColumn"` agreed at both revisions,

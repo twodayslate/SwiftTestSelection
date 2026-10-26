@@ -163,7 +163,11 @@ enum XcodeHeadOnlySelector {
             let entriesOnly = !changed.isEmpty && changed.allSatisfy { XcodeFineSelector.isTestEntry($0, in: current) }
             if !changed.isEmpty && !entriesOnly {
                 let opaque = index.paths(to: Set(graph.functions.values.filter(\.hasOpaqueRuntimeDependency).map(\.id)))
-                let declaredUI = current.mappings?.runtimeDependencyPolicy == .declared && source.mappings?.runtimeDependencyPolicy == .declared
+                let productionKeys = Set(production.map(\.key))
+                // App feature contracts do not isolate test helpers or lifecycle
+                // code. A mixed production edit must preserve their uncertainty.
+                let declaredUI = current.mappings?.runtimeDependencyPolicy == .declared && source.mappings?.runtimeDependencyPolicy == .declared &&
+                    changed.allSatisfy { productionKeys.contains($0.key) || XcodeFineSelector.isTestEntry($0, in: current) }
                 for test in inventory.sorted() {
                     if !production.isEmpty, uiTests.contains(test), declaredUI { continue }
                     if opaque.path(from: graph.tests[test] ?? []) != nil {

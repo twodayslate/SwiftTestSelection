@@ -180,6 +180,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             return values
         }
+        func containsOpaqueResult(_ node: Syntax) -> Bool {
+            node.is(SomeOrAnyTypeSyntax.self) ||
+                node.children(viewMode: .sourceAccurate).contains(where: containsOpaqueResult)
+        }
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String]) {
             if let alias = node.as(TypeAliasDeclSyntax.self) {
                 result.typeAliases!.insert(([module] + scope + [alias.name.text]).joined(separator: "."))
@@ -220,6 +224,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             let semantic = SourceUnit.withLocations(values, syntax: syntax)
             var bodySupported = false
             if let function = node.as(FunctionDeclSyntax.self) {
+                // Optional, tuple and generic wrappers can hide an opaque result
+                // whose inferred type changes callers without a surviving call edge.
+                let hasOpaqueResult = function.signature.returnClause.map { containsOpaqueResult(Syntax($0.type)) } ?? false
                 let attributes = function.attributes.compactMap { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription }
                 let hasMacro = function.body?.tokens(viewMode: .sourceAccurate).contains { token in
                     guard token.tokenKind == .pound, let macro = token.parent?.as(MacroExpansionExprSyntax.self) else { return false }
@@ -243,7 +250,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     enclosing = ancestor.parent
                 }
                 bodySupported = enclosingSupported && attributes.count == function.attributes.count && attributes.allSatisfy { $0 == "MainActor" } &&
-                    function.signature.returnClause?.type.is(SomeOrAnyTypeSyntax.self) != true && !hasMacro
+                    !hasOpaqueResult && !hasMacro
             }
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
