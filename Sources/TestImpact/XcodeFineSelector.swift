@@ -134,7 +134,8 @@ public enum XcodeFineSelector {
                 [current.mappings, previous?.mappings].allSatisfy { mappings in
                     mappings?.ignoredDocumentation?.contains { UIFeatureMappings.matches(path, pattern: $0) } == true
                 } && generatedBoundaries.allSatisfy { boundary in
-                    guard let files = boundary.repositoryInputFiles, let documentation = boundary.documentationInputs else { return false }
+                    guard boundary.documentationEvidenceVersion == 2,
+                          let files = boundary.repositoryInputFiles, let documentation = boundary.documentationInputs else { return false }
                     return files[path] == nil || documentation.contains(path)
                 }
         }

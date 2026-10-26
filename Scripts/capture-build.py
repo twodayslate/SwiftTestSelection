@@ -159,6 +159,9 @@ def build(args, session):
     if args.configuration: command += ['-configuration', args.configuration]
     if getattr(args, 'only_use_package_versions_from_resolved_file', False): command += ['-onlyUsePackageVersionsFromResolvedFile']
     command += ['OTHER_SWIFT_FLAGS=$(inherited) ' + ' '.join(shlex.quote(v) for v in setup['additionalSwiftFlags'])]
+    # Xcode's -MMD omits system headers, even when they are repository files.
+    # Retain them so documentation exclusions can use complete Metal evidence.
+    command += ['MTL_COMPILER_FLAGS=$(inherited) -Xclang -sys-header-deps']
     settings_path = session / 'settings.json'
     settings = subprocess.check_output(command + ['-showBuildSettings', '-json'], cwd=root, env=env)
     helper_files = [Path(__file__), prepare, prepare.with_name('capture_swiftc.py'), prepare.with_name('capture_inputs.py')]

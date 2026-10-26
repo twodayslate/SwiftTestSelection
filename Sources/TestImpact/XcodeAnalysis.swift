@@ -32,6 +32,9 @@ public struct XcodeConfiguration: Sendable {
                       "-destination", destination, "-derivedDataPath", derivedData.path]
         if let configuration { result += ["-configuration", configuration] }
         if let testPlan { result += ["-testPlan", testPlan] }
+        if action == "build-for-testing" {
+            result.append("MTL_COMPILER_FLAGS=$(inherited) -Xclang -sys-header-deps")
+        }
         return result
     }
 

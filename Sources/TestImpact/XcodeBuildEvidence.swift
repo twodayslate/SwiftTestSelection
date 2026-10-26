@@ -18,6 +18,9 @@ public struct GeneratedSourceBoundary: Codable, Sendable, Equatable {
     public var documentationBlockers: [String: [String]]? = nil
     public var sourceLocations: [String]? = nil
     public var generatorInputs: [String: String]? = nil
+    // Missing in older archives, whose exclusions did not require complete
+    // Metal system-header dependencies. They must be recaptured before ignoring docs.
+    public var documentationEvidenceVersion: Int? = 2
 }
 
 public struct RecoveredProductRole: Codable, Sendable, Equatable {
@@ -295,6 +298,9 @@ struct XcodeBuildEvidence {
                     continue
                 }
                 inputRows += paths.map { (key, $0, inputPath($0, command)) }
+                if !Self.metalIncludesSystemHeaders(args) {
+                    unknown.append("Incomplete Metal dependencies for task \(normalized(key)): system headers may be omitted; rebuild with MTL_COMPILER_FLAGS='$(inherited) -Xclang -sys-header-deps'")
+                }
             } else {
                 let inputs = (command.inputs ?? []).filter { !$0.hasPrefix("<") }
                 if inputs.isEmpty || !inputs.allSatisfy({ $0.hasSuffix(".air") }) {
@@ -319,6 +325,30 @@ struct XcodeBuildEvidence {
             else { blockers[path] = Array(Set(reasons)).sorted() }
         }
         return (allowed, blockers)
+    }
+
+    /// -MMD omits system headers, including repository headers reached through
+    /// -isystem or marked by #pragma clang system_header. Even adding -MD does
+    /// not override -MMD. Xcode's ordinary -MMD invocation needs the explicit
+    /// cc1 system-header dependency option. Do not infer completeness through
+    /// opaque argument files or other preprocessor/cc1 forwarding.
+    static func metalIncludesSystemHeaders(_ args: [String]) -> Bool {
+        var systemHeaders = false
+        var index = 1
+        while index < args.count {
+            let argument = args[index]
+            if argument == "-Xclang", index + 1 < args.count, args[index + 1] == "-sys-header-deps" {
+                systemHeaders = true
+                index += 2
+                continue
+            }
+            if argument.hasPrefix("@") || argument.hasPrefix("-Xclang") || argument.hasPrefix("-Xpreprocessor") ||
+                argument.hasPrefix("-Wp,") || argument.hasPrefix("-Xarch_") || argument.hasPrefix("--config") ||
+                ["-cc1", "-M", "-MM", "-ivfsoverlay", "-vfsoverlay"].contains(argument) { return false }
+            index += 1
+        }
+        guard args.contains("-MD") || args.contains("-MMD") else { return false }
+        return systemHeaders || (args.contains("-MD") && !args.contains("-MMD"))
     }
 
     /// Xcode Metal emits one `-MT dependencies` makefile rule. Reject unknown
