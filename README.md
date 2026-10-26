@@ -4,13 +4,101 @@ Select Swift tests from a Git diff and a compiler-derived dependency graph. **No
 
 A Swift package providing a `swift-test-impact` executable and reusable `TestImpact` library. SwiftPM packages use a function dependency graph with XCTest and Swift Testing discovery. Xcode projects/workspaces select individual XCTest methods through syntax and compiler dependencies, with explicit feature mappings for XCUITest. It is experimental static analysis, not a guarantee of the smallest safe test set.
 
-## Build
+## Install a prebuilt executable
+
+Versioned [GitHub Releases](https://github.com/twodayslate/SwiftTestSelection/releases)
+provide `swift-test-impact-vX.Y.Z-macos-universal.tar.gz` and `SHA256SUMS`.
+The executable supports macOS 13+ on Apple Silicon and Intel. SwiftSyntax and
+SwiftParser are linked into the executable, so installing it does not compile
+this package or its dependencies. Git and a Swift 6+ toolchain are still needed
+to analyze/build your project; Xcode analysis requires Xcode.
+
+Pin a published version in CI, download both files, verify the checksum, and
+add the extracted `bin` directory to `PATH`:
+
+```sh
+set -eu
+VERSION=vX.Y.Z # Replace with a published release tag.
+RELEASE_URL="https://github.com/twodayslate/SwiftTestSelection/releases/download/$VERSION"
+INSTALL_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/swift-test-impact/$VERSION"
+mkdir -p "$INSTALL_DIR"
+curl --fail --location --retry 3 "$RELEASE_URL/swift-test-impact-$VERSION-macos-universal.tar.gz" \
+  --output "$INSTALL_DIR/swift-test-impact-$VERSION-macos-universal.tar.gz"
+curl --fail --location --retry 3 "$RELEASE_URL/SHA256SUMS" --output "$INSTALL_DIR/SHA256SUMS"
+(
+  cd "$INSTALL_DIR"
+  shasum -a 256 -c SHA256SUMS
+  tar -xzf "swift-test-impact-$VERSION-macos-universal.tar.gz"
+)
+export PATH="$INSTALL_DIR/bin:$PATH"
+export SWIFT_TEST_SELECTION="$INSTALL_DIR"
+swift-test-impact --help
+```
+
+Run this example as a shell script or CI step; `set -eu` stops the script on
+download, checksum, or extraction failures. The default uses the CI runner's
+temporary directory, or the system temporary directory, outside your checkout.
+Installing the tool therefore does not add files to the analyzed Git diff or
+require changes to `.gitignore`.
+
+In GitHub Actions, append
+`echo "$INSTALL_DIR/bin" >> "$GITHUB_PATH"` and
+`echo "SWIFT_TEST_SELECTION=$INSTALL_DIR" >> "$GITHUB_ENV"` to the install step
+to make the executable and helper location available in subsequent steps.
+Use `swift-test-impact` in place of `swift run swift-test-impact` in the examples
+below to use the binary.
+
+The archive also includes `Scripts/capture-build.py` and its three companion
+scripts under `Scripts/Experimental`. For build-time SIL capture and `--head-only`,
+pass `--build-time-sil "$SWIFT_TEST_SELECTION/Scripts/capture-build.py"` using the
+same installation as the executable. These modes additionally require Python 3.9+.
+
+Archives include the project and dependency licenses plus `BUILD-INFO.txt` with
+the version, source revisions, and build toolchain. Binaries are ad-hoc signed;
+they are not Developer ID signed or notarized. Linux binaries are not currently
+published.
+
+## Build from source
 
 Requires Swift 6+, Git, and a toolchain capable of building the target package. Validated with Apple Swift 6.3.3 on Apple Silicon macOS; Linux is not yet validated. SwiftSyntax/SwiftParser 600.0.1 is pinned for source parsing; unsupported syntax produces a diagnostic and conservative fallback.
 
 ```sh
 swift build -c release
 .build/release/swift-test-impact --help
+```
+
+### Build and publish releases
+
+The [Build and release CLI workflow](.github/workflows/binaries.yml) uses the
+attached macOS runner with labels `self-hosted`, `macOS`, and `ARM64`. It requires
+full Xcode selected with `xcode-select`, Swift 6+, and Python 3. It runs the Swift
+tests and capture-script tests, builds both architectures, checks the executable's
+runtime dependencies, and runs the SwiftPM integration suite and installation
+regressions against the extracted archive. It also compiles a Swift fixture through
+the bundled capture helpers. Intel execution is smoke-tested when Rosetta is already available;
+building the Intel slice does not require it.
+
+Pushes to `main` and manual runs produce downloadable workflow artifacts retained
+for 14 days. A tag such as `v1.2.3` also publishes those verified files to a GitHub
+Release; `v1.2.3-rc.1` publishes a prerelease. Choose the intended version and tag
+the reviewed commit after this workflow has landed:
+
+```sh
+git tag vX.Y.Z <reviewed-commit>
+git push origin vX.Y.Z
+```
+
+The publishing job runs on a GitHub-hosted runner with `contents: write`; the
+build job has read-only repository permissions. Pull requests do not execute on
+the persistent self-hosted runner. A failed publish can be rerun while the release
+is still a draft. Published assets are never overwritten; use a new version for
+changes. A manual run on a version tag follows the same publishing rules.
+
+To reproduce the packaging and integration checks locally:
+
+```sh
+bash Scripts/package-release.sh dev-local
+# Outputs: .build/distribution/dev-local/
 ```
 
 ## Select tests
@@ -436,8 +524,10 @@ swift-test-impact select \
   --format json --output "$REPORT"
 ```
 
-`--build-time-sil` takes the helper from the **same pinned checkout as the binary**
-and requires Python 3.9+. It is distinct from `--sil-capture`, which imports an
+`--build-time-sil` takes the helper from the **same release archive or pinned source
+checkout as the binary**. For a prebuilt installation, use
+`"$SWIFT_TEST_SELECTION/Scripts/capture-build.py"` as set up above. Capture
+requires Python 3.9+. It is distinct from `--sil-capture`, which imports an
 already sealed session with existing-build `graph` inputs. Capture is opt-in;
 ordinary builds and the default selection mode still use compiler replay.
 
@@ -782,6 +872,13 @@ let exitCode = try analysis.run(report)
 For Xcode, construct `XcodeConfiguration(container:path:scheme:destination:configuration:testPlan:)` and pass it to `XcodeAnalysis(options:)`. Its `graph()`, `select(base:head:mergeBase:fullSuite:)`, and `run(_:)` methods parallel the SwiftPM API. Set `mappingsPath` on the configuration to override the mapping file. `XcodeFineSelector` accepts populated Xcode graphs and structured changes directly without subprocesses. Legacy graphs without compiler data retain target-level fallback behavior. For existing Xcode builds, use `graph(from: XcodeBuildInputs)`, `select(base:head:mergeBase:fullSuite:baseGraph:headGraph:)`, and `run(_:using:productsDirectory:)`. The optional `XcodeTestGraph.buildArtifact` stores capture metadata; cached selection requires it.
 
 ## Validation
+
+The [Tests workflow](.github/workflows/tests.yml) runs the full Swift package
+test suite, capture-script unit tests, and release-installation regressions on pull requests, pushes to `main`,
+merge-queue entries, and manual dispatches. It uses a GitHub-hosted macOS 26
+runner with Xcode 26.6, including for fork PRs. New commits cancel superseded
+test runs for the same PR or ref. The check is named `Unit tests (macOS)`;
+it can be selected as a required status check in repository branch rules.
 
 See [issue #39 validation](Documentation/Issue39Validation.md) for fresh
 real-project graphs, source-location policy and cache comparisons, measured time

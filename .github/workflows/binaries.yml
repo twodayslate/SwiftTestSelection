@@ -1,0 +1,99 @@
+name: Build and release CLI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binaries-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Only trusted pushes/manual runs use the persistent runner; no fork PR code.
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select artifact version
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF_TYPE" == tag ]]; then
+            if [[ ! "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+([.-][A-Za-z0-9]+)*)?$ ]]; then
+              echo "Release tags must use vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-suffix." >&2
+              exit 1
+            fi
+            version="$REF_NAME"
+          else
+            version="dev-${GITHUB_SHA:0:12}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Check toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          python3 --version
+      - name: Test
+        run: |
+          swift test -c release --scratch-path .build/binary-release --triple arm64-apple-macosx13.0
+          python3 Scripts/capture_build_test.py
+      - name: Package and test universal executable
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash Scripts/package-release.sh "$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: swift-test-impact-${{ steps.version.outputs.version }}
+          path: .build/distribution/${{ steps.version.outputs.version }}/*
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: swift-test-impact-${{ needs.build.outputs.version }}
+          path: distribution
+      - name: Publish GitHub release
+        working-directory: distribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          sha256sum --check SHA256SUMS
+          # A failed upload leaves a draft that can be retried. Never replace
+          # binaries in an already published release.
+          if gh release view "$VERSION" --json isDraft > release.json 2>/dev/null; then
+            if [[ "$(jq -r .isDraft release.json)" != true ]]; then
+              echo "Release $VERSION is already published; refusing to replace its binaries." >&2
+              exit 1
+            fi
+          else
+            gh release create "$VERSION" --verify-tag --draft --generate-notes --title "$VERSION"
+          fi
+          gh release upload "$VERSION" "swift-test-impact-$VERSION-macos-universal.tar.gz" SHA256SUMS --clobber
+          options=(--draft=false)
+          if [[ "$VERSION" == *-* ]]; then
+            options+=(--prerelease)
+          fi
+          gh release edit "$VERSION" "${options[@]}"
