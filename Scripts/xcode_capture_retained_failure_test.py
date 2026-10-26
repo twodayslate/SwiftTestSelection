@@ -54,7 +54,7 @@ if mode=='source-change':
  (pathlib.Path(export['root'])/'App.xcodeproj/project.pbxproj').write_text('tampered')
 if mode=='failure': sys.exit('capture failed deliberately')
 ''')
-    for storage in ['retained', 'cached', 'temporary']:
+    for storage in ['retained', 'head-only', 'cached', 'temporary']:
         for mode in ['setup-failure', 'failure', 'source-change', 'missing-products', 'cancel']:
             bundle = root / (storage + '-' + mode)
             marker = root / (storage + '-' + mode + '.marker')
@@ -63,7 +63,8 @@ if mode=='failure': sys.exit('capture failed deliberately')
             command = [str(tool), 'select', '--project', str(root / 'App.xcodeproj'), '--scheme', 'App',
                        '--destination', 'platform=macOS', '--base', 'HEAD', '--head', 'HEAD',
                        '--build-time-sil', str(helper)]
-            if storage == 'retained': command += ['--retain-build', str(bundle)]
+            if storage in ['retained', 'head-only']: command += ['--retain-build', str(bundle)]
+            if storage == 'head-only': command += ['--head-only']
             if storage == 'cached': command += ['--analysis-cache', str(bundle), '--cache-context', 'fixture']
             if mode == 'cancel':
                 process = subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
@@ -92,7 +93,7 @@ if mode=='failure': sys.exit('capture failed deliberately')
             if mode != 'setup-failure':
                 assert 'CAPTURE_FAILURE_SENTINEL' in (session / 'build.log').read_text()
                 assert (session / 'settings.json').exists()
-            if storage == 'retained': assert (bundle / 'state').read_text() == 'incomplete'
+            if storage in ['retained', 'head-only']: assert (bundle / 'state').read_text() == 'incomplete'
             assert not (bundle / 'complete.json').exists() and not (bundle / 'head-graph.json').exists()
-            if storage != 'retained': shutil.rmtree(diagnostics)
+            if storage not in ['retained', 'head-only']: shutil.rmtree(diagnostics)
             print('PASS durable capture diagnostics:', storage, mode, flush=True)

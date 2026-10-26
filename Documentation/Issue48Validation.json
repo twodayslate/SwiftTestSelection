@@ -1,0 +1,599 @@
+{
+  "sourceRevision": "5e11df8",
+  "analyzerSHA256": "b601dc791dc816a1ed37a47668cc407710c387dbac50db792ad398b48dc304fe",
+  "toolchain": "Xcode 27.0 (27A266a)",
+  "destination": "platform=iOS Simulator,id=51B1F3F2-8CCE-4A55-999B-EEC51082985B",
+  "releaseTests": 219,
+  "focusedTests": 2,
+  "captureHelperTests": 6,
+  "base": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+  "head": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+  "target": "12813f0db5dfe26f558e78f4e81963ad31a4a99b",
+  "stacked": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+  "measurements": [
+    {
+      "case": "empty",
+      "seconds": 8.053991457999999,
+      "buildCount": 0,
+      "error": {
+        "code": "cached_base_unavailable",
+        "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+        "reason": "No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)"
+      }
+    },
+    {
+      "case": "producer",
+      "seconds": 81.563763416,
+      "buildCount": 1,
+      "baseRevision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+      "headRevision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+      "selectedTests": [
+        "CheckoutUITests/InheritedUITests/testInheritedOne()",
+        "CheckoutUITests/InheritedUITests/testInheritedTwo()",
+        "CheckoutUITests/NotesUITests/testNotes()",
+        "CheckoutUITests/SharingUITests/testShareCopy()",
+        "CheckoutUITests/SharingUITests/testShareLink()",
+        "CheckoutUITests/SharingUITests/testShareSheet()",
+        "CheckoutUITests/SharingUITests/testStandalone()",
+        "UnitTests/ProductionTests/testNotes()",
+        "UnitTests/ProductionTests/testSharing()"
+      ],
+      "buildArtifactID": "EF34DD7E-B54F-41B1-85A0-4050B3B8AB90",
+      "diagnosticCodes": [],
+      "analysisEvents": [
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 2.157953977584839
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0.00022709369659423828
+        },
+        {
+          "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+          "phase": "cache",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0
+        },
+        {
+          "detail": "build-for-testing with supplementary SIL",
+          "phase": "build",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 12.291907541999999
+        },
+        {
+          "detail": "wrapper setup, settings and export/product/capture seals",
+          "phase": "captureValidation",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 5.733829505195436
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "buildEvidence",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0.022942066192626953
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "enumeration",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 51.50769603252411
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "captureConsumption",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0.009829044342041016
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "captureConsumption",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0.0031669139862060547
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "captureConsumption",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0.01377403736114502
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "extraction",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 7.509016036987305
+        },
+        {
+          "detail": "",
+          "phase": "graphPublish",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0.005807042121887207
+        },
+        {
+          "detail": "",
+          "phase": "retainBuild",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0.006680011749267578
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0.0009179115295410156
+        }
+      ]
+    },
+    {
+      "case": "wrong-context",
+      "seconds": 3.5828314999999975,
+      "buildCount": 0,
+      "error": {
+        "code": "cached_base_unavailable",
+        "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+        "reason": "No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)"
+      }
+    },
+    {
+      "case": "wrong-revision",
+      "seconds": 3.3038859170000023,
+      "buildCount": 0,
+      "error": {
+        "code": "cached_base_unavailable",
+        "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+        "reason": "No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)"
+      }
+    },
+    {
+      "case": "corrupt",
+      "seconds": 3.0400773749999956,
+      "buildCount": 0,
+      "error": {
+        "code": "cached_base_unavailable",
+        "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+        "reason": "Invalid cache entry: identity/checksum mismatch"
+      }
+    },
+    {
+      "case": "evicted",
+      "seconds": 3.0959006670000093,
+      "buildCount": 0,
+      "error": {
+        "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+        "reason": "No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+        "code": "cached_base_unavailable"
+      }
+    },
+    {
+      "case": "stale-target-hit",
+      "seconds": 52.655111541,
+      "buildCount": 1,
+      "baseRevision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+      "headRevision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+      "selectedTests": [
+        "UnitTests/ProductionTests/testSharing()"
+      ],
+      "buildArtifactID": "423A46C7-810A-4234-932F-96925ADB100A",
+      "diagnosticCodes": [],
+      "analysisEvents": [
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 1.251567006111145
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0.002400994300842285
+        },
+        {
+          "detail": "hit: no build, enumeration or extraction",
+          "phase": "cache",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 1.264894962310791
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.00011992454528808594
+        },
+        {
+          "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+          "phase": "cache",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0
+        },
+        {
+          "detail": "build-for-testing with supplementary SIL",
+          "phase": "build",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 7.668292292
+        },
+        {
+          "detail": "wrapper setup, settings and export/product/capture seals",
+          "phase": "captureValidation",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 3.2824016729581906
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "buildEvidence",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.015424013137817383
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "enumeration",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 30.644539952278137
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "captureConsumption",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.0034170150756835938
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "extraction",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 6.378652095794678
+        },
+        {
+          "detail": "",
+          "phase": "graphPublish",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.0019799470901489258
+        },
+        {
+          "detail": "",
+          "phase": "retainBuild",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.009173989295959473
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.0011010169982910156
+        }
+      ]
+    },
+    {
+      "case": "stacked-hit",
+      "seconds": 68.46760104100002,
+      "buildCount": 1,
+      "baseRevision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+      "headRevision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+      "selectedTests": [
+        "CheckoutUITests/SharingUITests/testShareSheet()"
+      ],
+      "buildArtifactID": "A94679BD-C1D1-4910-BED2-A31221C5531F",
+      "diagnosticCodes": [],
+      "analysisEvents": [
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 1.4709360599517822
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.0018169879913330078
+        },
+        {
+          "detail": "hit: no build, enumeration or extraction",
+          "phase": "cache",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 1.259883999824524
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 0.00014400482177734375
+        },
+        {
+          "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+          "phase": "cache",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 0
+        },
+        {
+          "detail": "build-for-testing with supplementary SIL",
+          "phase": "build",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 9.468709
+        },
+        {
+          "detail": "wrapper setup, settings and export/product/capture seals",
+          "phase": "captureValidation",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 6.910533062568664
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "buildEvidence",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 0.015727996826171875
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "enumeration",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 40.45397698879242
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "captureConsumption",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 0.011506915092468262
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "extraction",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 6.399883031845093
+        },
+        {
+          "detail": "",
+          "phase": "graphPublish",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 0.0021480321884155273
+        },
+        {
+          "detail": "",
+          "phase": "retainBuild",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 0.010391950607299805
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "950452e6e70e71aa675aabc84fd2cfe1553dbcf5",
+          "seconds": 0.0011589527130126953
+        }
+      ]
+    },
+    {
+      "case": "selected-execution",
+      "buildCount": 0,
+      "xctestrun": "/var/folders/1t/76_tgz5s4g912sj6w023t0wc0000gn/T/impact-cached-base-lobpjg0w/stale-target-hit/DerivedData/Build/Products/ImpactDemo_AllTests_iphonesimulator27.0-arm64.xctestrun",
+      "selectedTests": [
+        "UnitTests/ProductionTests/testSharing()"
+      ]
+    },
+    {
+      "case": "full-fallback",
+      "seconds": 53.230513583000004,
+      "buildCount": 1,
+      "baseRevision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+      "headRevision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+      "selectedTests": [
+        "CheckoutUITests/InheritedUITests/testInheritedOne()",
+        "CheckoutUITests/InheritedUITests/testInheritedTwo()",
+        "CheckoutUITests/NotesUITests/testNotes()",
+        "CheckoutUITests/SharingUITests/testShareCopy()",
+        "CheckoutUITests/SharingUITests/testShareLink()",
+        "CheckoutUITests/SharingUITests/testShareSheet()",
+        "CheckoutUITests/SharingUITests/testStandalone()",
+        "UnitTests/ProductionTests/testNotes()",
+        "UnitTests/ProductionTests/testSharing()"
+      ],
+      "buildArtifactID": "47FFA94B-9C1D-48F8-8ADF-9CF00E77CAC3",
+      "diagnosticCodes": [
+        "base_unavailable",
+        "cached_base_unavailable",
+        "file_level_change",
+        "unmapped_production_boundary",
+        "unresolved_declaration"
+      ],
+      "analysisEvents": [
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 1.3150970935821533
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0.0001289844512939453
+        },
+        {
+          "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+          "phase": "cache",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0
+        },
+        {
+          "detail": "No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+          "phase": "cachedBaseFallback",
+          "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+          "seconds": 0
+        },
+        {
+          "detail": "",
+          "phase": "buildSettings",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 1.3159539699554443
+        },
+        {
+          "detail": "",
+          "phase": "graphLoad",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.00010597705841064453
+        },
+        {
+          "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+          "phase": "cache",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0
+        },
+        {
+          "detail": "build-for-testing with supplementary SIL",
+          "phase": "build",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 7.856532542
+        },
+        {
+          "detail": "wrapper setup, settings and export/product/capture seals",
+          "phase": "captureValidation",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 3.4238704759977416
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "buildEvidence",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.015780091285705566
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "enumeration",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 30.63093400001526
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "captureConsumption",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.006795048713684082
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "captureConsumption",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.0037130117416381836
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "captureConsumption",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.011608004570007324
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "extraction",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 6.169108033180237
+        },
+        {
+          "detail": "",
+          "phase": "graphPublish",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.002382040023803711
+        },
+        {
+          "detail": "",
+          "phase": "retainBuild",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.007108092308044434
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "c7675adcbdb6f41c68d5b58be7ddef53694d5274",
+          "seconds": 0.0018389225006103516
+        }
+      ]
+    },
+    {
+      "case": "full-execution",
+      "buildCount": 0,
+      "xctestrun": "/var/folders/1t/76_tgz5s4g912sj6w023t0wc0000gn/T/impact-cached-base-lobpjg0w/full-fallback/DerivedData/Build/Products/ImpactDemo_AllTests_iphonesimulator27.0-arm64.xctestrun",
+      "selectedTests": [
+        "CheckoutUITests/InheritedUITests/testInheritedOne()",
+        "CheckoutUITests/InheritedUITests/testInheritedTwo()",
+        "CheckoutUITests/NotesUITests/testNotes()",
+        "CheckoutUITests/SharingUITests/testShareCopy()",
+        "CheckoutUITests/SharingUITests/testShareLink()",
+        "CheckoutUITests/SharingUITests/testShareSheet()",
+        "CheckoutUITests/SharingUITests/testStandalone()",
+        "UnitTests/ProductionTests/testNotes()",
+        "UnitTests/ProductionTests/testSharing()"
+      ]
+    }
+  ],
+  "supplementalMissChecks": [
+    {
+      "case": "configuration",
+      "exitStatus": 3,
+      "buildCount": 0,
+      "error": {
+        "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+        "code": "cached_base_unavailable",
+        "reason": "No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)"
+      }
+    },
+    {
+      "case": "destination",
+      "exitStatus": 3,
+      "buildCount": 0,
+      "error": {
+        "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5",
+        "code": "cached_base_unavailable",
+        "reason": "No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)"
+      }
+    },
+    {
+      "case": "toolchain",
+      "exitStatus": 3,
+      "buildCount": 0,
+      "error": {
+        "reason": "No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+        "code": "cached_base_unavailable",
+        "revision": "575d6871cce5b83878bf4f31b86cb22a7bb9ead5"
+      }
+    },
+    {
+      "case": "ownership",
+      "exitStatus": 1,
+      "buildCount": 0,
+      "error": "Waiting for analysis cache lock: /var/folders/1t/76_tgz5s4g912sj6w023t0wc0000gn/T/impact-cached-base-lobpjg0w/unowned\nerror: Analysis cache directory is not empty and has no ownership marker. Choose a dedicated cache directory."
+    },
+    {
+      "case": "settings-failure",
+      "exitStatus": 1,
+      "buildCount": 0,
+      "error": "error: Xcode container must be inside the repository."
+    }
+  ],
+  "executionResults": [
+    {
+      "path": "/private/var/folders/1t/76_tgz5s4g912sj6w023t0wc0000gn/T/impact-cached-base-lobpjg0w/source/.build/test-impact-results/6737E967-6D60-4A74-8558-70893CCC902E.xcresult",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "total": 1
+    },
+    {
+      "path": "/private/var/folders/1t/76_tgz5s4g912sj6w023t0wc0000gn/T/impact-cached-base-lobpjg0w/source/.build/test-impact-results/BBEA7B4D-8C68-4182-9F6B-3ED900702CAF.xcresult",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "total": 9
+    }
+  ]
+}

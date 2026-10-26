@@ -27,10 +27,18 @@ USAGE
 Persistent Xcode analysis:
   select <Xcode options> --base REV --head REV [--merge-base]
          --analysis-cache PATH --cache-context EXTERNAL_INPUT_DIGEST
-         [--cache-max-bytes BYTES]
+         [--cache-max-bytes BYTES] [--cached-base-policy require|full-suite]
 Cache hits validate settings/toolchain and reuse graphs without build or enumeration.
 External input context must cover environment/scripts/local dependencies outside Git.
+--cached-base-policy checks the resolved base before the head build, never building
+that base. require exits 3 with a JSON error on stderr; full-suite selects all head
+tests on a miss. Explicit --full-suite skips baseline lookup with either policy.
 The default disk limit is 5 GiB. New revisions rebuild; worktrees are not cached.
+
+Head-only selection without baseline artifacts or a persistent cache:
+  select <Xcode options> --base REV --head REV --merge-base --head-only
+         --build-time-sil HELPER --retain-build NEW_DIRECTORY
+Compares native Git source syntax; unsupported changes broaden explicitly.
 
 Retain the analyzed head for execution after selection exits:
   select <Xcode options> --base REV --head REV --retain-build NEW_DIRECTORY
@@ -94,6 +102,8 @@ private struct Options {
     var testProducts: String?
     var retainedBuild: String?
     var reportPath: String?
+    var headOnly = false
+    var cachedBasePolicy: XcodeCachedBasePolicy = .build
     var cachePath: String?
     var cacheContext: String?
     var cacheMaxBytes: Int64 = 5 * 1_024 * 1_024 * 1_024
@@ -129,8 +139,9 @@ private struct Options {
             guard seen.insert(flag).inserted else { throw ImpactError("Repeated option: \(flag)") }
             if flag == "--run" { run = true; continue }
             if flag == "--merge-base" { mergeBase = true; continue }
+            if flag == "--head-only" { headOnly = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
-            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture", "--build-time-sil"].contains(flag), index < arguments.count else {
+            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--cached-base-policy", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture", "--build-time-sil"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
             let value = arguments[index]
@@ -147,6 +158,11 @@ private struct Options {
             case "--report": reportPath = value
             case "--analysis-cache": cachePath = value
             case "--cache-context": cacheContext = value
+            case "--cached-base-policy":
+                guard let policy = XcodeCachedBasePolicy(rawValue: value), policy != .build else {
+                    throw ImpactError("--cached-base-policy must be require or full-suite.")
+                }
+                cachedBasePolicy = policy
             case "--cache-max-bytes":
                 guard let size = Int64(value), size > 0 else { throw ImpactError("--cache-max-bytes must be positive.") }
                 cacheMaxBytes = size
@@ -173,10 +189,16 @@ private struct Options {
             default: break
             }
         }
-        if cachePath != nil || cacheContext != nil || seen.contains("--cache-max-bytes") {
+        if cachePath != nil || cacheContext != nil || seen.contains("--cache-max-bytes") || seen.contains("--cached-base-policy") {
             guard cachePath != nil, cacheContext?.isEmpty == false, head != nil, command == "select",
                   project != nil || workspace != nil, baseGraph == nil, headGraph == nil else {
                 throw ImpactError("Analysis caching requires Xcode select, --head, --analysis-cache and --cache-context; cannot combine with saved graph inputs.")
+            }
+        }
+        if headOnly {
+            guard command == "select", head != nil, buildTimeSIL != nil, retainedBuild != nil || run,
+                  project != nil || workspace != nil, baseGraph == nil, headGraph == nil, cachedBasePolicy == .build else {
+                throw ImpactError("--head-only requires Xcode select, --head, --build-time-sil, and --retain-build or --run; cannot combine with saved graphs or --cached-base-policy.")
             }
         }
         let captureCount = [derivedData, buildLog, buildSettings, xctestrun, revision].compactMap { $0 }.count
@@ -268,6 +290,7 @@ private func write(_ data: Data, to path: String?) throws {
 
 private func render(_ report: ImpactReport) -> String {
     var lines = ["Selected \(report.selectedTests.count) of \(report.totalTests) tests", "Base: \(report.baseRevision)"]
+    if let mode = report.analysisMode { lines.append("Analysis mode: " + mode) }
     if let head = report.headRevision { lines.append("Head: " + head + " (" + (report.comparisonMode ?? "direct") + ")") }
     for diagnostic in report.diagnostics { lines.append("Diagnostic [\(diagnostic.code)]: \(diagnostic.message)") }
     for reason in report.fullRunReasons { lines.append("Full-suite fallback: \(reason)") }
@@ -325,7 +348,7 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                         fullSuite: options.fullSuite, baseGraph: baseGraph, headGraph: headGraph)
                 } else {
                     report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite,
-                        cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) }, retainingBuildAt: retained)
+                        cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) }, retainingBuildAt: retained, cachedBasePolicy: options.cachedBasePolicy, headOnly: options.headOnly)
                 }
                 let data = options.format == "json" ? try encoder.encode(report) : Data(render(report).utf8)
                 try write(data, to: options.output)
@@ -352,6 +375,11 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
             try write(data, to: options.output)
             if options.run { exit(try analysis.run(report)) }
         }
+    } catch let miss as XcodeCachedBaseUnavailable {
+        if let data = try? JSONEncoder().encode(miss) {
+            FileHandle.standardError.write(data + Data("\n".utf8))
+        }
+        exit(3)
     } catch {
         log("error: \(error)")
         exit(1)

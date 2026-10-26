@@ -147,3 +147,65 @@ private func cacheGraph() -> XcodeTestGraph {
     try JSONSerialization.data(withJSONObject: ["identity": identity, "digest": XcodeGraphCache.digest(data)]).write(to: entry.appendingPathComponent("manifest.json"))
     #expect(try cache.load(identity)?.tests == cacheGraph().tests)
 }
+
+@Test func cacheOnlyLookupReportsMissingIncompatibleAndCorruptEntries() throws {
+    let root = try cacheFixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = try XcodeGraphCache(.init(directory: root, context: "context"), progress: { _ in })
+    let identity = ["revision": "base", "repository": "repo", "settings": "locked pins", "toolchain": "xcode",
+                    "simulatorRuntimes": "runtime", "destination": "simulator", "externalInputs": "context",
+                    "analyzerExecutable": "analyzer", "buildTimeSIL": "capture"]
+    var reason = ""
+    #expect(try cache.load(identity, onMiss: { reason = $0 }) == nil)
+    #expect(reason.contains("absent, evicted or incompatible"))
+    try cache.store(cacheGraph(), identity: identity)
+    for field in identity.keys {
+        var changed = identity; changed[field] = "different"
+        reason = ""
+        #expect(try cache.load(changed, onMiss: { reason = $0 }) == nil)
+        #expect(!reason.isEmpty)
+    }
+    reason = ""
+    #expect(try cache.load(identity, onMiss: { reason = $0 }) != nil)
+    #expect(reason.isEmpty)
+    let entry = root.appendingPathComponent(try XcodeGraphCache.key(identity))
+    try Data("corrupt".utf8).write(to: entry.appendingPathComponent("graph.bin"))
+    #expect(try cache.load(identity, onMiss: { reason = $0 }) == nil)
+    #expect(reason.contains("checksum mismatch"))
+    let error = XcodeCachedBaseUnavailable(revision: "resolved-sha", reason: reason)
+    let decoded = try JSONDecoder().decode(XcodeCachedBaseUnavailable.self, from: JSONEncoder().encode(error))
+    #expect(decoded.code == "cached_base_unavailable")
+    #expect(decoded.revision == "resolved-sha")
+    #expect(decoded.reason == reason)
+}
+
+@Test func cachedBasePolicyRequiresExplicitCacheBeforeAnalysis() throws {
+    let analysis = XcodeAnalysis(options: XcodeConfiguration(container: .project,
+        path: URL(fileURLWithPath: "/nonexistent/App.xcodeproj"), scheme: "App", destination: "simulator"))
+    for policy in [XcodeCachedBasePolicy.require, .fullSuite] {
+        do {
+            _ = try analysis.select(base: "base", head: "head", cachedBasePolicy: policy)
+            Issue.record("Expected a missing-cache error")
+        } catch {
+            #expect(String(describing: error).contains("explicit analysis cache and context"))
+        }
+    }
+}
+
+@Test func headOnlyRequiresHeadCaptureAndRetentionBeforeAnalysis() throws {
+    var options = XcodeConfiguration(container: .project,
+        path: URL(fileURLWithPath: "/nonexistent/App.xcodeproj"), scheme: "App", destination: "simulator")
+    for stage in 0..<3 {
+        if stage > 0 { options.buildTimeSILHelper = URL(fileURLWithPath: "/nonexistent/helper.py") }
+        do {
+            _ = try XcodeAnalysis(options: options).select(base: "base", head: stage == 2 ? nil : "head", headOnly: true)
+            Issue.record("Expected early argument rejection")
+        } catch {
+            #expect(String(describing: error).contains("Head-only analysis requires"))
+        }
+    }
+    do {
+        _ = try XcodeAnalysis(options: options).select(base: "base", head: "head", retainingBuildAt: URL(fileURLWithPath: "/nonexistent/bundle"), cachedBasePolicy: .fullSuite, headOnly: true)
+        Issue.record("Expected conflicting policy rejection")
+    } catch { #expect(String(describing: error).contains("Head-only analysis requires")) }
+}

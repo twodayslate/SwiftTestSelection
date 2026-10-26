@@ -421,7 +421,9 @@ mapping completeness. Validate selected runs against full runs before using a CI
 
 ### Build-time SIL capture (opt-in)
 
-Cached/retained selection can now own capture for both revisions:
+Cached/retained selection can own capture for both revisions. To limit a PR job
+to one executable build, use the [cache-only baseline policy](#limit-pr-jobs-to-one-executable-build)
+with a baseline produced by main's ordinary build.
 
 ```sh
 swift-test-impact select \
@@ -442,7 +444,7 @@ ordinary builds and the default selection mode still use compiler replay.
 The analyzer seals each Git archive export against its exact revision and file
 manifest, preserves locked package resolution, and builds the retained head once.
 It validates capture sources, outputs, context and products before publishing the
-retained completion marker. In capture mode both revisions must succeed before
+retained completion marker. In the default capture mode both revisions must succeed before
 that marker is published, and the head products, log and settings must still match
 the original capture seal after the base build finishes.
 
@@ -892,6 +894,172 @@ Copyright (c) 2026 Zachary Gorak.
 
 Licensed under the **GNU Affero General Public License, version 3 only** (`AGPL-3.0-only`). See [LICENSE](LICENSE) for the complete terms. This is a strong-copyleft open-source license, including source-sharing requirements for modified versions used over a network. Commercial use is permitted under the license.
 
+### Select without any baseline artifacts
+
+Use `--head-only` when CI cannot retain a baseline graph. This is an explicit
+alternative to the cache-only policy below. It compares native Swift syntax at
+both Git revisions, builds **only the head** with supplementary SIL, enumerates
+that build's enabled tests, and retains its exact products. No persistent cache,
+baseline producer, saved graph, or baseline compilation is required.
+
+```sh
+swift-test-impact select \
+  --project MyApp.xcodeproj --scheme MyApp --test-plan AllTests \
+  --destination 'platform=iOS Simulator,id=SIMULATOR_UUID' \
+  --base origin/main --head HEAD --merge-base --head-only \
+  --build-time-sil /absolute/path/to/SwiftTestSelection/Scripts/capture-build.py \
+  --retain-build /absolute/new/job-directory/head-build \
+  --format json --output impact.json
+
+swift-test-impact run \
+  --project MyApp.xcodeproj --scheme MyApp --test-plan AllTests \
+  --destination 'platform=iOS Simulator,id=SIMULATOR_UUID' \
+  --head-graph /absolute/new/job-directory/head-build/head-graph.json \
+  --report impact.json
+```
+
+`select` is report-only unless `--run` is requested. `--merge-base` resolves the
+actual common ancestor of the explicit revisions, including stale and stacked
+branches. Without it, `--base` is the exact comparison revision. Both inputs must
+exist in local Git history; fetch enough history before running. `--head-only`
+requires build-time capture and retained products (`--retain-build` or `--run`),
+and cannot be combined with saved graphs or `--cached-base-policy`. Optional
+`--analysis-cache`/`--cache-context` can reuse head/module analysis, but never
+cause baseline lookup or compilation in this mode.
+
+The supported-change model is deliberately narrower than two-graph analysis:
+
+| Change/evidence | Head-only behavior |
+| --- | --- |
+| Surviving ordinary function body, unchanged header | Trace head compiler dependencies to tests; deleting lines inside a body is supported |
+| Edited test, helper, setup/teardown or inherited method | Select bound tests and dependent consumers; unresolved identities broaden explicitly |
+| Added/deleted/renamed/moved declaration, overload/signature/default-argument/dispatch change | Full enabled head inventory: old compiler edges are unavailable |
+| Global/initializer, resource, configuration, mapping or unowned source change | Full enabled head inventory |
+| Macros, opaque return types, unrecognized build scripts or unresolved ownership | Explained conservative fallback |
+| Production change and app-hosted/unknown test host | Retain the affected host's tests; base source imports do not prove isolation |
+| Hostless tests | Use head dependencies, retaining tests with opaque runtime uncertainty; two-graph runtime-boundary exemptions are unavailable |
+| UI feature change | Use declared source/symbol/fixture mappings and `dependsOn`; missing boundaries, selectors or runtime contracts broaden UI selection |
+
+New tests are included through the structural-change fallback; deleted tests are
+absent from the head inventory. UI mappings remain user-declared contracts, not
+measured coverage. Ordinary bodies with attributes other than `@MainActor` or an
+opaque result type (including one nested in an optional, tuple or generic type)
+are conservatively unsupported. This also applies to attributes
+on enclosing types: an attached macro can synthesize other declarations from a
+changed body. Test-entry selection retains the existing test-independence assumption.
+Declared UI feature mappings narrow runtime uncertainty only when all changed
+bodies belong to production code or proven test entries. Mixed helper or lifecycle
+edits retain their runtime fallbacks even when a mapped app feature also changes.
+
+Native Swift tokens preserve strings, regex literals, operators and directives.
+With `sourceLocationPolicy: "diagnosticLineColumn"` agreed at both revisions,
+comment/whitespace line and column shifts are ignored while file identity remains
+semantic. The default semantic policy conservatively considers call-site locations
+because location defaults can affect behavior without changing tokens. Markdown
+is ignored only when both revisions opt in through `ignoredDocumentation` and the
+fresh build proves the file is not an input; unknown tasks block that proof.
+
+JSON reports identify `analysisMode: "head-only-git-syntax"`, resolved revisions,
+exact method identifiers, dependency/mapping/fallback reasons, and timed phases.
+`baseSourceSyntax` reads Git blobs; it is not base compiler extraction. Every
+fallback uses the same retained head build. Capture failures prevent publication; malformed reports or modified graphs/products
+fail verification. A valid empty selection executes no tests. `--full-suite`
+explicitly selects all enabled head tests, still with one build. After execution,
+the job's retained directory can be removed; nothing must survive to the next job.
+Changes outside Git, such as an SDK/toolchain update, script environment or unlocked
+external dependency, have no historical evidence in this mode. Keep those inputs
+stable for a source comparison, or request `--full-suite`.
+
+Validate selection against targeted and full controls before making it a CI gate.
+Run `Scripts/xcode_head_only_test.py --tool /path/to/release/swift-test-impact
+--destination 'platform=iOS Simulator,id=UUID' --output measurements.json --execute`
+on an idle runner to measure build/analysis phases, execution, elapsed time, sampled
+peak workspace disk, and exact executable-build counts. Local fixture and consumer
+results, including validation limits, are recorded in
+[the head-only validation report](Documentation/Issue49Validation.md).
+
+### Require a cached baseline for one-build PR selection
+
+Use `--cached-base-policy require` with `--analysis-cache` and `--cache-context`
+to require a compatible cached baseline. With `--merge-base`, the tool resolves
+and checks the **actual common ancestor**, including stale or stacked branches.
+It exports that revision and resolves locked build settings before the head
+build; it never builds, enumerates or extracts the base on this path. The normal
+cache identity, checksum and ownership checks still apply. Package resolution
+and settings inspection can perform I/O, so this is not an offline lookup.
+
+```sh
+swift-test-impact select \
+  --project App.xcodeproj --scheme App --test-plan AllTests \
+  --configuration Debug --destination "$DESTINATION" \
+  --base origin/main --head HEAD --merge-base \
+  --analysis-cache "$CACHE" --cache-context "$BUILD_INPUT_DIGEST" \
+  --cached-base-policy require \
+  --build-time-sil "$SWIFT_TEST_SELECTION/Scripts/capture-build.py" \
+  --retain-build "$NEW_BUNDLE" --format json --output "$REPORT"
+```
+
+On a cache hit, this builds the head once, captures its SIL, and retains the exact
+products for `verify-build` and `run`. A missing, evicted, corrupt or incompatible
+base stops **before creating the head bundle or building anything**, exits with
+status **3**, and writes a final JSON error line to stderr:
+
+```json
+{"code":"cached_base_unavailable","revision":"RESOLVED_BASE_SHA","reason":"No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)"}
+```
+
+No selection report is published on that failure. Other failures (for example an
+unowned cache directory, ambiguous merge base or head build failure) remain
+errors, not permission to run all tests. Always check the exit status and use a
+fresh report path; an old file is not evidence that this invocation succeeded.
+
+To explicitly choose full coverage on a baseline miss, use
+`--cached-base-policy full-suite`. It checks the baseline first, builds the head
+at most once, selects every enabled test in the chosen plan, and retains those
+same verified products. The report includes `cached_base_unavailable`, the
+resolved base and reason, `fullSuite` explanations, and a `cachedBaseFallback`
+phase event. A hit still performs affected-test selection. Neither policy treats
+a missing or malformed saved report as a request for full execution. Without
+`--run`, both successful modes only produce a report and retained artifacts.
+
+Publish main's baseline from its **ordinary executable build**, using the same
+pinned analyzer/helper, toolchain, destination, build settings and external input
+context as PR jobs:
+
+```sh
+REV=$(git rev-parse HEAD)
+swift-test-impact select \
+  --project App.xcodeproj --scheme App --test-plan AllTests \
+  --configuration Debug --destination "$DESTINATION" \
+  --base "$REV" --head "$REV" --full-suite \
+  --analysis-cache "$CACHE" --cache-context "$BUILD_INPUT_DIGEST" \
+  --cached-base-policy require \
+  --build-time-sil "$SWIFT_TEST_SELECTION/Scripts/capture-build.py" \
+  --retain-build "$NEW_BUNDLE" --format json --output "$REPORT"
+swift-test-impact run \
+  --project App.xcodeproj --scheme App --test-plan AllTests \
+  --configuration Debug --destination "$DESTINATION" \
+  --report "$REPORT" --head-graph "$NEW_BUNDLE/head-graph.json"
+```
+
+Explicit `--full-suite` skips baseline lookup with either cache-only policy.
+The same-revision producer builds once, publishes its reusable graph, and runs
+all tests from that build. It replaces a standalone build-for-testing step; do
+not run an extra build just to warm the cache. Preserve the cache across jobs and
+allow enough disk space to retain older actual merge bases, not only main's tip.
+Entries larger than the cache budget are not published; publication/eviction
+messages remain visible. The original default policy is unchanged and may build
+both revisions on a miss.
+
+Validate exact build counts, stale/stacked merge bases, misses, retained product
+identity, and selected/full execution with:
+
+```sh
+python3 Scripts/xcode_cached_base_policy_test.py \
+  --tool /path/to/release/swift-test-impact \
+  --destination "$DESTINATION" --output /tmp/cached-base-validation.json
+```
+
 ### Persist Xcode analysis across comparisons
 
 ```sh
@@ -930,7 +1098,8 @@ currently invalidates the entry, even for equivalent hardware/runtime.
 Use a dedicated local directory (network filesystems without working `flock`
 locks are unsupported). A process lock serializes reads, publication and pruning;
 completed entries are published by directory rename and verified by checksum.
-Corrupt entries are removed and rebuilt. Interrupted staging is removed by the
+Corrupt entries are removed and rebuilt by default; cache-only baseline policies
+report the miss instead. Interrupted staging is removed by the
 next holder. A base analysis failure remains an explicit full-selection fallback;
 a head failure stops the command. `--cache-max-bytes` bounds persisted entries
 (default 5 GiB), evicting least recently used entries. Temporary builds can need

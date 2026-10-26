@@ -1,0 +1,2307 @@
+{
+  "implementationCommit": "e9477cb",
+  "failureHarnessCommit": "9dfeedf",
+  "date": "2026-10-26",
+  "toolchains": {
+    "26.6.0": "Xcode 26.6\nBuild version 17F113",
+    "27.0.0": "Xcode 27.0\nBuild version 27A266a"
+  },
+  "measurementLimits": [
+    "Shared local host, not an idle clean CI runner",
+    "Fresh build/capture directories; no persistent analysis cache",
+    "Peak workspace disk sampled once per second; includes accumulated retained cases and failed attempts; excludes global tools/runtimes/package caches and temporary paths outside the workspace",
+    "RSS is the maximum resident set reported by /usr/bin/time -l, not aggregate host memory",
+    "Phase timers may overlap; do not sum extraction and per-module captureConsumption events",
+    "Consumer full UI/snapshot suite and complete successful hostless control remain unvalidated"
+  ],
+  "releaseSwiftTestCount": 232,
+  "captureHelperPythonTestCount": 6,
+  "captureFailureScenarios": [
+    "PASS durable capture diagnostics: retained setup-failure",
+    "PASS durable capture diagnostics: retained failure",
+    "PASS durable capture diagnostics: retained source-change",
+    "PASS durable capture diagnostics: retained missing-products",
+    "PASS durable capture diagnostics: retained cancel",
+    "PASS durable capture diagnostics: head-only setup-failure",
+    "PASS durable capture diagnostics: head-only failure",
+    "PASS durable capture diagnostics: head-only source-change",
+    "PASS durable capture diagnostics: head-only missing-products",
+    "PASS durable capture diagnostics: head-only cancel",
+    "PASS durable capture diagnostics: cached setup-failure",
+    "PASS durable capture diagnostics: cached failure",
+    "PASS durable capture diagnostics: cached source-change",
+    "PASS durable capture diagnostics: cached missing-products",
+    "PASS durable capture diagnostics: cached cancel",
+    "PASS durable capture diagnostics: temporary setup-failure",
+    "PASS durable capture diagnostics: temporary failure",
+    "PASS durable capture diagnostics: temporary source-change",
+    "PASS durable capture diagnostics: temporary missing-products",
+    "PASS durable capture diagnostics: temporary cancel"
+  ],
+  "fixtureInitial": {
+    "analyzerSHA256": "a9b40ef1b29f4befe955bbf024259e0cb3c59045483fee797d1bbe4fdea04aea",
+    "destination": "platform=iOS Simulator,id=51B1F3F2-8CCE-4A55-999B-EEC51082985B",
+    "measurements": [
+      {
+        "case": "method",
+        "seconds": 53.69911,
+        "peakWorkspaceBytes": 147124224,
+        "maximumResidentSetBytes": 219824128,
+        "buildCount": 1,
+        "totalTests": 9,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 2.2531659603118896
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 0.0003750324249267578
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 7.218017625
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 3.462045384262085
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 0.016605019569396973
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 29.298869013786316
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 0.007253050804138184
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 0.002848982810974121
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 0.013152003288269043
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 6.343886971473694
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 0.0014369487762451172
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 0.10193908214569092
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 0.025799036026000977
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "96ce5c79b9e00b670db8ee90852d8db60c18e733",
+            "seconds": 0.1472870111465454
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+            "seconds": 0.00044798851013183594
+          }
+        ],
+        "base": "96ce5c79b9e00b670db8ee90852d8db60c18e733",
+        "head": "305e78930c4fda56a6aa978d40e723d1307c33cd",
+        "selectedTestCount": 1,
+        "selectedTargets": {
+          "UnitTests": 1
+        },
+        "selectedIdentifiersSHA256": "ba190292b7da0fc4c4197c68cbce921da61d36a5a02880511d90ec6169030dcf",
+        "selectedTests": [
+          "UnitTests/ProductionTests/testSharing()"
+        ],
+        "diagnosticsByCode": {}
+      },
+      {
+        "case": "mixed",
+        "seconds": 47.582952333,
+        "peakWorkspaceBytes": 293695488,
+        "maximumResidentSetBytes": 218824704,
+        "buildCount": 1,
+        "totalTests": 9,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 1.0590310096740723
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 0.0001480579376220703
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 6.553562917
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 2.9363520963132936
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 0.015104055404663086
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 27.618600964546204
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 0.00822305679321289
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 0.0030829906463623047
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 0.01630401611328125
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 6.387608051300049
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 0.0013840198516845703
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 0.10522997379302979
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 0.026304960250854492
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "96ce5c79b9e00b670db8ee90852d8db60c18e733",
+            "seconds": 0.14422905445098877
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 0.00032699108123779297
+          }
+        ],
+        "base": "96ce5c79b9e00b670db8ee90852d8db60c18e733",
+        "head": "e93b5c0d79556624dfdc5de38dd782688554806a",
+        "selectedTestCount": 1,
+        "selectedTargets": {
+          "UnitTests": 1
+        },
+        "selectedIdentifiersSHA256": "ba190292b7da0fc4c4197c68cbce921da61d36a5a02880511d90ec6169030dcf",
+        "selectedTests": [
+          "UnitTests/ProductionTests/testSharing()"
+        ],
+        "diagnosticsByCode": {}
+      },
+      {
+        "case": "stacked",
+        "seconds": 48.772013959000006,
+        "peakWorkspaceBytes": 440643584,
+        "maximumResidentSetBytes": 220348416,
+        "buildCount": 1,
+        "totalTests": 9,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 1.182055950164795
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 0.00024199485778808594
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 7.207378292
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 3.036784744346436
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 0.015736937522888184
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 27.92834210395813
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 0.006581902503967285
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 0.0031899213790893555
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 0.01040494441986084
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 5.920549988746643
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 0.0014749765396118164
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 0.1090700626373291
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 0.02617204189300537
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "e93b5c0d79556624dfdc5de38dd782688554806a",
+            "seconds": 0.14123201370239258
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+            "seconds": 0.00036406517028808594
+          }
+        ],
+        "base": "e93b5c0d79556624dfdc5de38dd782688554806a",
+        "head": "fd779c30bad02688c3ddbff65a5fd0795b472d03",
+        "selectedTestCount": 1,
+        "selectedTargets": {
+          "CheckoutUITests": 1
+        },
+        "selectedIdentifiersSHA256": "f77e3047a47dd51d70e5d7bc62b9b82ea77c85ecd0f032f82553ad7832fd377b",
+        "selectedTests": [
+          "CheckoutUITests/SharingUITests/testShareSheet()"
+        ],
+        "diagnosticsByCode": {}
+      },
+      {
+        "case": "production",
+        "seconds": 46.025833500000005,
+        "peakWorkspaceBytes": 587452416,
+        "maximumResidentSetBytes": 219398144,
+        "buildCount": 1,
+        "totalTests": 9,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 1.1209800243377686
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 0.00016498565673828125
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 6.60364125
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 2.8300097204589845
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 0.016270995140075684
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 25.851611971855164
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 0.007606983184814453
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 0.0027440786361694336
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 0.012699007987976074
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 6.077622890472412
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 0.0013580322265625
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 0.10646295547485352
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 0.024975061416625977
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "96ce5c79b9e00b670db8ee90852d8db60c18e733",
+            "seconds": 0.14223694801330566
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+            "seconds": 0.0003789663314819336
+          }
+        ],
+        "base": "96ce5c79b9e00b670db8ee90852d8db60c18e733",
+        "head": "c960ea48cf49b40a2a5946e7a27178888dd1c5e7",
+        "selectedTestCount": 8,
+        "selectedTargets": {
+          "CheckoutUITests": 6,
+          "UnitTests": 2
+        },
+        "selectedIdentifiersSHA256": "e38c50f837f3d754b06999d10ec35da1e8e50dee927858e5e8440c72b35de859",
+        "selectedTests": [
+          "CheckoutUITests/InheritedUITests/testInheritedOne()",
+          "CheckoutUITests/InheritedUITests/testInheritedTwo()",
+          "CheckoutUITests/SharingUITests/testShareCopy()",
+          "CheckoutUITests/SharingUITests/testShareLink()",
+          "CheckoutUITests/SharingUITests/testShareSheet()",
+          "CheckoutUITests/SharingUITests/testStandalone()",
+          "UnitTests/ProductionTests/testNotes()",
+          "UnitTests/ProductionTests/testSharing()"
+        ],
+        "diagnosticsByCode": {
+          "head_only_test_host": {
+            "count": 1,
+            "affectedTestCount": 2,
+            "example": "App-hosted or unresolved test runtime can execute changed production code outside explicit test roots: UnitTests"
+          }
+        }
+      },
+      {
+        "case": "added",
+        "seconds": 47.61897266700001,
+        "peakWorkspaceBytes": 734052352,
+        "maximumResidentSetBytes": 216956928,
+        "buildCount": 1,
+        "totalTests": 10,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 1.108246922492981
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 0.00016498565673828125
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 6.521755
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 2.8841749230575564
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 0.017690062522888184
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 28.256392002105713
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 0.007126927375793457
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 0.003583073616027832
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 0.01314699649810791
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 5.7803720235824585
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 0.0013790130615234375
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 0.10907697677612305
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 0.02536189556121826
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "96ce5c79b9e00b670db8ee90852d8db60c18e733",
+            "seconds": 0.14323210716247559
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "6df548708c70fae315228e5163b3262164a5a3dd",
+            "seconds": 0.0003019571304321289
+          }
+        ],
+        "base": "96ce5c79b9e00b670db8ee90852d8db60c18e733",
+        "head": "6df548708c70fae315228e5163b3262164a5a3dd",
+        "selectedTestCount": 10,
+        "selectedTargets": {
+          "CheckoutUITests": 7,
+          "UnitTests": 3
+        },
+        "selectedIdentifiersSHA256": "1b28bb38621d1d163fa2cd252a8f074e635574f9610e678f47584ef17c1bb136",
+        "selectedTests": [
+          "CheckoutUITests/InheritedUITests/testInheritedOne()",
+          "CheckoutUITests/InheritedUITests/testInheritedTwo()",
+          "CheckoutUITests/NotesUITests/testNotes()",
+          "CheckoutUITests/SharingUITests/testShareCopy()",
+          "CheckoutUITests/SharingUITests/testShareLink()",
+          "CheckoutUITests/SharingUITests/testShareSheet()",
+          "CheckoutUITests/SharingUITests/testStandalone()",
+          "UnitTests/ProductionTests/testAdded()",
+          "UnitTests/ProductionTests/testNotes()",
+          "UnitTests/ProductionTests/testSharing()"
+        ],
+        "diagnosticsByCode": {
+          "head_only_declaration_change": {
+            "count": 1,
+            "affectedTestCount": 10,
+            "example": "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: UnitTests/ProductionTests.swift"
+          }
+        }
+      },
+      {
+        "case": "empty",
+        "seconds": 47.712054083,
+        "peakWorkspaceBytes": 880807936,
+        "maximumResidentSetBytes": 217677824,
+        "buildCount": 1,
+        "totalTests": 9,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 1.050029993057251
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 0.00015294551849365234
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 6.459209458
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 2.8708895286256713
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 0.01599299907684326
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 27.74220895767212
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 0.0063179731369018555
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 0.003728032112121582
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 0.010979890823364258
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 6.350271940231323
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 0.0014110803604125977
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 0.10632693767547607
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 0.02755892276763916
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "96ce5c79b9e00b670db8ee90852d8db60c18e733",
+            "seconds": 0.14271903038024902
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "56472e4cf053b7b6713847638892e391370b732b",
+            "seconds": 0.0002599954605102539
+          }
+        ],
+        "base": "96ce5c79b9e00b670db8ee90852d8db60c18e733",
+        "head": "56472e4cf053b7b6713847638892e391370b732b",
+        "selectedTestCount": 0,
+        "selectedTargets": {},
+        "selectedIdentifiersSHA256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "selectedTests": [],
+        "diagnosticsByCode": {}
+      },
+      {
+        "case": "method-execution",
+        "seconds": 22.938167082999996,
+        "peakWorkspaceBytes": 881213440,
+        "maximumResidentSetBytes": 228032512,
+        "buildCount": 0
+      },
+      {
+        "case": "mixed-execution",
+        "seconds": 28.87835662499998,
+        "peakWorkspaceBytes": 881385472,
+        "maximumResidentSetBytes": 226820096,
+        "buildCount": 0
+      },
+      {
+        "case": "production-execution",
+        "seconds": 40.60795891699996,
+        "peakWorkspaceBytes": 881922048,
+        "maximumResidentSetBytes": 229294080,
+        "buildCount": 0
+      },
+      {
+        "case": "full-execution",
+        "seconds": 47.731891374999975,
+        "peakWorkspaceBytes": 882241536,
+        "maximumResidentSetBytes": 227311616,
+        "buildCount": 0
+      },
+      {
+        "case": "empty-execution",
+        "seconds": 1.2464958339999725,
+        "peakWorkspaceBytes": 881971200,
+        "maximumResidentSetBytes": 10911744,
+        "buildCount": 0
+      }
+    ]
+  },
+  "fixtureFinalMatrix": {
+    "analyzerSHA256": "90c1dda1b8ffaa79c8cecc937d485e16cd7ea8db65969d9b976c6b1bc9c2377c",
+    "destination": "platform=iOS Simulator,id=51B1F3F2-8CCE-4A55-999B-EEC51082985B",
+    "measurements": [
+      {
+        "case": "method",
+        "seconds": 55.858505542,
+        "peakWorkspaceBytes": 146972672,
+        "maximumResidentSetBytes": 220758016,
+        "buildCount": 1,
+        "totalTests": 9,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 1.888638973236084
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 0.0003509521484375
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 8.435696458
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 3.4786215075075066
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 0.023934006690979004
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 28.518513083457947
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 0.008988022804260254
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 0.003152012825012207
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 0.012742042541503906
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 8.656085014343262
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 0.001426100730895996
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 0.11429405212402344
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 0.028174996376037598
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "8e4156af50a75c4683fbbd61a7540fce54a716e0",
+            "seconds": 0.14185500144958496
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+            "seconds": 0.00034999847412109375
+          }
+        ],
+        "base": "8e4156af50a75c4683fbbd61a7540fce54a716e0",
+        "head": "d4249d6c9adb9b82bcba2088c5a20b4a0b78e866",
+        "selectedTestCount": 1,
+        "selectedTargets": {
+          "UnitTests": 1
+        },
+        "selectedIdentifiersSHA256": "ba190292b7da0fc4c4197c68cbce921da61d36a5a02880511d90ec6169030dcf",
+        "selectedTests": [
+          "UnitTests/ProductionTests/testSharing()"
+        ],
+        "diagnosticsByCode": {}
+      },
+      {
+        "case": "mixed",
+        "seconds": 100.402045209,
+        "peakWorkspaceBytes": 293912576,
+        "maximumResidentSetBytes": 217907200,
+        "buildCount": 1,
+        "totalTests": 9,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 15.47242796421051
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 0.008661985397338867
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 12.310853916000001
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 15.398273152519591
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 0.02426588535308838
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 27.99231505393982
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 0.029205918312072754
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 0.012243986129760742
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 0.07188498973846436
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 25.34065008163452
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 0.008729934692382812
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 0.2334580421447754
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 0.06451404094696045
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "8e4156af50a75c4683fbbd61a7540fce54a716e0",
+            "seconds": 0.15898799896240234
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 0.0010360479354858398
+          }
+        ],
+        "base": "8e4156af50a75c4683fbbd61a7540fce54a716e0",
+        "head": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+        "selectedTestCount": 1,
+        "selectedTargets": {
+          "UnitTests": 1
+        },
+        "selectedIdentifiersSHA256": "ba190292b7da0fc4c4197c68cbce921da61d36a5a02880511d90ec6169030dcf",
+        "selectedTests": [
+          "UnitTests/ProductionTests/testSharing()"
+        ],
+        "diagnosticsByCode": {}
+      },
+      {
+        "case": "stacked",
+        "seconds": 126.69819279200001,
+        "peakWorkspaceBytes": 440754176,
+        "maximumResidentSetBytes": 214237184,
+        "buildCount": 1,
+        "totalTests": 9,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 2.6370179653167725
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 0.00016701221466064453
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 12.590644417
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 5.504144611167725
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 0.019107937812805176
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 78.7065761089325
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 0.014792919158935547
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 0.003831028938293457
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 0.022932052612304688
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 22.26595902442932
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 0.0026890039443969727
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 0.12999701499938965
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 0.07970404624938965
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+            "seconds": 0.15730202198028564
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+            "seconds": 0.0009289979934692383
+          }
+        ],
+        "base": "022708bdb682cd1ebc4be136c6fd09507c95613b",
+        "head": "4de5c3873ded71caa788aa3f4eb1c39baeba54a2",
+        "selectedTestCount": 1,
+        "selectedTargets": {
+          "CheckoutUITests": 1
+        },
+        "selectedIdentifiersSHA256": "f77e3047a47dd51d70e5d7bc62b9b82ea77c85ecd0f032f82553ad7832fd377b",
+        "selectedTests": [
+          "CheckoutUITests/SharingUITests/testShareSheet()"
+        ],
+        "diagnosticsByCode": {}
+      },
+      {
+        "case": "production",
+        "seconds": 125.134507375,
+        "peakWorkspaceBytes": 589283328,
+        "maximumResidentSetBytes": 208027648,
+        "buildCount": 1,
+        "totalTests": 9,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 7.860266923904419
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 0.0002529621124267578
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 20.903489874999998
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 16.939514113265993
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 0.030292034149169922
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 57.02731800079346
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 0.014668941497802734
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 0.004580020904541016
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 0.017379045486450195
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 17.62877106666565
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 0.003278017044067383
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 0.14556407928466797
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 0.040101051330566406
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "8e4156af50a75c4683fbbd61a7540fce54a716e0",
+            "seconds": 0.18723297119140625
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+            "seconds": 0.001466989517211914
+          }
+        ],
+        "base": "8e4156af50a75c4683fbbd61a7540fce54a716e0",
+        "head": "998eed4e34a26b45b53b17eb2e55e04733224b5c",
+        "selectedTestCount": 8,
+        "selectedTargets": {
+          "CheckoutUITests": 6,
+          "UnitTests": 2
+        },
+        "selectedIdentifiersSHA256": "e38c50f837f3d754b06999d10ec35da1e8e50dee927858e5e8440c72b35de859",
+        "selectedTests": [
+          "CheckoutUITests/InheritedUITests/testInheritedOne()",
+          "CheckoutUITests/InheritedUITests/testInheritedTwo()",
+          "CheckoutUITests/SharingUITests/testShareCopy()",
+          "CheckoutUITests/SharingUITests/testShareLink()",
+          "CheckoutUITests/SharingUITests/testShareSheet()",
+          "CheckoutUITests/SharingUITests/testStandalone()",
+          "UnitTests/ProductionTests/testNotes()",
+          "UnitTests/ProductionTests/testSharing()"
+        ],
+        "diagnosticsByCode": {
+          "head_only_test_host": {
+            "count": 1,
+            "affectedTestCount": 2,
+            "example": "App-hosted or unresolved test runtime can execute changed production code outside explicit test roots: UnitTests"
+          }
+        }
+      },
+      {
+        "case": "added",
+        "seconds": 442.184192166,
+        "peakWorkspaceBytes": 737026048,
+        "maximumResidentSetBytes": 213254144,
+        "buildCount": 1,
+        "totalTests": 10,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 33.112258076667786
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 0.0003180503845214844
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 22.511109
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 24.769592041221618
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 0.02935791015625
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 331.9066860675812
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 0.01971590518951416
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 0.01073300838470459
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 0.029618024826049805
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 23.711016058921814
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 0.005897045135498047
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 0.1408931016921997
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 0.040109992027282715
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "8e4156af50a75c4683fbbd61a7540fce54a716e0",
+            "seconds": 0.15342700481414795
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+            "seconds": 0.001370072364807129
+          }
+        ],
+        "base": "8e4156af50a75c4683fbbd61a7540fce54a716e0",
+        "head": "0287e2ccf77cea1778d55c89bc8ee3e7dcb8ad3b",
+        "selectedTestCount": 10,
+        "selectedTargets": {
+          "CheckoutUITests": 7,
+          "UnitTests": 3
+        },
+        "selectedIdentifiersSHA256": "1b28bb38621d1d163fa2cd252a8f074e635574f9610e678f47584ef17c1bb136",
+        "selectedTests": [
+          "CheckoutUITests/InheritedUITests/testInheritedOne()",
+          "CheckoutUITests/InheritedUITests/testInheritedTwo()",
+          "CheckoutUITests/NotesUITests/testNotes()",
+          "CheckoutUITests/SharingUITests/testShareCopy()",
+          "CheckoutUITests/SharingUITests/testShareLink()",
+          "CheckoutUITests/SharingUITests/testShareSheet()",
+          "CheckoutUITests/SharingUITests/testStandalone()",
+          "UnitTests/ProductionTests/testAdded()",
+          "UnitTests/ProductionTests/testNotes()",
+          "UnitTests/ProductionTests/testSharing()"
+        ],
+        "diagnosticsByCode": {
+          "head_only_declaration_change": {
+            "count": 1,
+            "affectedTestCount": 10,
+            "example": "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: UnitTests/ProductionTests.swift"
+          }
+        }
+      },
+      {
+        "case": "empty",
+        "seconds": 80.34687929100005,
+        "peakWorkspaceBytes": 883609600,
+        "maximumResidentSetBytes": 217923584,
+        "buildCount": 1,
+        "totalTests": 9,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 5.535328984260559
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 0.0002300739288330078
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 13.282989125
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 7.226409931434631
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 0.03276097774505615
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 37.30115497112274
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 0.015647053718566895
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 0.007154941558837891
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 0.020260930061340332
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 11.530188083648682
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 0.0014709234237670898
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 0.11824893951416016
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 0.04981803894042969
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "8e4156af50a75c4683fbbd61a7540fce54a716e0",
+            "seconds": 0.14946496486663818
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+            "seconds": 0.00039899349212646484
+          }
+        ],
+        "base": "8e4156af50a75c4683fbbd61a7540fce54a716e0",
+        "head": "a3dc550bdaa11af6c4aac8dbb469fffa2385a9f1",
+        "selectedTestCount": 0,
+        "selectedTargets": {},
+        "selectedIdentifiersSHA256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "selectedTests": [],
+        "diagnosticsByCode": {}
+      },
+      {
+        "case": "method-execution",
+        "seconds": 22.933340084000065,
+        "peakWorkspaceBytes": 884027392,
+        "maximumResidentSetBytes": 228081664,
+        "buildCount": 0
+      },
+      {
+        "case": "mixed-execution",
+        "seconds": 32.57908837499997,
+        "peakWorkspaceBytes": 884187136,
+        "maximumResidentSetBytes": 226770944,
+        "buildCount": 0
+      },
+      {
+        "case": "production-execution",
+        "seconds": 52.80673341600004,
+        "peakWorkspaceBytes": 884768768,
+        "maximumResidentSetBytes": 230227968,
+        "buildCount": 0
+      },
+      {
+        "case": "full-execution",
+        "seconds": 42.885061166000014,
+        "peakWorkspaceBytes": 885022720,
+        "maximumResidentSetBytes": 229408768,
+        "buildCount": 0
+      },
+      {
+        "case": "empty-execution",
+        "seconds": 1.3808106249998673,
+        "peakWorkspaceBytes": 884772864,
+        "maximumResidentSetBytes": 10649600,
+        "buildCount": 0
+      }
+    ]
+  },
+  "fixtureIntegrityProbes": [
+    {
+      "case": "graph-tamper",
+      "exitCode": 1,
+      "buildCount": 0,
+      "testLaunchCount": 0,
+      "error": "error: Retained head graph is incomplete, corrupt, or incompatible. Build and select again."
+    },
+    {
+      "case": "products-tamper",
+      "exitCode": 1,
+      "buildCount": 0,
+      "testLaunchCount": 0,
+      "error": "error: Test products differ from the captured graph (missing, modified, or extra files). Restore the matching products or recapture the graph."
+    }
+  ],
+  "fixtureProbeNote": "All final matrix selection/execution cases passed. Corrected graph/product corruption probes were run separately against the completed final bundle. Capture-input metadata is verified before publication; post-publication execution verifies the published graph and products.",
+  "consumerInitial": {
+    "base": "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+    "destination": "platform=iOS Simulator,id=FC0881FB-DA22-4597-BD85-24B6DA5968BB",
+    "toolSHA256": "a9b40ef1b29f4befe955bbf024259e0cb3c59045483fee797d1bbe4fdea04aea",
+    "cases": [
+      {
+        "case": "method",
+        "exitCode": 0,
+        "seconds": 414.661418875,
+        "peakWorkspaceBytes": 3510685696,
+        "maximumResidentSetBytes": 2391949312,
+        "buildCount": 1,
+        "head": "855afd0056811ed7ba86574b1394b30ea473bebf",
+        "totalTests": 1972,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 6.697603940963745
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 0.0001690387725830078
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 160.644966042
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 8.808294856590095
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 1.365125060081482
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 129.1590769290924
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 0.06297099590301514
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 10.717779994010925
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 0.9890240430831909
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 0.17402100563049316
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 21.951616048812866
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 0.272379994392395
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 1.0144280195236206
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 15.426576018333435
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 4.248155951499939
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 7.281175971031189
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 87.71230494976044
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 1.232450008392334
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 0.8882660865783691
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 2.4934409856796265
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+            "seconds": 0.30215001106262207
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "855afd0056811ed7ba86574b1394b30ea473bebf",
+            "seconds": 0.5480960607528687
+          }
+        ],
+        "ignoredChanges": [],
+        "selectedTestCount": 1,
+        "selectedTargets": {
+          "ChainOfCustodyUITests": 1
+        },
+        "selectedIdentifiersSHA256": "e62fdfadb45fdfd90e8c37c84e62ace8a0df6d5a9d38972ff7465766ad928f09",
+        "selectedTests": [
+          "ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()"
+        ],
+        "diagnosticsByCode": {}
+      },
+      {
+        "case": "method-execution",
+        "exitCode": 0,
+        "seconds": 302.13358520799994,
+        "peakWorkspaceBytes": 3512516608,
+        "maximumResidentSetBytes": 1136984064,
+        "buildCount": 0
+      },
+      {
+        "case": "mixed",
+        "exitCode": 1,
+        "seconds": 478.330915333,
+        "peakWorkspaceBytes": 6624092160,
+        "maximumResidentSetBytes": 2033074176,
+        "buildCount": 1
+      }
+    ]
+  },
+  "consumerFinal": {
+    "base": "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+    "destination": "platform=iOS Simulator,id=FC0881FB-DA22-4597-BD85-24B6DA5968BB",
+    "toolSHA256": "90c1dda1b8ffaa79c8cecc937d485e16cd7ea8db65969d9b976c6b1bc9c2377c",
+    "cases": [
+      {
+        "case": "mixed-retry",
+        "exitCode": 0,
+        "seconds": 484.16573066600006,
+        "peakWorkspaceBytes": 10132144128,
+        "maximumResidentSetBytes": 2040414208,
+        "buildCount": 1,
+        "head": "b4a7751934d5c185e750ae1850586c249d1277f5",
+        "totalTests": 1972,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 15.631495952606201
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 0.0003210306167602539
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 198.898933
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 25.151472025482178
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 1.3180910348892212
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 121.26972508430481
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 1.1531130075454712
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 0.066802978515625
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 11.88690197467804
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 0.18303203582763672
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 23.783507108688354
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 0.2772020101547241
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 1.071645975112915
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 16.430068969726562
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 8.456892013549805
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 4.796209096908569
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 100.26318502426147
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 1.5315439701080322
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 0.7638388872146606
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 2.1746180057525635
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+            "seconds": 0.3224910497665405
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+            "seconds": 0.614435076713562
+          }
+        ],
+        "ignoredChanges": [
+          "AGENTS.md"
+        ],
+        "selectedTestCount": 1,
+        "selectedTargets": {
+          "ChainOfCustodyUITests": 1
+        },
+        "selectedIdentifiersSHA256": "e62fdfadb45fdfd90e8c37c84e62ace8a0df6d5a9d38972ff7465766ad928f09",
+        "selectedTests": [
+          "ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()"
+        ],
+        "diagnosticsByCode": {}
+      },
+      {
+        "case": "mixed-retry-execution",
+        "exitCode": 0,
+        "seconds": 113.538846208,
+        "peakWorkspaceBytes": 10133450752,
+        "maximumResidentSetBytes": 1134067712,
+        "buildCount": 0
+      },
+      {
+        "case": "production",
+        "exitCode": 0,
+        "seconds": 328.957550125,
+        "peakWorkspaceBytes": 13544808448,
+        "maximumResidentSetBytes": 2497658880,
+        "buildCount": 1,
+        "head": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+        "totalTests": 1972,
+        "phases": [
+          {
+            "detail": "",
+            "phase": "buildSettings",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 6.069671034812927
+          },
+          {
+            "detail": "",
+            "phase": "graphLoad",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 0.00023305416107177734
+          },
+          {
+            "detail": "miss: No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)",
+            "phase": "cache",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 0
+          },
+          {
+            "detail": "build-for-testing with supplementary SIL",
+            "phase": "build",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 137.265461084
+          },
+          {
+            "detail": "wrapper setup, settings and export/product/capture seals",
+            "phase": "captureValidation",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 9.891975882896048
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "buildEvidence",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 1.1529489755630493
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "enumeration",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 71.56997394561768
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 0.06760799884796143
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 0.9755700826644897
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 10.478978991508484
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 0.16903209686279297
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 20.625671982765198
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 0.25591301918029785
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 0.944206953048706
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 14.549744963645935
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 7.394788980484009
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "captureConsumption",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 4.283292055130005
+          },
+          {
+            "detail": "fresh analysis",
+            "phase": "extraction",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 84.57792496681213
+          },
+          {
+            "detail": "",
+            "phase": "graphPublish",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 1.1426939964294434
+          },
+          {
+            "detail": "",
+            "phase": "headBuildEvidence",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 0.5551439523696899
+          },
+          {
+            "detail": "",
+            "phase": "retainBuild",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 1.782359004020691
+          },
+          {
+            "detail": "Git syntax only; no baseline build or compiler graph",
+            "phase": "baseSourceSyntax",
+            "revision": "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+            "seconds": 0.1611729860305786
+          },
+          {
+            "detail": "",
+            "phase": "selection",
+            "revision": "ba92d14c1a3d1cee1154dd7b51589b17647def56",
+            "seconds": 0.4607689380645752
+          }
+        ],
+        "ignoredChanges": [],
+        "selectedTestCount": 1697,
+        "selectedTargets": {
+          "ChainOfCustodySnapshotTests": 459,
+          "ChainOfCustodyTests": 1060,
+          "ChainOfCustodyUITests": 178
+        },
+        "selectedIdentifiersSHA256": "203b7c65cdb0922d934c3fe5b7af71c5648dcca61ee16c2c13198ffdda2bcc52",
+        "diagnosticsByCode": {
+          "head_only_runtime_uncertainty": {
+            "count": 1506,
+            "affectedTestCount": 1506,
+            "example": "Opaque head runtime dependency may reach the change; no base compiler evidence validates isolation for ChainOfCustodySnapshotTests/AppNavigationPreferencesTests/itemRestorationRequiresThePreviouslyOpenedSoleItem()"
+          },
+          "head_only_test_host": {
+            "count": 1,
+            "affectedTestCount": 459,
+            "example": "App-hosted or unresolved test runtime can execute changed production code outside explicit test roots: ChainOfCustodySnapshotTests"
+          }
+        }
+      }
+    ]
+  },
+  "consumerControl": {
+    "case": "full-hostless-target-control",
+    "exitCode": 65,
+    "seconds": 735.735424334,
+    "selectedCount": 1119,
+    "peakWorkspaceBytes": 6884155392,
+    "maximumResidentSetBytes": 930316288,
+    "buildCount": 0,
+    "xcresult": {
+      "result": "Failed",
+      "passedTests": 811,
+      "failedTests": 1,
+      "totalTestCount": 812,
+      "skippedTests": 0,
+      "testFailures": [
+        {
+          "failureText": "Test exceeded execution time allowance of 1 minute",
+          "targetName": "ChainOfCustodyTests",
+          "testIdentifier": 636,
+          "testIdentifierString": "PairingNoteLinkTests/timeoutAndCancellationDoNotWaitForUnresponsiveSync(cancel:)",
+          "testIdentifierURL": "test://com.apple.xcode/ChainOfCustody/ChainOfCustodyTests/PairingNoteLinkTests/timeoutAndCancellationDoNotWaitForUnresponsiveSync(cancel:)",
+          "testName": "timeoutAndCancellationDoNotWaitForUnresponsiveSync(cancel:)"
+        }
+      ]
+    },
+    "diagnosticCollectionInterrupted": true
+  },
+  "productionProbe": {
+    "case": "mapped-production-test-control",
+    "exitCode": 0,
+    "seconds": 146.919025291,
+    "selectedCount": 1,
+    "peakWorkspaceBytes": 13560066048,
+    "maximumResidentSetBytes": 920076288,
+    "buildCount": 0
+  },
+  "executionResults": {
+    "method-execution": {
+      "result": "Passed",
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 1,
+      "testFailures": []
+    },
+    "mixed-retry-execution": {
+      "result": "Passed",
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 1,
+      "testFailures": []
+    },
+    "production-probe": {
+      "result": "Passed",
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 1,
+      "testFailures": []
+    },
+    "fixture-method-execution": {
+      "result": "Passed",
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 1,
+      "testFailures": []
+    },
+    "fixture-mixed-execution": {
+      "result": "Passed",
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 1,
+      "testFailures": []
+    },
+    "fixture-production-execution": {
+      "result": "Passed",
+      "passedTests": 8,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 8,
+      "testFailures": []
+    },
+    "fixture-full-execution": {
+      "result": "Passed",
+      "passedTests": 10,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 10,
+      "testFailures": []
+    }
+  },
+  "diagnosticComparisons": {
+    "method": {
+      "twoGraph": {
+        "totalTests": 1972,
+        "selectedTestCount": 1972,
+        "selectedTargets": {
+          "ChainOfCustodySnapshotTests": 459,
+          "ChainOfCustodyTests": 1119,
+          "ChainOfCustodyUITests": 394
+        },
+        "selectedIdentifiersSHA256": "f58339b0a292dc0e79aa88b1fceae7a3fe57d5462f8a47d8bb3a2782f6669ab7",
+        "diagnosticsByCode": {
+          "generated_input_changed": {
+            "count": 3,
+            "affectedTestCount": 1972,
+            "example": "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for ChainOfCustody."
+          }
+        }
+      },
+      "finalHeadOnlyReplay": {
+        "totalTests": 1972,
+        "selectedTestCount": 1,
+        "selectedTargets": {
+          "ChainOfCustodyUITests": 1
+        },
+        "selectedIdentifiersSHA256": "e62fdfadb45fdfd90e8c37c84e62ace8a0df6d5a9d38972ff7465766ad928f09",
+        "selectedTests": [
+          "ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()"
+        ],
+        "diagnosticsByCode": {}
+      },
+      "matchesOriginalHeadOnlyReport": true
+    },
+    "production": {
+      "twoGraph": {
+        "totalTests": 1972,
+        "selectedTestCount": 1972,
+        "selectedTargets": {
+          "ChainOfCustodySnapshotTests": 459,
+          "ChainOfCustodyTests": 1119,
+          "ChainOfCustodyUITests": 394
+        },
+        "selectedIdentifiersSHA256": "f58339b0a292dc0e79aa88b1fceae7a3fe57d5462f8a47d8bb3a2782f6669ab7",
+        "diagnosticsByCode": {
+          "generated_input_changed": {
+            "count": 3,
+            "affectedTestCount": 1972,
+            "example": "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for ChainOfCustody."
+          },
+          "unresolved_dependency": {
+            "count": 446,
+            "affectedTestCount": 446,
+            "example": "Opaque runtime dependency reachable from ChainOfCustodySnapshotTests/AppNavigationPreferencesTests/itemRestorationRequiresThePreviouslyOpenedSoleItem(); no validated boundary excludes changed modules [ChainOfCustody]: Dynamic dispatch: objc_method UserDefaults.string!foreign; Dynamic dispatch: witness_method Equatable.\"==\"; Imported conformance: Equatable@witness:UUID module Foundation Imported conformance ownership is known; its implementation body/runtime effects are unavailable."
+          }
+        }
+      },
+      "finalHeadOnlyReplay": {
+        "totalTests": 1972,
+        "selectedTestCount": 1697,
+        "selectedTargets": {
+          "ChainOfCustodySnapshotTests": 459,
+          "ChainOfCustodyTests": 1060,
+          "ChainOfCustodyUITests": 178
+        },
+        "selectedIdentifiersSHA256": "203b7c65cdb0922d934c3fe5b7af71c5648dcca61ee16c2c13198ffdda2bcc52",
+        "diagnosticsByCode": {
+          "head_only_runtime_uncertainty": {
+            "count": 1506,
+            "affectedTestCount": 1506,
+            "example": "Opaque head runtime dependency may reach the change; no base compiler evidence validates isolation for ChainOfCustodySnapshotTests/AppNavigationPreferencesTests/itemRestorationRequiresThePreviouslyOpenedSoleItem()"
+          },
+          "head_only_test_host": {
+            "count": 1,
+            "affectedTestCount": 459,
+            "example": "App-hosted or unresolved test runtime can execute changed production code outside explicit test roots: ChainOfCustodySnapshotTests"
+          }
+        }
+      },
+      "matchesOriginalHeadOnlyReport": true
+    }
+  },
+  "consumerCaptureNote": "The method capture used the earlier implementation binary. Its final native syntax/selector replay matched exactly. Mixed-retry and production used the final CLI (same hash as final fixture matrix).",
+  "retainedBundleBytes": {
+    "method": 3406897152,
+    "mixed-retry": 3437445120,
+    "production": 3411963904
+  }
+}
