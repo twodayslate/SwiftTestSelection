@@ -11,7 +11,7 @@ and compiler arguments that include system headers in that rule. Xcode's default
 `-MMD` alone is insufficient. Tool-managed builds and the capture helper add
 `MTL_COMPILER_FLAGS='$(inherited) -Xclang -sys-header-deps'`; imported builds
 without complete evidence keep conservative selection. Graphs captured before
-`documentationEvidenceVersion: 2` must be regenerated before excluding docs.
+`documentationEvidenceVersion: 3` must be regenerated before excluding docs.
 Its transitive inputs participate in documentation exclusions, and the dependency
 file is fingerprinted with the active build metadata. Missing or unsupported
 Metal dependency evidence remains conservative. Unknown scripts and direct,
@@ -147,3 +147,35 @@ package validation overlapped part of the mixed capture. The JSON companion's
 `postReviewValidation` records the exact analyzer digest, revisions, commands,
 versioned boundaries, Metal dependency checks, and result-bundle test node. The
 full consumer suite was not executed.
+
+
+## Follow-up review: overlays and dependency path identity
+
+At analyzer source revision `66c4a1a`, both spaced and joined VFS-overlay options
+are rejected. Every parsed Metal dependency must resolve to a readable regular
+file. Missing paths, directories, and dangling links keep conservative selection.
+Markdown paths containing literal backslashes or newlines cannot be excluded:
+Metal can rewrite their spelling, including to the name of a different existing
+file. Documentation evidence is now version 3, so earlier exclusions require
+recapture.
+
+All **217 release tests pass on Xcode 26.6 and 27.0** with installed Metal tests
+enabled. Four real-compiler cases exercise spaced/joined overlays and backslash
+paths with and without an existing slash-spelled collision. Each changes the
+compiled shader product and verifies selection includes the test, excludes no
+changed documentation, and reports `documentation_exclusion_blocked`. Deterministic
+tests cover invalid dependency paths, joined flag forms, and version-2 archives.
+
+The same release suites replay the retained mixed build under Xcode 27 and the
+retained method-only build under Xcode 26 using `IMPACT_BUILD_EVIDENCE_REPLAY`
+and `IMPACT_EXPECT_IGNORED_DOCUMENTATION=AGENTS.md`. Recovery preserves all three
+generated boundaries, with no unresolved roles or unsupported inputs. Their
+version-3 documentation lists exactly match the previously validated lists.
+A documentation-only selection against each recovered graph ignores `AGENTS.md`,
+selects no tests, and reports no diagnostics.
+
+These are metadata replays of `/tmp/pr47-system-header-validation/{mixed,method-only}/retained`,
+not new consumer builds or UI executions; the preceding fresh-build and exact UI
+execution evidence remains recorded above. Existing graph archives were not
+modified. The JSON companion's `dependencyPathValidation` records the new source
+and binary identities, test counts, and replay assertions.

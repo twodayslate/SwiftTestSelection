@@ -415,5 +415,71 @@
       "Xcode27.0": 215
     },
     "captureHelperTests": 6
+  },
+  "dependencyPathValidation": {
+    "analyzerSourceRevision": "66c4a1a20caa36b416e45dee2ab6ed59ec78affa",
+    "analyzerSHA256": "cc84501578fc2e6d07d0479004a3fcfe04f7e973b5a1cedccffe6ead53c9b8f5",
+    "documentationEvidenceVersion": 3,
+    "releaseTests": {
+      "Xcode26.6": 217,
+      "Xcode27.0": 217
+    },
+    "realCompilerCases": [
+      "spacedVFSOverlay",
+      "joinedVFSOverlay",
+      "backslashPath",
+      "backslashPathWithExistingSlashCollision"
+    ],
+    "allCompilerCases": {
+      "compiledProductChanged": true,
+      "affectedTestSelected": true,
+      "changedDocumentIgnored": false,
+      "diagnostic": "documentation_exclusion_blocked"
+    },
+    "retainedEvidenceReplays": [
+      {
+        "case": "mixed",
+        "xcode": "27.0",
+        "retainedBuild": "/tmp/pr47-system-header-validation/mixed/retained",
+        "generatedModules": [
+          "ChainOfCustody",
+          "ChainOfCustodyCore",
+          "MessagesExtension"
+        ],
+        "documentationListsUnchanged": true,
+        "unresolvedProductRoles": {},
+        "unsupportedSourceInputs": {},
+        "documentationOnlySelection": {
+          "ignoredChanges": [
+            "AGENTS.md"
+          ],
+          "selectedTests": [],
+          "diagnostics": []
+        }
+      },
+      {
+        "case": "method-only",
+        "xcode": "26.6",
+        "retainedBuild": "/tmp/pr47-system-header-validation/method-only/retained",
+        "generatedModules": [
+          "ChainOfCustody",
+          "ChainOfCustodyCore",
+          "MessagesExtension"
+        ],
+        "documentationListsUnchanged": true,
+        "unresolvedProductRoles": {},
+        "unsupportedSourceInputs": {},
+        "documentationOnlySelection": {
+          "ignoredChanges": [
+            "AGENTS.md"
+          ],
+          "selectedTests": [],
+          "diagnostics": []
+        }
+      }
+    ],
+    "freshConsumerBuild": false,
+    "consumerTestsExecuted": false,
+    "retainedGraphArchivesModified": false
   }
 }
