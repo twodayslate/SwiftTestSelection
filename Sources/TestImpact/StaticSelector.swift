@@ -27,6 +27,7 @@ public struct ImpactReport: Codable, Sendable {
     /// Caller-owned retained head graph; products outlive selection/cache eviction.
     public var buildArtifactPath: String?
     public var analysisEvents: [XcodeAnalysisEvent]?
+    public var analysisMode: String? = nil
     public var comparisonMode: String?
     public var onlyTestingArguments: [String]?
     public var diagnostics: [SelectionDiagnostic] = []

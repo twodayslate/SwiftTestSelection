@@ -251,7 +251,7 @@ struct XcodeBuildEvidence {
     /// Exact Xcode tool locations, not a developer-directory prefix plus basename.
     /// Downloaded Metal tools live outside Xcode; they must match xcrun's explicit
     /// Apple Metal toolchain lookup. An unknown task still blocks exclusions.
-    private func documentationEvidence(files: [String: String], compiler: String) -> (allowed: [String], blockers: [String: [String]]) {
+    func documentationEvidence(files: [String: String], compiler: String) -> (allowed: [String], blockers: [String: [String]], uncertainty: [String]) {
         let developer = compiler.range(of: "/Toolchains/").map { String(compiler[..<$0.lowerBound]) }
         var supported = Set(["/usr/bin/touch", "/usr/bin/derq"].map(canonical))
         if let developer, developer.hasPrefix("/") {
@@ -340,7 +340,7 @@ struct XcodeBuildEvidence {
             if reasons.isEmpty { allowed.append(path) }
             else { blockers[path] = Array(Set(reasons)).sorted() }
         }
-        return (allowed, blockers)
+        return (allowed, blockers, Array(Set(unknown)).sorted())
     }
 
     private static func supportedMetalDependencyPath(_ path: String) -> Bool {

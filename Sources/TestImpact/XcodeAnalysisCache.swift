@@ -302,7 +302,7 @@ final class XcodeGraphCache {
 }
 
 extension XcodeAnalysis {
-    func selectCached(base: String, head: String, mergeBase: Bool, fullSuite: Bool, cache configuration: XcodeAnalysisCache, retainingBuildAt retained: URL? = nil, cachedBasePolicy: XcodeCachedBasePolicy = .build) throws -> ImpactReport {
+    func selectCached(base: String, head: String, mergeBase: Bool, fullSuite: Bool, cache configuration: XcodeAnalysisCache, retainingBuildAt retained: URL? = nil, cachedBasePolicy: XcodeCachedBasePolicy = .build, headOnly: Bool = false) throws -> ImpactReport {
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         let context = try artifactContext(root: root)
         let comparison = try RevisionComparison(base: base, head: head, mergeBase: mergeBase, root: root)
@@ -329,6 +329,8 @@ extension XcodeAnalysis {
         let captureMode = try options.buildTimeSILHelper.map { try XcodeBuildTimeCapture(helper: $0) }
         var pendingCapture: (workspace: URL, settings: Data, identity: [String: String], capture: CapturedSIL)?
         var retainedGraphPath: String?
+        var headDocumentation = Set<String>()
+        var headBuildUncertainty: String?
         func graph(_ revision: String, keepBuild: Bool = false, cacheOnly: Bool = false) throws -> XcodeTestGraph {
             try extractionCancellation.check()
             try cache.resetWork()
@@ -415,6 +417,17 @@ extension XcodeAnalysis {
             }
             try extractionCancellation.check()
             try captured?.validateFiles()
+            if headOnly {
+                try timed("headBuildEvidence", revision: revision) {
+                    let evidence = try XcodeBuildEvidence(log: buildText, root: source, derived: derived, captured: captured)
+                    try evidence.validate(log: buildText, boundaries: result.generatedSourceBoundaries?.values.flatMap { $0 } ?? [])
+                    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: source).text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let files = try XcodeBuildEvidence.repositoryInputFiles(root: source, derived: derived)
+                    let proof = evidence.documentationEvidence(files: files, compiler: compiler)
+                    headDocumentation = Set(proof.allowed)
+                    if !proof.uncertainty.isEmpty { headBuildUncertainty = proof.uncertainty.joined(separator: "; ") }
+                }
+            }
             if keepBuild, let captured {
                 // Capture selection commits its retained bundle only after both
                 // revision captures succeed. A bad base cannot leave a completed
@@ -450,7 +463,7 @@ extension XcodeAnalysis {
             }
         }
         var current = try graph(comparison.head!, keepBuild: retained != nil)
-        if cachedBasePolicy == .build {
+        if !headOnly && cachedBasePolicy == .build {
             if comparison.base == comparison.head { previous = current }
             else {
                 do { previous = try graph(comparison.base) }
@@ -469,8 +482,15 @@ extension XcodeAnalysis {
                     inputIdentity: pendingCapture.identity, capture: pendingCapture.capture)
             }.path
         }
+        let baseSources = try headOnly ? timed("baseSourceSyntax", revision: comparison.base, detail: "Git syntax only; no baseline build or compiler graph") {
+            try XcodeHeadOnlySources.read(current: current, changes: changes, base: comparison.base, root: root, mappingPath: options.mappingsPath)
+        } : nil
         var report = timed("selection", revision: comparison.head!) {
-            XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base, additionalFallbacks: fallbacks)
+            if let baseSources {
+                return XcodeHeadOnlySelector.select(current: current, source: baseSources, changes: changes,
+                    baseRevision: comparison.base, documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty)
+            }
+            return XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base, additionalFallbacks: fallbacks)
         }
         report.headRevision = comparison.head; report.comparisonMode = comparison.mode
         report.buildArtifactID = current.buildArtifact?.id

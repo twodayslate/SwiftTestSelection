@@ -894,7 +894,87 @@ Copyright (c) 2026 Zachary Gorak.
 
 Licensed under the **GNU Affero General Public License, version 3 only** (`AGPL-3.0-only`). See [LICENSE](LICENSE) for the complete terms. This is a strong-copyleft open-source license, including source-sharing requirements for modified versions used over a network. Commercial use is permitted under the license.
 
-### Limit PR jobs to one executable build
+### Select without any baseline artifacts
+
+Use `--head-only` when CI cannot retain a baseline graph. This is an explicit
+alternative to the cache-only policy below. It compares native Swift syntax at
+both Git revisions, builds **only the head** with supplementary SIL, enumerates
+that build's enabled tests, and retains its exact products. No persistent cache,
+baseline producer, saved graph, or baseline compilation is required.
+
+```sh
+swift-test-impact select \
+  --project MyApp.xcodeproj --scheme MyApp --test-plan AllTests \
+  --destination 'platform=iOS Simulator,id=SIMULATOR_UUID' \
+  --base origin/main --head HEAD --merge-base --head-only \
+  --build-time-sil /absolute/path/to/SwiftTestSelection/Scripts/capture-build.py \
+  --retain-build /absolute/new/job-directory/head-build \
+  --format json --output impact.json
+
+swift-test-impact run \
+  --project MyApp.xcodeproj --scheme MyApp --test-plan AllTests \
+  --destination 'platform=iOS Simulator,id=SIMULATOR_UUID' \
+  --head-graph /absolute/new/job-directory/head-build/head-graph.json \
+  --report impact.json
+```
+
+`select` is report-only unless `--run` is requested. `--merge-base` resolves the
+actual common ancestor of the explicit revisions, including stale and stacked
+branches. Without it, `--base` is the exact comparison revision. Both inputs must
+exist in local Git history; fetch enough history before running. `--head-only`
+requires build-time capture and retained products (`--retain-build` or `--run`),
+and cannot be combined with saved graphs or `--cached-base-policy`. Optional
+`--analysis-cache`/`--cache-context` can reuse head/module analysis, but never
+cause baseline lookup or compilation in this mode.
+
+The supported-change model is deliberately narrower than two-graph analysis:
+
+| Change/evidence | Head-only behavior |
+| --- | --- |
+| Surviving ordinary function body, unchanged header | Trace head compiler dependencies to tests; deleting lines inside a body is supported |
+| Edited test, helper, setup/teardown or inherited method | Select bound tests and dependent consumers; unresolved identities broaden explicitly |
+| Added/deleted/renamed/moved declaration, overload/signature/default-argument/dispatch change | Full enabled head inventory: old compiler edges are unavailable |
+| Global/initializer, resource, configuration, mapping or unowned source change | Full enabled head inventory |
+| Macros, opaque return types, unrecognized build scripts or unresolved ownership | Explained conservative fallback |
+| Production change and app-hosted/unknown test host | Retain the affected host's tests; base source imports do not prove isolation |
+| Hostless tests | Use head dependencies, retaining tests with opaque runtime uncertainty; two-graph runtime-boundary exemptions are unavailable |
+| UI feature change | Use declared source/symbol/fixture mappings and `dependsOn`; missing boundaries, selectors or runtime contracts broaden UI selection |
+
+New tests are included through the structural-change fallback; deleted tests are
+absent from the head inventory. UI mappings remain user-declared contracts, not
+measured coverage. Ordinary bodies with attributes other than `@MainActor` or an
+opaque result type are conservatively unsupported. This also applies to attributes
+on enclosing types: an attached macro can synthesize other declarations from a
+changed body. Test-entry selection retains the existing test-independence assumption.
+
+Native Swift tokens preserve strings, regex literals, operators and directives.
+With `sourceLocationPolicy: "diagnosticLineColumn"` agreed at both revisions,
+comment/whitespace line and column shifts are ignored while file identity remains
+semantic. The default semantic policy conservatively considers call-site locations
+because location defaults can affect behavior without changing tokens. Markdown
+is ignored only when both revisions opt in through `ignoredDocumentation` and the
+fresh build proves the file is not an input; unknown tasks block that proof.
+
+JSON reports identify `analysisMode: "head-only-git-syntax"`, resolved revisions,
+exact method identifiers, dependency/mapping/fallback reasons, and timed phases.
+`baseSourceSyntax` reads Git blobs; it is not base compiler extraction. Every
+fallback uses the same retained head build. A malformed report or damaged capture
+fails verification. A valid empty selection executes no tests. `--full-suite`
+explicitly selects all enabled head tests, still with one build. After execution,
+the job's retained directory can be removed; nothing must survive to the next job.
+Changes outside Git, such as an SDK/toolchain update, script environment or unlocked
+external dependency, have no historical evidence in this mode. Keep those inputs
+stable for a source comparison, or request `--full-suite`.
+
+Validate selection against targeted and full controls before making it a CI gate.
+Run `Scripts/xcode_head_only_test.py --tool /path/to/release/swift-test-impact
+--destination 'platform=iOS Simulator,id=UUID' --output measurements.json --execute`
+on an idle runner to measure build/analysis phases, execution, elapsed time, sampled
+peak workspace disk, and exact executable-build counts. Local fixture and consumer
+results, including validation limits, are recorded in
+[the head-only validation report](Documentation/Issue49Validation.md).
+
+### Require a cached baseline for one-build PR selection
 
 Use `--cached-base-policy require` with `--analysis-cache` and `--cache-context`
 to require a compatible cached baseline. With `--merge-base`, the tool resolves

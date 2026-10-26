@@ -191,3 +191,21 @@ private func cacheGraph() -> XcodeTestGraph {
         }
     }
 }
+
+@Test func headOnlyRequiresHeadCaptureAndRetentionBeforeAnalysis() throws {
+    var options = XcodeConfiguration(container: .project,
+        path: URL(fileURLWithPath: "/nonexistent/App.xcodeproj"), scheme: "App", destination: "simulator")
+    for stage in 0..<3 {
+        if stage > 0 { options.buildTimeSILHelper = URL(fileURLWithPath: "/nonexistent/helper.py") }
+        do {
+            _ = try XcodeAnalysis(options: options).select(base: "base", head: stage == 2 ? nil : "head", headOnly: true)
+            Issue.record("Expected early argument rejection")
+        } catch {
+            #expect(String(describing: error).contains("Head-only analysis requires"))
+        }
+    }
+    do {
+        _ = try XcodeAnalysis(options: options).select(base: "base", head: "head", retainingBuildAt: URL(fileURLWithPath: "/nonexistent/bundle"), cachedBasePolicy: .fullSuite, headOnly: true)
+        Issue.record("Expected conflicting policy rejection")
+    } catch { #expect(String(describing: error).contains("Head-only analysis requires")) }
+}

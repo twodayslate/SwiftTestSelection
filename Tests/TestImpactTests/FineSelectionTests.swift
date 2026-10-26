@@ -734,3 +734,195 @@ func lineColumnPolicyKeepsBodyAndCallerFileMoves(macro: String) throws {
     head.dependencies!.functions["UI.Sharing.testIndependent()"]!.dependencies.insert("UI.Sharing.helper()")
     #expect(selection(head, old).selectedTests == ["UI/Sharing/testIndependent()"])
 }
+
+// Head-only mode deliberately receives source snapshots, never a base graph.
+private func headOnlyModel(ui: String = uiSource, app: String = appSource) -> XcodeTestGraph {
+    var value = model(ui: ui, app: app)
+    value.mappings?.sourceLocationPolicy = .diagnosticLineColumn
+    value.mappings?.runtimeDependencyPolicy = .declared
+    value.mappings?.ignoredDocumentation = ["AGENTS.md"]
+    return value
+}
+private func headOnlySelection(_ current: XcodeTestGraph, old: XcodeTestGraph = headOnlyModel(),
+                               paths: [String] = ["Tests/UI.swift"], documentation: Set<String> = [],
+                               failure: String? = nil) -> ImpactReport {
+    XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: old.mappings),
+        changes: paths.map { FileChange(path: $0) }, baseRevision: "base", documentation: documentation, buildEvidenceFailure: failure)
+}
+
+@Test func headOnlyEditedMethodAndAllowedTriviaSelectExactlyOne() {
+    let edit = uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")
+    let plain = headOnlySelection(headOnlyModel(ui: edit))
+    let mixed = headOnlySelection(headOnlyModel(ui: "// header\n" + edit), paths: ["Tests/UI.swift", "AGENTS.md"], documentation: ["AGENTS.md"])
+    #expect(plain.selectedTests == ["UI/Sharing/testIndependent()"])
+    #expect(mixed.selectedTests == plain.selectedTests)
+    #expect(mixed.diagnostics.isEmpty)
+    #expect(mixed.analysisMode == "head-only-git-syntax")
+    #expect(mixed.onlyTestingArguments == ["-only-testing:UI/Sharing/testIndependent()"])
+    #expect(mixed.ignoredChanges == ["AGENTS.md"])
+    #expect(headOnlySelection(headOnlyModel(ui: "// header\n" + uiSource)).selectedTests.isEmpty)
+}
+
+@Test func headOnlySharedHelperAndLifecycleSelectConsumers() {
+    let helper = headOnlySelection(headOnlyModel(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(2, 2)", with: "XCTAssertEqual(2, 3)")))
+    #expect(helper.selectedTests == ["UI/Sharing/testOne()", "UI/Sharing/testThree()", "UI/Sharing/testTwo()"])
+    let lifecycle = headOnlySelection(headOnlyModel(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(3, 3)", with: "XCTAssertEqual(3, 4)")))
+    #expect(lifecycle.selectedTests.count == 4)
+    #expect(lifecycle.selectedTests.allSatisfy { $0.hasPrefix("UI/Sharing/") })
+    let deletedLines = headOnlySelection(headOnlyModel(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "")))
+    #expect(deletedLines.selectedTests == ["UI/Sharing/testIndependent()"])
+    #expect(deletedLines.fullRunReasons.isEmpty)
+}
+
+@Test func headOnlyStructuralChangesAlwaysRetainSurvivors() {
+    let changes = [
+        uiSource + "\nfunc newHelper() {}",
+        uiSource.replacingOccurrences(of: "func testIndependent() { XCTAssertEqual(1, 1) }", with: ""),
+        uiSource.replacingOccurrences(of: "testIndependent()", with: "testRenamed()"),
+        uiSource.replacingOccurrences(of: "func helper()", with: "func helper(_ n: Int = 1)"),
+        uiSource.replacingOccurrences(of: "class Sharing: XCTestCase", with: "class Sharing: OtherCase"),
+        uiSource + "\nvar sharedState = 0",
+        uiSource + "\n#if DEBUG\nfunc conditional() {}\n#endif",
+        uiSource.replacingOccurrences(of: "func helper()", with: "@inline(__always) func helper()"),
+        uiSource.replacingOccurrences(of: "func testIndependent()", with: "func testNew()").appending("\nclass Added: XCTestCase { func testAdded() {} }")
+    ]
+    for text in changes {
+        let current = headOnlyModel(ui: text)
+        let report = headOnlySelection(current)
+        #expect(report.selectedTests == current.tests.sorted())
+        #expect(report.diagnostics.contains { $0.code == "head_only_declaration_change" })
+        #expect(!report.selectedTests.contains("UI/Sharing/testIndependent()") || current.tests.contains("UI/Sharing/testIndependent()"))
+    }
+}
+
+@Test func headOnlyProductionUsesDeclaredUIAndSharedDependencies() {
+    let sharing = headOnlySelection(headOnlyModel(app: appSource.replacingOccurrences(of: "func sharing() -> Int { common() }", with: "func sharing() -> Int { common() + 1 }")), paths: ["App/Features.swift"])
+    #expect(sharing.selectedTests.count == 4)
+    #expect(sharing.selectedTests.allSatisfy { $0.hasPrefix("UI/Sharing/") })
+    #expect(sharing.diagnostics.isEmpty)
+    let common = headOnlySelection(headOnlyModel(app: appSource.replacingOccurrences(of: "42", with: "43")), paths: ["App/Features.swift"])
+    #expect(common.selectedTests.count == 5)
+    #expect(common.explanations.allSatisfy { $0.kind == "explicitMapping" })
+    var unmapped = headOnlyModel(app: appSource.replacingOccurrences(of: "42", with: "43"))
+    unmapped.mappings = nil
+    #expect(headOnlySelection(unmapped, paths: ["App/Features.swift"]).diagnostics.contains { $0.code == "head_only_missing_mappings" })
+}
+
+@Test func headOnlyHostlessAndHostedRuntimeStayDistinct() {
+    func unitModel(_ text: String, hosted: Bool = false, opaque: Bool = false) -> XcodeTestGraph {
+        var value = headOnlyModel(app: text)
+        value.targets[0].productType = "com.apple.product-type.bundle.unit-test"
+        value.mappings?.features = []
+        value.runtimeInventory = .init(imports: [:], hosts: ["UI": hosted ? ["UI", "App"] : ["UI"]])
+        value.dependencies!.functions["UI.Sharing.testIndependent()"]!.dependencies = ["App.sharing()"]
+        if opaque { value.dependencies!.functions["UI.Notes.testNotes()"]!.uncertainties.insert("Global state access") }
+        return value
+    }
+    let edit = appSource.replacingOccurrences(of: "func sharing() -> Int { common() }", with: "func sharing() -> Int { common() + 1 }")
+    let focused = headOnlySelection(unitModel(edit), old: unitModel(appSource), paths: ["App/Features.swift"])
+    #expect(focused.selectedTests == ["UI/Sharing/testIndependent()"])
+    #expect(focused.diagnostics.isEmpty)
+    let hosted = headOnlySelection(unitModel(edit, hosted: true), old: unitModel(appSource, hosted: true), paths: ["App/Features.swift"])
+    #expect(hosted.selectedTests.count == 5)
+    #expect(hosted.diagnostics.contains { $0.code == "head_only_test_host" })
+    let opaque = headOnlySelection(unitModel(edit, opaque: true), old: unitModel(appSource), paths: ["App/Features.swift"])
+    #expect(opaque.selectedTests == ["UI/Notes/testNotes()", "UI/Sharing/testIndependent()"])
+    #expect(opaque.diagnostics.contains { $0.code == "head_only_runtime_uncertainty" })
+}
+
+@Test func headOnlyUncertainInputsCannotBecomeEmptySelections() {
+    for path in ["AGENTS.md", "Assets/image.png", "Config.xcconfig", "Missing.swift", ".swift-test-selection.json"] {
+        let report = headOnlySelection(headOnlyModel(), paths: [path])
+        #expect(report.selectedTests.count == 5)
+        #expect(report.diagnostics.contains { $0.code == "head_only_build_input" })
+    }
+    let failed = headOnlySelection(headOnlyModel(), failure: "Unknown generation script")
+    #expect(failed.selectedTests.count == 5)
+    #expect(failed.diagnostics.contains { $0.code == "head_only_build_evidence" })
+    var missing = headOnlyModel(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)"))
+    missing.dependencies!.functions.removeValue(forKey: "UI.Sharing.testIndependent()")
+    #expect(headOnlySelection(missing).diagnostics.contains { $0.code == "head_only_unresolved_body" })
+}
+
+@Test func headOnlyLiteralOperatorAndLocationEditsStaySemantic() {
+    for (before, after) in [
+        (#"print("// literal")"#, #"print("// changed")"#),
+        (##"print(#"/* literal */"#)"##, ##"print(#"/* changed */"#)"##),
+        (#"print(/literal/)"#, #"print(/changed/)"#),
+        ("print(1 + 2)", "print(1 - 2)")
+    ] {
+        let old = headOnlyModel(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: before))
+        let new = headOnlyModel(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: after))
+        #expect(headOnlySelection(new, old: old).selectedTests == ["UI/Sharing/testIndependent()"])
+    }
+    let source = uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "print(#line, #column, #filePath)")
+    #expect(headOnlySelection(headOnlyModel(ui: "// shift\n" + source), old: headOnlyModel(ui: source)).selectedTests.isEmpty)
+    var moved = headOnlyModel(ui: source)
+    moved.sources["Tests/UI.swift"] = SwiftSourceSnapshot.parse(source, path: "Other/UI.swift", module: "UI")
+    var move = FileChange(path: "Other/UI.swift"); move.previousPath = "Tests/UI.swift"
+    let report = XcodeHeadOnlySelector.select(current: moved, source: .init(base: headOnlyModel(ui: source).sources, mappings: moved.mappings),
+        changes: [move], baseRevision: "base")
+    #expect(report.selectedTests == moved.tests.sorted())
+    #expect(report.diagnostics.contains { $0.code == "head_only_move" })
+}
+
+@Test func headOnlyUnsafeBodyAttributesAndUnknownMappingsBroaden() {
+    for prefix in ["@inlinable ", "@inline(__always) ", "@CustomMacro "] {
+        let oldText = appSource.replacingOccurrences(of: "func common", with: prefix + "func common")
+        let report = headOnlySelection(headOnlyModel(app: oldText.replacingOccurrences(of: "42", with: "43")), old: headOnlyModel(app: oldText), paths: ["App/Features.swift"])
+        #expect(report.selectedTests.count == 5)
+        #expect(report.diagnostics.contains { $0.code == "head_only_unsupported_body" })
+    }
+    var value = headOnlyModel(app: appSource.replacingOccurrences(of: "42", with: "43"))
+    value.mappings?.features[0].symbols = ["App.missing()"]
+    #expect(headOnlySelection(value, paths: ["App/Features.swift"]).diagnostics.contains { $0.code == "head_only_unresolved_mapping" })
+}
+
+@Test func headOnlyUsesRealGitBaseSyntaxAndRejectsUnavailableBlobs() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    func git(_ args: [String]) throws -> String { try CommandRunner.run("git", args, at: root).text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    _ = try git(["init", "-q"])
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("Tests"), withIntermediateDirectories: true)
+    try uiSource.write(to: root.appendingPathComponent("Tests/UI.swift"), atomically: true, encoding: .utf8)
+    try JSONEncoder().encode(headOnlyModel().mappings).write(to: root.appendingPathComponent(".swift-test-selection.json"))
+    _ = try git(["add", "."])
+    _ = try git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base"])
+    let base = try git(["rev-parse", "HEAD"])
+    var current = headOnlyModel(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)"))
+    current.sources = Dictionary(uniqueKeysWithValues: current.sources.map { key, snapshot in
+        ((key.hasPrefix("Tests/") ? "UI:" : "App:") + key, snapshot)
+    })
+    let changes = [FileChange(path: "Tests/UI.swift")]
+    let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: base, root: root, mappingPath: ".swift-test-selection.json")
+    #expect(source.diagnostics.isEmpty)
+    #expect(XcodeHeadOnlySelector.select(current: current, source: source, changes: changes, baseRevision: base).selectedTests == ["UI/Sharing/testIndependent()"])
+    let invalid = try XcodeHeadOnlySources.read(current: current, changes: changes, base: "missing", root: root, mappingPath: ".swift-test-selection.json")
+    #expect(!invalid.diagnostics.isEmpty)
+    #expect(XcodeHeadOnlySelector.select(current: current, source: invalid, changes: changes, baseRevision: "missing").selectedTests.count == 5)
+}
+
+@Test func headOnlyEnclosingMacrosAndTestAttributesDoNotBypassUncertainty() {
+    for replacement in ["@CustomMacro class Sharing", "@Observable class Sharing"] {
+        let text = uiSource.replacingOccurrences(of: "class Sharing", with: replacement)
+        let before = headOnlyModel(ui: text)
+        let after = headOnlyModel(ui: text.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)"))
+        let report = headOnlySelection(after, old: before)
+        #expect(report.selectedTests.count == 5)
+        #expect(report.diagnostics.contains { $0.code == "head_only_unsupported_body" })
+    }
+    let text = uiSource.replacingOccurrences(of: "func testIndependent", with: "@inline(__always) func testIndependent")
+    #expect(headOnlySelection(headOnlyModel(ui: text.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")), old: headOnlyModel(ui: text)).selectedTests.count == 5)
+}
+
+@Test func headOnlyCommentsInAnEmptyOwnedSwiftFileAreIgnored() {
+    var before = headOnlyModel(), after = headOnlyModel()
+    before.targets[0].sourceFiles.insert("Tests/Empty.swift")
+    after.targets[0].sourceFiles.insert("Tests/Empty.swift")
+    before.sources["UI:Tests/Empty.swift"] = SwiftSourceSnapshot.parse("// before", path: "Tests/Empty.swift", module: "UI")
+    after.sources["UI:Tests/Empty.swift"] = SwiftSourceSnapshot.parse("// after", path: "Tests/Empty.swift", module: "UI")
+    let report = headOnlySelection(after, old: before, paths: ["Tests/Empty.swift"])
+    #expect(report.selectedTests.isEmpty)
+    #expect(report.ignoredChanges == ["Tests/Empty.swift"])
+}

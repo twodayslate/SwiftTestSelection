@@ -35,6 +35,11 @@ that base. require exits 3 with a JSON error on stderr; full-suite selects all h
 tests on a miss. Explicit --full-suite skips baseline lookup with either policy.
 The default disk limit is 5 GiB. New revisions rebuild; worktrees are not cached.
 
+Head-only selection without baseline artifacts or a persistent cache:
+  select <Xcode options> --base REV --head REV --merge-base --head-only
+         --build-time-sil HELPER --retain-build NEW_DIRECTORY
+Compares native Git source syntax; unsupported changes broaden explicitly.
+
 Retain the analyzed head for execution after selection exits:
   select <Xcode options> --base REV --head REV --retain-build NEW_DIRECTORY
         [--build-time-sil /path/to/Scripts/capture-build.py]
@@ -97,6 +102,7 @@ private struct Options {
     var testProducts: String?
     var retainedBuild: String?
     var reportPath: String?
+    var headOnly = false
     var cachedBasePolicy: XcodeCachedBasePolicy = .build
     var cachePath: String?
     var cacheContext: String?
@@ -133,6 +139,7 @@ private struct Options {
             guard seen.insert(flag).inserted else { throw ImpactError("Repeated option: \(flag)") }
             if flag == "--run" { run = true; continue }
             if flag == "--merge-base" { mergeBase = true; continue }
+            if flag == "--head-only" { headOnly = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
             guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--cached-base-policy", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture", "--build-time-sil"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
@@ -186,6 +193,12 @@ private struct Options {
             guard cachePath != nil, cacheContext?.isEmpty == false, head != nil, command == "select",
                   project != nil || workspace != nil, baseGraph == nil, headGraph == nil else {
                 throw ImpactError("Analysis caching requires Xcode select, --head, --analysis-cache and --cache-context; cannot combine with saved graph inputs.")
+            }
+        }
+        if headOnly {
+            guard command == "select", head != nil, buildTimeSIL != nil, retainedBuild != nil || run,
+                  project != nil || workspace != nil, baseGraph == nil, headGraph == nil, cachedBasePolicy == .build else {
+                throw ImpactError("--head-only requires Xcode select, --head, --build-time-sil, and --retain-build or --run; cannot combine with saved graphs or --cached-base-policy.")
             }
         }
         let captureCount = [derivedData, buildLog, buildSettings, xctestrun, revision].compactMap { $0 }.count
@@ -277,6 +290,7 @@ private func write(_ data: Data, to path: String?) throws {
 
 private func render(_ report: ImpactReport) -> String {
     var lines = ["Selected \(report.selectedTests.count) of \(report.totalTests) tests", "Base: \(report.baseRevision)"]
+    if let mode = report.analysisMode { lines.append("Analysis mode: " + mode) }
     if let head = report.headRevision { lines.append("Head: " + head + " (" + (report.comparisonMode ?? "direct") + ")") }
     for diagnostic in report.diagnostics { lines.append("Diagnostic [\(diagnostic.code)]: \(diagnostic.message)") }
     for reason in report.fullRunReasons { lines.append("Full-suite fallback: \(reason)") }
@@ -334,7 +348,7 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                         fullSuite: options.fullSuite, baseGraph: baseGraph, headGraph: headGraph)
                 } else {
                     report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite,
-                        cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) }, retainingBuildAt: retained, cachedBasePolicy: options.cachedBasePolicy)
+                        cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) }, retainingBuildAt: retained, cachedBasePolicy: options.cachedBasePolicy, headOnly: options.headOnly)
                 }
                 let data = options.format == "json" ? try encoder.encode(report) : Data(render(report).utf8)
                 try write(data, to: options.output)

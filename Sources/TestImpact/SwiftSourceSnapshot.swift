@@ -17,6 +17,8 @@ public struct SourceUnit: Codable, Sendable {
     /// Present only when evaluated location literals add meaning beyond syntax.
     /// Older graphs lack this evidence and keep their conservative fingerprint.
     public var syntaxFingerprint: String? = nil
+    /// A surviving body can be compared without assuming old compiler edges.
+    public var headOnlyBodySupported: Bool? = nil
     /// Evaluated file/fileID/filePath literals, excluding caller defaults. An
     /// empty array proves there are none; nil keeps legacy snapshots conservative.
     public var fileLocationValues: [String]? = nil
@@ -216,12 +218,40 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             let syntax = fingerprint(node)
             let values = locationValues(node)
             let semantic = SourceUnit.withLocations(values, syntax: syntax)
+            var bodySupported = false
+            if let function = node.as(FunctionDeclSyntax.self) {
+                let attributes = function.attributes.compactMap { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription }
+                let hasMacro = function.body?.tokens(viewMode: .sourceAccurate).contains { token in
+                    guard token.tokenKind == .pound, let macro = token.parent?.as(MacroExpansionExprSyntax.self) else { return false }
+                    return !locationNames.contains(macro.macroName.text) && macro.macroName.text != "function"
+                } ?? false
+                // Enclosing attached macros may synthesize other declarations
+                // from this body, outside the body's direct dependency paths.
+                var enclosing = node.parent
+                var enclosingSupported = true
+                while let ancestor = enclosing {
+                    let list = ancestor.as(ClassDeclSyntax.self)?.attributes
+                        ?? ancestor.as(StructDeclSyntax.self)?.attributes
+                        ?? ancestor.as(EnumDeclSyntax.self)?.attributes
+                        ?? ancestor.as(ExtensionDeclSyntax.self)?.attributes
+                        ?? ancestor.as(ProtocolDeclSyntax.self)?.attributes
+                    if let list {
+                        enclosingSupported = enclosingSupported && list.allSatisfy {
+                            $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor"
+                        }
+                    }
+                    enclosing = ancestor.parent
+                }
+                bodySupported = enclosingSupported && attributes.count == function.attributes.count && attributes.allSatisfy { $0 == "MainActor" } &&
+                    function.signature.returnClause?.type.is(SomeOrAnyTypeSyntax.self) != true && !hasMacro
+            }
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
                 kind: kind, scope: scope.joined(separator: "."),
                 region: SourceRegion(path: path, startLine: start, endLine: end),
                 syntaxFingerprint: semantic == syntax ? nil : syntax,
+                headOnlyBodySupported: bodySupported,
                 fileLocationValues: values.filter { !$0.hasPrefix("line:") && !$0.hasPrefix("column:") },
                 locationDefaultKinds: defaults,
                 locationDefaultNames: defaultNames, invocationNames: calls.names,

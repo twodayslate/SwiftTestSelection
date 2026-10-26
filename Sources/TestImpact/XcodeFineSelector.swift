@@ -565,7 +565,7 @@ public enum XcodeFineSelector {
             owners.allSatisfy { $0.hasProductionRole && snapshot.modules[$0.name] == module }
     }
 
-    private static func isTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
+    static func isTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
         guard unit.kind == "function", let graph = snapshot.dependencies else { return false }
         let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
         guard !owners.isEmpty, owners.allSatisfy(\.isTest) else { return false }
