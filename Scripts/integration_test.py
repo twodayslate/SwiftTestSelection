@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """End-to-end validation against real SwiftPM/SIL/Git, isolated from the checkout."""
+import argparse
 import json
 import pathlib
 import shutil
@@ -10,7 +11,9 @@ import subprocess
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-TOOL = ROOT / ".build/debug/swift-test-impact"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--tool", type=pathlib.Path, default=ROOT / ".build/debug/swift-test-impact")
+TOOL = parser.parse_args().tool.resolve()
 
 
 def run(args, cwd, expected=0):
