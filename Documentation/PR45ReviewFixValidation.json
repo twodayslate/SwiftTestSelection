@@ -1,0 +1,52 @@
+{
+  "work": "/private/var/folders/1t/76_tgz5s4g912sj6w023t0wc0000gn/T/capture-review-5j7d23a5",
+  "cases": [
+    {
+      "case": "documentation",
+      "seconds": 61.544,
+      "maximumResidentSetBytes": 630964224,
+      "selectedTests": [],
+      "totalTests": 15
+    },
+    {
+      "case": "mixed",
+      "seconds": 30.831,
+      "maximumResidentSetBytes": 627261440,
+      "selectedTests": [
+        "CoreTests/ValueTests/testValue()"
+      ],
+      "totalTests": 15
+    },
+    {
+      "case": "resource",
+      "seconds": 56.92,
+      "maximumResidentSetBytes": 636682240,
+      "selectedTests": [
+        "CheckoutUITests/InheritedUITests/testInheritedOne()",
+        "CheckoutUITests/InheritedUITests/testInheritedTwo()",
+        "CheckoutUITests/NotesUITests/testNotes()",
+        "CheckoutUITests/SharingUITests/testShareCopy()",
+        "CheckoutUITests/SharingUITests/testShareLink()",
+        "CheckoutUITests/SharingUITests/testShareSheet()",
+        "CheckoutUITests/SharingUITests/testStandalone()",
+        "CoreTests/ValueTests/testResource()",
+        "CoreTests/ValueTests/testRuntime()",
+        "CoreTests/ValueTests/testValue()",
+        "UnitTests/ProductionTests/testExtension()",
+        "UnitTests/ProductionTests/testHostedRuntime()",
+        "UnitTests/ProductionTests/testNotes()",
+        "UnitTests/ProductionTests/testPackage()",
+        "UnitTests/ProductionTests/testSharing()"
+      ],
+      "totalTests": 15
+    }
+  ],
+  "testBodiesExecuted": false,
+  "validationDate": "2026-10-25",
+  "releaseTestCounts": {
+    "Xcode26.6": 205,
+    "Xcode27.0": 205
+  },
+  "captureHelperTests": 6,
+  "captureFailureMatrixCases": 15
+}

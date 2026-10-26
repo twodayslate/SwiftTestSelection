@@ -311,3 +311,113 @@ func mixedEntryEditsKeepUnsupportedRuntimeFallbacks(reason: String) {
     #expect(report.selectedTests.contains("Tests/Other/testOther()"))
     #expect(report.runtimeBoundaryDecisions == nil)
 }
+
+@Test(arguments: ["valid", "oneSided", "changedRole", "missingImports", "unproved"])
+func recoveredProductionRoleRequiresMatchingEvidenceInBothRevisions(scenario: String) {
+    var old = boundaryFixture()
+    old.targets[0].productType = XcodeSourceOwnership.productType
+    old.targets[0].recoveredRole = .init(targetName: "Extension", productType: "com.apple.product-type.app-extension", evidence: "active-xcode-manifest+pif-v1")
+    var current = labelEdit(old)
+    switch scenario {
+    case "oneSided": old.targets[0].recoveredRole = nil
+    case "changedRole": current.targets[0].recoveredRole?.productType = "com.apple.product-type.framework"
+    case "missingImports": old.runtimeInventory?.imports.removeValue(forKey: "App")
+    case "unproved": old.targets[0].recoveredRole = nil; current.targets[0].recoveredRole = nil
+    default: break
+    }
+    let report = XcodeFineSelector.select(current: current, previous: old, changes: [.init(path: "App.swift")], baseRevision: "base")
+    #expect(report.selectedTests.contains("Hosted/Labels/testLabel()"))
+    #expect(report.selectedTests.contains("Tests/Other/testOther()") == (scenario != "valid"))
+}
+
+@Test(arguments: ["unchanged", "changed", "missingBase", "missingHead"])
+func generatedInputsAreComparedEvenWithoutGitPaths(scenario: String) throws {
+    var old = boundaryFixture()
+    let boundary = GeneratedSourceBoundary(module: "App", logicalPath: "<DerivedData>/Generated.swift", contentDigest: "source", generatorIdentity: "settings", repositoryInputs: "resources")
+    old.generatedSourceBoundaries = ["App": [boundary]]
+    var current = labelEdit(old)
+    switch scenario {
+    case "changed": current.generatedSourceBoundaries?["App"]?[0].contentDigest = "changed"
+    case "missingBase": old.generatedSourceBoundaries = nil
+    case "missingHead": current.generatedSourceBoundaries = nil
+    default: break
+    }
+    let report = XcodeFineSelector.select(current: current, previous: old, changes: [.init(path: "App.swift")], baseRevision: "base")
+    #expect(report.diagnostics.contains { $0.code == "generated_input_changed" } == (scenario != "unchanged"))
+    #expect(report.selectedTests.count == (scenario == "unchanged" ? 1 : 2))
+    let saved = try GraphArchive.decode(GraphArchive.encode(current))
+    #expect(saved.generatedSourceBoundaries == current.generatedSourceBoundaries)
+}
+
+@Test(arguments: ["docs", "mixed", "added", "deleted", "oneSided", "resource", "legacy", "generator", "unignored"])
+func generatedBoundariesHonorOnlyProvenIgnoredDocumentation(scenario: String) throws {
+    var old = boundaryFixture()
+    var boundary = GeneratedSourceBoundary(module: "App", logicalPath: "<DerivedData>/Generated.swift", contentDigest: "source", generatorIdentity: "settings", repositoryInputs: "")
+    boundary.repositoryInputFiles = ["AGENTS.md": "old", "Resources/value.txt": "resource"]
+    boundary.documentationInputs = ["AGENTS.md"]
+    if scenario == "added" { boundary.repositoryInputFiles?.removeValue(forKey: "AGENTS.md"); boundary.documentationInputs = [] }
+    boundary.repositoryInputs = try XcodeGraphCache.key(boundary.repositoryInputFiles!)
+    old.generatedSourceBoundaries = ["App": [boundary]]
+    var current = scenario == "mixed" ? labelEdit(old) : old
+    boundary.repositoryInputFiles?["AGENTS.md"] = "new"
+    boundary.documentationInputs = ["AGENTS.md"]
+    switch scenario {
+    case "deleted": boundary.repositoryInputFiles?.removeValue(forKey: "AGENTS.md"); boundary.documentationInputs = []
+    case "oneSided": old.mappings?.ignoredDocumentation = []
+    case "resource": boundary.documentationInputs = []
+    case "generator": boundary.generatorIdentity = "changed"
+    case "unignored": old.mappings?.ignoredDocumentation = []; current.mappings?.ignoredDocumentation = []
+    default: break
+    }
+    boundary.repositoryInputs = try XcodeGraphCache.key(boundary.repositoryInputFiles!)
+    if scenario == "legacy" { boundary.repositoryInputFiles = nil; boundary.documentationInputs = nil }
+    current.generatedSourceBoundaries = ["App": [boundary]]
+    let changes: [FileChange] = scenario == "mixed" ? [.init(path: "AGENTS.md"), .init(path: "App.swift")] : [.init(path: "AGENTS.md")]
+    let report = XcodeFineSelector.select(current: current, previous: old, changes: changes, baseRevision: "base")
+    let supported = ["docs", "mixed", "added", "deleted"].contains(scenario)
+    #expect(report.diagnostics.contains { $0.code == "generated_input_changed" } == !supported)
+    #expect(report.selectedTests.count == (supported ? (scenario == "mixed" ? 1 : 0) : 2))
+    if !supported && scenario != "generator" { #expect(!report.ignoredChanges.contains("AGENTS.md")) }
+}
+
+@Test(arguments: ["move", "mixed", "unproven", "resource", "resourceMove", "generator", "legacy", "missingProject", "corruptEvidence"])
+func generatedBoundariesHonorProvenProjectReferenceMoves(scenario: String) throws {
+    let project = "App.xcodeproj/project.pbxproj"
+    var old = boundaryFixture()
+    var boundary = GeneratedSourceBoundary(module: "App", logicalPath: "<DerivedData>/Generated.swift", contentDigest: "source", generatorIdentity: "settings", repositoryInputs: "")
+    boundary.repositoryInputFiles = [project: "before", "Resources/value.txt": "resource"]
+    boundary.documentationInputs = []
+    if scenario == "missingProject" { boundary.repositoryInputFiles?.removeValue(forKey: project) }
+    boundary.repositoryInputs = try XcodeGraphCache.key(boundary.repositoryInputFiles!)
+    old.generatedSourceBoundaries = ["App": [boundary]]
+    var current = old
+    var change = FileChange(path: project)
+    change.isPureMove = scenario != "unproven"
+    var changes = [change]
+    boundary.repositoryInputFiles?[project] = "after reference substitution"
+    switch scenario {
+    case "mixed":
+        let index = current.sources["Tests:Tests.swift"]!.units.firstIndex { $0.kind == "function" }!
+        current.sources["Tests:Tests.swift"]!.units[index].fingerprint += "edited"
+        changes.append(.init(path: "Tests.swift"))
+    case "resource": boundary.repositoryInputFiles?["Resources/value.txt"] = "changed resource"
+    case "resourceMove":
+        boundary.repositoryInputFiles?.removeValue(forKey: "Resources/value.txt")
+        boundary.repositoryInputFiles?["Resources/moved.txt"] = "resource"
+        var resource = FileChange(path: "Resources/moved.txt")
+        resource.previousPath = "Resources/value.txt"; resource.isPureMove = true
+        changes.append(resource)
+    case "generator": boundary.generatorIdentity = "new settings"
+    default: break
+    }
+    boundary.repositoryInputs = try XcodeGraphCache.key(boundary.repositoryInputFiles!)
+    if scenario == "legacy" { boundary.repositoryInputFiles = nil; boundary.documentationInputs = nil }
+    if scenario == "corruptEvidence" { boundary.repositoryInputs = "unverified" }
+    current.generatedSourceBoundaries = ["App": [boundary]]
+    let report = XcodeFineSelector.select(current: current, previous: old, changes: changes, baseRevision: "base")
+    let supported = ["move", "mixed"].contains(scenario)
+    #expect(report.diagnostics.contains { $0.code == "generated_input_changed" } == !supported)
+    if scenario == "move" { #expect(report.selectedTests.isEmpty) }
+    else if scenario == "mixed" { #expect(report.selectedTests == ["Tests/Other/testOther()"]) }
+    else { #expect(Set(report.selectedTests) == Set(current.tests)) }
+}

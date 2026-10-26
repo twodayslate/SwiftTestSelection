@@ -6,13 +6,16 @@ import Foundation
 enum XcodeCompilerGraph {
     static func extract(log: String, sourceRoot: URL, directory: URL, derived: URL,
                         progress: (String) -> Void, ownership: [String: Set<String>] = [:],
-                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil) -> DependencyGraph {
+                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil, measurement: (String, Double) -> Void = { _, _ in }) -> DependencyGraph {
         var graph = DependencyGraph()
         guard (1...8).contains(workers) else {
             graph.diagnostics.append("Extraction workers must be between 1 and 8.")
             return graph
         }
-        moduleCache?.prepare(log: log)
+        let cacheLog: String
+        do { cacheLog = try captured?.replayLog(log) ?? log }
+        catch { graph.diagnostics.append("Cannot validate captured compiler commands: \(error)"); return graph }
+        moduleCache?.prepare(log: cacheLog)
         captured?.diagnostics.forEach(progress)
         var seen: [String: [String]] = [:]
         var jobs: [XcodeModuleJob] = []
@@ -66,23 +69,35 @@ enum XcodeCompilerGraph {
                     if let cached {
                         return (try publish(cached), ["Module cache \(job.module): hit: compatible compiler inputs; skipped compiler and parser"], true)
                     }
-                    if let capturedModule = try captured?.parse(module: job.module, sourceRoot: sourceRoot) {
-                        return (try publish(capturedModule), ["Captured SIL \(job.module): validated primary coverage; skipped compiler replay"], false)
+                    var captureMessages: [String] = []
+                    let consumption = AnalysisMeasurement()
+                    let captureStart = Date()
+                    do {
+                        if let capturedModule = try captured?.parse(module: job.module, sourceRoot: sourceRoot) {
+                            result.measurements["captureConsumption"] = Date().timeIntervalSince(captureStart)
+                            return (try publish(capturedModule), [consumption.report("Captured SIL \(job.module): validated primary coverage; skipped compiler replay")], false)
+                        }
+                    } catch let error as CapturedSIL.UnsupportedLayout {
+                        captureMessages.append("Captured SIL \(job.module): \(error); replaying module")
                     }
                     let output = derived.appendingPathComponent("impact-\(UUID().uuidString).sil")
                     defer { try? FileManager.default.removeItem(at: output) }
                     let args = arguments(captured?.replayArguments(job.arguments) ?? job.arguments) + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-o", output.path]
                     let compilation = AnalysisMeasurement()
+                    let compilationStart = Date()
                     _ = try CommandRunner.run(job.compiler, args, at: directory)
+                    result.measurements["compilerReplay"] = Date().timeIntervalSince(compilationStart)
                     let compiled = compilation.report("Compiled \(job.module)")
                     try cancellation.check()
                     let parsing = AnalysisMeasurement()
+                    let parsingStart = Date()
                     let parsed = try SILParser.parse(file: output, module: job.module, sourceRoot: sourceRoot)
+                    result.measurements["silParsing"] = Date().timeIntervalSince(parsingStart)
                     let bytes = (try? output.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
                     try cancellation.check()
                     guard !parsed.functions.isEmpty else { throw ImpactError("No SIL functions for \(job.module)") }
                     let message = parsing.report("Parsed \(job.module) (\(bytes) SIL bytes, \(parsed.functions.count) functions)")
-                    return (try publish(parsed), [compiled, message], false)
+                    return (try publish(parsed), captureMessages + [compiled, message], false)
                 }
             }
         }
@@ -95,6 +110,7 @@ enum XcodeCompilerGraph {
             defer { if workers == 1 && index + 1 < jobs.count { schedule(index + 1) } }
             do {
                 let (fragment, messages, hit) = try result.take()
+                for (phase, seconds) in result.measurements.sorted(by: { $0.key < $1.key }) { measurement(phase, seconds) }
                 defer { fragment.remove() }
                 let parsed = try fragment.load()
                 messages.forEach(progress)
@@ -125,7 +141,7 @@ enum XcodeCompilerGraph {
             graph.diagnostics = ["Compiler dependency extraction cancelled; a full selection is required."]
             return graph
         }
-        do { try moduleCache?.finish(log: log) }
+        do { try moduleCache?.finish(log: cacheLog) }
         catch {
             graph = DependencyGraph()
             graph.diagnostics = ["Compiler dependency extraction failed: \(error)"]

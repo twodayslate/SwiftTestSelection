@@ -4,13 +4,14 @@
 import Foundation
 
 /// Recovers compiler module ownership omitted by scheme build settings. These
-/// records deliberately do not invent a product type or a test-target identity.
+/// records retain unknown roles until active Xcode metadata proves production ownership.
 enum XcodeSourceOwnership {
     static let productType = "compiler-module"
 
     static func recover(log: String, sourceRoot: URL, derived: URL, activeInputs: Set<String>?,
                         targets: inout [XcodeTarget], modules: inout [String: String],
-                        listOwners: [URL: Set<String>], unsupportedInputs: inout [String: [String]], classifiedLists: inout Set<URL>, diagnostics: inout [String]) {
+                        listOwners: [URL: Set<String>], unsupportedInputs: inout [String: [String]], classifiedLists: inout Set<URL>, diagnostics: inout [String], evidence: XcodeBuildEvidence? = nil,
+                        generated: inout [String: [GeneratedSourceBoundary]], roleDiagnostics: inout [String: String]) {
         func canonical(_ file: URL) -> URL { file.standardizedFileURL.resolvingSymlinksInPath() }
         let root = canonical(sourceRoot).path + "/", generatedRoot = canonical(derived).path + "/"
         var invocations: [String: [String]] = [:], invalid = Set<String>()
@@ -28,6 +29,7 @@ enum XcodeSourceOwnership {
                 invocations[module] = args
             } catch { diagnostics.append("Compiler source ownership unavailable: \(error)") }
         }
+        var repositorySeal: Result<(String, [String: String]), Error>?
         var lists: [String: URL] = [:]
         for (module, args) in invocations.sorted(by: { $0.key < $1.key }) {
             do {
@@ -73,12 +75,25 @@ enum XcodeSourceOwnership {
                         classifiedLists.insert(list)
                         continue
                     }
-                    let repositorySet = Set(repositoryFiles)
-                    let unsupported = files.filter { !repositorySet.contains($0) }.map { file in
-                        file.path.hasPrefix(generatedRoot) ? "<DerivedData>/" + file.path.dropFirst(generatedRoot.count) : file.path
-                    }
-                    if !unsupported.isEmpty { unsupportedInputs[module] = Array(Set(unsupported)).sorted() }
                 }
+                let repositorySet = Set(repositoryFiles)
+                var unsupported: [String] = []
+                for file in files where !repositorySet.contains(file) {
+                    do {
+                        guard let evidence else { throw ImpactError("Missing Xcode generator evidence") }
+                        if repositorySeal == nil { repositorySeal = Result {
+                            let files = try XcodeBuildEvidence.repositoryInputFiles(root: sourceRoot, derived: derived)
+                            return (try XcodeGraphCache.key(files), files)
+                        } }
+                        let boundary = try evidence.boundary(file: file, module: module, list: list,
+                            arguments: invocations[module]!, repositoryInputs: try repositorySeal!.get().0, repositoryInputFiles: try repositorySeal!.get().1)
+                        generated[module, default: []].append(boundary)
+                    } catch {
+                        let path = file.path.hasPrefix(generatedRoot) ? "<DerivedData>/" + file.path.dropFirst(generatedRoot.count) : file.path
+                        unsupported.append(path)
+                    }
+                }
+                if !unsupported.isEmpty { unsupportedInputs[module] = Array(Set(unsupported)).sorted() }
                 guard repositoryFiles.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else {
                     throw ImpactError("Missing compiler source file")
                 }
@@ -88,11 +103,40 @@ enum XcodeSourceOwnership {
                 } else {
                     let name = "Compiler module: " + module
                     guard !targets.contains(where: { $0.name == name }) else { throw ImpactError("Compiler ownership identity conflicts with a build target") }
-                    targets.append(XcodeTarget(name: name, productType: productType, sourceFiles: paths))
+                    var target = XcodeTarget(name: name, productType: productType, sourceFiles: paths)
+                    do {
+                        guard let evidence else { throw ImpactError("Missing active Xcode manifest/PIF evidence") }
+                        target.recoveredRole = try evidence.role(module: module, list: list)
+                    } catch { roleDiagnostics[module] = String(describing: error) }
+                    targets.append(target)
                     modules[name] = module
                 }
                 classifiedLists.insert(list)
             } catch { diagnostics.append("Compiler source ownership unavailable for \(module): \(error)") }
         }
     }
+
+    /// Retention builds products even after a revision-cache hit. Revalidate the
+    /// newly generated inputs and roles before attaching that cached analysis to
+    /// the new products; a nondeterministic generator cannot reuse old evidence.
+    static func metadataMatches(_ graph: XcodeTestGraph, log: String, root: URL, derived: URL, captured: CapturedSIL? = nil) -> Bool {
+        var targets = graph.targets.filter { $0.productType != productType }
+        var modules = graph.modules.filter { name, _ in targets.contains { $0.name == name } }
+        var generated: [String: [GeneratedSourceBoundary]] = [:], roles: [String: String] = [:]
+        var unsupported: [String: [String]] = [:], classified = Set<URL>(), diagnostics: [String] = []
+        let evidence = try? XcodeBuildEvidence(log: log, root: root, derived: derived, captured: captured)
+        recover(log: log, sourceRoot: root, derived: derived, activeInputs: nil, targets: &targets, modules: &modules,
+            listOwners: [:], unsupportedInputs: &unsupported, classifiedLists: &classified, diagnostics: &diagnostics,
+            evidence: evidence, generated: &generated, roleDiagnostics: &roles)
+        func boundaries(_ values: [String: [GeneratedSourceBoundary]]) -> [String: [GeneratedSourceBoundary]] {
+            values.mapValues { $0.sorted { $0.logicalPath < $1.logicalPath } }
+        }
+        func recovered(_ targets: [XcodeTarget]) -> [String: RecoveredProductRole] {
+            targets.reduce(into: [:]) { result, target in result[target.name] = target.recoveredRole }
+        }
+        return diagnostics.isEmpty && boundaries(generated) == boundaries(graph.generatedSourceBoundaries ?? [:]) &&
+            unsupported == (graph.unsupportedSourceInputs ?? [:]) && roles == (graph.unresolvedProductRoles ?? [:]) &&
+            recovered(targets) == recovered(graph.targets) && (try? evidence?.validate(log: log, boundaries: generated.values.flatMap { $0 })) != nil
+    }
+
 }

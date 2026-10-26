@@ -1,0 +1,553 @@
+{
+  "upstreamBase": "5840d254dcee033cd7d1539d7f565bb413d374ef",
+  "finalReleaseToolSHA256": "d3118e354675d9bb19f4017d44a1353946680cfb2b2f3b50c52795f5ce119f51",
+  "historicalReleaseToolSHA256": "ebce4909edd763c05ebbd9f2a2477f0e02d868c62fa6bbb115500554b5791e2a",
+  "historicalToolDifference": "Historical runs exercised safe SnapshotTesting replay for a type-alias-only primary; final reader validation accepts this layout.",
+  "environment": {
+    "xcode": "27.0.0",
+    "configuration": "Debug",
+    "simulator": "iPhone 17 Pro",
+    "runtime": "iOS 26.2",
+    "extractionWorkers": 1,
+    "concurrentHostActivity": true
+  },
+  "historical": [
+    {
+      "pr": 296,
+      "status": 0,
+      "seconds": 487.05,
+      "selected": 1928,
+      "total": 2000,
+      "targets": {
+        "ChainOfCustodySnapshotTests": 447,
+        "ChainOfCustodyTests": 1078,
+        "ChainOfCustodyUITests": 403
+      },
+      "diagnostics": {
+        "unmapped_production_boundary": 4,
+        "unresolved_dependency": 1525
+      },
+      "fullRunReasons": [],
+      "runtimeBoundaryDecisions": 0,
+      "maximumResidentBytes": 2677309440,
+      "verificationStatus": 0,
+      "unsupportedSourceInputs": {},
+      "unresolvedProductRoles": {},
+      "generatedModules": [
+        "ChainOfCustody",
+        "ChainOfCustodyCore",
+        "MessagesExtension"
+      ],
+      "recoveredRoles": {
+        "Compiler module: ChainOfCustodyCore": {
+          "evidence": "active-xcode-manifest+pif-v1",
+          "productType": "org.swift.product-type.library.static",
+          "targetName": "ChainOfCustodyCore"
+        },
+        "Compiler module: MessagesExtension": {
+          "evidence": "active-xcode-manifest+pif-v1",
+          "productType": "com.apple.product-type.app-extension.messages",
+          "targetName": "MessagesExtension"
+        },
+        "Compiler module: ShareExtension": {
+          "evidence": "active-xcode-manifest+pif-v1",
+          "productType": "com.apple.product-type.app-extension",
+          "targetName": "ShareExtension"
+        }
+      },
+      "base": "e9994eed5eb12da33da98b4ca9d56ae1c99b40fe",
+      "head": "0bd5ddebf160d21fcd2f8267f1f81dffd3ce5fe2",
+      "normalized": {
+        "base": "2f05f0ef356369b04b96bec535043d9f2623edc3",
+        "head": "b296ed167aba45edfa1378c48845ff523c253b2e"
+      },
+      "policyRevision": "7e5638020d694235c97d9a4bfca40030b5ef1801",
+      "removedMappingPaths": [],
+      "paths": [
+        "ChainOfCustody/Features/Pairings/DepotView.swift",
+        "ChainOfCustody/Features/Settings/NotificationHubView.swift",
+        "ChainOfCustodyCore/UI/AppTheme.swift"
+      ],
+      "phaseSeconds": {
+        "b296ed167aba45edfa1378c48845ff523c253b2e": {
+          "buildSettings": 4.4931,
+          "graphLoad": 0.0001,
+          "cache": 0,
+          "build": 125.4765,
+          "captureValidation": 8.8811,
+          "buildEvidence": 0.2398,
+          "enumeration": 7.2022,
+          "captureConsumption": 60.2305,
+          "compilerReplay": 9.3322,
+          "silParsing": 0.8765,
+          "extraction": 97.898,
+          "graphPublish": 1.097,
+          "retainBuild": 1.7954,
+          "selection": 10.8734
+        },
+        "2f05f0ef356369b04b96bec535043d9f2623edc3": {
+          "buildSettings": 3.1881,
+          "graphLoad": 0.0001,
+          "cache": 0,
+          "build": 103.0805,
+          "captureValidation": 7.2294,
+          "buildEvidence": 0.2397,
+          "enumeration": 6.5504,
+          "captureConsumption": 61.6023,
+          "extraction": 86.0247,
+          "graphPublish": 1.0991
+        }
+      },
+      "peakPhysicalFootprintBytes": 2112243872,
+      "capturedModuleParses": {
+        "CloudKitSyncMonitor": 1,
+        "ChainOfCustodyCore": 2,
+        "SimpleCommon": 1,
+        "ChainOfCustodyTests": 2,
+        "ShareExtension": 2,
+        "MessagesExtension": 2,
+        "ChainOfCustody": 2,
+        "ChainOfCustodyUITests": 2,
+        "ChainOfCustodySnapshotTests": 2
+      },
+      "moduleCacheHits": {
+        "SnapshotTesting": 1,
+        "CloudKitSyncMonitor": 1,
+        "SimpleCommon": 1
+      },
+      "replayedModules": [
+        "SnapshotTesting"
+      ],
+      "reportSHA256": "e15073236b13b8197b747593af5a7fc618fb1d364e79a37b1cf95f60ddf36b9e",
+      "graphSHA256": "56a6dc732f7d1f2691674cd0179a8da9eeafd19d1f9a0b3b97c6e14ab388b687",
+      "execution": "verify-build only; no consumer test bodies executed"
+    },
+    {
+      "pr": 294,
+      "status": 0,
+      "seconds": 447.66,
+      "selected": 837,
+      "total": 1969,
+      "targets": {
+        "ChainOfCustodySnapshotTests": 444,
+        "ChainOfCustodyUITests": 393
+      },
+      "diagnostics": {
+        "unmapped_production_boundary": 5,
+        "unresolved_dependency": 444
+      },
+      "fullRunReasons": [],
+      "runtimeBoundaryDecisions": 2,
+      "maximumResidentBytes": 2650980352,
+      "verificationStatus": 0,
+      "unsupportedSourceInputs": {},
+      "unresolvedProductRoles": {},
+      "generatedModules": [
+        "ChainOfCustody",
+        "ChainOfCustodyCore",
+        "MessagesExtension"
+      ],
+      "recoveredRoles": {
+        "Compiler module: ChainOfCustodyCore": {
+          "evidence": "active-xcode-manifest+pif-v1",
+          "productType": "org.swift.product-type.library.static",
+          "targetName": "ChainOfCustodyCore"
+        },
+        "Compiler module: MessagesExtension": {
+          "evidence": "active-xcode-manifest+pif-v1",
+          "productType": "com.apple.product-type.app-extension.messages",
+          "targetName": "MessagesExtension"
+        },
+        "Compiler module: ShareExtension": {
+          "evidence": "active-xcode-manifest+pif-v1",
+          "productType": "com.apple.product-type.app-extension",
+          "targetName": "ShareExtension"
+        }
+      },
+      "base": "31bbaa5a964637445b6c56ad7de46463d5db0e7c",
+      "head": "59b43501c290481906c5434d0954e9ca16865b64",
+      "normalized": {
+        "base": "7d6db340095a051e0fa03d2b76cb807690c1e1ac",
+        "head": "231606c38938ec69e7086efaa6f128a52470dac1"
+      },
+      "policyRevision": "7e5638020d694235c97d9a4bfca40030b5ef1801",
+      "removedMappingPaths": [
+        "ChainOfCustody/Features/Notes/NoteMessageComposer.swift"
+      ],
+      "paths": [
+        "ShareExtension/ShareRootView.swift",
+        "ShareExtension/ShareViewModel.swift"
+      ],
+      "phaseSeconds": {
+        "231606c38938ec69e7086efaa6f128a52470dac1": {
+          "buildSettings": 2.8867,
+          "graphLoad": 0.0001,
+          "cache": 0,
+          "build": 103.6602,
+          "captureValidation": 7.6694,
+          "buildEvidence": 0.2314,
+          "enumeration": 6.3082,
+          "compilerReplay": 7.044,
+          "silParsing": 1.3687,
+          "captureConsumption": 86.609,
+          "extraction": 123.1861,
+          "graphPublish": 1.1698,
+          "retainBuild": 1.7283,
+          "selection": 9.296
+        },
+        "7d6db340095a051e0fa03d2b76cb807690c1e1ac": {
+          "buildSettings": 3.8208,
+          "graphLoad": 0.0002,
+          "cache": 0,
+          "build": 123.8525,
+          "captureValidation": 7.5886,
+          "buildEvidence": 0.2621,
+          "enumeration": 5.9085,
+          "captureConsumption": 4.9724,
+          "extraction": 27.4468,
+          "graphPublish": 1.013
+        }
+      },
+      "peakPhysicalFootprintBytes": 1518765808,
+      "capturedModuleParses": {
+        "CloudKitSyncMonitor": 1,
+        "ChainOfCustodyCore": 1,
+        "SimpleCommon": 1,
+        "ChainOfCustodyTests": 1,
+        "ShareExtension": 2,
+        "MessagesExtension": 1,
+        "ChainOfCustody": 1,
+        "ChainOfCustodyUITests": 2,
+        "ChainOfCustodySnapshotTests": 1
+      },
+      "moduleCacheHits": {
+        "ChainOfCustodyCore": 1,
+        "CloudKitSyncMonitor": 1,
+        "SnapshotTesting": 1,
+        "SimpleCommon": 1,
+        "ChainOfCustodyTests": 1,
+        "MessagesExtension": 1,
+        "ChainOfCustody": 1,
+        "ChainOfCustodySnapshotTests": 1
+      },
+      "replayedModules": [
+        "SnapshotTesting"
+      ],
+      "reportSHA256": "70edce8f2b6c334d3352dad60ea6920a4d51b84db748281786ad2872d3dcd2ee",
+      "graphSHA256": "87e91ba29f8a13c705239d1727e491f88d70f47cab9f8be0015d7f11349afe18",
+      "execution": "verify-build only; no consumer test bodies executed"
+    }
+  ],
+  "fixture": {
+    "work": "/var/folders/1t/76_tgz5s4g912sj6w023t0wc0000gn/T/swift-impact-generated-9r_elfuc",
+    "cases": [
+      {
+        "case": "package",
+        "seconds": 94.163,
+        "selected": [
+          "CheckoutUITests/SharingUITests/testShareSheet()",
+          "CoreTests/ValueTests/testRuntime()",
+          "CoreTests/ValueTests/testValue()",
+          "UnitTests/ProductionTests/testHostedRuntime()",
+          "UnitTests/ProductionTests/testPackage()"
+        ],
+        "total": 15,
+        "diagnostics": {
+          "unresolved_dependency": 2
+        },
+        "phaseSeconds": {
+          "de3e84489d30a280f78862e707e38fdf05f78113": {
+            "buildSettings": 2.0132,
+            "graphLoad": 0.0001,
+            "cache": 0,
+            "build": 10.3843,
+            "captureValidation": 5.0167,
+            "buildEvidence": 0.0823,
+            "enumeration": 5.9706,
+            "captureConsumption": 0.0657,
+            "extraction": 16.7888,
+            "graphPublish": 0.0031,
+            "retainBuild": 0.0309,
+            "selection": 0.0023
+          },
+          "f8c89d456fbe09ff2ee57f88570f952cc8671382": {
+            "buildSettings": 2.9332,
+            "graphLoad": 0.0002,
+            "cache": 0,
+            "build": 12.7891,
+            "captureValidation": 10.6064,
+            "buildEvidence": 0.0629,
+            "enumeration": 6.0699,
+            "captureConsumption": 0.0373,
+            "extraction": 19.0343,
+            "graphPublish": 0.0032
+          }
+        }
+      },
+      {
+        "case": "extension",
+        "seconds": 44.114,
+        "selected": [
+          "CheckoutUITests/NotesUITests/testNotes()",
+          "UnitTests/ProductionTests/testHostedRuntime()"
+        ],
+        "total": 15,
+        "diagnostics": {
+          "unresolved_dependency": 1
+        },
+        "phaseSeconds": {
+          "8782b4768a1f934ac8e75f8c013bdd7659722e49": {
+            "buildSettings": 5.43,
+            "graphLoad": 0.0001,
+            "cache": 0,
+            "build": 10.9517,
+            "captureValidation": 8.036,
+            "buildEvidence": 0.0448,
+            "enumeration": 4.2592,
+            "captureConsumption": 0.0029,
+            "extraction": 11.4793,
+            "graphPublish": 0.0034,
+            "retainBuild": 0.0173,
+            "selection": 0.0022
+          },
+          "f8c89d456fbe09ff2ee57f88570f952cc8671382": {
+            "buildSettings": 1.653,
+            "graphLoad": 0.0027,
+            "cache": 0
+          }
+        }
+      },
+      {
+        "case": "extension-warm",
+        "seconds": 19.89,
+        "selected": [
+          "CheckoutUITests/NotesUITests/testNotes()",
+          "UnitTests/ProductionTests/testHostedRuntime()"
+        ],
+        "total": 15,
+        "diagnostics": {
+          "unresolved_dependency": 1
+        },
+        "phaseSeconds": {
+          "8782b4768a1f934ac8e75f8c013bdd7659722e49": {
+            "buildSettings": 1.5844,
+            "graphLoad": 0.0024,
+            "cache": 0,
+            "build": 9.9372,
+            "captureValidation": 4.1081,
+            "retainBuild": 0.0253,
+            "selection": 0.0019
+          },
+          "f8c89d456fbe09ff2ee57f88570f952cc8671382": {
+            "buildSettings": 2.42,
+            "graphLoad": 0.0038,
+            "cache": 0
+          }
+        }
+      },
+      {
+        "case": "extension-fresh",
+        "seconds": 59.986,
+        "selected": [
+          "CheckoutUITests/NotesUITests/testNotes()",
+          "UnitTests/ProductionTests/testHostedRuntime()"
+        ],
+        "total": 15,
+        "diagnostics": {
+          "unresolved_dependency": 1
+        },
+        "phaseSeconds": {
+          "8782b4768a1f934ac8e75f8c013bdd7659722e49": {
+            "buildSettings": 1.8167,
+            "graphLoad": 0.0001,
+            "cache": 0,
+            "build": 9.0994,
+            "captureValidation": 3.6396,
+            "buildEvidence": 0.0443,
+            "enumeration": 3.9806,
+            "captureConsumption": 0.0437,
+            "extraction": 11.7163,
+            "graphPublish": 0.002,
+            "retainBuild": 0.0178,
+            "selection": 0.0019
+          },
+          "f8c89d456fbe09ff2ee57f88570f952cc8671382": {
+            "buildSettings": 1.6512,
+            "graphLoad": 0.0001,
+            "cache": 0,
+            "build": 8.0454,
+            "captureValidation": 3.2252,
+            "buildEvidence": 0.0479,
+            "enumeration": 3.7553,
+            "captureConsumption": 0.0458,
+            "extraction": 10.6964,
+            "graphPublish": 0.0018
+          }
+        }
+      },
+      {
+        "case": "replay-package",
+        "seconds": 99.235,
+        "selected": [
+          "CheckoutUITests/SharingUITests/testShareSheet()",
+          "CoreTests/ValueTests/testRuntime()",
+          "CoreTests/ValueTests/testValue()",
+          "UnitTests/ProductionTests/testHostedRuntime()",
+          "UnitTests/ProductionTests/testPackage()"
+        ],
+        "total": 15,
+        "diagnostics": {
+          "unresolved_dependency": 2
+        },
+        "phaseSeconds": {
+          "de3e84489d30a280f78862e707e38fdf05f78113": {
+            "buildSettings": 5.7733,
+            "graphLoad": 0.0004,
+            "cache": 0,
+            "build": 15.5302,
+            "buildEvidence": 0.0799,
+            "enumeration": 12.1385,
+            "compilerReplay": 8.9641,
+            "silParsing": 0.0548,
+            "extraction": 24.4881,
+            "graphPublish": 0.0022,
+            "retainBuild": 0.0532,
+            "selection": 0.0029
+          },
+          "f8c89d456fbe09ff2ee57f88570f952cc8671382": {
+            "buildSettings": 2.3588,
+            "graphLoad": 0.0001,
+            "cache": 0,
+            "build": 7.9688,
+            "buildEvidence": 0.0531,
+            "enumeration": 5.2561,
+            "compilerReplay": 8.3504,
+            "silParsing": 0.0463,
+            "extraction": 20.1094,
+            "graphPublish": 0.0033
+          }
+        }
+      },
+      {
+        "case": "replay-extension",
+        "seconds": 104.522,
+        "selected": [
+          "CheckoutUITests/NotesUITests/testNotes()",
+          "UnitTests/ProductionTests/testHostedRuntime()"
+        ],
+        "total": 15,
+        "diagnostics": {
+          "unresolved_dependency": 1
+        },
+        "phaseSeconds": {
+          "8782b4768a1f934ac8e75f8c013bdd7659722e49": {
+            "buildSettings": 6.3376,
+            "graphLoad": 0.0002,
+            "cache": 0,
+            "build": 10.2452,
+            "buildEvidence": 0.0529,
+            "enumeration": 4.4926,
+            "compilerReplay": 11.2396,
+            "silParsing": 0.0614,
+            "extraction": 28.8101,
+            "graphPublish": 0.0038,
+            "retainBuild": 0.0322,
+            "selection": 0.0021
+          },
+          "f8c89d456fbe09ff2ee57f88570f952cc8671382": {
+            "buildSettings": 5.2498,
+            "graphLoad": 0.0001,
+            "cache": 0,
+            "build": 12.0678,
+            "buildEvidence": 0.0805,
+            "enumeration": 6.382,
+            "compilerReplay": 11.4469,
+            "silParsing": 0.0521,
+            "extraction": 27.7616,
+            "graphPublish": 0.0019
+          }
+        }
+      },
+      {
+        "case": "same-revision",
+        "seconds": 32.112,
+        "selected": [],
+        "total": 15,
+        "diagnostics": {},
+        "phaseSeconds": {
+          "8782b4768a1f934ac8e75f8c013bdd7659722e49": {
+            "buildSettings": 2.259,
+            "graphLoad": 0.0001,
+            "cache": 0,
+            "build": 8.7642,
+            "captureValidation": 3.5816,
+            "buildEvidence": 0.0433,
+            "enumeration": 3.988,
+            "captureConsumption": 0.0482,
+            "extraction": 11.5998,
+            "graphPublish": 0.0023,
+            "retainBuild": 0.0222,
+            "selection": 0.0015
+          }
+        }
+      }
+    ],
+    "selectedExecutionSeconds": 125.027,
+    "fullExecutionSeconds": 881.16,
+    "fullRunSucceeded": true,
+    "selectedRunSucceeded": true,
+    "executedSelectedTests": [
+      "CheckoutUITests/NotesUITests/testNotes()",
+      "UnitTests/ProductionTests/testHostedRuntime()"
+    ],
+    "executedFullTests": [
+      "CheckoutUITests/InheritedUITests/testInheritedOne()",
+      "CheckoutUITests/InheritedUITests/testInheritedTwo()",
+      "CheckoutUITests/NotesUITests/testNotes()",
+      "CheckoutUITests/SharingUITests/testShareCopy()",
+      "CheckoutUITests/SharingUITests/testShareLink()",
+      "CheckoutUITests/SharingUITests/testShareSheet()",
+      "CheckoutUITests/SharingUITests/testStandalone()",
+      "CoreTests/ValueTests/testResource()",
+      "CoreTests/ValueTests/testRuntime()",
+      "CoreTests/ValueTests/testValue()",
+      "UnitTests/ProductionTests/testExtension()",
+      "UnitTests/ProductionTests/testHostedRuntime()",
+      "UnitTests/ProductionTests/testNotes()",
+      "UnitTests/ProductionTests/testPackage()",
+      "UnitTests/ProductionTests/testSharing()"
+    ]
+  },
+  "sealedConsumerProbe": {
+    "sourceRevision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+    "modulesCaptured": 10,
+    "compilerReplays": 0,
+    "diagnostics": [],
+    "enumeratedEntriesFromSavedGraph": 1972,
+    "functions": 121927,
+    "seconds": 88.756,
+    "scope": "Read-only original sealed capture; no new build, enumeration or execution",
+    "boundTests": 1972,
+    "bindingDiagnostics": []
+  },
+  "dependencyParity": {
+    "tests": 15,
+    "projectFunctions": 198,
+    "matchingReachability": true,
+    "seconds": 11.539
+  },
+  "regression": {
+    "xcode26ReleaseTests": 202,
+    "xcode27ReleaseTests": 202,
+    "pythonInventoryTests": 6,
+    "filelistCapturePassed": true,
+    "failureModes": [
+      "helper failure",
+      "source mutation",
+      "missing products",
+      "cancellation"
+    ],
+    "failureModesPassed": true
+  },
+  "consumerFullSuiteEquivalenceValidated": false
+}

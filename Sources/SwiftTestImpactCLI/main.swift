@@ -34,6 +34,7 @@ The default disk limit is 5 GiB. New revisions rebuild; worktrees are not cached
 
 Retain the analyzed head for execution after selection exits:
   select <Xcode options> --base REV --head REV --retain-build NEW_DIRECTORY
+        [--build-time-sil /path/to/Scripts/capture-build.py]
   run <Xcode options> --report impact.json --head-graph NEW_DIRECTORY/head-graph.json
   verify-build <Xcode options> --report impact.json --head-graph FILE
 Retained directories are caller-owned; remove them explicitly after execution.
@@ -121,6 +122,7 @@ private struct Options {
         var discoveryCache: String?
         var discoveryContext: String?
         var silCapture: String?
+        var buildTimeSIL: String?
         while index < arguments.count {
             let flag = arguments[index]
             index += 1
@@ -128,7 +130,7 @@ private struct Options {
             if flag == "--run" { run = true; continue }
             if flag == "--merge-base" { mergeBase = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
-            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture"].contains(flag), index < arguments.count else {
+            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture", "--build-time-sil"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
             let value = arguments[index]
@@ -137,6 +139,7 @@ private struct Options {
             case "--discovery-cache": discoveryCache = value
             case "--discovery-context": discoveryContext = value
             case "--sil-capture": silCapture = value
+            case "--build-time-sil": buildTimeSIL = value
             case "--extraction-workers":
                 guard let count = Int(value), (1...8).contains(count) else { throw ImpactError("--extraction-workers must be between 1 and 8.") }
                 extractionWorkers = count
@@ -190,6 +193,12 @@ private struct Options {
             }
             buildInputs!.discoveryCache = XcodeAnalysisCache(directory: URL(fileURLWithPath: discoveryCache), context: discoveryContext)
         }
+        if buildTimeSIL != nil {
+            guard command == "select", head != nil, project != nil || workspace != nil,
+                  baseGraph == nil, headGraph == nil, captureCount == 0, silCapture == nil else {
+                throw ImpactError("--build-time-sil HELPER requires Xcode select with --head and fresh revision analysis; use --sil-capture for saved build sessions.")
+            }
+        }
         if let silCapture {
             guard buildInputs != nil else { throw ImpactError("--sil-capture requires existing-build graph inputs.") }
             buildInputs!.silCapture = URL(fileURLWithPath: silCapture)
@@ -233,6 +242,7 @@ private struct Options {
                                        path: URL(fileURLWithPath: container), scheme: scheme, destination: destination,
                                        configuration: configuration, testPlan: testPlan)
             xcode!.extractionWorkers = extractionWorkers
+            xcode!.buildTimeSILHelper = buildTimeSIL.map { URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath() }
             if let mappings { xcode!.mappingsPath = mappings }
         } else if scheme != nil || destination != nil || configuration != nil || testPlan != nil || mappings != nil || seen.contains("--extraction-workers") {
             throw ImpactError("Xcode options require --project or --workspace.")

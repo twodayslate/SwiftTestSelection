@@ -7,6 +7,11 @@ public struct XcodeTarget: Codable, Sendable {
     public var name: String
     public var productType: String
     public var sourceFiles: Set<String>
+    public var recoveredRole: RecoveredProductRole? = nil
+
+    var hasProductionRole: Bool {
+        !isTest && productType != "unknown" && (productType != XcodeSourceOwnership.productType || recoveredRole != nil)
+    }
 
     public var isTest: Bool {
         ["com.apple.product-type.bundle.ui-testing", "com.apple.product-type.bundle.unit-test"].contains(productType)
@@ -35,6 +40,8 @@ public struct XcodeTestGraph: Codable, Sendable {
     /// semantic snapshots. Module edits remain conservative without invalidating
     /// independently resolved test-entry edits in other modules.
     public var unsupportedSourceInputs: [String: [String]]? = nil
+    public var generatedSourceBoundaries: [String: [GeneratedSourceBoundary]]? = nil
+    public var unresolvedProductRoles: [String: String]? = nil
     public var modules: [String: String] = [:]
     public var mappings: UIFeatureMappings?
     public var runtimeInventory: XcodeRuntimeInventory? = nil

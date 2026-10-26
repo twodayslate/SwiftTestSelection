@@ -126,21 +126,70 @@ public enum XcodeFineSelector {
         }
         oldChanged = Dictionary(grouping: oldChanged, by: { $0.key + $0.region.path }).values.compactMap(\.first)
         newChanged = Dictionary(grouping: newChanged, by: { $0.key + $0.region.path }).values.compactMap(\.first)
-        let semanticPaths = Set((oldChanged + newChanged).map { $0.region.path })
         let knownPaths = Set((current.targets + (previous?.targets ?? [])).flatMap(\.sourceFiles))
+        let generatedBoundaries = Array(current.generatedSourceBoundaries?.values ?? [:].values).flatMap { $0 } +
+            Array(previous?.generatedSourceBoundaries?.values ?? [:].values).flatMap { $0 }
+        func ignoredDocumentation(_ path: String) -> Bool {
+            path.hasSuffix(".md") && !knownPaths.contains(path) &&
+                [current.mappings, previous?.mappings].allSatisfy { mappings in
+                    mappings?.ignoredDocumentation?.contains { UIFeatureMappings.matches(path, pattern: $0) } == true
+                } && generatedBoundaries.allSatisfy { boundary in
+                    guard let files = boundary.repositoryInputFiles, let documentation = boundary.documentationInputs else { return false }
+                    return files[path] == nil || documentation.contains(path)
+                }
+        }
+        // Git comparison proves these edits only substitute PBXFileReference
+        // paths for byte-identical moves. Apply the same exemption to the
+        // repository fingerprint; generator settings/content still compare.
+        let projectReferenceMoves = Set(changes.filter {
+            $0.isPureMove && $0.path.hasSuffix(".pbxproj")
+        }.map(\.path))
+        func comparable(_ boundaries: [GeneratedSourceBoundary]?, ignoring paths: Set<String>) -> [GeneratedSourceBoundary]? {
+            boundaries?.map { boundary in
+                var result = boundary
+                if let files = boundary.repositoryInputFiles, let documentation = boundary.documentationInputs,
+                   (try? XcodeGraphCache.key(files)) == boundary.repositoryInputs {
+                    let filtered = files.filter { !paths.contains($0.key) }
+                    result.repositoryInputFiles = filtered
+                    result.repositoryInputs = (try? XcodeGraphCache.key(filtered)) ?? boundary.repositoryInputs
+                    result.documentationInputs = documentation.filter { !paths.contains($0) }
+                }
+                return result
+            }.sorted { $0.logicalPath < $1.logicalPath }
+        }
+        // Unchanged validated generated inputs are an equivalence boundary.
+        // Changed/one-sided evidence never disappears merely because Git has no
+        // path for DerivedSources. Unsupported inputs retain their existing gate.
+        let generatedModules = Set(current.generatedSourceBoundaries?.keys ?? [:].keys)
+            .union(previous?.generatedSourceBoundaries?.keys ?? [:].keys)
+        for module in generatedModules.sorted() {
+            let old = previous?.generatedSourceBoundaries?[module], new = current.generatedSourceBoundaries?[module]
+            if old == new { continue }
+            // Every existing file must be proven outside build inputs on both
+            // sides. Added/deleted docs need evidence only on the side they exist.
+            let boundaries = (old ?? []) + (new ?? [])
+            let candidates = Set(boundaries.flatMap { $0.documentationInputs ?? [] }).filter(ignoredDocumentation)
+            var excluded = Set(candidates.filter { path in
+                boundaries.allSatisfy { boundary in
+                    guard let files = boundary.repositoryInputFiles, let documentation = boundary.documentationInputs else { return false }
+                    return files[path] == nil || documentation.contains(path)
+                }
+            })
+            excluded.formUnion(projectReferenceMoves.filter { path in
+                boundaries.allSatisfy { $0.repositoryInputFiles?[path] != nil }
+            })
+            if comparable(old, ignoring: excluded) != comparable(new, ignoring: excluded) {
+                fallback("generated_input_changed", "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for \(module).")
+            }
+        }
+        let semanticPaths = Set((oldChanged + newChanged).map { $0.region.path })
         let analyzedPaths = Set((Array(current.sources.keys) + Array(previous?.sources.keys ?? [:].keys)).compactMap { key in
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) }
         }).union(oldUnits.values.flatMap { $0 }.map { $0.region.path })
             .union(newUnits.values.flatMap { $0 }.map { $0.region.path })
         for change in changes {
             let paths = [change.path] + (change.previousPath.map { [$0] } ?? [])
-            let ignoredDocumentation = paths.allSatisfy { path in
-                path.hasSuffix(".md") && !knownPaths.contains(path) &&
-                [current.mappings, previous?.mappings].allSatisfy { mappings in
-                    mappings?.ignoredDocumentation?.contains { UIFeatureMappings.matches(path, pattern: $0) } == true
-                }
-            }
-            if ignoredDocumentation {
+            if paths.allSatisfy(ignoredDocumentation) {
                 ignored.insert(change.path)
             } else if change.path.hasSuffix(".swift"), knownPaths.contains(change.path), analyzedPaths.contains(change.path), !semanticPaths.contains(change.path) {
                 ignored.insert(change.path)
@@ -164,7 +213,16 @@ public enum XcodeFineSelector {
         // runtime dependency contract, app impact comes from mapped boundaries
         // and dependsOn, not opaque calls in every UI runner's launch path.
         // Test helpers/lifecycle changes still require the conservative policy.
-        let declaredUIRuntime = current.mappings?.runtimeDependencyPolicy == .declared &&
+        let changedModuleNames = Set((oldChanged + newChanged).map { String($0.key.prefix { $0 != ":" }) })
+        let compatibleRoles = changedModuleNames.allSatisfy { module in
+            let before = previous?.targets.filter { previous?.modules[$0.name] == module } ?? []
+            let after = current.targets.filter { current.modules[$0.name] == module }
+            guard (before + after).contains(where: { $0.productType == XcodeSourceOwnership.productType }) else { return true }
+            return before.count == 1 && after.count == 1 && before[0].recoveredRole != nil &&
+                before[0].recoveredRole == after[0].recoveredRole &&
+                previous?.runtimeInventory?.imports[module] != nil && current.runtimeInventory?.imports[module] != nil
+        }
+        let declaredUIRuntime = compatibleRoles && current.mappings?.runtimeDependencyPolicy == .declared &&
             previous?.mappings?.runtimeDependencyPolicy == .declared && previous?.dependencies != nil &&
             oldChanged.allSatisfy { isProductionOrTestEntry($0, in: previous!) } &&
             newChanged.allSatisfy { isProductionOrTestEntry($0, in: current) }
@@ -181,6 +239,9 @@ public enum XcodeFineSelector {
             guard let snapshot = optionalGraph, let graph = snapshot.dependencies else { continue }
             let changedModules = Set(units.map { String($0.key.prefix { $0 != ":" }) })
             for module in changedModules.sorted() {
+                if let message = snapshot.unresolvedProductRoles?[module] {
+                    diagnostics.append(SelectionDiagnostic(code: "unresolved_product_role", message: "\(revision) \(module): \(message); runtime isolation cannot narrow this module", tests: []))
+                }
                 if let inputs = snapshot.unsupportedSourceInputs?[module], !inputs.isEmpty {
                     fallback("unsupported_source_ownership", "Changed module \(module) also compiles inputs without a repository semantic boundary: " + inputs.joined(separator: ", "))
                 }
@@ -274,7 +335,7 @@ public enum XcodeFineSelector {
                 // Proven test entry bodies cannot invalidate an unrelated runtime
                 // closure. Keep their modules in the boundary comparison and all
                 // dependency selections; helpers/lifecycle/state remain conservative.
-                let changesHaveIsolatedOwnership = previous != nil &&
+                let changesHaveIsolatedOwnership = compatibleRoles && previous != nil &&
                     oldChanged.allSatisfy { isProduction($0, in: previous!) || isTestEntry($0, in: previous!) } &&
                     newChanged.allSatisfy { isProduction($0, in: current) || isTestEntry($0, in: current) }
                 let changedModules = Set((oldChanged + newChanged).map { String($0.key.prefix { $0 != ":" }) })
@@ -484,14 +545,14 @@ public enum XcodeFineSelector {
 
     private static func isProductionOrTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
         let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
-        return (!owners.isEmpty && owners.allSatisfy { !$0.isTest && $0.productType != XcodeSourceOwnership.productType }) || isTestEntry(unit, in: snapshot)
+        return (!owners.isEmpty && owners.allSatisfy { $0.hasProductionRole }) || isTestEntry(unit, in: snapshot)
     }
 
     private static func isProduction(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
         let module = String(unit.key.prefix { $0 != ":" })
         let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
         return snapshot.runtimeInventory?.imports[module] != nil && !owners.isEmpty &&
-            owners.allSatisfy { !$0.isTest && $0.productType != XcodeSourceOwnership.productType && snapshot.modules[$0.name] == module }
+            owners.allSatisfy { $0.hasProductionRole && snapshot.modules[$0.name] == module }
     }
 
     private static func isTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {

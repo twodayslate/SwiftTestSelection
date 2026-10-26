@@ -1,0 +1,27 @@
+{
+  "work": "/private/var/folders/1t/76_tgz5s4g912sj6w023t0wc0000gn/T/capture-review-ruez6m6k",
+  "cases": [
+    {
+      "case": "move",
+      "seconds": 79.488,
+      "maximumResidentSetBytes": 637190144,
+      "selectedTests": [],
+      "totalTests": 15
+    },
+    {
+      "case": "move-mixed",
+      "seconds": 30.385,
+      "maximumResidentSetBytes": 612777984,
+      "selectedTests": [
+        "CoreTests/ValueTests/testValue()"
+      ],
+      "totalTests": 15
+    }
+  ],
+  "testBodiesExecuted": false,
+  "validationDate": "2026-10-25",
+  "releaseTestCounts": {
+    "Xcode26.6": 207,
+    "Xcode27.0": 207
+  }
+}

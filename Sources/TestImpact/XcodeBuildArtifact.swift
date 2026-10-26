@@ -286,7 +286,7 @@ enum ArtifactFiles {
     /// Fingerprint only inputs referenced by this build's compiler commands.
     /// DerivedData also retains lists from inactive configurations/removed targets.
     static func sourceInputs(log: String, directory: URL) throws -> [String: String] {
-        var result: [String: String] = [:]
+        var result = try XcodeBuildEvidence.fingerprints(log: log)
         var commandDirectory = directory
         var sources = Set<URL>()
         func absolute(_ path: String, at directory: URL) -> URL {

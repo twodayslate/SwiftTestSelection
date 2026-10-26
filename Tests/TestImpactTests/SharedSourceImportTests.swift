@@ -68,9 +68,10 @@ func sharedSourceImportsPreserveDefiningModuleAndFeatureMappings(attribute: Stri
     }
     var targets: [XcodeTarget] = [], modules: [String: String] = [:], unsupported: [String: [String]] = [:]
     var classified = Set<URL>(), diagnostics: [String] = []
+    var generated: [String: [GeneratedSourceBoundary]] = [:], roles: [String: String] = [:]
     XcodeSourceOwnership.recover(log: logs.joined(separator: "\n"), sourceRoot: root, derived: derived, activeInputs: nil,
         targets: &targets, modules: &modules, listOwners: [:], unsupportedInputs: &unsupported,
-        classifiedLists: &classified, diagnostics: &diagnostics)
+        classifiedLists: &classified, diagnostics: &diagnostics, generated: &generated, roleDiagnostics: &roles)
     #expect(diagnostics.isEmpty)
     let ownership = Dictionary(uniqueKeysWithValues: targets.map { (modules[$0.name]!, $0.sourceFiles) })
     #expect(ownership == ["First": ["Shared.swift"], "Second": ["Shared.swift"]])
