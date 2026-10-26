@@ -43,7 +43,7 @@ struct XcodeHeadOnlySources {
 /// This does not delegate to the two-graph selector with a synthetic previous.
 enum XcodeHeadOnlySelector {
     static func select(current: XcodeTestGraph, source: XcodeHeadOnlySources, changes: [FileChange],
-                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil) -> ImpactReport {
+                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = []) -> ImpactReport {
         let inventory = Set(current.tests)
         func target(_ test: String) -> String { String(test.prefix { $0 != "/" }) }
         let uiTargets = Set(current.targets.filter(\.isUITest).map(\.name))
@@ -82,6 +82,7 @@ enum XcodeHeadOnlySelector {
         let paths = Set(changes.map(\.path))
         let old = Dictionary(grouping: source.base.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
         let new = Dictionary(grouping: current.sources.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
+        let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries)
         var changed: [SourceUnit] = []
         var semanticPaths = Set<String>()
         for key in Set(old.keys).union(new.keys).sorted() {
@@ -97,6 +98,9 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_unsupported_body", "Attributes, macros or opaque result types can change callers outside a surviving body: \(b.region.path):\(b.region.startLine)")
                 continue
             }
+            // A separate execution of this entry does not cover effects from
+            // structural changes or unsupported bodies outside its call graph.
+            if excludedKeys.contains(key) { continue }
             changed.append(b)
         }
         let owned = Set(current.targets.flatMap(\.sourceFiles))
@@ -156,7 +160,10 @@ enum XcodeHeadOnlySelector {
                     include([test], kind: "dependency", reason: "Head compiler dependencies reach a surviving body with an unchanged declaration header", path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
                 if !changed.isEmpty {
-                    if graph.tests[test]?.isEmpty ?? true { fallback("head_only_unresolved_test", "No compiled head entry for \(test)", tests: [test]) }
+                    let roots = graph.tests[test] ?? []
+                    if roots.isEmpty || roots.contains(where: { graph.functions[$0] == nil }) {
+                        fallback("head_only_unresolved_test", "Missing or incomplete compiled head entry for \(test)", tests: [test])
+                    }
                     for message in graph.testDiagnostics[test] ?? [] { fallback("head_only_unresolved_test", message, tests: [test]) }
                 }
             }

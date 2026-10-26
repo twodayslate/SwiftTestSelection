@@ -302,11 +302,17 @@ final class XcodeGraphCache {
 }
 
 extension XcodeAnalysis {
-    func selectCached(base: String, head: String, mergeBase: Bool, fullSuite: Bool, cache configuration: XcodeAnalysisCache, retainingBuildAt retained: URL? = nil, cachedBasePolicy: XcodeCachedBasePolicy = .build, headOnly: Bool = false) throws -> ImpactReport {
+    func selectCached(base: String, head: String, mergeBase: Bool, fullSuite: Bool, cache configuration: XcodeAnalysisCache, retainingBuildAt retained: URL? = nil, cachedBasePolicy: XcodeCachedBasePolicy = .build, headOnly: Bool = false, selectionScopes: SelectionScopes? = nil) throws -> ImpactReport {
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         let context = try artifactContext(root: root)
         let comparison = try RevisionComparison(base: base, head: head, mergeBase: mergeBase, root: root)
         let changes = try GitChanges.readComparison(base: comparison.base, head: comparison.head, at: root)
+        if let selectionScopes {
+            let paths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+            guard selectionScopes.scopes.allSatisfy({ Set($0.paths).isSubset(of: paths) }) else {
+                throw ImpactError("Selection scope contains paths outside the resolved review diff")
+            }
+        }
         let cache = try XcodeGraphCache(configuration, progress: progress)
         try cache.resetWork(); try cache.prune()
         defer { try? FileManager.default.removeItem(at: cache.work) }
@@ -491,6 +497,13 @@ extension XcodeAnalysis {
                     baseRevision: comparison.base, documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty)
             }
             return XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base, additionalFallbacks: fallbacks)
+        }
+        if let selectionScopes {
+            report.selectionScopes = try timed("selectionScopes", revision: comparison.head!, detail: "Additional queries over the same captured head graph; no build or extraction") {
+                try XcodeHeadOnlySelector.scopedReports(current: current, requests: selectionScopes, changes: changes,
+                    baseRevision: comparison.base, headRevision: comparison.head!, root: root, mappingPath: options.mappingsPath,
+                    documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty, retainedGraphPath: retainedGraphPath)
+            }
         }
         report.headRevision = comparison.head; report.comparisonMode = comparison.mode
         report.buildArtifactID = current.buildArtifact?.id
