@@ -25,6 +25,27 @@ public struct XcodeAnalysisCache: Sendable {
     }
 }
 
+/// A cache-only baseline policy never builds the base revision. The default
+/// preserves the existing two-revision build behavior.
+public enum XcodeCachedBasePolicy: String, Sendable {
+    case build
+    case require
+    case fullSuite = "full-suite"
+}
+
+/// CLI exit status 3. Encoded as one JSON line on stderr, never as a test report.
+public struct XcodeCachedBaseUnavailable: Error, Codable, Sendable {
+    public let code: String
+    public let revision: String
+    public let reason: String
+
+    init(revision: String, reason: String) {
+        self.code = "cached_base_unavailable"
+        self.revision = revision
+        self.reason = reason
+    }
+}
+
 public struct XcodeAnalysisEvent: Codable, Sendable {
     public var phase: String
     public var revision: String
@@ -189,8 +210,8 @@ final class XcodeGraphCache {
             }
     }
 
-    func load(_ identity: [String: String]) throws -> XcodeTestGraph? {
-        try load(identity, as: XcodeTestGraph.self) { graph in
+    func load(_ identity: [String: String], onMiss: (String) -> Void = { _ in }) throws -> XcodeTestGraph? {
+        try load(identity, as: XcodeTestGraph.self, onMiss: onMiss) { graph in
             guard graph.schemaVersion == 2, graph.analysisKind == "xcode-sil-and-ui-mappings", graph.dependencies != nil,
                   !graph.tests.isEmpty, graph.buildArtifact == nil else { throw ImpactError("unsupported or incomplete graph") }
         }
@@ -202,12 +223,14 @@ final class XcodeGraphCache {
         }
     }
 
-    private func load<T: Decodable>(_ identity: [String: String], as type: T.Type, report: Bool = true, validate: (T) throws -> Void) throws -> T? {
+    private func load<T: Decodable>(_ identity: [String: String], as type: T.Type, report: Bool = true, onMiss: (String) -> Void = { _ in }, validate: (T) throws -> Void) throws -> T? {
         let notify: (String) -> Void = report ? progress : { _ in }
         let key = try Self.key(identity)
         let entry = options.directory.appendingPathComponent(key)
         guard fm.fileExists(atPath: entry.path) else {
-            notify("Cache miss \(key.prefix(12)): no entry matching analyzer, toolchain, settings and input identity")
+            let reason = "No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)"
+            notify("Cache miss \(key.prefix(12)): \(reason)")
+            onMiss(reason)
             return nil
         }
         do {
@@ -222,7 +245,8 @@ final class XcodeGraphCache {
             notify("Cache hit \(key.prefix(12)): validated identity and payload checksum")
             return graph
         } catch {
-            notify("Cache invalidated \(key.prefix(12)): \(error); rebuilding")
+            notify("Cache invalidated \(key.prefix(12)): \(error)")
+            onMiss("Invalid cache entry: \(error)")
             try fm.removeItem(at: entry)
             return nil
         }
@@ -278,7 +302,7 @@ final class XcodeGraphCache {
 }
 
 extension XcodeAnalysis {
-    func selectCached(base: String, head: String, mergeBase: Bool, fullSuite: Bool, cache configuration: XcodeAnalysisCache, retainingBuildAt retained: URL? = nil) throws -> ImpactReport {
+    func selectCached(base: String, head: String, mergeBase: Bool, fullSuite: Bool, cache configuration: XcodeAnalysisCache, retainingBuildAt retained: URL? = nil, cachedBasePolicy: XcodeCachedBasePolicy = .build) throws -> ImpactReport {
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         let context = try artifactContext(root: root)
         let comparison = try RevisionComparison(base: base, head: head, mergeBase: mergeBase, root: root)
@@ -305,7 +329,7 @@ extension XcodeAnalysis {
         let captureMode = try options.buildTimeSILHelper.map { try XcodeBuildTimeCapture(helper: $0) }
         var pendingCapture: (workspace: URL, settings: Data, identity: [String: String], capture: CapturedSIL)?
         var retainedGraphPath: String?
-        func graph(_ revision: String, keepBuild: Bool = false) throws -> XcodeTestGraph {
+        func graph(_ revision: String, keepBuild: Bool = false, cacheOnly: Bool = false) throws -> XcodeTestGraph {
             try extractionCancellation.check()
             try cache.resetWork()
             let workspace: URL
@@ -337,9 +361,11 @@ extension XcodeAnalysis {
             identity["settings"] = XcodeGraphCache.digest(normalized)
             identity["externalInputs"] = configuration.context
             identity["buildTimeSIL"] = captureMode?.identity ?? "replay"
-            let found = try timed("graphLoad", revision: revision) { try cache.load(identity) }
-            events.append(.init(phase: "cache", revision: revision, seconds: 0, detail: found == nil ? "miss: incompatible or absent entry; fresh build required" : "hit: no build, enumeration or extraction"))
+            var missReason = "No compatible cache entry"
+            let found = try timed("graphLoad", revision: revision) { try cache.load(identity, onMiss: { missReason = $0 }) }
+            events.append(.init(phase: "cache", revision: revision, seconds: 0, detail: found == nil ? "miss: " + missReason : "hit: no build, enumeration or extraction"))
             if let found, !keepBuild { return found }
+            if cacheOnly { throw XcodeCachedBaseUnavailable(revision: revision, reason: missReason) }
             if found != nil { progress("Reusing head analysis; building its executable products once for retention.") }
             let buildLog = keepBuild ? workspace.appendingPathComponent("build.log") : nil
             if let buildLog {
@@ -404,17 +430,36 @@ extension XcodeAnalysis {
             graphSucceeded = true
             return result
         }
-        var current = try graph(comparison.head!, keepBuild: retained != nil)
+        // Resolve and validate the actual baseline before creating a retained
+        // head workspace. Keep the validated graph in memory across head cache
+        // publication/eviction; never perform a second lookup that could rebuild.
         var previous: XcodeTestGraph?
+        var baselineMiss: XcodeCachedBaseUnavailable?
         var fallbacks: [String] = []
-        if comparison.base == comparison.head { previous = current }
-        else {
-            do { previous = try graph(comparison.base) }
+        if cachedBasePolicy != .build && !fullSuite {
+            do { previous = try graph(comparison.base, cacheOnly: true) }
             catch {
-                if captureMode != nil { throw error }
-                fallbacks.append("Cannot analyze base revision: \(error)")
+                try extractionCancellation.check()
+                let miss = error as? XcodeCachedBaseUnavailable ?? XcodeCachedBaseUnavailable(
+                    revision: comparison.base, reason: "Baseline validation failed: \(error)")
+                if cachedBasePolicy == .require { throw miss }
+                baselineMiss = miss
+                fallbacks.append("Cached baseline unavailable at \(miss.revision): \(miss.reason); full suite requested by policy")
+                events.append(.init(phase: "cachedBaseFallback", revision: miss.revision, seconds: 0, detail: miss.reason))
+                progress(fallbacks.last!)
             }
         }
+        var current = try graph(comparison.head!, keepBuild: retained != nil)
+        if cachedBasePolicy == .build {
+            if comparison.base == comparison.head { previous = current }
+            else {
+                do { previous = try graph(comparison.base) }
+                catch {
+                    if captureMode != nil { throw error }
+                    fallbacks.append("Cannot analyze base revision: \(error)")
+                }
+            }
+        } else if fullSuite { previous = current }
         if let pendingCapture {
             try extractionCancellation.check()
             try pendingCapture.capture.validateFiles()
@@ -430,10 +475,14 @@ extension XcodeAnalysis {
         report.headRevision = comparison.head; report.comparisonMode = comparison.mode
         report.buildArtifactID = current.buildArtifact?.id
         report.buildArtifactPath = retainedGraphPath
-        if fullSuite {
+        if fullSuite || baselineMiss != nil {
             report.selectedTests = current.tests.sorted()
             report.onlyTestingArguments = report.selectedTests.map { "-only-testing:" + $0 }
-            report.explanations += report.selectedTests.map { TestExplanation(test: $0, reason: "Full suite explicitly requested", revision: "head", path: [], kind: "fullSuite") }
+            report.explanations += report.selectedTests.map { TestExplanation(test: $0, reason: baselineMiss == nil ? "Full suite explicitly requested" : "Full suite requested by cached-base miss policy", revision: "head", path: [], kind: "fullSuite") }
+        }
+        if let baselineMiss {
+            report.diagnostics.append(SelectionDiagnostic(code: baselineMiss.code,
+                message: "\(baselineMiss.revision): \(baselineMiss.reason)", tests: current.tests.sorted()))
         }
         report.analysisEvents = events
         return report

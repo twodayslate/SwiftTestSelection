@@ -442,7 +442,7 @@ ordinary builds and the default selection mode still use compiler replay.
 The analyzer seals each Git archive export against its exact revision and file
 manifest, preserves locked package resolution, and builds the retained head once.
 It validates capture sources, outputs, context and products before publishing the
-retained completion marker. In capture mode both revisions must succeed before
+retained completion marker. In the default capture mode both revisions must succeed before
 that marker is published, and the head products, log and settings must still match
 the original capture seal after the base build finishes.
 
@@ -892,6 +892,88 @@ Copyright (c) 2026 Zachary Gorak.
 
 Licensed under the **GNU Affero General Public License, version 3 only** (`AGPL-3.0-only`). See [LICENSE](LICENSE) for the complete terms. This is a strong-copyleft open-source license, including source-sharing requirements for modified versions used over a network. Commercial use is permitted under the license.
 
+### Limit PR jobs to one executable build
+
+Use `--cached-base-policy require` with `--analysis-cache` and `--cache-context`
+to require a compatible cached baseline. With `--merge-base`, the tool resolves
+and checks the **actual common ancestor**, including stale or stacked branches.
+It exports that revision and resolves locked build settings before the head
+build; it never builds, enumerates or extracts the base on this path. The normal
+cache identity, checksum and ownership checks still apply. Package resolution
+and settings inspection can perform I/O, so this is not an offline lookup.
+
+```sh
+swift-test-impact select \
+  --project App.xcodeproj --scheme App --test-plan AllTests \
+  --configuration Debug --destination "$DESTINATION" \
+  --base origin/main --head HEAD --merge-base \
+  --analysis-cache "$CACHE" --cache-context "$BUILD_INPUT_DIGEST" \
+  --cached-base-policy require \
+  --build-time-sil "$SWIFT_TEST_SELECTION/Scripts/capture-build.py" \
+  --retain-build "$NEW_BUNDLE" --format json --output "$REPORT"
+```
+
+On a cache hit, this builds the head once, captures its SIL, and retains the exact
+products for `verify-build` and `run`. A missing, evicted, corrupt or incompatible
+base stops **before creating the head bundle or building anything**, exits with
+status **3**, and writes a final JSON error line to stderr:
+
+```json
+{"code":"cached_base_unavailable","revision":"RESOLVED_BASE_SHA","reason":"No entry matching analyzer, toolchain, settings and input identity (absent, evicted or incompatible)"}
+```
+
+No selection report is published on that failure. Other failures (for example an
+unowned cache directory, ambiguous merge base or head build failure) remain
+errors, not permission to run all tests. Always check the exit status and use a
+fresh report path; an old file is not evidence that this invocation succeeded.
+
+To explicitly choose full coverage on a baseline miss, use
+`--cached-base-policy full-suite`. It checks the baseline first, builds the head
+at most once, selects every enabled test in the chosen plan, and retains those
+same verified products. The report includes `cached_base_unavailable`, the
+resolved base and reason, `fullSuite` explanations, and a `cachedBaseFallback`
+phase event. A hit still performs affected-test selection. Neither policy treats
+a missing or malformed saved report as a request for full execution. Without
+`--run`, both successful modes only produce a report and retained artifacts.
+
+Publish main's baseline from its **ordinary executable build**, using the same
+pinned analyzer/helper, toolchain, destination, build settings and external input
+context as PR jobs:
+
+```sh
+REV=$(git rev-parse HEAD)
+swift-test-impact select \
+  --project App.xcodeproj --scheme App --test-plan AllTests \
+  --configuration Debug --destination "$DESTINATION" \
+  --base "$REV" --head "$REV" --full-suite \
+  --analysis-cache "$CACHE" --cache-context "$BUILD_INPUT_DIGEST" \
+  --cached-base-policy require \
+  --build-time-sil "$SWIFT_TEST_SELECTION/Scripts/capture-build.py" \
+  --retain-build "$NEW_BUNDLE" --format json --output "$REPORT"
+swift-test-impact run \
+  --project App.xcodeproj --scheme App --test-plan AllTests \
+  --configuration Debug --destination "$DESTINATION" \
+  --report "$REPORT" --head-graph "$NEW_BUNDLE/head-graph.json"
+```
+
+Explicit `--full-suite` skips baseline lookup with either cache-only policy.
+The same-revision producer builds once, publishes its reusable graph, and runs
+all tests from that build. It replaces a standalone build-for-testing step; do
+not run an extra build just to warm the cache. Preserve the cache across jobs and
+allow enough disk space to retain older actual merge bases, not only main's tip.
+Entries larger than the cache budget are not published; publication/eviction
+messages remain visible. The original default policy is unchanged and may build
+both revisions on a miss.
+
+Validate exact build counts, stale/stacked merge bases, misses, retained product
+identity, and selected/full execution with:
+
+```sh
+python3 Scripts/xcode_cached_base_policy_test.py \
+  --tool /path/to/release/swift-test-impact \
+  --destination "$DESTINATION" --output /tmp/cached-base-validation.json
+```
+
 ### Persist Xcode analysis across comparisons
 
 ```sh
@@ -930,7 +1012,8 @@ currently invalidates the entry, even for equivalent hardware/runtime.
 Use a dedicated local directory (network filesystems without working `flock`
 locks are unsupported). A process lock serializes reads, publication and pruning;
 completed entries are published by directory rename and verified by checksum.
-Corrupt entries are removed and rebuilt. Interrupted staging is removed by the
+Corrupt entries are removed and rebuilt by default; cache-only baseline policies
+report the miss instead. Interrupted staging is removed by the
 next holder. A base analysis failure remains an explicit full-selection fallback;
 a head failure stops the command. `--cache-max-bytes` bounds persisted entries
 (default 5 GiB), evicting least recently used entries. Temporary builds can need
