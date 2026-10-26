@@ -6,7 +6,12 @@ match a clean-environment lookup using that Xcode and the explicit Apple Metal
 toolchain identifier. A matching basename or arbitrary path underneath Developer
 is insufficient.
 
-Metal compilation also requires the emitted `-MT dependencies` makefile rule.
+Metal compilation also requires the emitted `-MT dependencies` makefile rule
+and compiler arguments that include system headers in that rule. Xcode's default
+`-MMD` alone is insufficient. Tool-managed builds and the capture helper add
+`MTL_COMPILER_FLAGS='$(inherited) -Xclang -sys-header-deps'`; imported builds
+without complete evidence keep conservative selection. Graphs captured before
+`documentationEvidenceVersion: 2` must be regenerated before excluding docs.
 Its transitive inputs participate in documentation exclusions, and the dependency
 file is fingerprinted with the active build metadata. Missing or unsupported
 Metal dependency evidence remains conservative. Unknown scripts and direct,
@@ -16,7 +21,7 @@ The graph records `documentationBlockers`, and selection emits
 
 ## Release tests
 
-All **213 tests** pass with both Xcode 26.6 and Xcode 27.0. The Xcode 27 run also
+The initial implementation passed **213 tests** with both Xcode 26.6 and Xcode 27.0. The Xcode 27 run also
 uses `IMPACT_METAL_DEVELOPER=/Applications/Xcode-27.0.0.app/Contents/Developer` to
 exercise the installed external Apple Metal toolchain. The deterministic task
 matrix covers four executables across eight scenarios, including unavailable
@@ -27,6 +32,9 @@ fallback diagnostics. The real retained manifest is replayed as an additional
 check that all three generated boundaries and recovered production roles survive.
 
 ## Consumer reproduction
+
+The results below describe the initial implementation at `5cadc20`. Post-review
+validation with complete system-header dependencies is recorded separately below.
 
 ChainOfCustody's normalized historical #293 pair from the issue:
 
@@ -95,3 +103,47 @@ provenance assertions, resource measurements and the executed test node. Local
 logs, captures, reports, products and the result bundle are preserved under
 `/tmp/issue46-validation-final`. The full 1,972-test consumer suite was not run;
 this verifies the reported selection regression and its exact retained execution.
+
+
+## Post-review: complete Metal system-header dependencies
+
+At analyzer source revision `4cd9ea9`, tool-managed builds and the capture helper
+request system-header dependencies without changing shader code generation.
+Imports using plain `-MMD`, opaque argument forwarding, or older saved exclusion
+evidence remain conservative. The README's existing-build example supplies the
+same Metal setting to the build and settings capture.
+
+All **215 release tests pass on Xcode 26.6 and 27.0**, with the installed Metal
+integration enabled on both. Six real-compiler cases cover `-isystem` and nested
+includes of a `#pragma clang system_header` header under `-MMD`, `-MD`, and
+`-MMD -Xclang -sys-header-deps`. Each case changes the included Markdown, checks
+that the compiled Metal product changes, and verifies the selector includes the
+test instead of ignoring that input. Separate cases cover ambiguous dependency
+flags and legacy/unknown documentation evidence versions. The six Python
+capture-helper tests also pass.
+
+A fresh consumer capture under `/tmp/pr47-system-header-validation` repeats the
+same historical mixed comparison and a newly created method-only counterpart.
+Both select the same **1 / 1,972** with **zero diagnostics** and all three generated
+boundaries at evidence version 2. Both retained builds pass `verify-build`, and
+both have empty unresolved-role and unsupported-input inventories. The actual
+Metal compiler commands contain `-Xclang -sys-header-deps` alongside Xcode's
+`-MMD`; their emitted dependency files include Metal system headers.
+
+All 20 mixed-comparison module extractions use captured SIL. The method-only
+head reuses nine parsed modules, parses its captured UI module, and reuses the
+validated base graph. The exact selected UI test executes from the original
+mixed head's retained products: **1 passed, 0 failed, 0 skipped**, confirmed in
+`.xcresult` (139.01 seconds in the test body; 177.67 seconds including verification
+and execution).
+
+| Selection case | Elapsed | Command maximum RSS | Selected |
+| --- | ---: | ---: | ---: |
+| mixed | 592.07 s | 2565.8 MiB | 1 / 1,972 |
+| method-only | 225.56 s | 2580.2 MiB | 1 / 1,972 |
+
+These are complete-command observations, not isolated performance benchmarks;
+package validation overlapped part of the mixed capture. The JSON companion's
+`postReviewValidation` records the exact analyzer digest, revisions, commands,
+versioned boundaries, Metal dependency checks, and result-bundle test node. The
+full consumer suite was not executed.
