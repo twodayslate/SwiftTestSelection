@@ -60,12 +60,22 @@ extension XcodeHeadOnlySelector {
 
     static func independentEntryKeys(current: XcodeTestGraph, excluding entries: Set<String>) -> Set<String> {
         guard !entries.isEmpty, let graph = current.dependencies else { return [] }
+        // Restrict expensive ownership/reachability checks to locations of the
+        // requested entries, rather than scanning every test body in the graph.
+        let regions = Dictionary(grouping: entries.flatMap { graph.tests[$0] ?? [] }
+            .flatMap { graph.functions[$0]?.regions ?? [] }, by: \.path)
+        let candidates = current.sources.values.flatMap(\.units).filter { unit in
+            unit.kind == "function" && (regions[unit.region.path] ?? []).contains {
+                $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine
+            }
+        }
+        guard !candidates.isEmpty else { return [] }
         let index = DependencyIndex(graph)
-        return Set(current.sources.values.flatMap(\.units).filter { unit in
-            guard isIndependentEntry(unit, current: current, graph: graph, index: index, entries: entries) else { return false }
-            return true
+        return Set(candidates.filter {
+            isIndependentEntry($0, current: current, graph: graph, index: index, entries: entries)
         }.map(\.key))
     }
+
     private static func isIndependentEntry(_ unit: SourceUnit, current: XcodeTestGraph, graph: DependencyGraph,
                                           index: DependencyIndex, entries: Set<String>) -> Bool {
         guard XcodeFineSelector.isTestEntry(unit, in: current) else { return false }
