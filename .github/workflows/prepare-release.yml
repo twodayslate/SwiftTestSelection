@@ -1,0 +1,50 @@
+name: Release current version
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Increment VERSION after releasing its current value
+        type: choice
+        required: true
+        default: patch
+        options: [patch, minor, major]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: release-current-version
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Tag release and bump version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require main
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          if [[ "$RELEASE_REF" != refs/heads/main ]]; then
+            echo 'Run this workflow from main.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Keep the dispatch's exact commit; the script rejects a moved main.
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Release current version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+          NEXT_BUMP: ${{ inputs.bump }}
+        run: |
+          python3 Scripts/prepare_release.py \
+            --repository "$RELEASE_REPOSITORY" --expected-sha "$RELEASE_SHA" \
+            --bump "$NEXT_BUMP"

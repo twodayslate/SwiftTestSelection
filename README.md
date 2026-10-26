@@ -69,6 +69,36 @@ swift build -c release
 
 ### Build and publish releases
 
+For a one-button release, open **Actions → Release current version → Run workflow**
+on `main`. The button appears after the workflow is merged into the default branch.
+It reads the current version from [`VERSION`](VERSION), tags that exact commit as
+`v<version>`, and commits the next version to `main`. The `bump` dropdown controls
+the **next** version: `patch` (default), `minor`, or `major`. For example, a current
+version of `0.1.0` with a patch bump publishes source tag `v0.1.0` and leaves
+`VERSION` at `0.1.1` for subsequent development.
+
+SwiftPM discovers package releases through Git tags; `Package.swift` has no package
+release-version field. Its `swift-tools-version` remains the minimum toolchain
+requirement. `VERSION` tracks the next stable release, starting at `0.1.0`.
+Edit it in a reviewed PR if the upcoming release needs a different version.
+
+The button fails if that version already has a Git tag or GitHub release (including
+a draft), if the selected commit is no longer the tip of `main`, or if the version
+is invalid. Both prefixed (`v0.1.0`) and unprefixed (`0.1.0`) tags count as existing
+releases. The tag and version bump are pushed atomically with expected-ref checks:
+a concurrent main update or a rejected branch push leaves neither update applied.
+Repository rules must allow the workflow token to push the bump to `main`.
+
+The workflow uses the built-in `GITHUB_TOKEN` with `contents: write` and
+`actions: write`; no personal access token is needed. Because token-created pushes
+do not trigger push workflows, it explicitly dispatches **Build and release CLI**
+on the new tag and **Tests** on the bumped `main`. Binary publishing runs separately
+and must finish successfully before customers can download the release assets.
+If dispatch or binary publishing fails after the atomic push, the tag and bump
+remain. Recover by manually running **Build and release CLI** on that existing
+tag (and **Tests** on `main` if needed); do not create another version to retry.
+Rerunning the old release-button run fails rather than releasing the next version.
+
 The [Build and release CLI workflow](.github/workflows/binaries.yml) uses the
 attached macOS runner with labels `self-hosted`, `macOS`, and `ARM64`. It requires
 full Xcode selected with `xcode-select`, Swift 6+, and Python 3. It runs the Swift
@@ -874,7 +904,8 @@ For Xcode, construct `XcodeConfiguration(container:path:scheme:destination:confi
 ## Validation
 
 The [Tests workflow](.github/workflows/tests.yml) runs the full Swift package
-test suite, capture-script unit tests, and release-installation regressions on pull requests, pushes to `main`,
+test suite, capture-script unit tests, release-installation regressions, and
+release-transaction tests on pull requests, pushes to `main`,
 merge-queue entries, and manual dispatches. It uses a GitHub-hosted macOS 26
 runner with Xcode 26.6, including for fork PRs. New commits cancel superseded
 test runs for the same PR or ref. The check is named `Unit tests (macOS)`;

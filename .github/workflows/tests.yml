@@ -39,3 +39,4 @@ jobs:
         run: |
           python3 Scripts/capture_build_test.py
           python3 Scripts/release_distribution_test.py
+          python3 Scripts/prepare_release_test.py
