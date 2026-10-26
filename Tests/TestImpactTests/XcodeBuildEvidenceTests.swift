@@ -160,3 +160,24 @@ func generatedBoundaryChangesWithItsInputs(change: String) throws {
     args = args.map { $0.replacingOccurrences(of: f.derived.path, with: physical) }
     #expect(try f.boundary() == f.boundary(arguments: args))
 }
+
+@Test(arguments: ["documentation", "resource", "relative", "directory", "argument", "relativeArgument", "script"])
+func generatedDocumentationEvidenceProtectsBuildInputs(scenario: String) throws {
+    let f = try EvidenceFixture()
+    let doc = f.root.appendingPathComponent("Docs/Guide.md")
+    try f.write("documentation", to: doc)
+    var commands = f.commands
+    switch scenario {
+    case "resource": commands["copy-resource"] = ["tool": "file-copy", "inputs": [doc.path]]
+    case "relative": commands["copy-resource"] = ["tool": "file-copy", "inputs": ["Docs/Guide.md"]]
+    case "relativeArgument": commands["resource-argument"] = ["tool": "file-copy", "args": ["Docs/Guide.md"]]
+    case "directory": commands["copy-directory"] = ["tool": "file-copy", "inputs": [doc.deletingLastPathComponent().path]]
+    case "argument": commands["resource-argument"] = ["tool": "file-copy", "args": [doc.path]]
+    case "script": commands["script"] = ["tool": "shell", "args": ["/bin/sh", "build.sh"], "inputs": []]
+    default: break
+    }
+    try f.save(commands: commands)
+    let boundary = try f.boundary()
+    #expect(boundary.repositoryInputFiles?["Docs/Guide.md"] != nil)
+    #expect(boundary.documentationInputs?.contains("Docs/Guide.md") == (scenario == "documentation"))
+}

@@ -29,7 +29,7 @@ enum XcodeSourceOwnership {
                 invocations[module] = args
             } catch { diagnostics.append("Compiler source ownership unavailable: \(error)") }
         }
-        var repositorySeal: Result<String, Error>?
+        var repositorySeal: Result<(String, [String: String]), Error>?
         var lists: [String: URL] = [:]
         for (module, args) in invocations.sorted(by: { $0.key < $1.key }) {
             do {
@@ -81,9 +81,12 @@ enum XcodeSourceOwnership {
                 for file in files where !repositorySet.contains(file) {
                     do {
                         guard let evidence else { throw ImpactError("Missing Xcode generator evidence") }
-                        if repositorySeal == nil { repositorySeal = Result { try XcodeBuildEvidence.repositoryInputs(root: sourceRoot, derived: derived) } }
+                        if repositorySeal == nil { repositorySeal = Result {
+                            let files = try XcodeBuildEvidence.repositoryInputFiles(root: sourceRoot, derived: derived)
+                            return (try XcodeGraphCache.key(files), files)
+                        } }
                         let boundary = try evidence.boundary(file: file, module: module, list: list,
-                            arguments: invocations[module]!, repositoryInputs: try repositorySeal!.get())
+                            arguments: invocations[module]!, repositoryInputs: try repositorySeal!.get().0, repositoryInputFiles: try repositorySeal!.get().1)
                         generated[module, default: []].append(boundary)
                     } catch {
                         let path = file.path.hasPrefix(generatedRoot) ? "<DerivedData>/" + file.path.dropFirst(generatedRoot.count) : file.path

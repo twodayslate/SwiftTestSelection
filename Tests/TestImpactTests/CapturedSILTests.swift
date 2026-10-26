@@ -32,10 +32,19 @@ import Testing
     let sealPath = root.appendingPathComponent("build.json")
     let log = root.appendingPathComponent("build.log")
     try Data("builtin-SwiftDriver -- swiftc -module-name M \"\(source.path)\" \"\(missing.path)\"\n".utf8).write(to: log)
-    let inputs = XcodeBuildInputs(derivedData: root, buildLog: log, buildSettings: root, xctestrun: root, revision: revision)
+    let settings = root.appendingPathComponent("settings.json")
+    try Data("[]".utf8).write(to: settings)
+    let products = root.appendingPathComponent("Build/Products")
+    try FileManager.default.createDirectory(at: products, withIntermediateDirectories: true)
+    let product = products.appendingPathComponent("app")
+    try Data("binary".utf8).write(to: product)
+    let productManifest = try ArtifactFiles.manifest(at: products)
+    let logDigest = try ArtifactFiles.digest(log), settingsDigest = try ArtifactFiles.digest(settings)
+    seal["buildLogDigest"] = logDigest; seal["buildSettingsDigest"] = settingsDigest; seal["products"] = productManifest
+    let inputs = XcodeBuildInputs(derivedData: root, buildLog: log, buildSettings: settings, xctestrun: product, revision: revision)
     func load(context: String? = nil, helper: String? = nil) throws -> CapturedSIL {
         try JSONSerialization.data(withJSONObject: seal).write(to: sealPath)
-        return try CapturedSIL.load(at: root, root: root, inputs: inputs, logDigest: "log", settingsDigest: "settings", products: ["app": "digest"], toolchain: "compiler", expectedContext: context, expectedHelper: helper)
+        return try CapturedSIL.load(at: root, root: root, inputs: inputs, logDigest: logDigest, settingsDigest: settingsDigest, products: productManifest, toolchain: "compiler", expectedContext: context, expectedHelper: helper)
     }
     let incomplete = try load()
     #expect(incomplete.modules.isEmpty)
@@ -47,6 +56,17 @@ import Testing
     let capture = try load()
     #expect(capture.diagnostics.isEmpty)
     #expect(try capture.parse(module: "M", sourceRoot: root)?.functions["a"] != nil)
+    for file in [product, log, settings] {
+        let original = try Data(contentsOf: file)
+        try Data("changed after load".utf8).write(to: file)
+        #expect(throws: (any Error).self) { try capture.validateFiles() }
+        try original.write(to: file)
+    }
+    let added = products.appendingPathComponent("extra-resource")
+    try Data("added".utf8).write(to: added)
+    #expect(throws: (any Error).self) { try capture.validateFiles() }
+    try FileManager.default.removeItem(at: added)
+    try capture.validateFiles()
     seal["helperIdentity"] = "helper"
     seal["inputIdentity"] = ["context": "context", "helper": "helper"]
     _ = try load(context: "context", helper: "helper")

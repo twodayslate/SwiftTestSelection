@@ -13,6 +13,8 @@ struct CapturedSIL: Sendable {
     var helperIdentity: String? = nil
     var exportedSources: (root: URL, files: [String: String])? = nil
 
+    var buildSeal: (productsDirectory: URL, products: [String: String], logDigest: String, settingsDigest: String)? = nil
+
     private static func canonical(_ path: String) -> String {
         if let resolved = realpath(path, nil) { defer { free(resolved) }; return String(cString: resolved) }
         return URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
@@ -80,7 +82,7 @@ struct CapturedSIL: Sendable {
             throw ImpactError("SIL capture inventory differs from the build's complete compiler source inventory")
         }
         var modules: [String: [URL]] = [:], covered: [String: Set<String>] = [:]
-        var fingerprints = [sealPath.path: try ArtifactFiles.digest(sealPath)]
+        var fingerprints = [sealPath.path: try ArtifactFiles.digest(sealPath), inputs.buildLog.path: logDigest, inputs.buildSettings.path: settingsDigest]
         func record(_ path: String, _ digest: String) throws {
             if let earlier = fingerprints[path], earlier != digest {
                 throw ImpactError("Captured jobs disagree about input bytes: \(path)")
@@ -128,7 +130,8 @@ struct CapturedSIL: Sendable {
                 diagnostics.append("Capture \(module): incomplete or unsupported primary coverage; replaying module")
             }
         }
-        let result = Self(modules: modules, fingerprints: fingerprints, diagnostics: diagnostics, frontendPath: directory.appendingPathComponent("wrapper/bin/swift-frontend").path, helperIdentity: seal.helperIdentity)
+        var result = Self(modules: modules, fingerprints: fingerprints, diagnostics: diagnostics, frontendPath: directory.appendingPathComponent("wrapper/bin/swift-frontend").path, helperIdentity: seal.helperIdentity)
+        result.buildSeal = (inputs.derivedData.appendingPathComponent("Build/Products"), products, logDigest, settingsDigest)
         try result.validateFiles()
         return result
     }
@@ -154,6 +157,9 @@ struct CapturedSIL: Sendable {
         return result
     }
     func validateFiles() throws {
+        if let buildSeal, try ArtifactFiles.manifest(at: buildSeal.productsDirectory) != buildSeal.products {
+            throw ImpactError("Test products changed after SIL capture")
+        }
         if let exportedSources, try ArtifactFiles.manifest(at: exportedSources.root) != exportedSources.files {
             throw ImpactError("Exported sources changed after capture")
         }

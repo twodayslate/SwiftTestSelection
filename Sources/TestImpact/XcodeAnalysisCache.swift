@@ -346,12 +346,23 @@ extension XcodeAnalysis {
                 try settings.write(to: workspace.appendingPathComponent("build-settings.json"), options: .atomic)
                 progress("Full build log (retained on failure): \(buildLog.path)")
             }
+            // Keep diagnostics outside disposable cache work from the outset:
+            // cancellation cannot depend on running a catch/defer copy.
+            let captureDiagnostics: URL?
+            if captureMode != nil, !keepBuild {
+                captureDiagnostics = retained?.appendingPathComponent("base-capture-failure") ?? FileManager.default.temporaryDirectory.appendingPathComponent("swift-test-impact-capture-" + UUID().uuidString)
+                try FileManager.default.createDirectory(at: captureDiagnostics!, withIntermediateDirectories: false)
+            } else { captureDiagnostics = nil }
+            var graphSucceeded = false
+            defer {
+                if graphSucceeded, let captureDiagnostics { try? FileManager.default.removeItem(at: captureDiagnostics) }
+            }
             let buildText: String
             var captured: CapturedSIL?
             if let captureMode {
                 let captureStart = Date()
                 let result = try captureMode.build(options: options, source: source, workspace: workspace,
-                    revision: revision, context: configuration.context, progress: progress)
+                    revision: revision, context: configuration.context, diagnostics: captureDiagnostics, progress: progress)
                 buildText = result.log; settings = result.settings; captured = result.captured
                 events.append(.init(phase: "build", revision: revision, seconds: result.buildSeconds, detail: "build-for-testing with supplementary SIL"))
                 events.append(.init(phase: "captureValidation", revision: revision, seconds: max(0, Date().timeIntervalSince(captureStart) - result.buildSeconds), detail: "wrapper setup, settings and export/product/capture seals"))
@@ -390,6 +401,7 @@ extension XcodeAnalysis {
                         inputIdentity: identity)
                 }.path
             }
+            graphSucceeded = true
             return result
         }
         var current = try graph(comparison.head!, keepBuild: retained != nil)
@@ -399,17 +411,7 @@ extension XcodeAnalysis {
         else {
             do { previous = try graph(comparison.base) }
             catch {
-                if captureMode != nil {
-                    if let retained {
-                        let diagnostics = retained.appendingPathComponent("base-capture-failure")
-                        try? FileManager.default.createDirectory(at: diagnostics, withIntermediateDirectories: true)
-                        for name in ["SILCapture", "source-export.json", "build.log", "build-settings.json"] {
-                            let file = cache.work.appendingPathComponent(name)
-                            if FileManager.default.fileExists(atPath: file.path) { try? FileManager.default.copyItem(at: file, to: diagnostics.appendingPathComponent(name)) }
-                        }
-                    }
-                    throw error
-                }
+                if captureMode != nil { throw error }
                 fallbacks.append("Cannot analyze base revision: \(error)")
             }
         }
@@ -419,7 +421,7 @@ extension XcodeAnalysis {
             retainedGraphPath = try timed("retainBuild", revision: comparison.head!) {
                 try RetainedXcodeBuild.publish(graph: &current, revision: comparison.head!, context: context,
                     toolchain: toolchain, workspace: pendingCapture.workspace, settings: pendingCapture.settings,
-                    inputIdentity: pendingCapture.identity)
+                    inputIdentity: pendingCapture.identity, capture: pendingCapture.capture)
             }.path
         }
         var report = timed("selection", revision: comparison.head!) {

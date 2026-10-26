@@ -442,8 +442,18 @@ The analyzer seals each Git archive export against its exact revision and file
 manifest, preserves locked package resolution, and builds the retained head once.
 It validates capture sources, outputs, context and products before publishing the
 retained completion marker. In capture mode both revisions must succeed before
-that marker is published. Head failure diagnostics remain in `SILCapture`; base
-capture failure diagnostics are copied to `base-capture-failure`. Verify and run
+that marker is published, and the head products, log and settings must still match
+the original capture seal after the base build finishes.
+
+With `--retain-build`, head diagnostics remain in the bundle's `capture.log` and
+`SILCapture`; base capture diagnostics are written directly to
+`base-capture-failure`. Without retention, each fresh capture uses a separate
+`swift-test-impact-capture-*` temporary directory outside the disposable analysis
+cache. The command prints its path before launching the helper. Failures and
+cancellation preserve this directory, including combined helper stdout/stderr in
+`capture.log`, the source-export manifest, and any session build log/settings/SIL
+already written. Successful analysis removes temporary capture diagnostics.
+Remove failed capture directories explicitly when no longer needed. Verify and run
 the resulting report with the same `verify-build` / `run` commands as ordinary
 retained selection. Identical base/head revisions share one analysis/build.
 
@@ -644,6 +654,12 @@ cache product roles or generated-source equivalence. When retaining new products
 on a revision-cache hit, the new build's evidence is rechecked before reusing its
 analysis. Put analysis outputs outside the source tree: generated-input validation
 conservatively fingerprints repository non-Swift files and package manifests.
+An `ignoredDocumentation` pattern present in both revisions also applies to these
+fingerprints when the active build evidence proves the Markdown file is outside
+build inputs. Markdown resources, directory inputs, and files referenced by build
+commands remain protected. Unknown shell tools prevent this exclusion because
+they may consume undeclared inputs. Older graphs with only opaque fingerprints
+remain conservative; regenerate both graphs to obtain the per-file evidence.
 The `buildEvidence` analysis event reports ownership/provenance processing time.
 These checks work with both compiler replay and sealed build-time SIL capture;
 ordinary `build-for-testing` still does not retain SIL automatically.

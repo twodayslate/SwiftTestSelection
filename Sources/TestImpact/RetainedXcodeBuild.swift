@@ -32,7 +32,7 @@ enum RetainedXcodeBuild {
     }
 
     static func publish(graph: inout XcodeTestGraph, revision: String, context: [String: String], toolchain: String,
-                        workspace: URL, settings: Data, inputIdentity: [String: String]) throws -> URL {
+                        workspace: URL, settings: Data, inputIdentity: [String: String], capture: CapturedSIL? = nil) throws -> URL {
         let products = workspace.appendingPathComponent("DerivedData/Build/Products")
         let runs = try FileManager.default.contentsOfDirectory(at: products, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "xctestrun" }
@@ -46,9 +46,20 @@ enum RetainedXcodeBuild {
         context["sdkAndArchitecture"] = Set(decoded.map { entry in
             ["CONFIGURATION", "SDK_NAME", "PLATFORM_NAME", "ARCHS"].map { entry.buildSettings[$0] ?? "" }.joined(separator: "|")
         }).sorted().joined(separator: "\n")
+        let productManifest = try ArtifactFiles.manifest(at: products)
+        let logDigest = try ArtifactFiles.digest(logFile), settingsDigest = try ArtifactFiles.digest(settingsFile)
+        // Publish the snapshot checked against the original seal, never a newly
+        // adopted product set after the base revision has finished building.
+        if let capture {
+            guard let seal = capture.buildSeal,
+                  seal.productsDirectory.standardizedFileURL.resolvingSymlinksInPath() == products.standardizedFileURL.resolvingSymlinksInPath(),
+                  seal.products == productManifest, seal.logDigest == logDigest, seal.settingsDigest == settingsDigest else {
+                throw ImpactError("Retained products, log or settings no longer match the original SIL capture seal")
+            }
+        }
         graph.buildArtifact = XcodeBuildArtifact(revision: revision, context: context, toolchain: toolchain,
-            buildLogDigest: try ArtifactFiles.digest(logFile), buildSettingsDigest: try ArtifactFiles.digest(settingsFile),
-            productsDirectory: products.path, xctestrun: runs[0].lastPathComponent, products: try ArtifactFiles.manifest(at: products))
+            buildLogDigest: logDigest, buildSettingsDigest: settingsDigest,
+            productsDirectory: products.path, xctestrun: runs[0].lastPathComponent, products: productManifest)
         graph.buildArtifact?.simulatorRuntimes = inputIdentity["simulatorRuntimes"]
         let graphFile = workspace.appendingPathComponent("head-graph.json")
         let encoder = JSONEncoder()

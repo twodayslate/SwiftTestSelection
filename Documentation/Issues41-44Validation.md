@@ -137,3 +137,7 @@ fixture. The historical consumer comparisons establish graph/selection and
 product-verification results only. Their selected bodies and complete consumer
 suites were not run here. Full-suite equivalence and end-to-end CI performance
 remain the consumer rollout gate; this validation does not enable that gate.
+
+Subsequent PR #45 review fixes and their independent validation are recorded in
+[PR45ReviewFixValidation.md](PR45ReviewFixValidation.md). The historical results
+above are unchanged.

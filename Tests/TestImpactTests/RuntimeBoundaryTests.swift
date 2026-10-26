@@ -348,3 +348,34 @@ func generatedInputsAreComparedEvenWithoutGitPaths(scenario: String) throws {
     let saved = try GraphArchive.decode(GraphArchive.encode(current))
     #expect(saved.generatedSourceBoundaries == current.generatedSourceBoundaries)
 }
+
+@Test(arguments: ["docs", "mixed", "added", "deleted", "oneSided", "resource", "legacy", "generator", "unignored"])
+func generatedBoundariesHonorOnlyProvenIgnoredDocumentation(scenario: String) throws {
+    var old = boundaryFixture()
+    var boundary = GeneratedSourceBoundary(module: "App", logicalPath: "<DerivedData>/Generated.swift", contentDigest: "source", generatorIdentity: "settings", repositoryInputs: "")
+    boundary.repositoryInputFiles = ["AGENTS.md": "old", "Resources/value.txt": "resource"]
+    boundary.documentationInputs = ["AGENTS.md"]
+    if scenario == "added" { boundary.repositoryInputFiles?.removeValue(forKey: "AGENTS.md"); boundary.documentationInputs = [] }
+    boundary.repositoryInputs = try XcodeGraphCache.key(boundary.repositoryInputFiles!)
+    old.generatedSourceBoundaries = ["App": [boundary]]
+    var current = scenario == "mixed" ? labelEdit(old) : old
+    boundary.repositoryInputFiles?["AGENTS.md"] = "new"
+    boundary.documentationInputs = ["AGENTS.md"]
+    switch scenario {
+    case "deleted": boundary.repositoryInputFiles?.removeValue(forKey: "AGENTS.md"); boundary.documentationInputs = []
+    case "oneSided": old.mappings?.ignoredDocumentation = []
+    case "resource": boundary.documentationInputs = []
+    case "generator": boundary.generatorIdentity = "changed"
+    case "unignored": old.mappings?.ignoredDocumentation = []; current.mappings?.ignoredDocumentation = []
+    default: break
+    }
+    boundary.repositoryInputs = try XcodeGraphCache.key(boundary.repositoryInputFiles!)
+    if scenario == "legacy" { boundary.repositoryInputFiles = nil; boundary.documentationInputs = nil }
+    current.generatedSourceBoundaries = ["App": [boundary]]
+    let changes: [FileChange] = scenario == "mixed" ? [.init(path: "AGENTS.md"), .init(path: "App.swift")] : [.init(path: "AGENTS.md")]
+    let report = XcodeFineSelector.select(current: current, previous: old, changes: changes, baseRevision: "base")
+    let supported = ["docs", "mixed", "added", "deleted"].contains(scenario)
+    #expect(report.diagnostics.contains { $0.code == "generated_input_changed" } == !supported)
+    #expect(report.selectedTests.count == (supported ? (scenario == "mixed" ? 1 : 0) : 2))
+    if !supported && scenario != "generator" { #expect(!report.ignoredChanges.contains("AGENTS.md")) }
+}

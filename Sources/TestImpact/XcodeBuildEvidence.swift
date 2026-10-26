@@ -12,6 +12,9 @@ public struct GeneratedSourceBoundary: Codable, Sendable, Equatable {
     public var contentDigest: String
     public var generatorIdentity: String
     public var repositoryInputs: String
+    // Optional for archive compatibility; old opaque seals remain conservative.
+    public var repositoryInputFiles: [String: String]? = nil
+    public var documentationInputs: [String]? = nil
     public var sourceLocations: [String]? = nil
     public var generatorInputs: [String: String]? = nil
 }
@@ -147,7 +150,7 @@ struct XcodeBuildEvidence {
         }
     }
 
-    func boundary(file: URL, module: String, list: URL, arguments: [String], repositoryInputs: String) throws -> GeneratedSourceBoundary {
+    func boundary(file: URL, module: String, list: URL, arguments: [String], repositoryInputs: String, repositoryInputFiles: [String: String]? = nil) throws -> GeneratedSourceBoundary {
         let record = try record(module: module, list: list)
         guard file.path.hasPrefix(derived.path + "/Build/Intermediates.noindex/") else {
             throw ImpactError("Generated source is outside the active build intermediates")
@@ -186,30 +189,60 @@ struct XcodeBuildEvidence {
         guard snapshot.diagnostics.isEmpty else { throw ImpactError("Unsupported generated Swift syntax") }
         // Physical #filePath values are semantic, even though artifact locations
         // use stable logical paths. Never normalize literals inside source text.
+        let repositoryFiles = try repositoryInputFiles ?? Self.repositoryInputFiles(root: root, derived: derived)
         return GeneratedSourceBoundary(module: module, logicalPath: normalized(file.path), contentDigest: try ArtifactFiles.digest(file),
             generatorIdentity: identity, repositoryInputs: repositoryInputs,
+            repositoryInputFiles: repositoryFiles, documentationInputs: documentationInputs(files: repositoryFiles, compiler: arguments.first ?? ""),
             sourceLocations: snapshot.units.flatMap { $0.fileLocationValues ?? [] }.sorted(), generatorInputs: generatorInputs)
+    }
+
+    /// A declared documentation policy cannot hide a resource or an input to a
+    /// build task. Unknown shell tools may read undeclared inputs, so their
+    /// presence prevents documentation exclusions for this build.
+    private func documentationInputs(files: [String: String], compiler: String) -> [String] {
+        let developer = compiler.range(of: "/Toolchains/").map { String(compiler[..<$0.lowerBound]) + "/" }
+        let xcodeTools: Set<String> = ["actool", "ibtool", "clang", "clang++", "clang-stat-cache", "swiftc",
+            "appintentsmetadataprocessor", "appintentsnltrainingprocessor", "embeddedBinaryValidationUtility", "lipo", "tapi"]
+        for command in commands.values where command.tool == "shell" {
+            guard let executable = command.args?.first,
+                  ["/usr/bin/touch", "/usr/bin/derq"].contains(executable) ||
+                    (developer.map { executable.hasPrefix($0) } == true && xcodeTools.contains(URL(fileURLWithPath: executable).lastPathComponent)) else { return [] }
+        }
+        let consumed = commands.values.flatMap { $0.inputs ?? [] }.filter { !$0.hasPrefix("<") }.map {
+            canonical(URL(fileURLWithPath: $0, relativeTo: URL(fileURLWithPath: root.path, isDirectory: true)).path)
+        }
+        let arguments = commands.values.flatMap { $0.args ?? [] }
+        return files.keys.filter { path in
+            guard path.hasSuffix(".md") else { return false }
+            let absolute = canonical(root.appendingPathComponent(path).path)
+            return !consumed.contains { absolute == $0 || absolute.hasPrefix($0 + "/") } &&
+                !arguments.contains { normalized($0).contains("<Source>/" + path) || $0.contains(path) }
+        }.sorted()
     }
 
     /// Non-Swift inputs include resource membership/content, package manifests
     /// (added separately), project settings, scripts and generator configuration.
     /// Swift changes are compared by semantic snapshots, not this opaque seal.
     static func repositoryInputs(root: URL, derived: URL) throws -> String {
+        try XcodeGraphCache.key(repositoryInputFiles(root: root, derived: derived))
+    }
+
+    static func repositoryInputFiles(root: URL, derived: URL) throws -> [String: String] {
         let root = root.standardizedFileURL.resolvingSymlinksInPath()
         let derived = derived.standardizedFileURL.resolvingSymlinksInPath()
         var result: [String: String] = [:]
-        func walk(_ directory: URL) throws {
+        func walk(_ directory: URL, prefix: String = "") throws {
             for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]) {
                 if [".git", ".build"].contains(file.lastPathComponent) || file.standardizedFileURL.resolvingSymlinksInPath() == derived { continue }
                 let values = try file.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                 if values.isSymbolicLink == true { throw ImpactError("Generated input validation does not support repository symlinks") }
-                if values.isDirectory == true { try walk(file) }
+                if values.isDirectory == true { try walk(file, prefix: prefix + file.lastPathComponent + "/") }
                 else if file.pathExtension != "swift" || file.lastPathComponent == "Package.swift" {
-                    result[String(file.path.dropFirst(root.path.count + 1))] = try ArtifactFiles.digest(file)
+                    result[prefix + file.lastPathComponent] = try ArtifactFiles.digest(file)
                 }
             }
         }
         try walk(root)
-        return try XcodeGraphCache.key(result)
+        return result
     }
 }
