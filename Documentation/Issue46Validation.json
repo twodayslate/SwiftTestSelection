@@ -1,0 +1,485 @@
+{
+  "base": "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+  "mixedHead": "b4a7751934d5c185e750ae1850586c249d1277f5",
+  "destination": "platform=iOS Simulator,id=51B1F3F2-8CCE-4A55-999B-EEC51082985B",
+  "cases": [
+    {
+      "case": "mixed",
+      "head": "b4a7751934d5c185e750ae1850586c249d1277f5",
+      "seconds": 484.391,
+      "maximumResidentSetBytes": 2625355776,
+      "selectedTests": [
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()"
+      ],
+      "totalTests": 1972,
+      "diagnostics": [],
+      "ignoredChanges": [
+        "AGENTS.md"
+      ],
+      "capturedSILModules": 20,
+      "command": [
+        "/tmp/issue29-swift27-build/release/swift-test-impact",
+        "select",
+        "--project",
+        "/tmp/issue46-validation-final/repo/ChainOfCustody.xcodeproj",
+        "--scheme",
+        "ChainOfCustody",
+        "--test-plan",
+        "ChainOfCustody",
+        "--configuration",
+        "Debug",
+        "--destination",
+        "platform=iOS Simulator,id=51B1F3F2-8CCE-4A55-999B-EEC51082985B",
+        "--base",
+        "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+        "--head",
+        "b4a7751934d5c185e750ae1850586c249d1277f5",
+        "--merge-base",
+        "--build-time-sil",
+        "/Users/zac/.codex/worktrees/module-fragment-cache/start-a-new-project-i-want/Scripts/capture-build.py",
+        "--analysis-cache",
+        "/tmp/issue46-validation-final/cache",
+        "--cache-context",
+        "issue46-locked-historical-inputs-v1",
+        "--retain-build",
+        "/tmp/issue46-validation-final/mixed/retained",
+        "--format",
+        "json",
+        "--output",
+        "/tmp/issue46-validation-final/mixed/impact.json"
+      ],
+      "verified": true,
+      "moduleCacheHits": 0,
+      "commandPeakMemoryFootprintBytes": 2328611144,
+      "highestInstrumentedAnalyzerFootprintMiB": 986.2,
+      "generatedBoundaries": {
+        "ChainOfCustodyCore": [
+          {
+            "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustodyCore.build/Debug-iphonesimulator/ChainOfCustodyCore-t.build/DerivedSources/resource_bundle_accessor.swift",
+            "documentationInputCount": 27,
+            "AGENTS.mdExcluded": true
+          }
+        ],
+        "MessagesExtension": [
+          {
+            "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustody.build/Debug-iphonesimulator/MessagesExtension.build/DerivedSources/GeneratedAssetSymbols.swift",
+            "documentationInputCount": 27,
+            "AGENTS.mdExcluded": true
+          }
+        ],
+        "ChainOfCustody": [
+          {
+            "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustody.build/Debug-iphonesimulator/ChainOfCustody.build/DerivedSources/GeneratedAssetSymbols.swift",
+            "documentationInputCount": 27,
+            "AGENTS.mdExcluded": true
+          }
+        ]
+      },
+      "unresolvedProductRoles": {},
+      "unsupportedSourceInputs": {},
+      "extractionDiagnostics": [],
+      "onlyTestingArguments": [
+        "-only-testing:ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()"
+      ],
+      "evidenceTimings": [
+        {
+          "detail": "fresh analysis",
+          "phase": "buildEvidence",
+          "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+          "seconds": 1.0814720392227173
+        },
+        {
+          "detail": "fresh analysis",
+          "phase": "buildEvidence",
+          "revision": "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+          "seconds": 1.1968910694122314
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "b4a7751934d5c185e750ae1850586c249d1277f5",
+          "seconds": 10.009039998054504
+        }
+      ],
+      "baseGraphReused": false
+    },
+    {
+      "case": "method-only",
+      "head": "c0592b22a6d7aca5688d381afcf671d6784fa00b",
+      "seconds": 190.338,
+      "maximumResidentSetBytes": 2662449152,
+      "selectedTests": [
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()"
+      ],
+      "totalTests": 1972,
+      "diagnostics": [],
+      "ignoredChanges": [],
+      "capturedSILModules": 1,
+      "command": [
+        "/tmp/issue29-swift27-build/release/swift-test-impact",
+        "select",
+        "--project",
+        "/tmp/issue46-validation-final/repo/ChainOfCustody.xcodeproj",
+        "--scheme",
+        "ChainOfCustody",
+        "--test-plan",
+        "ChainOfCustody",
+        "--configuration",
+        "Debug",
+        "--destination",
+        "platform=iOS Simulator,id=51B1F3F2-8CCE-4A55-999B-EEC51082985B",
+        "--base",
+        "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+        "--head",
+        "c0592b22a6d7aca5688d381afcf671d6784fa00b",
+        "--merge-base",
+        "--build-time-sil",
+        "/Users/zac/.codex/worktrees/module-fragment-cache/start-a-new-project-i-want/Scripts/capture-build.py",
+        "--analysis-cache",
+        "/tmp/issue46-validation-final/cache",
+        "--cache-context",
+        "issue46-locked-historical-inputs-v1",
+        "--retain-build",
+        "/tmp/issue46-validation-final/method-only/retained",
+        "--format",
+        "json",
+        "--output",
+        "/tmp/issue46-validation-final/method-only/impact.json"
+      ],
+      "verified": true,
+      "moduleCacheHits": 9,
+      "commandPeakMemoryFootprintBytes": 2009974896,
+      "highestInstrumentedAnalyzerFootprintMiB": 439.4,
+      "generatedBoundaries": {
+        "ChainOfCustody": [
+          {
+            "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustody.build/Debug-iphonesimulator/ChainOfCustody.build/DerivedSources/GeneratedAssetSymbols.swift",
+            "documentationInputCount": 27,
+            "AGENTS.mdExcluded": true
+          }
+        ],
+        "MessagesExtension": [
+          {
+            "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustody.build/Debug-iphonesimulator/MessagesExtension.build/DerivedSources/GeneratedAssetSymbols.swift",
+            "documentationInputCount": 27,
+            "AGENTS.mdExcluded": true
+          }
+        ],
+        "ChainOfCustodyCore": [
+          {
+            "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustodyCore.build/Debug-iphonesimulator/ChainOfCustodyCore-t.build/DerivedSources/resource_bundle_accessor.swift",
+            "documentationInputCount": 27,
+            "AGENTS.mdExcluded": true
+          }
+        ]
+      },
+      "unresolvedProductRoles": {},
+      "unsupportedSourceInputs": {},
+      "extractionDiagnostics": [],
+      "onlyTestingArguments": [
+        "-only-testing:ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()"
+      ],
+      "evidenceTimings": [
+        {
+          "detail": "fresh analysis",
+          "phase": "buildEvidence",
+          "revision": "c0592b22a6d7aca5688d381afcf671d6784fa00b",
+          "seconds": 1.1446939706802368
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "c0592b22a6d7aca5688d381afcf671d6784fa00b",
+          "seconds": 9.138167023658752
+        }
+      ],
+      "baseGraphReused": true
+    }
+  ],
+  "execution": {
+    "seconds": 175.444,
+    "log": "/tmp/issue46-validation-final/mixed/execution.log",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "tests": [
+      {
+        "duration": "2m 16s",
+        "durationInSeconds": 136.02085900306702,
+        "name": "testBackButtonDismissesMediaPreviewToItsListBlock()",
+        "nodeIdentifier": "PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()",
+        "nodeIdentifierURL": "test://com.apple.xcode/ChainOfCustody/ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock",
+        "nodeType": "Test Case",
+        "result": "Passed"
+      }
+    ],
+    "xcresult": "/tmp/issue46-validation-final/repo/.build/test-impact-results/E0763EE2-3FA5-4CE9-B22D-D25A22F027F6.xcresult"
+  },
+  "analyzerSourceRevision": "5cadc20923300f959b8cc9928078c8b46bb0f42c",
+  "analyzerSHA256": "2ec3c4bc235b904089c987896f6f4e17a4b6ae6ccabb725351dce1813773ca18",
+  "xcode": "27.0 (27A266a)",
+  "releaseTests": {
+    "Xcode26.6": 213,
+    "Xcode27.0": 213
+  },
+  "measurementNote": "Elapsed time and /usr/bin/time -l resource measurements cover the selection command, including builds and enumeration. Not an isolated benchmark or simultaneous process-tree memory sum.",
+  "standardTasks": {
+    "copypng": 9,
+    "xcstringstool": 2,
+    "externalAppleMetal": 2
+  },
+  "postReviewValidation": {
+    "base": "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+    "mixedHead": "b4a7751934d5c185e750ae1850586c249d1277f5",
+    "destination": "platform=iOS Simulator,id=51B1F3F2-8CCE-4A55-999B-EEC51082985B",
+    "cases": [
+      {
+        "case": "mixed",
+        "head": "b4a7751934d5c185e750ae1850586c249d1277f5",
+        "seconds": 592.07,
+        "maximumResidentSetBytes": 2690416640,
+        "selectedTests": [
+          "ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()"
+        ],
+        "totalTests": 1972,
+        "diagnostics": [],
+        "ignoredChanges": [
+          "AGENTS.md"
+        ],
+        "capturedSILModules": 20,
+        "command": [
+          "/tmp/issue29-swift27-build/release/swift-test-impact",
+          "select",
+          "--project",
+          "/tmp/pr47-system-header-validation/repo/ChainOfCustody.xcodeproj",
+          "--scheme",
+          "ChainOfCustody",
+          "--test-plan",
+          "ChainOfCustody",
+          "--configuration",
+          "Debug",
+          "--destination",
+          "platform=iOS Simulator,id=51B1F3F2-8CCE-4A55-999B-EEC51082985B",
+          "--base",
+          "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+          "--head",
+          "b4a7751934d5c185e750ae1850586c249d1277f5",
+          "--merge-base",
+          "--build-time-sil",
+          "/Users/zac/.codex/worktrees/module-fragment-cache/start-a-new-project-i-want/Scripts/capture-build.py",
+          "--analysis-cache",
+          "/tmp/pr47-system-header-validation/cache",
+          "--cache-context",
+          "pr47-system-headers-v1",
+          "--retain-build",
+          "/tmp/pr47-system-header-validation/mixed/retained",
+          "--format",
+          "json",
+          "--output",
+          "/tmp/pr47-system-header-validation/mixed/impact.json"
+        ],
+        "verified": true,
+        "moduleCacheHits": 0,
+        "generatedBoundaries": {
+          "MessagesExtension": [
+            {
+              "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustody.build/Debug-iphonesimulator/MessagesExtension.build/DerivedSources/GeneratedAssetSymbols.swift",
+              "documentationEvidenceVersion": 2,
+              "documentationInputCount": 27,
+              "AGENTS.mdExcluded": true
+            }
+          ],
+          "ChainOfCustody": [
+            {
+              "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustody.build/Debug-iphonesimulator/ChainOfCustody.build/DerivedSources/GeneratedAssetSymbols.swift",
+              "documentationEvidenceVersion": 2,
+              "documentationInputCount": 27,
+              "AGENTS.mdExcluded": true
+            }
+          ],
+          "ChainOfCustodyCore": [
+            {
+              "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustodyCore.build/Debug-iphonesimulator/ChainOfCustodyCore-t.build/DerivedSources/resource_bundle_accessor.swift",
+              "documentationEvidenceVersion": 2,
+              "documentationInputCount": 27,
+              "AGENTS.mdExcluded": true
+            }
+          ]
+        },
+        "unresolvedProductRoles": {},
+        "unsupportedSourceInputs": {},
+        "metalCompileCommands": 1,
+        "metalSystemHeaderDependencies": true
+      },
+      {
+        "case": "method-only",
+        "head": "855afd0056811ed7ba86574b1394b30ea473bebf",
+        "seconds": 225.562,
+        "maximumResidentSetBytes": 2705588224,
+        "selectedTests": [
+          "ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()"
+        ],
+        "totalTests": 1972,
+        "diagnostics": [],
+        "ignoredChanges": [],
+        "capturedSILModules": 1,
+        "command": [
+          "/tmp/issue29-swift27-build/release/swift-test-impact",
+          "select",
+          "--project",
+          "/tmp/pr47-system-header-validation/repo/ChainOfCustody.xcodeproj",
+          "--scheme",
+          "ChainOfCustody",
+          "--test-plan",
+          "ChainOfCustody",
+          "--configuration",
+          "Debug",
+          "--destination",
+          "platform=iOS Simulator,id=51B1F3F2-8CCE-4A55-999B-EEC51082985B",
+          "--base",
+          "9a15c166a12f494ce84d9a90dcd082b4942b70ea",
+          "--head",
+          "855afd0056811ed7ba86574b1394b30ea473bebf",
+          "--merge-base",
+          "--build-time-sil",
+          "/Users/zac/.codex/worktrees/module-fragment-cache/start-a-new-project-i-want/Scripts/capture-build.py",
+          "--analysis-cache",
+          "/tmp/pr47-system-header-validation/cache",
+          "--cache-context",
+          "pr47-system-headers-v1",
+          "--retain-build",
+          "/tmp/pr47-system-header-validation/method-only/retained",
+          "--format",
+          "json",
+          "--output",
+          "/tmp/pr47-system-header-validation/method-only/impact.json"
+        ],
+        "verified": true,
+        "moduleCacheHits": 9,
+        "generatedBoundaries": {
+          "MessagesExtension": [
+            {
+              "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustody.build/Debug-iphonesimulator/MessagesExtension.build/DerivedSources/GeneratedAssetSymbols.swift",
+              "documentationEvidenceVersion": 2,
+              "documentationInputCount": 27,
+              "AGENTS.mdExcluded": true
+            }
+          ],
+          "ChainOfCustodyCore": [
+            {
+              "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustodyCore.build/Debug-iphonesimulator/ChainOfCustodyCore-t.build/DerivedSources/resource_bundle_accessor.swift",
+              "documentationEvidenceVersion": 2,
+              "documentationInputCount": 27,
+              "AGENTS.mdExcluded": true
+            }
+          ],
+          "ChainOfCustody": [
+            {
+              "logicalPath": "<DerivedData>/Build/Intermediates.noindex/ChainOfCustody.build/Debug-iphonesimulator/ChainOfCustody.build/DerivedSources/GeneratedAssetSymbols.swift",
+              "documentationEvidenceVersion": 2,
+              "documentationInputCount": 27,
+              "AGENTS.mdExcluded": true
+            }
+          ]
+        },
+        "unresolvedProductRoles": {},
+        "unsupportedSourceInputs": {},
+        "metalCompileCommands": 1,
+        "metalSystemHeaderDependencies": true
+      }
+    ],
+    "execution": {
+      "seconds": 177.665,
+      "log": "/tmp/pr47-system-header-validation/mixed/execution.log",
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "testNodes": [
+        {
+          "duration": "2m 19s",
+          "durationInSeconds": 139.00624799728394,
+          "name": "testBackButtonDismissesMediaPreviewToItsListBlock()",
+          "nodeIdentifier": "PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()",
+          "nodeIdentifierURL": "test://com.apple.xcode/ChainOfCustody/ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock",
+          "nodeType": "Test Case",
+          "result": "Passed"
+        }
+      ],
+      "xcresult": "/tmp/pr47-system-header-validation/repo/.build/test-impact-results/9B201AB9-23B6-4FBA-9E0F-A1FB2131F134.xcresult"
+    },
+    "analyzerSourceRevision": "4cd9ea994c06245e359e137d64e9b742518f364c",
+    "analyzerSHA256": "c825084755721a735fccbc0bfdf867c60c9878c033fbfa70a0e663f0d72d590f",
+    "xcode": "27.0 (27A266a)",
+    "releaseTests": {
+      "Xcode26.6": 215,
+      "Xcode27.0": 215
+    },
+    "captureHelperTests": 6
+  },
+  "dependencyPathValidation": {
+    "analyzerSourceRevision": "66c4a1a20caa36b416e45dee2ab6ed59ec78affa",
+    "analyzerSHA256": "cc84501578fc2e6d07d0479004a3fcfe04f7e973b5a1cedccffe6ead53c9b8f5",
+    "documentationEvidenceVersion": 3,
+    "releaseTests": {
+      "Xcode26.6": 217,
+      "Xcode27.0": 217
+    },
+    "realCompilerCases": [
+      "spacedVFSOverlay",
+      "joinedVFSOverlay",
+      "backslashPath",
+      "backslashPathWithExistingSlashCollision"
+    ],
+    "allCompilerCases": {
+      "compiledProductChanged": true,
+      "affectedTestSelected": true,
+      "changedDocumentIgnored": false,
+      "diagnostic": "documentation_exclusion_blocked"
+    },
+    "retainedEvidenceReplays": [
+      {
+        "case": "mixed",
+        "xcode": "27.0",
+        "retainedBuild": "/tmp/pr47-system-header-validation/mixed/retained",
+        "generatedModules": [
+          "ChainOfCustody",
+          "ChainOfCustodyCore",
+          "MessagesExtension"
+        ],
+        "documentationListsUnchanged": true,
+        "unresolvedProductRoles": {},
+        "unsupportedSourceInputs": {},
+        "documentationOnlySelection": {
+          "ignoredChanges": [
+            "AGENTS.md"
+          ],
+          "selectedTests": [],
+          "diagnostics": []
+        }
+      },
+      {
+        "case": "method-only",
+        "xcode": "26.6",
+        "retainedBuild": "/tmp/pr47-system-header-validation/method-only/retained",
+        "generatedModules": [
+          "ChainOfCustody",
+          "ChainOfCustodyCore",
+          "MessagesExtension"
+        ],
+        "documentationListsUnchanged": true,
+        "unresolvedProductRoles": {},
+        "unsupportedSourceInputs": {},
+        "documentationOnlySelection": {
+          "ignoredChanges": [
+            "AGENTS.md"
+          ],
+          "selectedTests": [],
+          "diagnostics": []
+        }
+      }
+    ],
+    "freshConsumerBuild": false,
+    "consumerTestsExecuted": false,
+    "retainedGraphArchivesModified": false
+  }
+}

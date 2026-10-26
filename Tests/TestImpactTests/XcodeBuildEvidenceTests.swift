@@ -134,6 +134,21 @@ func generatedBoundaryChangesWithItsInputs(change: String) throws {
     #expect(diagnostics.isEmpty && roles.isEmpty && unsupported.isEmpty)
     #expect(generated["ChainOfCustodyCore"]?.count == 1)
     #expect(graph.targets.first { graph.modules[$0.name] == "ShareExtension" }?.hasProductionRole == true)
+    if let document = ProcessInfo.processInfo.environment["IMPACT_EXPECT_IGNORED_DOCUMENTATION"] {
+        #expect(Set(generated.keys) == Set(graph.generatedSourceBoundaries?.keys ?? [:].keys))
+        for (module, boundaries) in generated {
+            for boundary in boundaries {
+                #expect(boundary.documentationEvidenceVersion == 3)
+                #expect(boundary.documentationInputs?.contains(document) == true)
+                let prior = graph.generatedSourceBoundaries?[module]?.first { $0.logicalPath == boundary.logicalPath }
+                #expect(boundary.documentationInputs == prior?.documentationInputs)
+            }
+        }
+        graph.generatedSourceBoundaries = generated
+        let report = XcodeFineSelector.select(current: graph, previous: graph, changes: [.init(path: document)], baseRevision: "replayed-evidence")
+        #expect(report.ignoredChanges == [document] && report.selectedTests.isEmpty)
+        #expect(report.diagnostics.isEmpty)
+    }
 }
 
 @Test func generatedFilePathValuesRemainSemanticAcrossDerivedDataRoots() throws {
@@ -180,4 +195,272 @@ func generatedDocumentationEvidenceProtectsBuildInputs(scenario: String) throws 
     let boundary = try f.boundary()
     #expect(boundary.repositoryInputFiles?["Docs/Guide.md"] != nil)
     #expect(boundary.documentationInputs?.contains("Docs/Guide.md") == (scenario == "documentation"))
+    if scenario != "documentation" {
+        let reasons = try #require(boundary.documentationBlockers?["Docs/Guide.md"])
+        #expect(reasons.contains { $0.contains(scenario == "script" ? "/bin/sh" : "Docs") })
+    }
+}
+
+@Test(arguments: ["copypng", "xcstringstool", "metal", "metallib"],
+      ["unrelated", "input", "directory", "argument", "impostor", "wrongXcode", "missingToolchain", "script"])
+func standardXcodeTasksPreserveDocumentationPrecision(tool: String, scenario: String) throws {
+    let f = try EvidenceFixture()
+    try f.write("documentation", to: f.root.appendingPathComponent("AGENTS.md"))
+    let developer = "/Applications/Xcode.app/Contents/Developer"
+    let metal = ["metal", "metallib"].contains(tool)
+    let installed = metal ? "/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v1/Metal.xctoolchain/usr/bin/" + tool : developer + "/usr/bin/" + tool
+    var executable = installed
+    if scenario == "impostor" { executable = developer + "/CustomTools/" + tool }
+    if scenario == "wrongXcode" { executable = "/Applications/OtherXcode.app/Contents/Developer/usr/bin/" + tool }
+    var commands = f.commands
+    commands["standard-task"] = ["tool": "shell", "args": [executable, scenario == "argument" ? "AGENTS.md" : "resource"],
+        "inputs": scenario == "input" ? ["AGENTS.md"] : scenario == "directory" ? [f.root.path] : [metal ? "Resources/value.air" : "Resources/value.txt"]]
+    if scenario == "script" { commands["custom-script"] = ["tool": "shell", "args": ["/bin/sh", "build.sh"]] }
+    try f.save(commands: commands)
+    var lookups: [String] = []
+    let evidence = try XcodeBuildEvidence(log: f.log, root: f.root, derived: f.derived, resolveMetalTool: { name, activeDeveloper in
+        #expect(activeDeveloper == developer)
+        lookups.append(name)
+        return scenario == "missingToolchain" ? nil : installed
+    })
+    let boundary = try evidence.boundary(file: f.generated, module: "Core", list: f.list, arguments: f.args,
+        repositoryInputs: XcodeBuildEvidence.repositoryInputs(root: f.root, derived: f.derived))
+    let excluded = scenario == "unrelated" || (scenario == "missingToolchain" && !metal)
+    #expect(boundary.documentationInputs == (excluded ? ["AGENTS.md"] : []))
+    #expect((boundary.documentationBlockers?["AGENTS.md"] != nil) == !excluded)
+    #expect(lookups.count == (metal ? 1 : 0))
+    if ["impostor", "wrongXcode"].contains(scenario) {
+        #expect(boundary.documentationBlockers?["AGENTS.md"]?.contains { $0.contains(executable) && $0.contains("standard-task") } == true)
+    }
+}
+
+/// Optional integration with Xcode's installed (potentially cryptex-mounted)
+/// toolchain. The table above remains deterministic on machines without Metal.
+@Test func installedAppleMetalProvenance() throws {
+    guard let developer = ProcessInfo.processInfo.environment["IMPACT_METAL_DEVELOPER"] else { return }
+    let metal = try #require(XcodeBuildEvidence.installedMetalTool("metal", developer: developer))
+    let f = try EvidenceFixture()
+    try f.write("documentation", to: f.root.appendingPathComponent("AGENTS.md"))
+    var commands = f.commands
+    let deps = f.derived.appendingPathComponent("example.dat")
+    try f.write("kernel void example() {}", to: f.root.appendingPathComponent("Shaders/example.metal"))
+    try f.write("dependencies: Shaders/example.metal\n", to: deps)
+    commands["CompileMetalFile"] = ["tool": "shell", "args": [metal, "-c", "-MD", "-MT", "dependencies", "-MF", deps.path, "Shaders/example.metal"],
+        "inputs": ["Shaders/example.metal"], "deps": [deps.path], "deps-style": "makefile"]
+    try f.save(commands: commands)
+    var arguments = f.args
+    arguments[0] = developer + "/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    #expect(try f.boundary(arguments: arguments).documentationInputs == ["AGENTS.md"])
+}
+
+@Test(arguments: ["unrelated", "includedMarkdown", "missing", "malformed", "changed", "unsupportedInvocation"])
+func metalIncludesAreSealedBuildInputs(scenario: String) throws {
+    let f = try EvidenceFixture()
+    try f.write("documentation", to: f.root.appendingPathComponent("Docs/Guide.md"))
+    let deps = f.derived.appendingPathComponent("shader.dat")
+    try f.write("kernel void example() {}", to: f.root.appendingPathComponent("Shaders/shader.metal"))
+    let included = scenario == "includedMarkdown" ? "../Docs/Guide.md" : "shader.metal"
+    if scenario != "missing" { try f.write(scenario == "malformed" ? "unknown format" : "dependencies: " + included + "\n", to: deps) }
+    var commands = f.commands
+    commands["CompileMetalFile"] = ["tool": "shell", "args": ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal", "-c", "-MD", "-MT", "dependencies", "-MF", deps.path],
+        "inputs": ["shader.metal"], "deps": [deps.path], "deps-style": "makefile", "working-directory": f.root.appendingPathComponent("Shaders").path]
+    if scenario == "unsupportedInvocation" {
+        commands["CompileMetalFile"]?["args"] = ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal", "-E", "shader.metal"]
+        commands["CompileMetalFile"]?.removeValue(forKey: "deps")
+    }
+    try f.save(commands: commands)
+    let evidence = try f.evidence(), boundary = try f.boundary()
+    #expect(boundary.documentationInputs == (["unrelated", "changed"].contains(scenario) ? ["Docs/Guide.md"] : []))
+    if scenario == "includedMarkdown" {
+        #expect(boundary.documentationBlockers?["Docs/Guide.md"]?.contains { $0.contains("CompileMetalFile") && $0.contains("../Docs/Guide.md") } == true)
+    }
+    if scenario == "changed" {
+        try f.write("dependencies: ../Docs/Guide.md\n", to: deps)
+        #expect(throws: ImpactError.self) { try evidence.validate(log: f.log, boundaries: [boundary]) }
+    }
+}
+
+@Test func metalMakefileDependenciesHandleEscapesAndRejectUnknownSyntax() {
+    #expect(XcodeBuildEvidence.metalDependencies("dependencies: /path/with\\ space/a.metal \\\n/path/Guide.md\n") == ["/path/with space/a.metal", "/path/Guide.md"])
+    for text in ["dependencies:", "wrong: file", "dependencies: file\nsecond: other", "dependencies: $(FILE)", "dependencies: file # comment", "dependencies: file\\"] {
+        #expect(XcodeBuildEvidence.metalDependencies(text) == nil)
+    }
+}
+
+@Test(arguments: ["scalar", "array"])
+func unrelatedBuiltInDependencyFormatsPreserveGeneratedEvidence(format: String) throws {
+    let f = try EvidenceFixture()
+    try f.write("documentation", to: f.root.appendingPathComponent("AGENTS.md"))
+    var commands = f.commands
+    commands["CopySwiftLibs"] = ["tool": "copy-swiftlib", "deps": format == "scalar" ? "libraries.dep" as Any : ["libraries.dep"] as Any]
+    try f.save(commands: commands)
+    #expect(try f.boundary().documentationInputs == ["AGENTS.md"])
+    #expect(try f.evidence().role(module: "Core", list: f.list).targetName == "Core")
+}
+
+@Test func metalDependencyCompletenessRequiresExplicitUnambiguousFlags() throws {
+    let cases: [([String], Bool)] = [
+        ([], false), (["-MMD"], false), (["-MD", "-MMD"], false), (["-MMD", "-MD"], false),
+        (["-MD"], true), (["-MMD", "-Xclang", "-sys-header-deps"], true),
+        (["-Xclang", "-sys-header-deps"], false),
+        (["-MD", "@flags.rsp"], false), (["-MD", "-Wp,-MMD"], false),
+        (["-MD", "-Xpreprocessor", "-MMD"], false), (["-MD", "-MM"], false),
+        (["-MMD", "-Xclang", "-sys-header-deps", "-Xclang", "@flags.rsp"], false),
+        (["-MD", "--config=flags.cfg"], false), (["-MD", "-ivfsoverlay", "overlay.json"], false),
+        (["-MD", "-ivfsoverlay/path/overlay.json"], false), (["-MD", "-ivfsoverlay=overlay.json"], false),
+        (["-MD", "-vfsoverlay", "overlay.json"], false), (["-MD", "-vfsoverlay=overlay.json"], false)
+    ]
+    for (flags, complete) in cases {
+        let f = try EvidenceFixture()
+        try f.write("documentation", to: f.root.appendingPathComponent("AGENTS.md"))
+        try f.write("kernel void example() {}", to: f.root.appendingPathComponent("shader.metal"))
+        let deps = f.derived.appendingPathComponent("shader.dat")
+        try f.write("dependencies: shader.metal\n", to: deps)
+        var commands = f.commands
+        commands["CompileMetalFile"] = ["tool": "shell", "args":
+            ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal", "-c"] + flags + ["-MT", "dependencies", "-MF", deps.path],
+            "inputs": ["shader.metal"], "deps": [deps.path], "deps-style": "makefile"]
+        try f.save(commands: commands)
+        let boundary = try f.boundary()
+        #expect(boundary.documentationInputs == (complete ? ["AGENTS.md"] : []), "\(flags)")
+        if !complete {
+            #expect(boundary.documentationBlockers?["AGENTS.md"]?.contains { $0.contains("Incomplete Metal dependencies") } == true)
+        }
+    }
+}
+
+/// Compile real system includes, rather than fabricating a complete depfile.
+/// Exercise both system search paths and a header that marks itself as system.
+@Test(arguments: ["systemPath", "pragma"], ["-MMD", "-MD", "systemHeaders"])
+func compiledMetalSystemHeadersRemainSelectionInputs(kind: String, mode: String) throws {
+    guard let developer = ProcessInfo.processInfo.environment["IMPACT_METAL_DEVELOPER"] else { return }
+    let metal = try #require(XcodeBuildEvidence.installedMetalTool("metal", developer: developer))
+    let f = try EvidenceFixture()
+    let header = f.root.appendingPathComponent("Docs/Guide.md"), shader = f.root.appendingPathComponent("shader.metal")
+    let deps = f.derived.appendingPathComponent("shader.dat"), product = f.derived.appendingPathComponent("shader.air")
+    // The header containing the pragma is recorded; its nested includes are
+    // classified as system headers and omitted by -MMD.
+    try f.write("#pragma clang system_header\n#include \"Guide.md\"\n", to: f.root.appendingPathComponent("Docs/System.h"))
+    try f.write("#define VALUE 1\n", to: header)
+    try f.write("documentation", to: f.root.appendingPathComponent("AGENTS.md"))
+    let include = kind == "pragma" ? "System.h" : "Guide.md"
+    try f.write("#include <\(include)>\nkernel void example(device int* result [[buffer(0)]]) { result[0] = VALUE; }\n", to: shader)
+    let flags = mode == "systemHeaders" ? ["-MMD", "-Xclang", "-sys-header-deps"] : [mode]
+    let args = [metal, "-c", "-target", "air64-apple-ios26.0-simulator", kind == "pragma" ? "-I" : "-isystem", header.deletingLastPathComponent().path] +
+        flags + ["-MT", "dependencies", "-MF", deps.path, shader.path, "-o", product.path]
+    var commands = f.commands
+    commands["CompileMetalFile"] = ["tool": "shell", "args": args, "inputs": [shader.path],
+        "deps": [deps.path], "deps-style": "makefile", "working-directory": f.root.path]
+    try f.save(commands: commands)
+    var compiler = f.args
+    compiler[0] = developer + "/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    func buildBoundary() throws -> GeneratedSourceBoundary {
+        _ = try CommandRunner.run(metal, Array(args.dropFirst()), at: f.root)
+        #expect(try String(contentsOf: deps, encoding: .utf8).contains("Guide.md") == (mode != "-MMD"))
+        let boundary = try f.boundary(arguments: compiler)
+        #expect(boundary.documentationInputs?.contains("Docs/Guide.md") == false)
+        #expect(boundary.documentationInputs?.contains("AGENTS.md") == (mode != "-MMD"))
+        return boundary
+    }
+    var before = XcodeTestGraph(targets: [], tests: ["Tests/Shaders/testShader()"])
+    before.dependencies = DependencyGraph(functions: [:], tests: [:])
+    before.mappings = UIFeatureMappings(features: [], ignoredDocumentation: ["**.md"])
+    before.generatedSourceBoundaries = ["Core": [try buildBoundary()]]
+    let oldProduct = try ArtifactFiles.digest(product)
+    try f.write("#define VALUE 2\n", to: header)
+    var after = before
+    after.generatedSourceBoundaries = ["Core": [try buildBoundary()]]
+    #expect(try ArtifactFiles.digest(product) != oldProduct)
+    let report = XcodeFineSelector.select(current: after, previous: before, changes: [.init(path: "Docs/Guide.md")], baseRevision: "base")
+    #expect(report.selectedTests == before.tests)
+    #expect(report.ignoredChanges.isEmpty)
+    #expect(report.diagnostics.contains { $0.code == "documentation_exclusion_blocked" })
+}
+
+@Test(arguments: ["file", "missing", "directory", "danglingSymlink", "backslashCollision"])
+func metalDependenciesRequireResolvedFiles(kind: String) throws {
+    let f = try EvidenceFixture()
+    let document = kind == "backslashCollision" ? #"Docs/Guide\file.md"# : "Docs/Guide.md"
+    try f.write("documentation", to: f.root.appendingPathComponent(document))
+    let input = f.root.appendingPathComponent("Docs/Guide/file.md")
+    switch kind {
+    case "file", "backslashCollision": try f.write("input", to: input)
+    case "directory": try FileManager.default.createDirectory(at: input, withIntermediateDirectories: true)
+    case "danglingSymlink":
+        try FileManager.default.createSymbolicLink(at: f.root.appendingPathComponent("missing-link"), withDestinationURL: input)
+    default: break
+    }
+    // The repository manifest is supplied separately so the dangling-symlink
+    // case reaches dependency validation rather than the repository symlink gate.
+    let deps = f.derived.appendingPathComponent("shader.dat")
+    let path = kind == "danglingSymlink" ? f.root.appendingPathComponent("missing-link").path : input.path
+    try f.write("dependencies: " + path + "\n", to: deps)
+    var commands = f.commands
+    commands["CompileMetalFile"] = ["tool": "shell", "args": [
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal", "-c", "-MD", "-MT", "dependencies", "-MF", deps.path],
+        "deps": [deps.path], "deps-style": "makefile"]
+    try f.save(commands: commands)
+    let files = [document: "content"]
+    let boundary = try f.evidence().boundary(file: f.generated, module: "Core", list: f.list, arguments: f.args,
+        repositoryInputs: XcodeGraphCache.key(files), repositoryInputFiles: files)
+    #expect(boundary.documentationInputs == (kind == "file" ? [document] : []))
+    if kind != "file" {
+        #expect(boundary.documentationBlockers?[document]?.contains { $0.contains("Metal") && $0.contains("unsupported") || $0.contains("Unsupported repository path") } == true)
+    }
+}
+
+/// Both the virtual path and the slash-spelled collision can exist on disk.
+/// Existence alone must not turn lossy dependency evidence into an exclusion.
+@Test(arguments: ["overlay", "joinedOverlay", "backslash", "backslashCollision"])
+func compiledMetalPathAliasesCannotHideRepositoryInputs(kind: String) throws {
+    guard let developer = ProcessInfo.processInfo.environment["IMPACT_METAL_DEVELOPER"] else { return }
+    let metal = try #require(XcodeBuildEvidence.installedMetalTool("metal", developer: developer))
+    let f = try EvidenceFixture()
+    let isOverlay = kind == "overlay" || kind == "joinedOverlay"
+    let document = isOverlay ? "Docs/Guide.md" : #"Docs/Guide\file.md"#
+    let header = f.root.appendingPathComponent(document), shader = f.root.appendingPathComponent("shader.metal")
+    let deps = f.derived.appendingPathComponent("shader.dat"), product = f.derived.appendingPathComponent("shader.air")
+    var flags: [String] = [], inputs = [shader.path]
+    if isOverlay {
+        let overlay = f.root.appendingPathComponent("overlay.json"), virtual = f.root.appendingPathComponent("Virtual.h")
+        let vfs: [String: Any] = ["version": 0, "use-external-names": false, "roots": [
+            ["type": "file", "name": virtual.path, "external-contents": header.path]]]
+        try f.write(String(decoding: JSONSerialization.data(withJSONObject: vfs), as: UTF8.self), to: overlay)
+        try f.write("#define VALUE 99\n", to: virtual)
+        flags = kind == "joinedOverlay" ? ["-ivfsoverlay" + overlay.path] : ["-ivfsoverlay", overlay.path]
+        inputs.append(overlay.path)
+    } else if kind == "backslashCollision" {
+        try f.write("#define VALUE 99\n", to: f.root.appendingPathComponent("Docs/Guide/file.md"))
+    }
+    try f.write("#define VALUE 1\n", to: header)
+    let include = isOverlay ? "Virtual.h" : document
+    try f.write("#include \"\(include)\"\nkernel void example(device int* result [[buffer(0)]]) { result[0] = VALUE; }\n", to: shader)
+    let args = [metal, "-c", "-target", "air64-apple-ios26.0-simulator"] + flags +
+        ["-MMD", "-Xclang", "-sys-header-deps", "-MT", "dependencies", "-MF", deps.path, shader.path, "-o", product.path]
+    var commands = f.commands
+    commands["CompileMetalFile"] = ["tool": "shell", "args": args, "inputs": inputs,
+        "deps": [deps.path], "deps-style": "makefile", "working-directory": f.root.path]
+    try f.save(commands: commands)
+    var compiler = f.args
+    compiler[0] = developer + "/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    func buildBoundary() throws -> GeneratedSourceBoundary {
+        _ = try CommandRunner.run(metal, Array(args.dropFirst()), at: f.root)
+        #expect(try !String(contentsOf: deps, encoding: .utf8).contains(document))
+        let boundary = try f.boundary(arguments: compiler)
+        #expect(boundary.documentationInputs?.contains(document) == false)
+        return boundary
+    }
+    var before = XcodeTestGraph(targets: [], tests: ["Tests/Shaders/testShader()"])
+    before.dependencies = DependencyGraph(functions: [:], tests: [:])
+    before.mappings = UIFeatureMappings(features: [], ignoredDocumentation: ["**.md"])
+    before.generatedSourceBoundaries = ["Core": [try buildBoundary()]]
+    let oldProduct = try ArtifactFiles.digest(product)
+    try f.write("#define VALUE 2\n", to: header)
+    var after = before
+    after.generatedSourceBoundaries = ["Core": [try buildBoundary()]]
+    #expect(try ArtifactFiles.digest(product) != oldProduct)
+    let report = XcodeFineSelector.select(current: after, previous: before, changes: [.init(path: document)], baseRevision: "base")
+    #expect(report.selectedTests == before.tests)
+    #expect(report.ignoredChanges.isEmpty)
+    #expect(report.diagnostics.contains { $0.code == "documentation_exclusion_blocked" })
 }

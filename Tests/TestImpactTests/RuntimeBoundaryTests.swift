@@ -349,7 +349,7 @@ func generatedInputsAreComparedEvenWithoutGitPaths(scenario: String) throws {
     #expect(saved.generatedSourceBoundaries == current.generatedSourceBoundaries)
 }
 
-@Test(arguments: ["docs", "mixed", "added", "deleted", "oneSided", "resource", "legacy", "generator", "unignored"])
+@Test(arguments: ["docs", "mixed", "added", "deleted", "oneSided", "resource", "legacy", "legacyDocumentation", "versionTwoDocumentation", "unknownDocumentation", "generator", "unignored"])
 func generatedBoundariesHonorOnlyProvenIgnoredDocumentation(scenario: String) throws {
     var old = boundaryFixture()
     var boundary = GeneratedSourceBoundary(module: "App", logicalPath: "<DerivedData>/Generated.swift", contentDigest: "source", generatorIdentity: "settings", repositoryInputs: "")
@@ -371,6 +371,17 @@ func generatedBoundariesHonorOnlyProvenIgnoredDocumentation(scenario: String) th
     }
     boundary.repositoryInputs = try XcodeGraphCache.key(boundary.repositoryInputFiles!)
     if scenario == "legacy" { boundary.repositoryInputFiles = nil; boundary.documentationInputs = nil }
+    if scenario == "legacyDocumentation" {
+        var encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(boundary)) as? [String: Any])
+        encoded.removeValue(forKey: "documentationEvidenceVersion")
+        boundary = try JSONDecoder().decode(GeneratedSourceBoundary.self, from: JSONSerialization.data(withJSONObject: encoded))
+        #expect(boundary.documentationEvidenceVersion == nil)
+    }
+    if scenario == "unknownDocumentation" { boundary.documentationEvidenceVersion = 999 }
+    if scenario == "versionTwoDocumentation" {
+        boundary.documentationEvidenceVersion = 2
+        old.generatedSourceBoundaries?["App"]?[0].documentationEvidenceVersion = 2
+    }
     current.generatedSourceBoundaries = ["App": [boundary]]
     let changes: [FileChange] = scenario == "mixed" ? [.init(path: "AGENTS.md"), .init(path: "App.swift")] : [.init(path: "AGENTS.md")]
     let report = XcodeFineSelector.select(current: current, previous: old, changes: changes, baseRevision: "base")
@@ -420,4 +431,21 @@ func generatedBoundariesHonorProvenProjectReferenceMoves(scenario: String) throw
     if scenario == "move" { #expect(report.selectedTests.isEmpty) }
     else if scenario == "mixed" { #expect(report.selectedTests == ["Tests/Other/testOther()"]) }
     else { #expect(Set(report.selectedTests) == Set(current.tests)) }
+}
+
+@Test func documentationBlockersSurviveArchivesAndExplainFallback() throws {
+    var old = mixedBoundaryFixture(), current = mixedBoundaryFixture("assert(false)")
+    func boundary(_ digest: String) throws -> GeneratedSourceBoundary {
+        let files = ["AGENTS.md": digest]
+        return GeneratedSourceBoundary(module: "App", logicalPath: "<DerivedData>/generated.swift", contentDigest: "same",
+            generatorIdentity: "same", repositoryInputs: try XcodeGraphCache.key(files), repositoryInputFiles: files,
+            documentationInputs: [], documentationBlockers: ["AGENTS.md": ["Unrecognized shell task custom-script: /bin/sh"]])
+    }
+    old.generatedSourceBoundaries = ["App": [try boundary("old")]]
+    current.generatedSourceBoundaries = ["App": [try boundary("new")]]
+    let archived = try GraphArchive.decode(GraphArchive.encode(current))
+    let report = XcodeFineSelector.select(current: archived, previous: old,
+        changes: [.init(path: "UI.swift"), .init(path: "AGENTS.md")], baseRevision: "base")
+    #expect(Set(report.selectedTests) == Set(current.tests))
+    #expect(report.diagnostics.contains { $0.code == "documentation_exclusion_blocked" && $0.message.contains("custom-script: /bin/sh") })
 }

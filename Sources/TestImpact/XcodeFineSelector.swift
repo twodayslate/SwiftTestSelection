@@ -134,7 +134,8 @@ public enum XcodeFineSelector {
                 [current.mappings, previous?.mappings].allSatisfy { mappings in
                     mappings?.ignoredDocumentation?.contains { UIFeatureMappings.matches(path, pattern: $0) } == true
                 } && generatedBoundaries.allSatisfy { boundary in
-                    guard let files = boundary.repositoryInputFiles, let documentation = boundary.documentationInputs else { return false }
+                    guard boundary.documentationEvidenceVersion == 3,
+                          let files = boundary.repositoryInputFiles, let documentation = boundary.documentationInputs else { return false }
                     return files[path] == nil || documentation.contains(path)
                 }
         }
@@ -147,6 +148,8 @@ public enum XcodeFineSelector {
         func comparable(_ boundaries: [GeneratedSourceBoundary]?, ignoring paths: Set<String>) -> [GeneratedSourceBoundary]? {
             boundaries?.map { boundary in
                 var result = boundary
+                // Explanations are not semantic generator inputs.
+                result.documentationBlockers = nil
                 if let files = boundary.repositoryInputFiles, let documentation = boundary.documentationInputs,
                    (try? XcodeGraphCache.key(files)) == boundary.repositoryInputs {
                     let filtered = files.filter { !paths.contains($0.key) }
@@ -196,6 +199,13 @@ public enum XcodeFineSelector {
             } else if change.isPureMove && change.path.hasSuffix(".pbxproj") {
                 ignored.insert(change.path)
             } else if !change.path.hasSuffix(".swift") || !knownPaths.contains(change.path) || !analyzedPaths.contains(change.path) {
+                let blockers = Set(paths.flatMap { path in
+                    generatedBoundaries.flatMap { $0.documentationBlockers?[path] ?? [] }
+                }).sorted()
+                if !blockers.isEmpty {
+                    diagnostics.append(SelectionDiagnostic(code: "documentation_exclusion_blocked",
+                        message: "Cannot exclude \(change.path) from build inputs: " + blockers.joined(separator: "; "), tests: inventory.sorted()))
+                }
                 fallback("unclassified_change", "Change lacks a supported semantic source boundary: \(change.path)")
             }
         }

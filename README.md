@@ -349,7 +349,8 @@ mkdir -p "$ARTIFACTS"
 
 build_options=(-project "$PROJECT" -scheme App -testPlan AllTests
                -configuration Debug -destination "$DESTINATION"
-               -derivedDataPath "$DERIVED_DATA")
+               -derivedDataPath "$DERIVED_DATA"
+               'MTL_COMPILER_FLAGS=$(inherited) -Xclang -sys-header-deps')
 xcodebuild build-for-testing "${build_options[@]}" > "$ARTIFACTS/build.log" 2>&1
 xcodebuild build-for-testing "${build_options[@]}" -showBuildSettings -json \
   > "$ARTIFACTS/settings.json"
@@ -657,9 +658,35 @@ conservatively fingerprints repository non-Swift files and package manifests.
 An `ignoredDocumentation` pattern present in both revisions also applies to these
 fingerprints when the active build evidence proves the Markdown file is outside
 build inputs. Markdown resources, directory inputs, and files referenced by build
-commands remain protected. Unknown shell tools prevent this exclusion because
-they may consume undeclared inputs. Older graphs with only opaque fingerprints
-remain conservative; regenerate both graphs to obtain the per-file evidence.
+commands remain protected. Standard `copypng` and `xcstringstool` tasks are
+recognized at their exact locations in the active compiler's Xcode installation.
+External Metal tools must match `xcrun --toolchain com.apple.dt.toolchain.Metal
+--find metal` (or `metallib`) using that Xcode and a clean environment. A matching
+executable basename elsewhere is insufficient. These tools' declared inputs and
+arguments still participate in the Markdown checks. Metal compilation also
+requires its emitted makefile dependency list; included Markdown is protected,
+and missing or unsupported dependency evidence keeps the conservative fallback.
+Dependency files are fingerprinted alongside the active build metadata.
+Xcode's default `-MMD` omits system headers, including repository files found
+through `-isystem` or marked with `#pragma clang system_header`. Tool-managed
+builds and `Scripts/capture-build.py` add
+`MTL_COMPILER_FLAGS='$(inherited) -Xclang -sys-header-deps'` to include them while
+preserving project Metal flags. When importing your own build, use the same
+setting for both `build-for-testing` and `-showBuildSettings`, as in the example
+above. Merely adding `-MD` alongside Xcode's `-MMD` is insufficient. Imports with
+incomplete or opaque dependency flags retain a diagnostic and conservative
+selection; they are not recompiled to recover missing Metal evidence.
+Spaced and joined VFS-overlay options are unsupported. Dependency paths must
+resolve to readable regular files; missing paths, directories, and dangling links
+block exclusions. Markdown paths containing literal backslashes or newlines also
+remain conservative because Metal's dependency output cannot reliably preserve
+those spellings, even when a different file exists at the rewritten path.
+Unknown shell tools prevent this exclusion because they may consume undeclared
+inputs. Each boundary's `documentationBlockers` records the exact command/input;
+selection emits `documentation_exclusion_blocked` when a changed Markdown file
+cannot be excluded. Graphs without `documentationEvidenceVersion: 3`, including
+earlier graphs with per-file exclusions or opaque fingerprints, cannot establish
+safe exclusions; regenerate both revisions to obtain the complete evidence.
 Proven reference-only `.pbxproj` edits accompanying pure file moves are also
 excluded from the repository fingerprint comparison. Generated content, generator
 settings and resource paths/content still participate in comparison.
