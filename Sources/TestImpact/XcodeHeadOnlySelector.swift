@@ -37,8 +37,8 @@ struct XcodeHeadOnlySources {
     }
 }
 
-/// Supports surviving function bodies with unchanged declaration headers and
-/// ownership/build inputs. Structural edits cannot recover vanished old edges:
+/// Supports surviving function bodies and proven isolated private test helper
+/// additions with unchanged ownership/build inputs. Other structural edits cannot recover vanished old edges:
 /// they select the full head inventory with an explicit uncertainty diagnostic.
 /// This does not delegate to the two-graph selector with a synthetic previous.
 enum XcodeHeadOnlySelector {
@@ -83,12 +83,21 @@ enum XcodeHeadOnlySelector {
         let old = Dictionary(grouping: source.base.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
         let new = Dictionary(grouping: current.sources.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
         let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries)
+        let dependencyIndex = current.dependencies.map(DependencyIndex.init)
+        var isolatedHelpers = Set<String>()
         var changed: [SourceUnit] = []
         var semanticPaths = Set<String>()
         for key in Set(old.keys).union(new.keys).sorted() {
             let before = old[key] ?? [], after = new[key] ?? []
             guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() else { continue }
             semanticPaths.formUnion((before + after).map { $0.region.path })
+            if before.count <= 1, after.count == 1, let unit = after.first,
+               let graph = current.dependencies, let index = dependencyIndex,
+               PrivateTestHelperIsolation.proves(unit, previous: before.first, current: current, base: source.base, graph: graph, index: index) {
+                isolatedHelpers.insert(key)
+                changed.append(unit)
+                continue
+            }
             guard before.count == 1, after.count == 1, let a = before.first, let b = after.first,
                   a.kind == "function", b.kind == "function", a.region.path == b.region.path else {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \((before + after).first?.region.path ?? key)")
@@ -128,9 +137,9 @@ enum XcodeHeadOnlySelector {
         }
         var mappingIndex: MappingIndex?
         if let graph = current.dependencies {
-            let index = DependencyIndex(graph)
+            let index = dependencyIndex!
             if let mappings = current.mappings { mappingIndex = MappingIndex(mappings, snapshot: current, graph: graph, index: index) }
-            var affected = Set<String>(), production: [SourceUnit] = []
+            var affected = Set<String>(), isolatedSymbols = Set<String>(), production: [SourceUnit] = []
             for unit in changed {
                 let module = String(unit.key.prefix { $0 != ":" })
                 let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
@@ -152,12 +161,13 @@ enum XcodeHeadOnlySelector {
                 })
                 if ids.isEmpty { fallback("head_only_unresolved_body", "No compiled function for surviving body \(unit.region.path):\(unit.region.startLine)") }
                 affected.formUnion(ids)
+                if isolatedHelpers.contains(unit.key) { isolatedSymbols.formUnion(ids) }
                 if owners.contains(where: { !$0.isTest }) { production.append(unit) }
             }
             let affectedPaths = index.paths(to: affected)
             for test in inventory.sorted() {
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
-                    include([test], kind: "dependency", reason: "Head compiler dependencies reach a surviving body with an unchanged declaration header", path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
+                    include([test], kind: "dependency", reason: path.last.map(isolatedSymbols.contains) == true ? "Head compiler dependencies reach a changed body; private helper isolation is verified from base/head syntax and compiled consumers" : "Head compiler dependencies reach a surviving body with an unchanged declaration header", path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
                 if !changed.isEmpty {
                     let roots = graph.tests[test] ?? []
@@ -167,14 +177,14 @@ enum XcodeHeadOnlySelector {
                     for message in graph.testDiagnostics[test] ?? [] { fallback("head_only_unresolved_test", message, tests: [test]) }
                 }
             }
-            let entriesOnly = !changed.isEmpty && changed.allSatisfy { XcodeFineSelector.isTestEntry($0, in: current) }
+            let entriesOnly = !changed.isEmpty && changed.allSatisfy { isolatedHelpers.contains($0.key) || XcodeFineSelector.isTestEntry($0, in: current) }
             if !changed.isEmpty && !entriesOnly {
                 let opaque = index.paths(to: Set(graph.functions.values.filter(\.hasOpaqueRuntimeDependency).map(\.id)))
                 let productionKeys = Set(production.map(\.key))
                 // App feature contracts do not isolate test helpers or lifecycle
                 // code. A mixed production edit must preserve their uncertainty.
                 let declaredUI = current.mappings?.runtimeDependencyPolicy == .declared && source.mappings?.runtimeDependencyPolicy == .declared &&
-                    changed.allSatisfy { productionKeys.contains($0.key) || XcodeFineSelector.isTestEntry($0, in: current) }
+                    changed.allSatisfy { productionKeys.contains($0.key) || isolatedHelpers.contains($0.key) || XcodeFineSelector.isTestEntry($0, in: current) }
                 for test in inventory.sorted() {
                     if !production.isEmpty, uiTests.contains(test), declaredUI { continue }
                     if opaque.path(from: graph.tests[test] ?? []) != nil {
@@ -228,8 +238,8 @@ enum XcodeHeadOnlySelector {
         } else if !changes.isEmpty { fallback("head_only_incomplete_graph", "Missing head compiler graph") }
         var report = ImpactReport(baseRevision: baseRevision, totalTests: inventory.count, selectedTests: selected.sorted(), explanations: explanations,
             fullRunReasons: fullReasons.sorted(), changedFiles: changes.map(\.path).sorted(), unreferencedChanges: [], limitations: [
-                "Head-only mode has no base compiler graph. Added/deleted/moved declarations, signature, dispatch, state, resource and configuration changes conservatively select all head tests.",
-                "Focused selection supports surviving function bodies with unchanged headers. Head dependency paths are evidence; absent old edges are never treated as proof for structural changes.",
+                "Head-only mode has no base compiler graph. Except for proven isolated private test helper additions, added/deleted/moved declarations, signature, dispatch, state, resource and configuration changes conservatively select all head tests.",
+                "Focused selection supports surviving function bodies with unchanged headers and private test helpers whose nonescaping source callers and compiler bindings prove isolation. Head dependency paths are evidence; absent old edges are never treated as proof for structural changes.",
                 "Tests are assumed independent. Non-UI runtime isolation is not inferred from base source imports; app-hosted and opaque runtime effects retain explicit fallbacks.",
                 "UI feature mappings are explicit dependency contracts, not measured coverage. Validate selections with full runs."])
         report.schemaVersion = 2; report.analysisMode = "head-only-git-syntax"

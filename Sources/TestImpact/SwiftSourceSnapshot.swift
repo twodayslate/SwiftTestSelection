@@ -33,6 +33,8 @@ public struct SourceUnit: Codable, Sendable {
     /// source-location default. Separate dimensions avoid line-only changes
     /// affecting callers of a file-only default.
     public var callerLocations: [String: String]? = nil
+    /// Syntax proof for a private helper referenced only by direct test calls.
+    public var privateTestHelper: PrivateTestHelperSyntax? = nil
 
     static func withLocations(_ values: [String], syntax: String) -> String {
         values.isEmpty ? syntax : syntax + "@locations[" +
@@ -55,6 +57,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// First inherited type for each class, excluding trailing conformances.
     /// Older snapshots fall back to the broader inheritance inventory.
     public var superclasses: [String: [String]]? = nil
+    /// Optional proof inventory; older captures conservatively decline isolation.
+    public var identifierNames: Set<String>? = nil
+    public var helperSafeClasses: [String: String]? = nil
+    public var helperNamesUnshadowed: Bool? = nil
 
     /// Match specialized superclass references to their nominal declarations.
     /// Parse the type so nested arguments, function types and qualification do
@@ -81,6 +87,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         result.dispatchOverrides = []
         result.typeAliases = []
         result.superclasses = [:]
+        let identifiers = Dictionary(grouping: tree.tokens(viewMode: .sourceAccurate).filter { $0.identifier != nil }, by: { $0.identifier!.name })
+        result.identifierNames = Set(identifiers.keys)
+        result.helperNamesUnshadowed = PrivateTestHelperSyntax.reservedNames.allSatisfy { name in
+            !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
+        }
+        result.helperSafeClasses = [:]
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
         // Preserve syntax structure, token kinds and literal contents, but not
         // trivia. Location values belong to their expression, not the whole file.
@@ -262,7 +274,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 fileLocationValues: values.filter { !$0.hasPrefix("line:") && !$0.hasPrefix("column:") },
                 locationDefaultKinds: defaults,
                 locationDefaultNames: defaultNames, invocationNames: calls.names,
-                callerLocations: calls.locations))
+                callerLocations: calls.locations,
+                privateTestHelper: node.as(FunctionDeclSyntax.self).flatMap {
+                    PrivateTestHelperSyntax.prove($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [], locations: locations)
+                }))
         }
         func walk(_ node: Syntax, scope: [String]) {
             if let item = node.as(CodeBlockItemSyntax.self), !item.item.is(DeclSyntax.self) {
@@ -273,6 +288,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 for child in node.children(viewMode: .sourceAccurate) { walk(child, scope: scope) }
             } else if let value = node.as(ClassDeclSyntax.self) {
                 let names = scope + [value.name.text]
+                if scope.isEmpty, let parent = PrivateTestHelperSyntax.safeSuperclass(value) {
+                    result.helperSafeClasses![module + "." + value.name.text] = parent
+                }
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
                 add(header, header: header, kind: "type", scope: names)
                 result.inheritance[module + "." + names.joined(separator: "."), default: []] += value.inheritanceClause?.inheritedTypes.map { $0.type.trimmedDescription } ?? []
