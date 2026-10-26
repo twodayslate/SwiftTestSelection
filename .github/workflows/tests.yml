@@ -1,0 +1,39 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests (macOS)
+    # PR code, including forks, runs on an ephemeral GitHub-hosted runner.
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          python3 --version
+      - name: Swift unit tests
+        # Several tests launch compiler processes; keep memory bounded on the
+        # standard hosted runner while still running the entire test suite.
+        run: swift test --jobs 3 --no-parallel
+      - name: Capture-script unit tests
+        run: python3 Scripts/capture_build_test.py

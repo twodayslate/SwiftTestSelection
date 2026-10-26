@@ -856,6 +856,13 @@ For Xcode, construct `XcodeConfiguration(container:path:scheme:destination:confi
 
 ## Validation
 
+The [Tests workflow](.github/workflows/tests.yml) runs the full Swift package
+test suite and capture-script unit tests on pull requests, pushes to `main`,
+merge-queue entries, and manual dispatches. It uses a GitHub-hosted macOS 26
+runner with Xcode 26.6, including for fork PRs. New commits cancel superseded
+test runs for the same PR or ref. The check is named `Unit tests (macOS)`;
+it can be selected as a required status check in repository branch rules.
+
 See [issue #39 validation](Documentation/Issue39Validation.md) for fresh
 real-project graphs, source-location policy and cache comparisons, measured time
 and memory, and execution of the single selected UI test. The report also records
