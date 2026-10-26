@@ -958,8 +958,8 @@ fresh build proves the file is not an input; unknown tasks block that proof.
 JSON reports identify `analysisMode: "head-only-git-syntax"`, resolved revisions,
 exact method identifiers, dependency/mapping/fallback reasons, and timed phases.
 `baseSourceSyntax` reads Git blobs; it is not base compiler extraction. Every
-fallback uses the same retained head build. A malformed report or damaged capture
-fails verification. A valid empty selection executes no tests. `--full-suite`
+fallback uses the same retained head build. Capture failures prevent publication; malformed reports or modified graphs/products
+fail verification. A valid empty selection executes no tests. `--full-suite`
 explicitly selects all enabled head tests, still with one build. After execution,
 the job's retained directory can be removed; nothing must survive to the next job.
 Changes outside Git, such as an SDK/toolchain update, script environment or unlocked

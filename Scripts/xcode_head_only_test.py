@@ -140,10 +140,12 @@ try:
     # Damage each trust boundary and require failure before any test launch.
     verified=subprocess.run(list(map(str,[tool,'verify-build',*common,'--report',full[2],'--head-graph',full[1]/'head-graph.json'])),cwd=source,env=env,capture_output=True,text=True)
     assert verified.returncode==0,verified.stderr
-    for label, path in [('capture',full[1]/'SILCapture/build.json'),('products',Path(json.loads(verified.stdout)['xctestrun']))]:
+    artifact=json.loads((full[1]/'head-graph.json').read_text())['buildArtifact']
+    executable,=(key for key in artifact['products'] if key.endswith('/UnitTests.xctest/UnitTests'))
+    for label, path in [('graph',full[1]/'head-graph.json'),('products',Path(artifact['productsDirectory'])/executable)]:
         original=path.read_bytes(); calls.write_text('')
         try:
-            path.write_bytes(original+b'\n')
+            path.write_bytes(original+b'\0')
             fail=subprocess.run(list(map(str,[tool,'run',*common,'--report',full[2],'--head-graph',full[1]/'head-graph.json'])),cwd=source,env=env,capture_output=True)
             assert fail.returncode!=0
             assert not any('test-without-building' in c or 'build-for-testing' in c for c in map(json.loads,calls.read_text().splitlines()))
