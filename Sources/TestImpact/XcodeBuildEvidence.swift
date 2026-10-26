@@ -54,6 +54,19 @@ struct XcodeBuildEvidence {
             case tool, args, env, inputs, outputs, deps
             case depsStyle = "deps-style", workingDirectory = "working-directory"
         }
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            tool = try values.decode(String.self, forKey: .tool)
+            args = try values.decodeIfPresent([String].self, forKey: .args)
+            env = try values.decodeIfPresent([String: String].self, forKey: .env)
+            inputs = try values.decodeIfPresent([String].self, forKey: .inputs)
+            outputs = try values.decodeIfPresent([String].self, forKey: .outputs)
+            // Built-in tasks use a scalar path; shell tasks use a list.
+            if let path = try? values.decode(String.self, forKey: .deps) { deps = [path] }
+            else { deps = try values.decodeIfPresent([String].self, forKey: .deps) }
+            depsStyle = try values.decodeIfPresent(String.self, forKey: .depsStyle)
+            workingDirectory = try values.decodeIfPresent(String.self, forKey: .workingDirectory)
+        }
         var isMetal: Bool { args?.first.map { ["metal", "metallib"].contains(URL(fileURLWithPath: $0).lastPathComponent) } ?? false }
     }
     private struct Manifest: Decodable { var commands: [String: Command] }

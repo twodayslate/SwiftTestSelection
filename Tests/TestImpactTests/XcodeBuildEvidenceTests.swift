@@ -269,3 +269,14 @@ func metalIncludesAreSealedBuildInputs(scenario: String) throws {
         #expect(XcodeBuildEvidence.metalDependencies(text) == nil)
     }
 }
+
+@Test(arguments: ["scalar", "array"])
+func unrelatedBuiltInDependencyFormatsPreserveGeneratedEvidence(format: String) throws {
+    let f = try EvidenceFixture()
+    try f.write("documentation", to: f.root.appendingPathComponent("AGENTS.md"))
+    var commands = f.commands
+    commands["CopySwiftLibs"] = ["tool": "copy-swiftlib", "deps": format == "scalar" ? "libraries.dep" as Any : ["libraries.dep"] as Any]
+    try f.save(commands: commands)
+    #expect(try f.boundary().documentationInputs == ["AGENTS.md"])
+    #expect(try f.evidence().role(module: "Core", list: f.list).targetName == "Core")
+}
