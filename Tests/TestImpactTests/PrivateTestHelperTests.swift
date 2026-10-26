@@ -161,6 +161,14 @@ func compiledPrivateXCTestHelpersSelectOnlyProvenConsumers(added: Bool, safety: 
     }
     legacyProof = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(legacyProof))
     #expect(select(legacyProof).selectedTests.contains(tests[3]))
+    for version in [nil, 0, PrivateTestHelperSyntax.currentProofVersion + 1] as [Int?] {
+        var staleProof = current
+        for i in staleProof.sources["UI:UI.swift"]!.units.indices {
+            staleProof.sources["UI:UI.swift"]!.units[i].privateTestHelper?.proofVersion = version
+        }
+        staleProof = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(staleProof))
+        #expect(select(staleProof).selectedTests.contains(tests[3]))
+    }
     var state = current
     let helperIDs = graph.functions.values.filter { $0.name.contains(added ? ".navigationTab(" : ".assertShareOptions(") }.map(\.id)
     #expect(!helperIDs.isEmpty)

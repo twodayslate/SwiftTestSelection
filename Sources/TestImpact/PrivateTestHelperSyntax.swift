@@ -8,6 +8,9 @@ import SwiftSyntax
 public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var name: String
     public var callerLines: Set<Int>
+    /// A capture produced by an older escape analysis must not grant isolation.
+    public var proofVersion: Int? = nil
+    static let currentProofVersion = 1
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
 
@@ -101,9 +104,11 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             while let node = ancestor {
                 if let method = node.as(FunctionDeclSyntax.self) { caller = method; break }
                 // Enclosing expressions can synthesize escaping autoclosures
-                // (operators, subscripts, string interpolation), even when no
-                // explicit closure or enclosing function call appears in source.
-                if node.is(ExprSyntax.self) || node.is(AccessorDeclSyntax.self) || node.is(DeferStmtSyntax.self) { return nil }
+                // (operators, subscripts, string interpolation). Patterns can
+                // also call a custom ~= with an escaping autoclosure, without
+                // any enclosing expression (guard/while/for/catch patterns).
+                if node.is(ExprSyntax.self) || node.is(PatternSyntax.self) ||
+                    node.is(AccessorDeclSyntax.self) || node.is(DeferStmtSyntax.self) { return nil }
                 if let variable = node.as(VariableDeclSyntax.self), !variable.modifiers.isEmpty || !variable.attributes.isEmpty { return nil }
                 ancestor = node.parent
             }
@@ -113,7 +118,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             callers.insert(locations.location(for: caller.positionAfterSkippingLeadingTrivia).line)
         }
         guard !callers.isEmpty else { return nil }
-        return Self(name: name, callerLines: callers, statements: statements(in: function))
+        return Self(name: name, callerLines: callers, proofVersion: currentProofVersion, statements: statements(in: function))
     }
 
     private static func safeBody(_ function: FunctionDeclSyntax) -> Bool {

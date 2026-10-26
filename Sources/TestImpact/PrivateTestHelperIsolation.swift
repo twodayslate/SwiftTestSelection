@@ -8,9 +8,10 @@ import Foundation
 enum PrivateTestHelperIsolation {
     static func proves(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
                        base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex) -> Bool {
-        guard let syntax = unit.privateTestHelper, syntax.statements != nil, unit.headOnlyBodySupported == true,
+        guard let syntax = unit.privateTestHelper, syntax.proofVersion == PrivateTestHelperSyntax.currentProofVersion,
+              syntax.statements != nil, unit.headOnlyBodySupported == true,
               previous == nil || (previous?.headOnlyBodySupported == true &&
-                  previous?.privateTestHelper.map { syntax.preservesEffects(of: $0) } == true),
+                  previous?.privateTestHelper.map { $0.proofVersion == PrivateTestHelperSyntax.currentProofVersion && syntax.preservesEffects(of: $0) } == true),
               current.tests.allSatisfy({ test in
                   guard let roots = graph.tests[test], !roots.isEmpty, graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
                   return roots.allSatisfy { graph.functions[$0] != nil }

@@ -1069,8 +1069,10 @@ NSPredicate construction. They cannot capture `self` or free project variables,
 write state, take inout/function-valued/default arguments, or contain closures or
 macros. Known global/shared-state and raw-pointer effects in project callees also
 prevent isolation. Calls wrapped in other expressions (including operators,
-subscripts and string interpolation) are not treated as direct calls: they may
-create escaping autoclosures. For an existing helper, all old statements must
+subscripts and string interpolation) or used as matching patterns are not treated
+as direct calls: they may create escaping autoclosures, including through custom
+`~=` operators in guard/while/for/catch patterns. Stored proof versions must match
+the current escape analysis; older or unknown versions retain fallback. For an existing helper, all old statements must
 remain unchanged and in order; only standalone XCTest assertions may be added.
 Removing/replacing/reordering statements or changing local bindings/control flow
 retains runtime fallback because head edges cannot prove the effects of old calls.

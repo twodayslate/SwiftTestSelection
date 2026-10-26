@@ -5,7 +5,9 @@ import Foundation
 import Testing
 @testable import TestImpact
 
-@Test(arguments: ["operator", "operator-added", "subscript", "subscript-added", "removed-state", "rebound-state"])
+@Test(arguments: ["operator", "operator-added", "subscript", "subscript-added", "removed-state", "rebound-state",
+                  "guard-pattern", "guard-pattern-added", "while-pattern", "while-pattern-added",
+                  "for-pattern", "for-pattern-added", "catch-pattern", "catch-pattern-added"])
 func privateHelperIsolationRetainsEscapesAndRemovedState(kind: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("helper-safety-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -13,7 +15,7 @@ func privateHelperIsolationRetainsEscapesAndRemovedState(kind: String) throws {
     let support: String
     var before: String
     let after: String
-    let escaped = kind.hasPrefix("operator") || kind.hasPrefix("subscript")
+    let escaped = kind.hasPrefix("operator") || kind.hasPrefix("subscript") || kind.contains("-pattern")
     let added = kind.hasSuffix("-added")
     if escaped {
         support = """
@@ -21,6 +23,9 @@ func privateHelperIsolationRetainsEscapesAndRemovedState(kind: String) throws {
         @MainActor var callback: (() -> Bool)?
         infix operator ~>
         @MainActor func ~>(lhs: Bool, rhs: @autoclosure @escaping () -> Bool) { callback = rhs }
+        @MainActor func ~= (pattern: @autoclosure @escaping () -> Bool, value: Bool) -> Bool { callback = pattern; return true }
+        @MainActor func ~= (pattern: @autoclosure @escaping () -> Bool, value: any Error) -> Bool { callback = pattern; return true }
+        enum ProbeError: Error { case value }
         @MainActor struct Recorder {
             subscript(_ rhs: @autoclosure @escaping () -> Bool) -> Bool { callback = rhs; return true }
         }
@@ -32,13 +37,24 @@ func privateHelperIsolationRetainsEscapesAndRemovedState(kind: String) throws {
         import XCTest
         @MainActor final class Suite: XCTestCase {
             func testRegister() { false ~> self.candidate() }
-            private func candidate() -> Bool { false }
+            private func candidate() -> Bool { return false }
         }
         """
         if kind.hasPrefix("subscript") {
             before = before.replacingOccurrences(of: "false ~> self.candidate()", with: "_ = Recorder()[self.candidate()]")
         }
-        after = before.replacingOccurrences(of: "-> Bool { false }", with: "-> Bool { true }")
+        let patterns = [
+            "guard": "guard case self.candidate() = true else { return }",
+            "while": "while case self.candidate() = true { break }",
+            "for": "for case self.candidate() in [true] {}",
+            "catch": "do { throw ProbeError.value } catch self.candidate() {} catch {}"
+        ]
+        if kind.contains("-pattern"), let pattern = patterns[String(kind.prefix { $0 != "-" })] {
+            before = before.replacingOccurrences(of: "false ~> self.candidate()", with: pattern)
+        }
+        // Preserve the old return and insert an assertion: historical-effect
+        // rejection must not mask a missed escape in the caller syntax proof.
+        after = before.replacingOccurrences(of: "-> Bool { return false }", with: "-> Bool { XCTAssertTrue(false); return false }")
         if added {
             before = before.components(separatedBy: "\n").filter { !$0.contains("private func candidate") }.joined(separator: "\n")
                 .replacingOccurrences(of: "self.candidate()", with: "false")
