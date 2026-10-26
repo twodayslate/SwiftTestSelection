@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Zachary Gorak
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-import SwiftParser
 import SwiftSyntax
 
 /// Deliberately narrow source evidence, not a declaration that all private
@@ -9,6 +8,43 @@ import SwiftSyntax
 public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var name: String
     public var callerLines: Set<Int>
+    /// Nil in older captures, whose caller/escape proof is not sufficient.
+    public var statements: [Statement]? = nil
+
+    public struct Statement: Codable, Sendable {
+        public var signature: String
+        public var isAssertion: Bool
+    }
+
+    private static let assertions: Set<String> = ["XCTAssert", "XCTAssertTrue", "XCTAssertFalse", "XCTAssertEqual", "XCTAssertNotEqual",
+        "XCTAssertNil", "XCTAssertNotNil", "XCTAssertGreaterThan", "XCTAssertGreaterThanOrEqual", "XCTAssertLessThan",
+        "XCTAssertLessThanOrEqual", "XCTFail"]
+
+    /// A head graph cannot establish effects of removed/rebound base calls.
+    /// Preserve every old statement and its binding/control-flow context. Only
+    /// standalone assertions may be inserted; their head effects are checked by
+    /// the compiler graph. This is deliberately stricter than matching call names.
+    func preservesEffects(of previous: Self) -> Bool {
+        guard let statements, let old = previous.statements else { return false }
+        var next = 0
+        for statement in statements {
+            if next < old.count, statement.signature == old[next].signature { next += 1 }
+            else if !statement.isAssertion { return false }
+        }
+        return next == old.count
+    }
+
+    private static func statements(in function: FunctionDeclSyntax) -> [Statement] {
+        (function.body?.statements ?? []).map { statement in
+            let call = statement.item.as(FunctionCallExprSyntax.self)
+                ?? statement.item.as(ExpressionStmtSyntax.self)?.expression.as(FunctionCallExprSyntax.self)
+            let name = call?.calledExpression.as(DeclReferenceExprSyntax.self)?.baseName.text
+            let signature = statement.item.tokens(viewMode: .sourceAccurate).map {
+                "\($0.tokenKind):\($0.text.utf8.count):\($0.text)"
+            }.joined(separator: "|")
+            return Statement(signature: signature, isAssertion: name.map(assertions.contains) ?? false)
+        }
+    }
 
     static let reservedNames: Set<String> = ["XCTestCase", "String", "Bool", "Int", "Double", "XCUIApplication", "XCUIElement", "NSPredicate",
         "XCTAssert", "XCTAssertTrue", "XCTAssertFalse", "XCTAssertEqual", "XCTAssertNotEqual", "XCTAssertNil", "XCTAssertNotNil",
@@ -64,8 +100,10 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             var caller: FunctionDeclSyntax?
             while let node = ancestor {
                 if let method = node.as(FunctionDeclSyntax.self) { caller = method; break }
-                if node.is(ClosureExprSyntax.self) || node.is(FunctionCallExprSyntax.self) ||
-                    node.is(MacroExpansionExprSyntax.self) || node.is(DeferStmtSyntax.self) { return nil }
+                // Enclosing expressions can synthesize escaping autoclosures
+                // (operators, subscripts, string interpolation), even when no
+                // explicit closure or enclosing function call appears in source.
+                if node.is(ExprSyntax.self) || node.is(AccessorDeclSyntax.self) || node.is(DeferStmtSyntax.self) { return nil }
                 if let variable = node.as(VariableDeclSyntax.self), !variable.modifiers.isEmpty || !variable.attributes.isEmpty { return nil }
                 ancestor = node.parent
             }
@@ -75,7 +113,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             callers.insert(locations.location(for: caller.positionAfterSkippingLeadingTrivia).line)
         }
         guard !callers.isEmpty else { return nil }
-        return Self(name: name, callerLines: callers)
+        return Self(name: name, callerLines: callers, statements: statements(in: function))
     }
 
     private static func safeBody(_ function: FunctionDeclSyntax) -> Bool {
@@ -92,9 +130,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
                   parameter.attributes.isEmpty, parameter.modifiers.isEmpty, parameter.ellipsis == nil else { return false }
             locals.insert((parameter.secondName ?? parameter.firstName).text)
         }
-        let allowedGlobals: Set<String> = ["XCTAssert", "XCTAssertTrue", "XCTAssertFalse", "XCTAssertEqual", "XCTAssertNotEqual",
-            "XCTAssertNil", "XCTAssertNotNil", "XCTAssertGreaterThan", "XCTAssertGreaterThanOrEqual", "XCTAssertLessThan",
-            "XCTAssertLessThanOrEqual", "XCTFail", "NSPredicate", "XCUIElement"]
+        let allowedGlobals = assertions.union(["NSPredicate", "XCUIElement"])
         func references(_ node: Syntax) -> Bool {
             if node.is(ClosureExprSyntax.self) || node.is(DeclSyntax.self) || node.is(SuperExprSyntax.self) ||
                 node.is(KeyPathExprSyntax.self) || node.is(AssignmentExprSyntax.self) ||

@@ -155,6 +155,12 @@ func compiledPrivateXCTestHelpersSelectOnlyProvenConsumers(added: Bool, safety: 
     var legacy = current
     legacy.sources["UI:UI.swift"]!.identifierNames = nil
     #expect(select(legacy).selectedTests.contains(tests[3]))
+    var legacyProof = current
+    for i in legacyProof.sources["UI:UI.swift"]!.units.indices {
+        legacyProof.sources["UI:UI.swift"]!.units[i].privateTestHelper?.statements = nil
+    }
+    legacyProof = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(legacyProof))
+    #expect(select(legacyProof).selectedTests.contains(tests[3]))
     var state = current
     let helperIDs = graph.functions.values.filter { $0.name.contains(added ? ".navigationTab(" : ".assertShareOptions(") }.map(\.id)
     #expect(!helperIDs.isEmpty)
