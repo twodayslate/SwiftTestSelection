@@ -138,6 +138,12 @@ public enum XcodeFineSelector {
                     return files[path] == nil || documentation.contains(path)
                 }
         }
+        // Git comparison proves these edits only substitute PBXFileReference
+        // paths for byte-identical moves. Apply the same exemption to the
+        // repository fingerprint; generator settings/content still compare.
+        let projectReferenceMoves = Set(changes.filter {
+            $0.isPureMove && $0.path.hasSuffix(".pbxproj")
+        }.map(\.path))
         func comparable(_ boundaries: [GeneratedSourceBoundary]?, ignoring paths: Set<String>) -> [GeneratedSourceBoundary]? {
             boundaries?.map { boundary in
                 var result = boundary
@@ -163,11 +169,14 @@ public enum XcodeFineSelector {
             // sides. Added/deleted docs need evidence only on the side they exist.
             let boundaries = (old ?? []) + (new ?? [])
             let candidates = Set(boundaries.flatMap { $0.documentationInputs ?? [] }).filter(ignoredDocumentation)
-            let excluded = Set(candidates.filter { path in
+            var excluded = Set(candidates.filter { path in
                 boundaries.allSatisfy { boundary in
                     guard let files = boundary.repositoryInputFiles, let documentation = boundary.documentationInputs else { return false }
                     return files[path] == nil || documentation.contains(path)
                 }
+            })
+            excluded.formUnion(projectReferenceMoves.filter { path in
+                boundaries.allSatisfy { $0.repositoryInputFiles?[path] != nil }
             })
             if comparable(old, ignoring: excluded) != comparable(new, ignoring: excluded) {
                 fallback("generated_input_changed", "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for \(module).")

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Zachary Gorak
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Build-only capture regressions for documentation precision and log lifetime."""
+"""Build-only capture regressions for documentation/move precision and log lifetime."""
 import argparse
 import importlib.util
 import json
+import plistlib
 from pathlib import Path
 import re
 import subprocess
@@ -16,6 +17,7 @@ parser.add_argument('--tool', type=Path, required=True)
 parser.add_argument('--capture-helper', type=Path, required=True)
 parser.add_argument('--destination', required=True)
 parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--moves-only', action='store_true', help='Run only project-reference move regressions')
 a = parser.parse_args()
 folder = Path(tempfile.mkdtemp(prefix='capture-review-')).resolve()
 work = folder / 'App'
@@ -68,7 +70,7 @@ def select(name, head, expected, storage='cached'):
     assert result.returncode == 0, result.stderr[-4000:]
     report = json.loads(report_path.read_text())
     assert len(report['selectedTests']) == expected, report
-    if name == 'mixed': assert report['selectedTests'] == ['CoreTests/ValueTests/testValue()'], report
+    if name in ['mixed', 'move-mixed']: assert report['selectedTests'] == ['CoreTests/ValueTests/testValue()'], report
     if name == 'resource': assert resource_path not in report['ignoredChanges'], report
     generated_fallback = any(d['code'] == 'generated_input_changed' for d in report['diagnostics'])
     assert generated_fallback == (name == 'resource'), report['diagnostics']
@@ -90,12 +92,30 @@ def select(name, head, expected, storage='cached'):
     print('PASS', name, expected, '/', report['totalTests'], flush=True)
 
 
-doc.write_text('Updated standalone documentation\n')
-select('documentation', commit('Ignored documentation edit'), 0, 'retained')
-doc.write_text('Another standalone documentation edit\n')
+if not a.moves_only:
+    doc.write_text('Updated standalone documentation\n')
+    select('documentation', commit('Ignored documentation edit'), 0, 'retained')
+    doc.write_text('Another standalone documentation edit\n')
+    test = work / 'CoreTests/ValueTests.swift'
+    test.write_text(test.read_text().replace('XCTAssertEqual(packageValue(), 42)', 'XCTAssertEqual(packageValue(), 40 + 2)'))
+    select('mixed', commit('One test and ignored documentation'), 1)
+    git('checkout', '--detach', base)
+    resource.write_text('Changed bundled Markdown resource\n')
+    select('resource', commit('Changed resource despite documentation pattern'), 15, 'temporary')
+
+# Move compiled Swift without changing its bytes or target membership. Only the
+# PBXFileReference path changes; the package's generated accessor is unchanged.
+git('checkout', '--detach', base)
+(work / 'Moved').mkdir()
+git('mv', 'UnitTests/ProductionTests.swift', 'Moved/ProductionTests.swift')
+project = work / 'ImpactDemo.xcodeproj/project.pbxproj'
+project_data = plistlib.loads(project.read_bytes())
+references = [obj for obj in project_data['objects'].values()
+              if obj.get('isa') == 'PBXFileReference' and obj.get('path') == 'UnitTests/ProductionTests.swift']
+assert len(references) == 1
+references[0]['path'] = 'Moved/ProductionTests.swift'
+project.write_bytes(plistlib.dumps(project_data))
+select('move', commit('Pure Swift file move and reference substitution'), 0, 'retained')
 test = work / 'CoreTests/ValueTests.swift'
 test.write_text(test.read_text().replace('XCTAssertEqual(packageValue(), 42)', 'XCTAssertEqual(packageValue(), 40 + 2)'))
-select('mixed', commit('One test and ignored documentation'), 1)
-git('checkout', '--detach', base)
-resource.write_text('Changed bundled Markdown resource\n')
-select('resource', commit('Changed resource despite documentation pattern'), 15, 'temporary')
+select('move-mixed', commit('One method edit alongside pure move'), 1)

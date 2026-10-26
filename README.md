@@ -660,6 +660,9 @@ build inputs. Markdown resources, directory inputs, and files referenced by buil
 commands remain protected. Unknown shell tools prevent this exclusion because
 they may consume undeclared inputs. Older graphs with only opaque fingerprints
 remain conservative; regenerate both graphs to obtain the per-file evidence.
+Proven reference-only `.pbxproj` edits accompanying pure file moves are also
+excluded from the repository fingerprint comparison. Generated content, generator
+settings and resource paths/content still participate in comparison.
 The `buildEvidence` analysis event reports ownership/provenance processing time.
 These checks work with both compiler replay and sealed build-time SIL capture;
 ordinary `build-for-testing` still does not retain SIL automatically.

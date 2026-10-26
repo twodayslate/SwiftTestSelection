@@ -61,3 +61,32 @@ remain recorded separately in [Issues41-44Validation.md](Issues41-44Validation.m
 | documentation | 0/15 | 61.544 | 601.7 |
 | mixed | 1/15 | 30.831 | 598.2 |
 | resource | 15/15 | 56.920 | 607.2 |
+
+## Follow-up: pure project-reference moves
+
+The generated-input comparison now honors Git's existing proof that a project
+edit only substitutes `PBXFileReference` paths for byte-identical file moves.
+Per-file evidence must contain the project file in both revisions, and its
+manifest must match the stored fingerprint before applying the exclusion.
+Generated source content/settings and resource membership/content still compare.
+
+All 207 release tests pass with Xcode 26.6 and 27.0. New cases cover pure moves,
+mixed test edits, unproven project edits, changed/moved resources, generator
+changes, legacy or missing evidence, and mismatched manifest digests. A Git-backed
+regression confirms that accompanying build-setting edits invalidate the
+reference-only proof.
+
+The fresh Xcode regression moves `UnitTests/ProductionTests.swift` to
+`Moved/ProductionTests.swift`, changing only its project reference. It then adds
+an independent edit to `CoreTests/ValueTests/testValue()`. The move selects 0/15;
+the mixed edit selects only that method (1/15). The retained move build passes
+product verification. No test bodies are executed. Measurements are recorded in
+[PR45MoveFixValidation.json](PR45MoveFixValidation.json).
+
+```sh
+python3 Scripts/xcode_capture_review_regression_test.py \
+  --tool "$RELEASE_TOOL" --capture-helper Scripts/capture-build.py \
+  --destination "$DESTINATION" --moves-only --output "$RESULTS_JSON"
+```
+
+Omit `--moves-only` to run the documentation/resource cases as well.
