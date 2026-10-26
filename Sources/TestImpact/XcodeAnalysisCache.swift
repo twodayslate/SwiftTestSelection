@@ -502,7 +502,7 @@ extension XcodeAnalysis {
             report.selectionScopes = try timed("selectionScopes", revision: comparison.head!, detail: "Additional queries over the same captured head graph; no build or extraction") {
                 try XcodeHeadOnlySelector.scopedReports(current: current, requests: selectionScopes, changes: changes,
                     baseRevision: comparison.base, headRevision: comparison.head!, root: root, mappingPath: options.mappingsPath,
-                    documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty)
+                    documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty, retainedGraphPath: retainedGraphPath)
             }
         }
         report.headRevision = comparison.head; report.comparisonMode = comparison.mode

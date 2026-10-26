@@ -1083,3 +1083,66 @@ func headOnlyScopeExclusionsRequireCompleteConsumerBindings(kind: String) {
     #expect(result.diagnostics.contains { $0.code == "head_only_unresolved_test" && $0.tests.contains(consumer) })
     #expect(result.onlyTestingArguments == result.selectedTests.map { "-only-testing:" + $0 })
 }
+
+@Test func headOnlyScopedReportsKeepRetainedExecutionAfterSerialization() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("scoped-retained-" + UUID().uuidString)
+        .standardizedFileURL.resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("Tests"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    func git(_ args: [String]) throws -> String { try CommandRunner.run("git", args, at: root).text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    func commit() throws -> String {
+        _ = try git(["add", "Tests/UI.swift", ".swift-test-selection.json"])
+        _ = try git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"])
+        return try git(["rev-parse", "HEAD"])
+    }
+    try uiSource.write(to: root.appendingPathComponent("Tests/UI.swift"), atomically: true, encoding: .utf8)
+    try JSONEncoder().encode(headOnlyModel().mappings!).write(to: root.appendingPathComponent(".swift-test-selection.json"))
+    _ = try git(["init", "-q"])
+    let base = try commit()
+    let edited = uiSource.replacingOccurrences(of: "XCTAssertEqual(2, 2)", with: "XCTAssertEqual(2, 3)")
+    try edited.write(to: root.appendingPathComponent("Tests/UI.swift"), atomically: true, encoding: .utf8)
+    let head = try commit()
+    var current = headOnlyModel(ui: edited)
+    current.sources = ["UI:Tests/UI.swift": current.sources["Tests/UI.swift"]!, "App:App/Features.swift": current.sources["App/Features.swift"]!]
+    var messages: [String] = []
+    let analysis = XcodeAnalysis(options: .init(container: .project, path: root.appendingPathComponent("App.xcodeproj"),
+        scheme: "Fixture", destination: "platform=macOS", configuration: "Debug", testPlan: "All"), progress: { messages.append($0) })
+
+    // Publish a sealed fixture bundle without invoking a compiler or Xcode.
+    let bundle = try RetainedXcodeBuild.create(at: root.appendingPathComponent("retained"), cache: root.appendingPathComponent("cache"))
+    let products = bundle.appendingPathComponent("DerivedData/Build/Products")
+    try FileManager.default.createDirectory(at: products, withIntermediateDirectories: true)
+    let plist: [String: Any] = ["__xctestrun_metadata__": ["FormatVersion": 2], "TestPlan": ["Name": "All"],
+        "TestConfigurations": [["TestTargets": [["TestBundlePath": "__TESTROOT__/Test.xctest"]]]]]
+    try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: products.appendingPathComponent("All.xctestrun"))
+    let binary = products.appendingPathComponent("Test.xctest")
+    try Data("original product".utf8).write(to: binary)
+    try Data("fixture build log".utf8).write(to: bundle.appendingPathComponent("build.log"))
+    let settings = Data(#"[{"buildSettings":{"CONFIGURATION":"Debug","SDK_NAME":"sdk","PLATFORM_NAME":"macosx","ARCHS":"arm64"}}]"#.utf8)
+    let graphPath = try RetainedXcodeBuild.publish(graph: &current, revision: head, context: analysis.artifactContext(root: root),
+        toolchain: "fixture", workspace: bundle, settings: settings, inputIdentity: [:]).path
+    let reports = try XcodeHeadOnlySelector.scopedReports(current: current,
+        requests: .init(scopes: [.init(name: "helpers", paths: ["Tests/UI.swift"]), .init(name: "empty", paths: [])]),
+        changes: [.init(path: "Tests/UI.swift")], baseRevision: base, headRevision: head, root: root,
+        mappingPath: ".swift-test-selection.json", documentation: [], buildEvidenceFailure: nil, retainedGraphPath: graphPath)
+    let decoded = try JSONDecoder().decode([ScopedImpactReport].self, from: JSONEncoder().encode(reports))
+    for scope in decoded {
+        try #require(scope.report.buildArtifactPath == graphPath)
+        #expect(scope.report.buildArtifactID == current.buildArtifact?.id)
+        #expect(scope.report.headRevision == head)
+    }
+    #expect(decoded[0].report.selectedTests.count == 3)
+    #expect(decoded[1].report.selectedTests.isEmpty)
+    #expect(try analysis.run(decoded[1].report) == 0)
+
+    // A nonempty scope must enter retained product verification. In particular,
+    // it must not export the head into fresh DerivedData and rebuild via `test`.
+    try Data("modified product".utf8).write(to: binary)
+    do {
+        _ = try analysis.run(decoded[0].report)
+        Issue.record("Scoped execution accepted modified retained products")
+    } catch let error as ImpactError {
+        #expect(error.description.contains("Test products differ from the captured graph"))
+    }
+    #expect(!messages.contains { $0.hasPrefix("Running ") })
+}

@@ -1404,7 +1404,9 @@ Each scope queries the **same captured head graph** against Git base syntax for
 only those changed paths. It adds no build, SIL extraction, or baseline graph.
 The primary report still describes the complete review diff. Additional results
 appear in `selectionScopes`, each with its request, ordinary report diagnostics,
-resolved revisions, and the same retained build identity. Paths must belong to
+resolved revisions, and the same retained build identity and graph path. The public
+`XcodeAnalysis.run(scoped.report)` API verifies and reuses those retained products,
+just as it does for the primary report. Paths must belong to
 the actual review diff; an empty scope selects no tests from changes.
 
 A consumer can run Base tests from the full report and regression tests from a

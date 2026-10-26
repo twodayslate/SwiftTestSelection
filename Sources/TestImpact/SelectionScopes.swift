@@ -37,7 +37,7 @@ public struct ScopedImpactReport: Codable, Sendable {
 extension XcodeHeadOnlySelector {
     static func scopedReports(current: XcodeTestGraph, requests: SelectionScopes, changes: [FileChange],
                               baseRevision: String, headRevision: String, root: URL, mappingPath: String,
-                              documentation: Set<String>, buildEvidenceFailure: String?) throws -> [ScopedImpactReport] {
+                              documentation: Set<String>, buildEvidenceFailure: String?, retainedGraphPath: String? = nil) throws -> [ScopedImpactReport] {
         try requests.validate()
         let changedPaths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
         return try requests.scopes.map { scope in
@@ -54,6 +54,7 @@ extension XcodeHeadOnlySelector {
                                 excludedTestEntries: Set(scope.excludedTestEntries))
             report.headRevision = headRevision
             report.buildArtifactID = current.buildArtifact?.id
+            report.buildArtifactPath = retainedGraphPath
             return ScopedImpactReport(scope: scope, report: report)
         }
     }
