@@ -22,7 +22,7 @@ output_dir="$root/.build/distribution/$version"
 mkdir -p "$output_dir"
 stage=$(mktemp -d "${TMPDIR:-/tmp}/swift-test-impact-release.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
-mkdir -p "$stage/package/bin" "$stage/package/licenses"
+mkdir -p "$stage/package/bin" "$stage/package/licenses" "$stage/package/Scripts/Experimental"
 
 for architecture in arm64 x86_64; do
     options=(--scratch-path "$build_dir" --configuration release
@@ -51,6 +51,9 @@ while IFS= read -r dependency; do
 done < <(otool -L "$binary" | awk '/compatibility version/ {print $1}')
 
 cp LICENSE "$stage/package/LICENSE"
+cp Scripts/capture-build.py "$stage/package/Scripts/"
+cp Scripts/Experimental/prepare_sil_capture.py Scripts/Experimental/capture_swiftc.py \
+    Scripts/Experimental/capture_inputs.py "$stage/package/Scripts/Experimental/"
 cp "$build_dir/checkouts/swift-syntax/LICENSE.txt" "$stage/package/licenses/swift-syntax-LICENSE.txt"
 if [[ -f "$build_dir/checkouts/swift-syntax/NOTICE.txt" ]]; then
     cp "$build_dir/checkouts/swift-syntax/NOTICE.txt" "$stage/package/licenses/swift-syntax-NOTICE.txt"
@@ -87,4 +90,5 @@ tar -xzf "$output_dir/$archive" -C "$stage/extracted"
     fi
 )
 python3 Scripts/integration_test.py --tool "$stage/extracted/bin/swift-test-impact"
+python3 Scripts/release_distribution_test.py --distribution "$stage/extracted"
 printf '\nRelease files: %s\n' "$output_dir"

@@ -35,6 +35,14 @@ with tempfile.TemporaryDirectory(prefix="swift-impact-integration-") as director
     run(["git", "add", "."], work)
     run(["git", "-c", "user.name=Integration Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "Fixture"], work)
 
+    # Match the documented external temporary install. Neither the executable nor
+    # its non-Swift metadata may broaden an otherwise unchanged worktree diff.
+    installation = pathlib.Path(directory) / "Installed tool with spaces/integration"
+    (installation / "bin").mkdir(parents=True)
+    shutil.copy2(TOOL, installation / "bin/swift-test-impact")
+    (installation / "BUILD-INFO.txt").write_text("Integration installation\n")
+    TOOL = installation / "bin/swift-test-impact"
+
     def select(*extra):
         result = run([TOOL, "select", "--package-path", work, "--base", "HEAD", "--format", "json", *extra], work)
         return json.loads(result.stdout), result
@@ -48,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix="swift-impact-integration-") as director
     empty, result = select("--run")
     assert empty["selectedTests"] == [], empty
     assert "no test command was executed" in result.stderr
-    print("PASS unchanged worktree: empty selection does not execute a full suite", flush=True)
+    print("PASS unchanged worktree: installed binary and metadata do not select tests or execute a full suite", flush=True)
 
     source = work / "Sources/Shop/Checkout.swift"
     original = source.read_text()

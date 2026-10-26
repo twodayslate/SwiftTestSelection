@@ -35,5 +35,7 @@ jobs:
         # Several tests launch compiler processes; keep memory bounded on the
         # standard hosted runner while still running the entire test suite.
         run: swift test --jobs 3 --no-parallel
-      - name: Capture-script unit tests
-        run: python3 Scripts/capture_build_test.py
+      - name: Python unit tests
+        run: |
+          python3 Scripts/capture_build_test.py
+          python3 Scripts/release_distribution_test.py
