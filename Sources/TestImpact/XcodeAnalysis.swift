@@ -13,6 +13,8 @@ public struct XcodeConfiguration: Sendable {
     public var testPlan: String?
     /// Maximum concurrent compiler/parser jobs (1...8). Serial by default.
     public var extractionWorkers: Int = 1
+    /// Opt-in helper from this distribution: Scripts/capture-build.py.
+    public var buildTimeSILHelper: URL? = nil
     /// Repository-relative mapping file, read separately from each revision.
     public var mappingsPath: String = ".swift-test-selection.json"
 
@@ -61,7 +63,7 @@ public struct XcodeAnalysis {
     }
 
     public func select(base: String, head: String? = nil, mergeBase: Bool = false, fullSuite: Bool = false, cache: XcodeAnalysisCache? = nil, retainingBuildAt: URL? = nil) throws -> ImpactReport {
-        if cache != nil || retainingBuildAt != nil {
+        if cache != nil || retainingBuildAt != nil || options.buildTimeSILHelper != nil {
             guard let head else { throw ImpactError("--analysis-cache requires an explicit --head revision; worktree analysis is never cached.") }
             let scratch = cache == nil ? try temporaryDirectory() : nil
             defer { if let scratch { try? FileManager.default.removeItem(at: scratch) } }
@@ -162,12 +164,15 @@ public struct XcodeAnalysis {
             throw ImpactError("Xcode container does not exist: \(configuration.path.path)")
         }
         let directory = configuration.path.deletingLastPathComponent()
+        let evidenceStart = Date()
         let settings = try JSONDecoder().decode([XcodeBuildSettings].self, from: settingsData)
         var targets: [XcodeTarget] = []
         var diagnostics: [String] = []
         var classifiedLists = Set<URL>()
         var listOwners: [URL: Set<String>] = [:]
         var unsupportedInputs: [String: [String]] = [:]
+        var generated: [String: [GeneratedSourceBoundary]] = [:], roleDiagnostics: [String: String] = [:]
+        let evidence = try? XcodeBuildEvidence(log: log, root: sourceRoot, derived: derived, captured: captured)
         var modules: [String: String] = [:]
         var sources: [String: SwiftSourceSnapshot] = [:]
         func isActiveList(_ file: URL) -> Bool {
@@ -179,7 +184,7 @@ public struct XcodeAnalysis {
             return Set(try XcodeSourceFileList.parse(lines).compactMap { decoded in
                 let file = URL(fileURLWithPath: decoded, relativeTo: sourceDirectory)
                     .standardizedFileURL.resolvingSymlinksInPath()
-                return file.path.hasPrefix(root) ? String(file.path.dropFirst(root.count)) : nil
+                return file.path.hasPrefix(root) && !file.path.hasPrefix(derived.standardizedFileURL.resolvingSymlinksInPath().path + "/") ? String(file.path.dropFirst(root.count)) : nil
             })
         }
         for entry in settings {
@@ -207,7 +212,8 @@ public struct XcodeAnalysis {
             }
         }
         XcodeSourceOwnership.recover(log: log, sourceRoot: sourceRoot, derived: derived, activeInputs: activeCompilerInputs,
-            targets: &targets, modules: &modules, listOwners: listOwners, unsupportedInputs: &unsupportedInputs, classifiedLists: &classifiedLists, diagnostics: &diagnostics)
+            targets: &targets, modules: &modules, listOwners: listOwners, unsupportedInputs: &unsupportedInputs, classifiedLists: &classifiedLists, diagnostics: &diagnostics, evidence: evidence, generated: &generated, roleDiagnostics: &roleDiagnostics)
+        measurement("buildEvidence", Date().timeIntervalSince(evidenceStart))
         let sourceJobs = targets.flatMap { target -> [(String, String)] in
             guard let module = modules[target.name] else { return [] }
             return target.sourceFiles.sorted().map { (module, $0) }
@@ -257,7 +263,7 @@ public struct XcodeAnalysis {
             if let module = modules[target.name] { result[module, default: []].formUnion(target.sourceFiles) }
         }
         let extractionStart = Date()
-        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation, moduleCache: moduleCache, captured: captured)
+        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation, moduleCache: moduleCache, captured: captured, measurement: measurement)
         measurement("extraction", Date().timeIntervalSince(extractionStart))
         progress("Binding compiler dependencies to \(tests.count) enumerated tests…")
         let binding = AnalysisMeasurement()
@@ -271,6 +277,9 @@ public struct XcodeAnalysis {
         var result = XcodeTestGraph(targets: targets, tests: tests, diagnostics: Array(Set(diagnostics)).sorted())
         result.dependencies = dependencies
         result.modules = modules
+        try evidence?.validate(log: log, boundaries: generated.values.flatMap { $0 })
+        result.generatedSourceBoundaries = generated
+        result.unresolvedProductRoles = roleDiagnostics
         result.unsupportedSourceInputs = unsupportedInputs
         result.sources = sources
         result.runtimeInventory = XcodeRuntimeInventory.capture(log: log, settings: settings)

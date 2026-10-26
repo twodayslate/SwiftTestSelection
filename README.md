@@ -420,6 +420,52 @@ mapping completeness. Validate selected runs against full runs before using a CI
 
 ### Build-time SIL capture (opt-in)
 
+Cached/retained selection can now own capture for both revisions:
+
+```sh
+swift-test-impact select \
+  --project MyApp.xcodeproj --scheme MyApp --test-plan AllTests \
+  --configuration Debug --destination "$DESTINATION" \
+  --base origin/main --head HEAD --merge-base \
+  --analysis-cache "$CACHE" --cache-context "$BUILD_INPUT_DIGEST" \
+  --retain-build "$NEW_BUNDLE" \
+  --build-time-sil "$SWIFT_TEST_SELECTION/Scripts/capture-build.py" \
+  --format json --output "$REPORT"
+```
+
+`--build-time-sil` takes the helper from the **same pinned checkout as the binary**
+and requires Python 3.9+. It is distinct from `--sil-capture`, which imports an
+already sealed session with existing-build `graph` inputs. Capture is opt-in;
+ordinary builds and the default selection mode still use compiler replay.
+
+The analyzer seals each Git archive export against its exact revision and file
+manifest, preserves locked package resolution, and builds the retained head once.
+It validates capture sources, outputs, context and products before publishing the
+retained completion marker. In capture mode both revisions must succeed before
+that marker is published. Head failure diagnostics remain in `SILCapture`; base
+capture failure diagnostics are copied to `base-capture-failure`. Verify and run
+the resulting report with the same `verify-build` / `run` commands as ordinary
+retained selection. Identical base/head revisions share one analysis/build.
+
+Cache identity includes capture mode and all four helper implementation files.
+Warm graph hits explicitly report reuse; when retaining products, a fresh head
+build and capture validation still occur. Unsupported/incomplete primary coverage
+replays that module and explains why. Valid canonical fragments from empty or
+platform-excluded Swift primaries contribute no functions but retain the other
+fragments in their module. Unsupported function-free layouts replay; missing or
+changed sealed files are integrity failures and never silently replay.
+
+`analysisEvents` separates build wall time, `captureValidation` (wrapper setup,
+settings and seals), per-module `captureConsumption`, `compilerReplay`,
+`silParsing`, enumeration, evidence processing and total extraction. Per-module
+times can overlap with multiple extraction workers; supplementary SIL overhead
+inside the original compiler job is included in build time. Measure the entire
+workflow against full runs before treating capture or smaller selections as a
+CI speedup. A capture-mode graph is not evidence of full-suite equivalence.
+
+See [generated-input, role and capture validation](Documentation/Issues41-44Validation.md)
+for real-project results, fixture execution, cache/replay parity and reproduction commands.
+
 `Scripts/capture-build.py` wraps **your build-for-testing step** to add supplementary
 SIL output to normal object compilation. `graph --sil-capture SESSION` validates
 and parses those fragments without recompiling complete captured modules. It does
@@ -558,18 +604,49 @@ shared source declarations. Their persisted per-module identities keep opaque
 runtime dependencies eligible for conservative selection even without source
 regions, including when loading saved graphs. Resolution is batched per module and cached;
 unfamiliar symbol contexts produce an explicit conservative fallback.
-These records prove compiler
-ownership, not a test target's identity or runtime isolation; they do not enable
-the UI or non-UI runtime uncertainty exemptions.
-Explicit UI feature mappings and unresolved-dependency fallbacks still apply.
+Compiler ownership alone does not prove a product role or runtime isolation.
+For recovered modules, the adapter joins the active build manifest's compiler
+file list to its target GUID and Xcode PIF target metadata. Supported production
+products (including local package libraries, frameworks and app extensions) gain
+`recoveredRole` evidence. Test products, contradictory host/module settings,
+unknown product types, ambiguous records, and missing metadata remain unproved.
+The role and compiler import inventory must agree in both revisions before an
+existing declared UI/runtime boundary can narrow uncertainty. This does not create
+a runtime contract or UI feature mapping. Hosted tests still require their host
+and imports inside their own declared boundary; direct dependencies always win.
+`unresolvedProductRoles` and `unresolved_product_role` explain unavailable roles.
 
 Conflicting module/list claims, missing or inactive inputs, unsupported response
 files, and modules containing only generated build inputs produce explicit
 ownership diagnostics and conservative selection, whether DerivedData is inside
 or outside the checkout. Mixed modules retain their repository snapshots and list
-generated/external inputs in `unsupportedSourceInputs`.
+unverified generated/external inputs in `unsupportedSourceInputs`.
 Semantic changes in those modules produce an `unsupported_source_ownership`
 fallback; unrelated resolved test-method edits remain eligible for narrowing.
+
+Validated Xcode auxiliary-file sources (including package resource accessors) and
+Xcode `actool` Swift asset symbols instead appear in `generatedSourceBoundaries`.
+The boundary records the owning module, stable logical path, exact source digest,
+compiler/generator settings and repository resource/build-input fingerprint.
+Explicit generated `#filePath` values remain semantic; source literals are never
+rewritten to normalize build directories. Equal evidence in both revisions avoids
+a full-suite fallback solely because an unchanged generated source exists.
+Changed content, resource membership/content, package manifests, bundle identity,
+generator/compiler settings, or one-sided evidence produces
+`generated_input_changed` and selects the full inventory. Resource changes still
+use a conservative fallback; this feature does not infer resource consumers.
+Arbitrary shell generators and external inputs remain unsupported.
+
+Preserve `DerivedData/Build/Intermediates.noindex/XCBuildData` (including the active
+manifest and `PIFCache/target`) alongside the complete build log when importing
+artifacts. Discovery cache keys fingerprint this metadata; module fragments do not
+cache product roles or generated-source equivalence. When retaining new products
+on a revision-cache hit, the new build's evidence is rechecked before reusing its
+analysis. Put analysis outputs outside the source tree: generated-input validation
+conservatively fingerprints repository non-Swift files and package manifests.
+The `buildEvidence` analysis event reports ownership/provenance processing time.
+These checks work with both compiler replay and sealed build-time SIL capture;
+ordinary `build-for-testing` still does not retain SIL automatically.
 Entirely external packages, including `DerivedData/SourcePackages/checkouts`,
 are not treated as repository source boundaries.
 Regenerate saved graphs to acquire this ownership metadata; supplying old graphs
@@ -755,7 +832,7 @@ runs are still required before relying on production-change selection as a CI ga
 
 ## Next work
 
-- Integrate [build-time SIL capture](#build-time-sil-capture-experimental) after incremental completeness, provenance and dispatch correctness are enforced.
+- Expand [build-time SIL capture](#build-time-sil-capture-opt-in) validation across compiler versions and consumer projects.
 - Extend precise declaration mapping to more language constructs and SwiftPM.
 - Improve dispatch, initializer, callback, and test-argument modeling.
 - Expand compiler-version, Swift Testing, external inheritance, and resource modeling coverage.

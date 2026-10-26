@@ -311,3 +311,40 @@ func mixedEntryEditsKeepUnsupportedRuntimeFallbacks(reason: String) {
     #expect(report.selectedTests.contains("Tests/Other/testOther()"))
     #expect(report.runtimeBoundaryDecisions == nil)
 }
+
+@Test(arguments: ["valid", "oneSided", "changedRole", "missingImports", "unproved"])
+func recoveredProductionRoleRequiresMatchingEvidenceInBothRevisions(scenario: String) {
+    var old = boundaryFixture()
+    old.targets[0].productType = XcodeSourceOwnership.productType
+    old.targets[0].recoveredRole = .init(targetName: "Extension", productType: "com.apple.product-type.app-extension", evidence: "active-xcode-manifest+pif-v1")
+    var current = labelEdit(old)
+    switch scenario {
+    case "oneSided": old.targets[0].recoveredRole = nil
+    case "changedRole": current.targets[0].recoveredRole?.productType = "com.apple.product-type.framework"
+    case "missingImports": old.runtimeInventory?.imports.removeValue(forKey: "App")
+    case "unproved": old.targets[0].recoveredRole = nil; current.targets[0].recoveredRole = nil
+    default: break
+    }
+    let report = XcodeFineSelector.select(current: current, previous: old, changes: [.init(path: "App.swift")], baseRevision: "base")
+    #expect(report.selectedTests.contains("Hosted/Labels/testLabel()"))
+    #expect(report.selectedTests.contains("Tests/Other/testOther()") == (scenario != "valid"))
+}
+
+@Test(arguments: ["unchanged", "changed", "missingBase", "missingHead"])
+func generatedInputsAreComparedEvenWithoutGitPaths(scenario: String) throws {
+    var old = boundaryFixture()
+    let boundary = GeneratedSourceBoundary(module: "App", logicalPath: "<DerivedData>/Generated.swift", contentDigest: "source", generatorIdentity: "settings", repositoryInputs: "resources")
+    old.generatedSourceBoundaries = ["App": [boundary]]
+    var current = labelEdit(old)
+    switch scenario {
+    case "changed": current.generatedSourceBoundaries?["App"]?[0].contentDigest = "changed"
+    case "missingBase": old.generatedSourceBoundaries = nil
+    case "missingHead": current.generatedSourceBoundaries = nil
+    default: break
+    }
+    let report = XcodeFineSelector.select(current: current, previous: old, changes: [.init(path: "App.swift")], baseRevision: "base")
+    #expect(report.diagnostics.contains { $0.code == "generated_input_changed" } == (scenario != "unchanged"))
+    #expect(report.selectedTests.count == (scenario == "unchanged" ? 1 : 2))
+    let saved = try GraphArchive.decode(GraphArchive.encode(current))
+    #expect(saved.generatedSourceBoundaries == current.generatedSourceBoundaries)
+}

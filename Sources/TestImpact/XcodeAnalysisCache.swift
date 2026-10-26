@@ -302,8 +302,11 @@ extension XcodeAnalysis {
         let origin = try CommandRunner.run("git", ["remote", "get-url", "origin"], at: root, allowFailure: true)
         let repository = origin.status == 0 ? origin.text : try CommandRunner.run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], at: root).text
         let runtimes = options.destination.contains("Simulator") ? try CommandRunner.run("xcrun", ["simctl", "list", "runtimes", "-j"], at: root).stdout : Data()
+        let captureMode = try options.buildTimeSILHelper.map { try XcodeBuildTimeCapture(helper: $0) }
+        var pendingCapture: (workspace: URL, settings: Data, identity: [String: String], capture: CapturedSIL)?
         var retainedGraphPath: String?
         func graph(_ revision: String, keepBuild: Bool = false) throws -> XcodeTestGraph {
+            try extractionCancellation.check()
             try cache.resetWork()
             let workspace: URL
             if keepBuild, let retained {
@@ -317,7 +320,7 @@ extension XcodeAnalysis {
             // Resolve settings/packages before lookup. No build, enumeration, or
             // compiler extraction occurs on a hit. Locked resolution cannot float.
             let args = options.arguments(action: "build-for-testing", derivedData: derived) + ["-onlyUsePackageVersionsFromResolvedFile"]
-            let settings = try timed("buildSettings", revision: revision) {
+            var settings = try timed("buildSettings", revision: revision) {
                 try CommandRunner.run("xcodebuild", args + ["-showBuildSettings", "-json"], at: options.path.deletingLastPathComponent()).stdout
             }
             let decoded = try JSONDecoder().decode([XcodeBuildSettings].self, from: settings)
@@ -333,6 +336,7 @@ extension XcodeAnalysis {
             identity["simulatorRuntimes"] = try XcodeGraphCache.runtimeFingerprint(runtimes)
             identity["settings"] = XcodeGraphCache.digest(normalized)
             identity["externalInputs"] = configuration.context
+            identity["buildTimeSIL"] = captureMode?.identity ?? "replay"
             let found = try timed("graphLoad", revision: revision) { try cache.load(identity) }
             events.append(.init(phase: "cache", revision: revision, seconds: 0, detail: found == nil ? "miss: incompatible or absent entry; fresh build required" : "hit: no build, enumeration or extraction"))
             if let found, !keepBuild { return found }
@@ -342,20 +346,44 @@ extension XcodeAnalysis {
                 try settings.write(to: workspace.appendingPathComponent("build-settings.json"), options: .atomic)
                 progress("Full build log (retained on failure): \(buildLog.path)")
             }
-            let build = try timed("build", revision: revision) {
-                try CommandRunner.run("xcodebuild", args, at: options.path.deletingLastPathComponent(), combinedLog: buildLog)
+            let buildText: String
+            var captured: CapturedSIL?
+            if let captureMode {
+                let captureStart = Date()
+                let result = try captureMode.build(options: options, source: source, workspace: workspace,
+                    revision: revision, context: configuration.context, progress: progress)
+                buildText = result.log; settings = result.settings; captured = result.captured
+                events.append(.init(phase: "build", revision: revision, seconds: result.buildSeconds, detail: "build-for-testing with supplementary SIL"))
+                events.append(.init(phase: "captureValidation", revision: revision, seconds: max(0, Date().timeIntervalSince(captureStart) - result.buildSeconds), detail: "wrapper setup, settings and export/product/capture seals"))
+            } else {
+                buildText = try timed("build", revision: revision) {
+                    try CommandRunner.run("xcodebuild", args, at: options.path.deletingLastPathComponent(), combinedLog: buildLog).text
+                }
             }
+            try extractionCancellation.check()
             var measured = self
             measured.measurement = { phase, seconds in
                 events.append(.init(phase: phase, revision: revision, seconds: seconds, detail: "fresh analysis"))
             }
             var result: XcodeTestGraph
-            if let found { result = found }
+            if let found, XcodeSourceOwnership.metadataMatches(found, log: buildText, root: source, derived: derived, captured: captured) {
+                result = found
+            }
             else {
-                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: build.text, settingsData: settings, moduleCache: XcodeModuleCache(cache: cache, identity: identity, source: source, derived: derived, workspace: workspace, directory: options.path.deletingLastPathComponent(), workers: options.extractionWorkers))
+                if found != nil { progress("Cached analysis has different or unverifiable generated-input/product-role evidence; extracting the new build.") }
+                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: buildText, settingsData: settings, moduleCache: XcodeModuleCache(cache: cache, identity: identity, source: source, derived: derived, workspace: workspace, directory: options.path.deletingLastPathComponent(), workers: options.extractionWorkers), captured: captured)
+                try extractionCancellation.check()
+                try captured?.validateFiles()
                 try timed("graphPublish", revision: revision) { try cache.store(result, identity: identity) }
             }
-            if keepBuild {
+            try extractionCancellation.check()
+            try captured?.validateFiles()
+            if keepBuild, let captured {
+                // Capture selection commits its retained bundle only after both
+                // revision captures succeed. A bad base cannot leave a completed
+                // executable capture bundle behind.
+                pendingCapture = (workspace, settings, identity, captured)
+            } else if keepBuild {
                 retainedGraphPath = try timed("retainBuild", revision: revision) {
                     try RetainedXcodeBuild.publish(graph: &result, revision: revision, context: context,
                         toolchain: toolchain, workspace: workspace, settings: settings,
@@ -364,13 +392,35 @@ extension XcodeAnalysis {
             }
             return result
         }
-        let current = try graph(comparison.head!, keepBuild: retained != nil)
+        var current = try graph(comparison.head!, keepBuild: retained != nil)
         var previous: XcodeTestGraph?
         var fallbacks: [String] = []
         if comparison.base == comparison.head { previous = current }
         else {
             do { previous = try graph(comparison.base) }
-            catch { fallbacks.append("Cannot analyze base revision: \(error)") }
+            catch {
+                if captureMode != nil {
+                    if let retained {
+                        let diagnostics = retained.appendingPathComponent("base-capture-failure")
+                        try? FileManager.default.createDirectory(at: diagnostics, withIntermediateDirectories: true)
+                        for name in ["SILCapture", "source-export.json", "build.log", "build-settings.json"] {
+                            let file = cache.work.appendingPathComponent(name)
+                            if FileManager.default.fileExists(atPath: file.path) { try? FileManager.default.copyItem(at: file, to: diagnostics.appendingPathComponent(name)) }
+                        }
+                    }
+                    throw error
+                }
+                fallbacks.append("Cannot analyze base revision: \(error)")
+            }
+        }
+        if let pendingCapture {
+            try extractionCancellation.check()
+            try pendingCapture.capture.validateFiles()
+            retainedGraphPath = try timed("retainBuild", revision: comparison.head!) {
+                try RetainedXcodeBuild.publish(graph: &current, revision: comparison.head!, context: context,
+                    toolchain: toolchain, workspace: pendingCapture.workspace, settings: pendingCapture.settings,
+                    inputIdentity: pendingCapture.identity)
+            }.path
         }
         var report = timed("selection", revision: comparison.head!) {
             XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base, additionalFallbacks: fallbacks)

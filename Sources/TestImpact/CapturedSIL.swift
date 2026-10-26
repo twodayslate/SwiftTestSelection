@@ -7,9 +7,11 @@ import Foundation
 /// coverage is a per-module replay, never an empty dependency graph.
 struct CapturedSIL: Sendable {
     let modules: [String: [URL]]
-    let fingerprints: [String: String]
+    var fingerprints: [String: String]
     let diagnostics: [String]
     var frontendPath: String? = nil
+    var helperIdentity: String? = nil
+    var exportedSources: (root: URL, files: [String: String])? = nil
 
     private static func canonical(_ path: String) -> String {
         if let resolved = realpath(path, nil) { defer { free(resolved) }; return String(cString: resolved) }
@@ -17,6 +19,8 @@ struct CapturedSIL: Sendable {
     }
 
     struct Seal: Decodable {
+        struct Identity: Decodable { var context: String?; var helper: String? }
+        var inputIdentity: Identity?
         var schemaVersion: Int
         var root: String
         var revision: String
@@ -26,6 +30,9 @@ struct CapturedSIL: Sendable {
         var products: [String: String]
         var manifests: [String: String]
         var inventory: [String: [String]]
+        var sourceExportDigest: String?
+        var helperIdentity: String?
+        var buildSeconds: Double?
     }
     struct Job: Decodable {
         var status: String
@@ -38,11 +45,15 @@ struct CapturedSIL: Sendable {
         var silSHA256: [String: String]
     }
     static func load(at directory: URL, root: URL, inputs: XcodeBuildInputs,
-                     logDigest: String, settingsDigest: String, products: [String: String], toolchain: String) throws -> Self {
+                     logDigest: String, settingsDigest: String, products: [String: String], toolchain: String, exportedRevision: String? = nil, sourceExportDigest: String? = nil, expectedContext: String? = nil, expectedHelper: String? = nil) throws -> Self {
         let sealPath = directory.appendingPathComponent("build.json")
         let seal = try JSONDecoder().decode(Seal.self, from: Data(contentsOf: sealPath))
         guard seal.schemaVersion == 1, URL(fileURLWithPath: seal.root).resolvingSymlinksInPath() == root.resolvingSymlinksInPath(),
-              seal.revision == (try GitChanges.revision(inputs.revision, at: root)), seal.toolchain == toolchain,
+              seal.revision == (try exportedRevision ?? GitChanges.revision(inputs.revision, at: root)),
+              seal.sourceExportDigest == sourceExportDigest, (exportedRevision == nil || exportedRevision == inputs.revision),
+              (expectedContext == nil || seal.inputIdentity?.context == expectedContext),
+              (expectedHelper == nil || seal.helperIdentity == expectedHelper && seal.inputIdentity?.helper == expectedHelper),
+              seal.toolchain == toolchain,
               seal.buildLogDigest == logDigest, seal.buildSettingsDigest == settingsDigest, seal.products == products else {
             throw ImpactError("SIL capture does not belong to this revision, toolchain, log, settings and exact test products. Run capture-build.py again.")
         }
@@ -117,10 +128,20 @@ struct CapturedSIL: Sendable {
                 diagnostics.append("Capture \(module): incomplete or unsupported primary coverage; replaying module")
             }
         }
-        let result = Self(modules: modules, fingerprints: fingerprints, diagnostics: diagnostics, frontendPath: directory.appendingPathComponent("wrapper/bin/swift-frontend").path)
+        let result = Self(modules: modules, fingerprints: fingerprints, diagnostics: diagnostics, frontendPath: directory.appendingPathComponent("wrapper/bin/swift-frontend").path, helperIdentity: seal.helperIdentity)
         try result.validateFiles()
         return result
     }
+    func replayLog(_ log: String) throws -> String {
+        try log.components(separatedBy: .newlines).map { line in
+            guard let marker = line.range(of: "builtin-SwiftDriver -- ") else { return line }
+            let arguments = try XcodeSourceFileList.parse(String(line[marker.upperBound...]))
+            return String(line[..<marker.upperBound]) + replayArguments(arguments).map { argument in
+                "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
+            }.joined(separator: " ")
+        }.joined(separator: "\n")
+    }
+
     func replayArguments(_ arguments: [String]) -> [String] {
         var result: [String] = [], index = 0
         while index < arguments.count {
@@ -133,18 +154,63 @@ struct CapturedSIL: Sendable {
         return result
     }
     func validateFiles() throws {
+        if let exportedSources, try ArtifactFiles.manifest(at: exportedSources.root) != exportedSources.files {
+            throw ImpactError("Exported sources changed after capture")
+        }
         for (path, digest) in fingerprints {
             guard try ArtifactFiles.digest(URL(fileURLWithPath: path)) == digest else {
                 throw ImpactError("SIL capture input/output changed: \(path)")
             }
         }
     }
+    struct UnsupportedLayout: Error, CustomStringConvertible {
+        var description: String
+    }
+
+    /// Function-free canonical output has a deliberately small grammar. Require
+    /// the compiler header, imports and complete file mapping footer; an empty or
+    /// truncated file is never accepted just because the parser found no nodes.
+    static func validateEmptyFragment(_ file: URL) throws {
+        var stage = false, footer = false, mappings = 0, imports = Set<String>(), valid = true
+        try SILLineReader.read(file: file) { raw in
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty { return }
+            if !stage { stage = line == "sil_stage canonical"; valid = valid && stage; return }
+            if line == "// Mappings from '#fileID' to '#filePath':" { valid = valid && !footer; footer = true; return }
+            if footer {
+                guard line.hasPrefix("//   '"), line.hasSuffix("'"), line.contains("' => '") else { valid = false; return }
+                mappings += 1
+            } else if line.hasPrefix("import ") {
+                let name = String(line.dropFirst(7))
+                valid = valid && !name.isEmpty && name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." }
+                imports.insert(name)
+            } else if line.hasPrefix("typealias ") {
+                // A platform shim can emit only simple type aliases (for
+                // example SnapshotTesting's UIKit aliases), with no SIL body.
+                let words = line.split(separator: " ")
+                func identifier(_ value: Substring) -> Bool {
+                    guard let first = value.first, first.isLetter || first == "_" else { return false }
+                    return value.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." }
+                }
+                valid = valid && words.count == 4 && words[2] == "=" && identifier(words[1]) && identifier(words[3])
+            } else { valid = false }
+        }
+        guard valid, stage, footer, mappings > 0, imports.isSuperset(of: ["Builtin", "Swift", "SwiftShims"]) else {
+            throw UnsupportedLayout(description: "Unsupported or malformed function-free captured SIL: \(file.lastPathComponent)")
+        }
+    }
+
     func parse(module: String, sourceRoot: URL) throws -> SILModule? {
         guard let files = modules[module] else { return nil }
         var result = SILModule(importedSymbols: [], sharedSymbols: [], functions: [:], dispatchTargets: [:])
         for file in files.sorted(by: { $0.path < $1.path }) {
+            // A changed/missing sealed file is an integrity failure, not a
+            // layout fallback. Do not silently replay a tampered capture.
+            if let expected = fingerprints[file.path], try ArtifactFiles.digest(file) != expected {
+                throw ImpactError("SIL capture input/output changed: \(file.path)")
+            }
             let parsed = try SILParser.parse(file: file, module: module, sourceRoot: sourceRoot)
-            guard !parsed.functions.isEmpty else { throw ImpactError("Empty captured SIL: \(file.path)") }
+            if parsed.functions.isEmpty { try Self.validateEmptyFragment(file) }
             result.sharedSymbols!.formUnion(parsed.sharedSymbols ?? [])
             for (id, node) in parsed.functions {
                 if parsed.importedSymbols?.contains(id) == true {

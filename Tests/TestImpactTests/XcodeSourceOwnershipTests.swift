@@ -31,8 +31,9 @@ private final class OwnershipFixture {
         return url
     }
     func recover(active: Set<String>? = nil) {
+        var generated: [String: [GeneratedSourceBoundary]] = [:], roles: [String: String] = [:]
         XcodeSourceOwnership.recover(log: log, sourceRoot: root, derived: derived, activeInputs: active,
-            targets: &targets, modules: &modules, listOwners: owners, unsupportedInputs: &unsupportedInputs, classifiedLists: &classified, diagnostics: &diagnostics)
+            targets: &targets, modules: &modules, listOwners: owners, unsupportedInputs: &unsupportedInputs, classifiedLists: &classified, diagnostics: &diagnostics, generated: &generated, roleDiagnostics: &roles)
     }
 }
 
@@ -115,8 +116,9 @@ private final class OwnershipFixture {
     let log = try String(contentsOf: url("log"), encoding: .utf8)
     var classified = Set<URL>(), diagnostics: [String] = []
     var unsupportedInputs: [String: [String]] = [:]
+    var generated: [String: [GeneratedSourceBoundary]] = [:], roles: [String: String] = [:]
     XcodeSourceOwnership.recover(log: log, sourceRoot: try url("root"), derived: try url("derived"), activeInputs: nil,
-        targets: &graph.targets, modules: &graph.modules, listOwners: [:], unsupportedInputs: &unsupportedInputs, classifiedLists: &classified, diagnostics: &diagnostics)
+        targets: &graph.targets, modules: &graph.modules, listOwners: [:], unsupportedInputs: &unsupportedInputs, classifiedLists: &classified, diagnostics: &diagnostics, generated: &generated, roleDiagnostics: &roles)
     #expect(diagnostics.isEmpty, "\(diagnostics)")
     let expected = try #require(config["snapshot"])
     for target in graph.targets where target.productType == XcodeSourceOwnership.productType {
@@ -153,9 +155,10 @@ func generatedOnlyOwnershipIsIndependentOfDerivedDataLocation(external: Bool) th
     var targets: [XcodeTarget] = [], modules: [String: String] = [:], unsupported: [String: [String]] = [:]
     var classified = Set<URL>(), diagnostics: [String] = []
     func recover() {
+        var generated: [String: [GeneratedSourceBoundary]] = [:], roles: [String: String] = [:]
         XcodeSourceOwnership.recover(log: f.log, sourceRoot: source, derived: f.derived, activeInputs: nil,
             targets: &targets, modules: &modules, listOwners: [:], unsupportedInputs: &unsupported,
-            classifiedLists: &classified, diagnostics: &diagnostics)
+            classifiedLists: &classified, diagnostics: &diagnostics, generated: &generated, roleDiagnostics: &roles)
     }
     recover()
     #expect(diagnostics == ["Compiler source ownership unavailable for Generated: Generated source ownership is unsupported"])

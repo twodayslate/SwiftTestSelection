@@ -38,6 +38,8 @@ enum XcodeModuleFragment: Sendable {
 /// consumer releases the fragment as soon as its ordered merge finishes.
 final class XcodeModuleResult: @unchecked Sendable {
     private let ready = DispatchSemaphore(value: 0)
+    // Written by the producer; read only after the completion semaphore.
+    var measurements: [String: Double] = [:]
     private var result: Result<(XcodeModuleFragment, [String], Bool), Error>?
     func complete(_ body: () throws -> (XcodeModuleFragment, [String], Bool)) {
         result = Result(catching: body)

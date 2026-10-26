@@ -16,6 +16,8 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+import time
+import re
 
 
 def digest(path):
@@ -112,16 +114,33 @@ def build(args, session):
     # partial build cannot establish a complete inventory from its log alone.
     had_build = (args.derived_data.resolve() / 'Build').exists()
     container = (args.project or args.workspace).resolve()
-    root = Path(output(['git', 'rev-parse', '--show-toplevel'], cwd=container.parent).strip()).resolve()
+    exported = getattr(args, 'export_manifest', None)
+    export_digest = digest(exported) if exported else None
+    if exported:
+        export = json.loads(exported.read_text())
+        root = Path(export['root']).resolve()
+        revision = export['revision']
+        if not re.fullmatch(r'[0-9a-f]{40}', revision) or not container.is_relative_to(root):
+            raise ValueError('Invalid exported revision/container provenance')
+        def source_identity():
+            if digest(exported) != export_digest or manifest(root) != export['files']:
+                raise ValueError('Exported source changed or does not match its revision manifest')
+            return export_digest
+    else:
+        root = Path(output(['git', 'rev-parse', '--show-toplevel'], cwd=container.parent).strip()).resolve()
+        revision = output(['git', 'rev-parse', 'HEAD'], cwd=root).strip()
+        def source_identity():
+            if output(['git', 'status', '--porcelain', '--untracked-files=all'], cwd=root).strip():
+                raise ValueError('Capture requires a clean committed checkout')
+            return output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root).strip()
     if session.is_relative_to(root): raise ValueError('Keep the session outside the source checkout')
-    revision = output(['git', 'rev-parse', 'HEAD'], cwd=root).strip()
-    def source_identity():
-        if output(['git', 'status', '--porcelain', '--untracked-files=all'], cwd=root).strip():
-            raise ValueError('Capture requires a clean committed checkout')
-        # Git tree is the source identity; context covers ignored/generated inputs,
-        # scripts, environment and external/local packages not described by Git.
-        return output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root).strip()
     tree = source_identity()
+    if exported and had_build:
+        build_root = args.derived_data.resolve() / 'Build'
+        if any(build_root.rglob('*.SwiftFileList')) or any((build_root / 'Products').rglob('*')):
+            raise ValueError('Export capture requires fresh build products and compiler inputs')
+        # The analyzer's cache lookup may resolve settings/packages first.
+        had_build = False
     compiler = output(['xcrun', '--find', 'swiftc']).strip()
     toolchain = output(['xcodebuild', '-version']) + output(['xcrun', 'swiftc', '--version'])
     wrapper = session / 'wrapper'
@@ -138,23 +157,28 @@ def build(args, session):
                '-scheme', args.scheme, '-destination', args.destination, '-derivedDataPath', str(args.derived_data.resolve())]
     if args.test_plan: command += ['-testPlan', args.test_plan]
     if args.configuration: command += ['-configuration', args.configuration]
+    if getattr(args, 'only_use_package_versions_from_resolved_file', False): command += ['-onlyUsePackageVersionsFromResolvedFile']
     command += ['OTHER_SWIFT_FLAGS=$(inherited) ' + ' '.join(shlex.quote(v) for v in setup['additionalSwiftFlags'])]
     settings_path = session / 'settings.json'
     settings = subprocess.check_output(command + ['-showBuildSettings', '-json'], cwd=root, env=env)
-    identity = dict(tree=tree, context=args.context, toolchain=toolchain, settings=hashlib.sha256(settings).hexdigest(), command=command)
+    helper_files = [Path(__file__), prepare, prepare.with_name('capture_swiftc.py'), prepare.with_name('capture_inputs.py')]
+    helper_identity = hashlib.sha256(json.dumps({p.name: digest(p) for p in helper_files}, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    identity = dict(helper=helper_identity, tree=tree, context=args.context, toolchain=toolchain, settings=hashlib.sha256(settings).hexdigest(), command=command)
     seal_path = session / 'build.json'
     previous = json.loads(seal_path.read_text()) if seal_path.exists() else {}
-    compatible = previous.get('root') == str(root) and all(previous.get('inputIdentity', {}).get(k) == identity[k] for k in ['toolchain', 'settings', 'command', 'context'])
+    compatible = previous.get('root') == str(root) and all(previous.get('inputIdentity', {}).get(k) == identity[k] for k in ['helper', 'toolchain', 'settings', 'command', 'context'])
     if had_build and not compatible:
         raise ValueError('No compatible complete compiler inventory; use fresh DerivedData for a new or incompatible session')
     # Invalidate the old seal before the first build mutation, including failures.
     seal_path.unlink(missing_ok=True)
     settings_path.write_bytes(settings)
     log_path = session / 'build.log'
+    build_started = time.monotonic()
     with log_path.open('wb') as log:
         result = subprocess.run(command, cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
+    build_seconds = time.monotonic() - build_started
     if result.returncode: raise ValueError('Build failed; complete log retained at ' + str(log_path))
-    if tree != source_identity() or revision != output(['git', 'rev-parse', 'HEAD'], cwd=root).strip():
+    if tree != source_identity() or (not exported and revision != output(['git', 'rev-parse', 'HEAD'], cwd=root).strip()):
         raise ValueError('Source changed during build')
     if settings != subprocess.check_output(command + ['-showBuildSettings', '-json'], cwd=root, env=env):
         raise ValueError('Build settings changed during build')
@@ -189,6 +213,7 @@ def build(args, session):
     manifests = {str(p.relative_to(session)): digest(p) for p in sorted(chosen)}
     products = manifest(args.derived_data.resolve() / 'Build/Products')
     seal = dict(schemaVersion=1, root=str(root), revision=revision, toolchain=toolchain,
+                sourceExportDigest=export_digest, helperIdentity=helper_identity, buildSeconds=build_seconds,
                 buildLogDigest=digest(log_path), buildSettingsDigest=digest(settings_path),
                 products=products, manifests=manifests, inventory=inventory, drivers=drivers, inputIdentity=identity)
     atomic(seal_path, seal)
@@ -207,6 +232,8 @@ if __name__ == '__main__':
     parser.add_argument('--derived-data', type=Path, required=True)
     parser.add_argument('--test-plan')
     parser.add_argument('--configuration')
+    parser.add_argument('--export-manifest', type=Path, help='Analyzer-owned revision/source manifest for a Git archive export')
+    parser.add_argument('--only-use-package-versions-from-resolved-file', action='store_true')
     try: run(parser.parse_args())
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         sys.exit('capture-build: ' + str(error))
