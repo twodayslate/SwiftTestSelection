@@ -134,6 +134,21 @@ func generatedBoundaryChangesWithItsInputs(change: String) throws {
     #expect(diagnostics.isEmpty && roles.isEmpty && unsupported.isEmpty)
     #expect(generated["ChainOfCustodyCore"]?.count == 1)
     #expect(graph.targets.first { graph.modules[$0.name] == "ShareExtension" }?.hasProductionRole == true)
+    if let document = ProcessInfo.processInfo.environment["IMPACT_EXPECT_IGNORED_DOCUMENTATION"] {
+        #expect(Set(generated.keys) == Set(graph.generatedSourceBoundaries?.keys ?? [:].keys))
+        for (module, boundaries) in generated {
+            for boundary in boundaries {
+                #expect(boundary.documentationEvidenceVersion == 3)
+                #expect(boundary.documentationInputs?.contains(document) == true)
+                let prior = graph.generatedSourceBoundaries?[module]?.first { $0.logicalPath == boundary.logicalPath }
+                #expect(boundary.documentationInputs == prior?.documentationInputs)
+            }
+        }
+        graph.generatedSourceBoundaries = generated
+        let report = XcodeFineSelector.select(current: graph, previous: graph, changes: [.init(path: document)], baseRevision: "replayed-evidence")
+        #expect(report.ignoredChanges == [document] && report.selectedTests.isEmpty)
+        #expect(report.diagnostics.isEmpty)
+    }
 }
 
 @Test func generatedFilePathValuesRemainSemanticAcrossDerivedDataRoots() throws {
@@ -228,6 +243,7 @@ func standardXcodeTasksPreserveDocumentationPrecision(tool: String, scenario: St
     try f.write("documentation", to: f.root.appendingPathComponent("AGENTS.md"))
     var commands = f.commands
     let deps = f.derived.appendingPathComponent("example.dat")
+    try f.write("kernel void example() {}", to: f.root.appendingPathComponent("Shaders/example.metal"))
     try f.write("dependencies: Shaders/example.metal\n", to: deps)
     commands["CompileMetalFile"] = ["tool": "shell", "args": [metal, "-c", "-MD", "-MT", "dependencies", "-MF", deps.path, "Shaders/example.metal"],
         "inputs": ["Shaders/example.metal"], "deps": [deps.path], "deps-style": "makefile"]
@@ -242,6 +258,7 @@ func metalIncludesAreSealedBuildInputs(scenario: String) throws {
     let f = try EvidenceFixture()
     try f.write("documentation", to: f.root.appendingPathComponent("Docs/Guide.md"))
     let deps = f.derived.appendingPathComponent("shader.dat")
+    try f.write("kernel void example() {}", to: f.root.appendingPathComponent("Shaders/shader.metal"))
     let included = scenario == "includedMarkdown" ? "../Docs/Guide.md" : "shader.metal"
     if scenario != "missing" { try f.write(scenario == "malformed" ? "unknown format" : "dependencies: " + included + "\n", to: deps) }
     var commands = f.commands
@@ -289,11 +306,14 @@ func unrelatedBuiltInDependencyFormatsPreserveGeneratedEvidence(format: String) 
         (["-MD", "@flags.rsp"], false), (["-MD", "-Wp,-MMD"], false),
         (["-MD", "-Xpreprocessor", "-MMD"], false), (["-MD", "-MM"], false),
         (["-MMD", "-Xclang", "-sys-header-deps", "-Xclang", "@flags.rsp"], false),
-        (["-MD", "--config=flags.cfg"], false), (["-MD", "-ivfsoverlay", "overlay.json"], false)
+        (["-MD", "--config=flags.cfg"], false), (["-MD", "-ivfsoverlay", "overlay.json"], false),
+        (["-MD", "-ivfsoverlay/path/overlay.json"], false), (["-MD", "-ivfsoverlay=overlay.json"], false),
+        (["-MD", "-vfsoverlay", "overlay.json"], false), (["-MD", "-vfsoverlay=overlay.json"], false)
     ]
     for (flags, complete) in cases {
         let f = try EvidenceFixture()
         try f.write("documentation", to: f.root.appendingPathComponent("AGENTS.md"))
+        try f.write("kernel void example() {}", to: f.root.appendingPathComponent("shader.metal"))
         let deps = f.derived.appendingPathComponent("shader.dat")
         try f.write("dependencies: shader.metal\n", to: deps)
         var commands = f.commands
@@ -352,6 +372,94 @@ func compiledMetalSystemHeadersRemainSelectionInputs(kind: String, mode: String)
     after.generatedSourceBoundaries = ["Core": [try buildBoundary()]]
     #expect(try ArtifactFiles.digest(product) != oldProduct)
     let report = XcodeFineSelector.select(current: after, previous: before, changes: [.init(path: "Docs/Guide.md")], baseRevision: "base")
+    #expect(report.selectedTests == before.tests)
+    #expect(report.ignoredChanges.isEmpty)
+    #expect(report.diagnostics.contains { $0.code == "documentation_exclusion_blocked" })
+}
+
+@Test(arguments: ["file", "missing", "directory", "danglingSymlink", "backslashCollision"])
+func metalDependenciesRequireResolvedFiles(kind: String) throws {
+    let f = try EvidenceFixture()
+    let document = kind == "backslashCollision" ? #"Docs/Guide\file.md"# : "Docs/Guide.md"
+    try f.write("documentation", to: f.root.appendingPathComponent(document))
+    let input = f.root.appendingPathComponent("Docs/Guide/file.md")
+    switch kind {
+    case "file", "backslashCollision": try f.write("input", to: input)
+    case "directory": try FileManager.default.createDirectory(at: input, withIntermediateDirectories: true)
+    case "danglingSymlink":
+        try FileManager.default.createSymbolicLink(at: f.root.appendingPathComponent("missing-link"), withDestinationURL: input)
+    default: break
+    }
+    // The repository manifest is supplied separately so the dangling-symlink
+    // case reaches dependency validation rather than the repository symlink gate.
+    let deps = f.derived.appendingPathComponent("shader.dat")
+    let path = kind == "danglingSymlink" ? f.root.appendingPathComponent("missing-link").path : input.path
+    try f.write("dependencies: " + path + "\n", to: deps)
+    var commands = f.commands
+    commands["CompileMetalFile"] = ["tool": "shell", "args": [
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal", "-c", "-MD", "-MT", "dependencies", "-MF", deps.path],
+        "deps": [deps.path], "deps-style": "makefile"]
+    try f.save(commands: commands)
+    let files = [document: "content"]
+    let boundary = try f.evidence().boundary(file: f.generated, module: "Core", list: f.list, arguments: f.args,
+        repositoryInputs: XcodeGraphCache.key(files), repositoryInputFiles: files)
+    #expect(boundary.documentationInputs == (kind == "file" ? [document] : []))
+    if kind != "file" {
+        #expect(boundary.documentationBlockers?[document]?.contains { $0.contains("Metal") && $0.contains("unsupported") || $0.contains("Unsupported repository path") } == true)
+    }
+}
+
+/// Both the virtual path and the slash-spelled collision can exist on disk.
+/// Existence alone must not turn lossy dependency evidence into an exclusion.
+@Test(arguments: ["overlay", "joinedOverlay", "backslash", "backslashCollision"])
+func compiledMetalPathAliasesCannotHideRepositoryInputs(kind: String) throws {
+    guard let developer = ProcessInfo.processInfo.environment["IMPACT_METAL_DEVELOPER"] else { return }
+    let metal = try #require(XcodeBuildEvidence.installedMetalTool("metal", developer: developer))
+    let f = try EvidenceFixture()
+    let isOverlay = kind == "overlay" || kind == "joinedOverlay"
+    let document = isOverlay ? "Docs/Guide.md" : #"Docs/Guide\file.md"#
+    let header = f.root.appendingPathComponent(document), shader = f.root.appendingPathComponent("shader.metal")
+    let deps = f.derived.appendingPathComponent("shader.dat"), product = f.derived.appendingPathComponent("shader.air")
+    var flags: [String] = [], inputs = [shader.path]
+    if isOverlay {
+        let overlay = f.root.appendingPathComponent("overlay.json"), virtual = f.root.appendingPathComponent("Virtual.h")
+        let vfs: [String: Any] = ["version": 0, "use-external-names": false, "roots": [
+            ["type": "file", "name": virtual.path, "external-contents": header.path]]]
+        try f.write(String(decoding: JSONSerialization.data(withJSONObject: vfs), as: UTF8.self), to: overlay)
+        try f.write("#define VALUE 99\n", to: virtual)
+        flags = kind == "joinedOverlay" ? ["-ivfsoverlay" + overlay.path] : ["-ivfsoverlay", overlay.path]
+        inputs.append(overlay.path)
+    } else if kind == "backslashCollision" {
+        try f.write("#define VALUE 99\n", to: f.root.appendingPathComponent("Docs/Guide/file.md"))
+    }
+    try f.write("#define VALUE 1\n", to: header)
+    let include = isOverlay ? "Virtual.h" : document
+    try f.write("#include \"\(include)\"\nkernel void example(device int* result [[buffer(0)]]) { result[0] = VALUE; }\n", to: shader)
+    let args = [metal, "-c", "-target", "air64-apple-ios26.0-simulator"] + flags +
+        ["-MMD", "-Xclang", "-sys-header-deps", "-MT", "dependencies", "-MF", deps.path, shader.path, "-o", product.path]
+    var commands = f.commands
+    commands["CompileMetalFile"] = ["tool": "shell", "args": args, "inputs": inputs,
+        "deps": [deps.path], "deps-style": "makefile", "working-directory": f.root.path]
+    try f.save(commands: commands)
+    var compiler = f.args
+    compiler[0] = developer + "/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    func buildBoundary() throws -> GeneratedSourceBoundary {
+        _ = try CommandRunner.run(metal, Array(args.dropFirst()), at: f.root)
+        #expect(try !String(contentsOf: deps, encoding: .utf8).contains(document))
+        let boundary = try f.boundary(arguments: compiler)
+        #expect(boundary.documentationInputs?.contains(document) == false)
+        return boundary
+    }
+    var before = XcodeTestGraph(targets: [], tests: ["Tests/Shaders/testShader()"])
+    before.dependencies = DependencyGraph(functions: [:], tests: [:])
+    before.mappings = UIFeatureMappings(features: [], ignoredDocumentation: ["**.md"])
+    before.generatedSourceBoundaries = ["Core": [try buildBoundary()]]
+    let oldProduct = try ArtifactFiles.digest(product)
+    try f.write("#define VALUE 2\n", to: header)
+    var after = before
+    after.generatedSourceBoundaries = ["Core": [try buildBoundary()]]
+    #expect(try ArtifactFiles.digest(product) != oldProduct)
+    let report = XcodeFineSelector.select(current: after, previous: before, changes: [.init(path: document)], baseRevision: "base")
     #expect(report.selectedTests == before.tests)
     #expect(report.ignoredChanges.isEmpty)
     #expect(report.diagnostics.contains { $0.code == "documentation_exclusion_blocked" })

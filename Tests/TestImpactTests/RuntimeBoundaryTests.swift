@@ -349,7 +349,7 @@ func generatedInputsAreComparedEvenWithoutGitPaths(scenario: String) throws {
     #expect(saved.generatedSourceBoundaries == current.generatedSourceBoundaries)
 }
 
-@Test(arguments: ["docs", "mixed", "added", "deleted", "oneSided", "resource", "legacy", "legacyDocumentation", "unknownDocumentation", "generator", "unignored"])
+@Test(arguments: ["docs", "mixed", "added", "deleted", "oneSided", "resource", "legacy", "legacyDocumentation", "versionTwoDocumentation", "unknownDocumentation", "generator", "unignored"])
 func generatedBoundariesHonorOnlyProvenIgnoredDocumentation(scenario: String) throws {
     var old = boundaryFixture()
     var boundary = GeneratedSourceBoundary(module: "App", logicalPath: "<DerivedData>/Generated.swift", contentDigest: "source", generatorIdentity: "settings", repositoryInputs: "")
@@ -378,6 +378,10 @@ func generatedBoundariesHonorOnlyProvenIgnoredDocumentation(scenario: String) th
         #expect(boundary.documentationEvidenceVersion == nil)
     }
     if scenario == "unknownDocumentation" { boundary.documentationEvidenceVersion = 999 }
+    if scenario == "versionTwoDocumentation" {
+        boundary.documentationEvidenceVersion = 2
+        old.generatedSourceBoundaries?["App"]?[0].documentationEvidenceVersion = 2
+    }
     current.generatedSourceBoundaries = ["App": [boundary]]
     let changes: [FileChange] = scenario == "mixed" ? [.init(path: "AGENTS.md"), .init(path: "App.swift")] : [.init(path: "AGENTS.md")]
     let report = XcodeFineSelector.select(current: current, previous: old, changes: changes, baseRevision: "base")

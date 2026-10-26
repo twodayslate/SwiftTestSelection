@@ -18,9 +18,9 @@ public struct GeneratedSourceBoundary: Codable, Sendable, Equatable {
     public var documentationBlockers: [String: [String]]? = nil
     public var sourceLocations: [String]? = nil
     public var generatorInputs: [String: String]? = nil
-    // Missing in older archives, whose exclusions did not require complete
-    // Metal system-header dependencies. They must be recaptured before ignoring docs.
-    public var documentationEvidenceVersion: Int? = 2
+    // Older versions did not validate Metal dependency paths and all overlay
+    // argument forms. Recapture them before excluding documentation.
+    public var documentationEvidenceVersion: Int? = 3
 }
 
 public struct RecoveredProductRole: Codable, Sendable, Equatable {
@@ -280,10 +280,12 @@ struct XcodeBuildEvidence {
         var inputRows = ordered.flatMap { key, command in
             (command.inputs ?? []).filter { !$0.hasPrefix("<") }.map { (key, $0, inputPath($0, command)) }
         }
+        var hasMetalCompilation = false
         for (key, command) in ordered where command.tool == "shell" && command.isMetal {
             let args = command.args ?? []
             let dependencies = command.deps ?? []
             if args.contains("-c") || !dependencies.isEmpty {
+                hasMetalCompilation = true
                 // Includes need not appear in the manifest's direct inputs. Read
                 // the compiler's makefile dependencies, which are also sealed by
                 // fingerprints(log:) for capture/discovery/retained validation.
@@ -297,7 +299,15 @@ struct XcodeBuildEvidence {
                     unknown.append("Unresolved Metal dependencies for task \(normalized(key)): \(dependencies.map(normalized).joined(separator: ", "))")
                     continue
                 }
-                inputRows += paths.map { (key, $0, inputPath($0, command)) }
+                let rows = paths.map { (key, $0, inputPath($0, command)) }
+                for (_, input, resolved) in rows {
+                    let values = try? URL(fileURLWithPath: resolved).resourceValues(forKeys: [.isRegularFileKey])
+                    if !Self.supportedMetalDependencyPath(resolved) || values?.isRegularFile != true ||
+                        !FileManager.default.isReadableFile(atPath: resolved) {
+                        unknown.append("Unresolved or unsupported Metal dependency for task \(normalized(key)): \(normalized(input)) (resolved: \(normalized(resolved)))")
+                    }
+                }
+                inputRows += rows
                 if !Self.metalIncludesSystemHeaders(args) {
                     unknown.append("Incomplete Metal dependencies for task \(normalized(key)): system headers may be omitted; rebuild with MTL_COMPILER_FLAGS='$(inherited) -Xclang -sys-header-deps'")
                 }
@@ -315,6 +325,12 @@ struct XcodeBuildEvidence {
         for path in files.keys.sorted() where path.hasSuffix(".md") {
             let absolute = canonical(root.appendingPathComponent(path).path)
             var reasons = unknown
+            // Metal can rewrite a literal backslash into a slash in its depfile.
+            // Even if that rewritten path happens to exist, it cannot establish
+            // whether this differently spelled repository input was consumed.
+            if hasMetalCompilation && !Self.supportedMetalDependencyPath(absolute) {
+                reasons.append("Unsupported repository path in Metal dependency evidence: \(normalized(absolute))")
+            }
             for (key, input, consumed) in inputRows where absolute == consumed || absolute.hasPrefix(consumed + "/") {
                 reasons.append("Task \(normalized(key)) consumes input \(normalized(input))")
             }
@@ -325,6 +341,10 @@ struct XcodeBuildEvidence {
             else { blockers[path] = Array(Set(reasons)).sorted() }
         }
         return (allowed, blockers)
+    }
+
+    private static func supportedMetalDependencyPath(_ path: String) -> Bool {
+        !path.contains { $0 == "\\" || $0.isNewline }
     }
 
     /// -MMD omits system headers, including repository headers reached through
@@ -344,7 +364,8 @@ struct XcodeBuildEvidence {
             }
             if argument.hasPrefix("@") || argument.hasPrefix("-Xclang") || argument.hasPrefix("-Xpreprocessor") ||
                 argument.hasPrefix("-Wp,") || argument.hasPrefix("-Xarch_") || argument.hasPrefix("--config") ||
-                ["-cc1", "-M", "-MM", "-ivfsoverlay", "-vfsoverlay"].contains(argument) { return false }
+                argument.hasPrefix("-ivfsoverlay") || argument.hasPrefix("-vfsoverlay") ||
+                ["-cc1", "-M", "-MM"].contains(argument) { return false }
             index += 1
         }
         guard args.contains("-MD") || args.contains("-MMD") else { return false }

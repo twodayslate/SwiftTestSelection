@@ -676,10 +676,15 @@ setting for both `build-for-testing` and `-showBuildSettings`, as in the example
 above. Merely adding `-MD` alongside Xcode's `-MMD` is insufficient. Imports with
 incomplete or opaque dependency flags retain a diagnostic and conservative
 selection; they are not recompiled to recover missing Metal evidence.
+Spaced and joined VFS-overlay options are unsupported. Dependency paths must
+resolve to readable regular files; missing paths, directories, and dangling links
+block exclusions. Markdown paths containing literal backslashes or newlines also
+remain conservative because Metal's dependency output cannot reliably preserve
+those spellings, even when a different file exists at the rewritten path.
 Unknown shell tools prevent this exclusion because they may consume undeclared
 inputs. Each boundary's `documentationBlockers` records the exact command/input;
 selection emits `documentation_exclusion_blocked` when a changed Markdown file
-cannot be excluded. Graphs without `documentationEvidenceVersion: 2`, including
+cannot be excluded. Graphs without `documentationEvidenceVersion: 3`, including
 earlier graphs with per-file exclusions or opaque fingerprints, cannot establish
 safe exclusions; regenerate both revisions to obtain the complete evidence.
 Proven reference-only `.pbxproj` edits accompanying pure file moves are also
