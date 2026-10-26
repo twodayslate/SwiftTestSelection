@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Zachary Gorak
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 """Verify durable failed/cancelled build evidence through the real CLI, using mocked Xcode."""
 import argparse
 import os

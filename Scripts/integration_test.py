@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Zachary Gorak
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 """End-to-end validation against real SwiftPM/SIL/Git, isolated from the checkout."""
 import argparse

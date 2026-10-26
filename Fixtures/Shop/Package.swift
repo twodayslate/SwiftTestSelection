@@ -1,6 +1,6 @@
 // swift-tools-version: 6.0
 // SPDX-FileCopyrightText: 2026 Zachary Gorak
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import PackageDescription
 

@@ -989,7 +989,11 @@ References: [Swift compiler](https://www.swift.org/documentation/swift-compiler/
 
 Copyright (c) 2026 Zachary Gorak.
 
-Licensed under the **GNU Affero General Public License, version 3 only** (`AGPL-3.0-only`). See [LICENSE](LICENSE) for the complete terms. This is a strong-copyleft open-source license, including source-sharing requirements for modified versions used over a network. Commercial use is permitted under the license.
+Licensed under the **PolyForm Noncommercial License 1.0.0** (`PolyForm-Noncommercial-1.0.0`). See [LICENSE](LICENSE) for the complete terms.
+
+This project is source-available. You may use and modify it for the purposes permitted by the license, including noncommercial purposes and the uses explicitly permitted for the organizations listed in the license. Forking and redistribution are allowed under the license's distribution and notice requirements. Commercial use outside those permissions requires a separate license from the copyright holder.
+
+Versions previously released under AGPL-3.0-only remain available under that license; this change does not revoke permissions already granted for those versions.
 
 ### Select without any baseline artifacts
 

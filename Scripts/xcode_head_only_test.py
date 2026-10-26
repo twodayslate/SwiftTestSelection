@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Zachary Gorak
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 """Fresh head-only fixtures: one executable build, merge-base syntax, exact retained execution.
 
 Requires an available simulator destination. Uses no persistent analysis cache.
