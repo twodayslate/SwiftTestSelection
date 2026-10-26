@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Zachary Gorak
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 """Experimental frontend wrapper; does not change optimization or codegen.
 
 Requires IMPACT_SIL_CAPTURE and IMPACT_REAL_SWIFTC. Each object-producing frontend

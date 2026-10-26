@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Zachary Gorak
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 """Read frontend input lists, which contain one literal filename per line.
 
 These are not shell response files: spaces, quotes and backslashes belong to

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Zachary Gorak
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 """Measure an isolated Xcode build command and sample its compiler-process RSS.
 
 RSS sums double-count shared pages and exclude persistent Xcode services whose

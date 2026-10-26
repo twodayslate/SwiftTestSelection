@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Zachary Gorak
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 """Release SIL regression benchmark, independent of Xcode/project builds (macOS).
 
 Generates growing files with a constant graph, checks memory bounds, and counts

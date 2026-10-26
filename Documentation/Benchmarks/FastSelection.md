@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Zachary Gorak -->
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
 
 # Indexed selection, compact artifacts and sealed capture
 
