@@ -1416,6 +1416,10 @@ policy, not proof that omitted changes cannot affect deferred regression tests.
 `excludedTestEntries` lists edited test entries the consumer executes separately.
 Their bodies do not become change roots in a helper scope when compiler evidence
 proves they are independent entries. Entries consumed by other tests remain roots.
+Exclusions apply only to supported surviving bodies after checking both source
+revisions; structural edits and macro/attribute uncertainty retain their fallbacks.
+Missing test roots or unresolved lifecycle bindings prevent independence from being
+proven, so those entries remain change roots and unresolved tests stay selected.
 Only provide entries your policy already executes. This does not exclude helpers,
 lifecycle methods, resources, or global build/graph uncertainty. Validate scope
 identity and candidates against the primary report, and use `verify-build` before

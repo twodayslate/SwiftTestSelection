@@ -89,7 +89,6 @@ enum XcodeHeadOnlySelector {
             let before = old[key] ?? [], after = new[key] ?? []
             guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() else { continue }
             semanticPaths.formUnion((before + after).map { $0.region.path })
-            if excludedKeys.contains(key) { continue }
             guard before.count == 1, after.count == 1, let a = before.first, let b = after.first,
                   a.kind == "function", b.kind == "function", a.region.path == b.region.path else {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \((before + after).first?.region.path ?? key)")
@@ -99,6 +98,9 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_unsupported_body", "Attributes, macros or opaque result types can change callers outside a surviving body: \(b.region.path):\(b.region.startLine)")
                 continue
             }
+            // A separate execution of this entry does not cover effects from
+            // structural changes or unsupported bodies outside its call graph.
+            if excludedKeys.contains(key) { continue }
             changed.append(b)
         }
         let owned = Set(current.targets.flatMap(\.sourceFiles))
@@ -158,7 +160,10 @@ enum XcodeHeadOnlySelector {
                     include([test], kind: "dependency", reason: "Head compiler dependencies reach a surviving body with an unchanged declaration header", path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
                 if !changed.isEmpty {
-                    if graph.tests[test]?.isEmpty ?? true { fallback("head_only_unresolved_test", "No compiled head entry for \(test)", tests: [test]) }
+                    let roots = graph.tests[test] ?? []
+                    if roots.isEmpty || roots.contains(where: { graph.functions[$0] == nil }) {
+                        fallback("head_only_unresolved_test", "Missing or incomplete compiled head entry for \(test)", tests: [test])
+                    }
                     for message in graph.testDiagnostics[test] ?? [] { fallback("head_only_unresolved_test", message, tests: [test]) }
                 }
             }

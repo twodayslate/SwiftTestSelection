@@ -60,6 +60,14 @@ extension XcodeHeadOnlySelector {
 
     static func independentEntryKeys(current: XcodeTestGraph, excluding entries: Set<String>) -> Set<String> {
         guard !entries.isEmpty, let graph = current.dependencies else { return [] }
+        // Missing roots and incomplete lifecycle bindings hide possible callers.
+        // Keep the change roots so normal selection reports that uncertainty;
+        // absence of a path in a partial test inventory cannot prove isolation.
+        guard current.tests.allSatisfy({ test in
+            guard let roots = graph.tests[test], !roots.isEmpty,
+                  graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
+            return roots.allSatisfy { graph.functions[$0] != nil }
+        }) else { return [] }
         // Restrict expensive ownership/reachability checks to locations of the
         // requested entries, rather than scanning every test body in the graph.
         let regions = Dictionary(grouping: entries.flatMap { graph.tests[$0] ?? [] }

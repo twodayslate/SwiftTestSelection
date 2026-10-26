@@ -1027,3 +1027,59 @@ func headOnlyNestedOpaqueResultsRequireFallback(result: String) throws {
         #expect(throws: (any Error).self) { try request.validate() }
     }
 }
+
+@Test(arguments: ["enclosing-macro", "function-macro", "inline-attribute", "body-macro"])
+func headOnlyScopeExclusionsPreserveUnsupportedBodyFallback(kind: String) {
+    let text: String
+    switch kind {
+    case "enclosing-macro": text = uiSource.replacingOccurrences(of: "class Sharing", with: "@CustomMacro class Sharing")
+    case "function-macro": text = uiSource.replacingOccurrences(of: "func testIndependent", with: "@CustomMacro func testIndependent")
+    case "inline-attribute": text = uiSource.replacingOccurrences(of: "func testIndependent", with: "@inline(__always) func testIndependent")
+    default: text = uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "#customAssertion(1, 1)")
+    }
+    let old = headOnlyModel(ui: text)
+    let current = headOnlyModel(ui: text.replacingOccurrences(of: "(1, 1)", with: "(1, 2)"))
+    let primary = headOnlySelection(current, old: old)
+    let scoped = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: old.mappings),
+        changes: [.init(path: "Tests/UI.swift")], baseRevision: "base", excludedTestEntries: ["UI/Sharing/testIndependent()"])
+    #expect(primary.selectedTests == current.tests)
+    #expect(scoped.selectedTests == primary.selectedTests)
+    #expect(scoped.diagnostics.contains { $0.code == "head_only_unsupported_body" })
+}
+
+@Test func headOnlyScopeExclusionsDoNotBypassStructuralFallback() {
+    let old = headOnlyModel()
+    let text = uiSource.replacingOccurrences(of: "func testIndependent()", with: "func testAdded() {}\n    func testIndependent()")
+    let current = headOnlyModel(ui: text)
+    let scoped = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: old.mappings),
+        changes: [.init(path: "Tests/UI.swift")], baseRevision: "base", excludedTestEntries: ["UI/Sharing/testAdded()"])
+    #expect(scoped.selectedTests == current.tests)
+    #expect(scoped.diagnostics.contains { $0.code == "head_only_declaration_change" })
+}
+
+@Test(arguments: ["missing", "empty", "dangling", "partial", "lifecycle"])
+func headOnlyScopeExclusionsRequireCompleteConsumerBindings(kind: String) {
+    let old = headOnlyModel()
+    var current = headOnlyModel(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)"))
+    let entry = "UI/Sharing/testIndependent()", consumer = "UI/Notes/testNotes()"
+    func scoped(_ graph: XcodeTestGraph) -> ImpactReport {
+        XcodeHeadOnlySelector.select(current: graph, source: .init(base: old.sources, mappings: old.mappings),
+            changes: [.init(path: "Tests/UI.swift")], baseRevision: "base", excludedTestEntries: [entry])
+    }
+    // A complete graph still permits a focused, valid empty scope when the
+    // only edited body is an independent entry already run by caller policy.
+    let control = scoped(current)
+    #expect(control.selectedTests.isEmpty)
+    #expect(control.diagnostics.isEmpty)
+    switch kind {
+    case "missing": current.dependencies!.tests.removeValue(forKey: consumer)
+    case "empty": current.dependencies!.tests[consumer] = []
+    case "dangling": current.dependencies!.tests[consumer] = ["missing-symbol"]
+    case "partial": current.dependencies!.tests[consumer]!.insert("missing-symbol")
+    default: current.dependencies!.testDiagnostics[consumer] = ["Cannot resolve inherited lifecycle/fixture type: ExternalBase"]
+    }
+    let result = scoped(current)
+    #expect(result.selectedTests == [consumer, entry])
+    #expect(result.diagnostics.contains { $0.code == "head_only_unresolved_test" && $0.tests.contains(consumer) })
+    #expect(result.onlyTestingArguments == result.selectedTests.map { "-only-testing:" + $0 })
+}
