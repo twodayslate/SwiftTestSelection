@@ -1034,7 +1034,8 @@ The supported-change model is deliberately narrower than two-graph analysis:
 | --- | --- |
 | Surviving ordinary function body, unchanged header | Trace head compiler dependencies to tests; deleting lines inside a body is supported |
 | Edited test, helper, setup/teardown or inherited method | Select bound tests and dependent consumers; unresolved identities broaden explicitly |
-| Added/deleted/renamed/moved declaration, overload/signature/default-argument/dispatch change | Full enabled head inventory: old compiler edges are unavailable |
+| Added or edited private test helper with verified isolation | Select its compiled test consumers; unrelated opaque runtime dependencies do not broaden this helper |
+| Other added/deleted/renamed/moved declaration, overload/signature/default-argument/dispatch change | Full enabled head inventory: old compiler edges are unavailable |
 | Global/initializer, resource, configuration, mapping or unowned source change | Full enabled head inventory |
 | Macros, opaque return types, unrecognized build scripts or unresolved ownership | Explained conservative fallback |
 | Production change and app-hosted/unknown test host | Retain the affected host's tests; base source imports do not prove isolation |
@@ -1049,8 +1050,45 @@ are conservatively unsupported. This also applies to attributes
 on enclosing types: an attached macro can synthesize other declarations from a
 changed body. Test-entry selection retains the existing test-independence assumption.
 Declared UI feature mappings narrow runtime uncertainty only when all changed
-bodies belong to production code or proven test entries. Mixed helper or lifecycle
-edits retain their runtime fallbacks even when a mapped app feature also changes.
+bodies belong to production code, proven test entries, or isolated private helpers.
+Other mixed helper or lifecycle edits retain their runtime fallbacks even when a
+mapped app feature also changes.
+
+Private helper isolation is automatic and deliberately bounded. It supports a
+synchronous `private func` in a final test class, with an unambiguous source-defined
+inheritance chain ending at XCTestCase. Both source revisions must prove that all
+references are direct calls from bound test entries in the same class. Added
+helpers also require their name to be absent from the base module, so introducing
+an overload or changing an existing name's resolution cannot silently pass.
+The head graph must confirm the callers, complete test/lifecycle bindings, and
+test-only ownership. The proof does not depend on UI feature mappings.
+
+The supported helper bodies use ordinary String/Bool/Int/Double or XCUIApplication/
+XCUIElement parameters, local `let` values, member queries, XCTest assertions, and
+NSPredicate construction. They cannot capture `self` or free project variables,
+write state, take inout/function-valued/default arguments, or contain closures or
+macros. Known global/shared-state and raw-pointer effects in project callees also
+prevent isolation. Calls wrapped in other expressions (including operators,
+subscripts and string interpolation) or used as matching patterns are not treated
+as direct calls: they may create escaping autoclosures, including through custom
+`~=` operators in guard/while/for/catch patterns. Stored proof versions must match
+the current escape analysis; older or unknown versions retain fallback. For an existing helper, all old statements must
+remain unchanged and in order; only standalone XCTest assertions may be added.
+Removing/replacing/reordering statements or changing local bindings/control flow
+retains runtime fallback because head edges cannot prove the effects of old calls.
+This supports adding the sharing assertion in #55 while preserving uncertainty
+for other body rewrites. Escaped references, Objective-C exposure, lifecycle callers,
+ambiguous classes/extensions, unsupported body syntax, missing bindings, and old
+captures without the new syntax evidence retain the existing explained fallback.
+As with test-entry selection, tests must be independent: this is a proof of the
+helper's callers, not a general effect system for SDK implementations or a proof
+that separately executed tests cannot communicate through external state.
+
+A mixed review still processes every other change normally; isolated helpers do
+not suppress production, configuration, graph, or build-evidence fallbacks. Scoped
+queries can use the same single captured head graph to separate those policies.
+Dependency explanations identify the verified private-helper proof. No baseline
+build, additional SIL extraction, or user-maintained helper mapping is required.
 
 Native Swift tokens preserve strings, regex literals, operators and directives.
 With `sourceLocationPolicy: "diagnosticLineColumn"` agreed at both revisions,
