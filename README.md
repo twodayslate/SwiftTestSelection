@@ -1170,7 +1170,7 @@ are audited across both revisions regardless of their declared owner, including
 inherited and type-aliased project members. Backticked identifiers are normalized
 when auditing fresh and saved source evidence, including declaration and call
 argument labels. Equivalent saved reference keys are merged so callers and escape
-warnings cannot disappear. Unresolved owners and protocol members
+warnings cannot disappear. Unresolved owners and protocol implementations
 remain conservative. Concrete project types cannot be ancestors of the trusted SDK
 classes; their same-named members and free functions do not replace SDK member
 calls. The compiler effect walk also rejects project callees outside the checked
