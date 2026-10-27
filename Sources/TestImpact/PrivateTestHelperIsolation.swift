@@ -7,8 +7,8 @@ import Foundation
 /// This proof is independent of app feature mappings and opaque SDK dispatch.
 enum PrivateTestHelperIsolation {
     static func proves(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
-                       base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex) -> Bool {
-        guard let syntax = unit.privateTestHelper, syntax.proofVersion == PrivateTestHelperSyntax.currentProofVersion,
+                       base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex, visiting: Set<String> = []) -> Bool {
+        guard !visiting.contains(unit.key), let syntax = unit.privateTestHelper, syntax.proofVersion == PrivateTestHelperSyntax.currentProofVersion,
               syntax.statements != nil, unit.headOnlyBodySupported == true,
               previous == nil || (previous?.headOnlyBodySupported == true &&
                   previous?.privateTestHelper.map { $0.proofVersion == PrivateTestHelperSyntax.currentProofVersion && syntax.preservesEffects(of: $0) } == true),
@@ -16,33 +16,9 @@ enum PrivateTestHelperIsolation {
                   guard let roots = graph.tests[test], !roots.isEmpty, graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
                   return roots.allSatisfy { graph.functions[$0] != nil }
               }) else { return false }
+        guard contextAllows(unit, name: syntax.name, existed: previous != nil, current: current, base: base) else { return false }
         let module = String(unit.key.prefix { $0 != ":" })
-        let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
-        guard !owners.isEmpty, owners.allSatisfy({ $0.isTest && !$0.hasProductionRole && current.modules[$0.name] == module }),
-              current.unsupportedSourceInputs?[module]?.isEmpty ?? true,
-              current.unresolvedProductRoles?[module] == nil else { return false }
-        let headSources = Array(current.sources.values), baseSources = Array(base.values)
-        guard (headSources + baseSources).allSatisfy({ $0.helperNamesUnshadowed == true }) else { return false }
-        let headUnits = headSources.flatMap(\.units), baseUnits = baseSources.flatMap(\.units)
-        func snapshotsInModule(_ snapshots: [String: SwiftSourceSnapshot]) -> [SwiftSourceSnapshot] {
-            snapshots.filter { key, snapshot in
-                key.hasPrefix(module + ":") || snapshot.units.contains { $0.key.hasPrefix(module + ":") }
-            }.map(\.value)
-        }
-        let moduleSources = snapshotsInModule(current.sources)
-        let oldModuleSources = snapshotsInModule(base)
-        // No missing module source, legacy evidence, overload in another file, or
-        // inaccessible extension/alias may be mistaken for a closed caller set.
-        let capturedPaths = Set(moduleSources.flatMap(\.units).map { $0.region.path }).union(
-            current.sources.keys.filter { $0.hasPrefix(module + ":") }.map { String($0.dropFirst(module.count + 1)) })
-        guard current.targets.filter({ current.modules[$0.name] == module }).allSatisfy({ Set($0.sourceFiles).isSubset(of: capturedPaths) }),
-              (moduleSources + oldModuleSources).allSatisfy({ $0.identifierNames != nil && $0.helperSafeClasses != nil }),
-              moduleSources.filter({ !$0.units.contains { $0.region.path == unit.region.path } }).allSatisfy({ !$0.identifierNames!.contains(syntax.name) }),
-              oldModuleSources.filter({ previous == nil || !$0.units.contains { $0.region.path == unit.region.path } }).allSatisfy({ !$0.identifierNames!.contains(syntax.name) }),
-              safeHierarchy(unit.scope, module: module, sources: moduleSources),
-              safeHierarchy(unit.scope, module: module, sources: oldModuleSources),
-              !(headUnits + baseUnits).contains(where: { $0.kind == "extension" && [$0.scope, module + "." + $0.scope].contains(module + "." + unit.scope) }),
-              Set(headUnits.filter { $0.kind == "function" && $0.region.intersects(unit.region) }.map(\.key)) == [unit.key] else { return false }
+        let headUnits = current.sources.values.flatMap(\.units), baseUnits = base.values.flatMap(\.units)
         let ids = symbols(unit, graph: graph, index: index)
         guard !ids.isEmpty else { return false }
         let paths = index.paths(to: ids)
@@ -61,9 +37,26 @@ enum PrivateTestHelperIsolation {
                 callers += surviving
             }
         }
-        guard callers.allSatisfy({ $0.headOnlyBodySupported == true && XcodeFineSelector.isTestEntry($0, in: current) }) else { return false }
-        let callerSymbols = callers.reduce(into: Set<String>()) { $0.formUnion(symbols($1, graph: graph, index: index)) }
-        let expectedTests = Set(current.tests.filter { !(graph.tests[$0] ?? []).isDisjoint(with: callerSymbols) })
+        callers = Dictionary(grouping: callers, by: \.key).values.compactMap(\.first)
+        let visiting = visiting.union([unit.key])
+        for caller in callers {
+            guard caller.headOnlyBodySupported == true else { return false }
+            if XcodeFineSelector.isTestEntry(caller, in: current) { continue }
+            let old = baseUnits.filter { $0.key == caller.key && $0.region.path == caller.region.path }
+            // Only unchanged intermediate helpers may extend the inbound proof.
+            // In particular, a head graph says nothing about removed old effects.
+            guard old.count == 1, let prior = old.first,
+                  caller.privateTestHelper?.statements?.map(\.signature) == prior.privateTestHelper?.statements?.map(\.signature),
+                  proves(caller, previous: prior, current: current, base: base, graph: graph, index: index, visiting: visiting) else { return false }
+        }
+        let entries = callers.filter { XcodeFineSelector.isTestEntry($0, in: current) }
+        let entrySymbols = entries.reduce(into: Set<String>()) { $0.formUnion(symbols($1, graph: graph, index: index)) }
+        let helperSymbols = callers.filter { !XcodeFineSelector.isTestEntry($0, in: current) }
+            .reduce(into: Set<String>()) { $0.formUnion(symbols($1, graph: graph, index: index)) }
+        let callerPaths = index.paths(to: helperSymbols)
+        let expectedTests = Set(current.tests.filter {
+            !(graph.tests[$0] ?? []).isDisjoint(with: entrySymbols) || callerPaths.path(from: graph.tests[$0] ?? []) != nil
+        })
         let consumers = Set(current.tests.filter { paths.path(from: graph.tests[$0] ?? []) != nil })
         // At least one compiled consumer and a path for every current syntactic
         // caller. Removed old calls need not have a surviving edge.
@@ -78,10 +71,54 @@ enum PrivateTestHelperIsolation {
         var pending = Array(ids), visited = Set<String>()
         while let id = pending.popLast() {
             guard visited.insert(id).inserted, let node = graph.functions[id] else { continue }
+            var unsafeEffects: Set<String> = ["Global state access", "Shared state access", "Raw pointer operation"]
+            if syntax.localAttachmentState == true && ids.contains(id) { unsafeEffects.remove("Shared state access") }
             if projectModules.contains(node.module) && node.hasProjectRuntimeContext &&
-                (!node.uncertainties.isDisjoint(with: ["Global state access", "Shared state access", "Raw pointer operation"])) { return false }
+                !node.uncertainties.isDisjoint(with: unsafeEffects) { return false }
             pending += node.dependencies.filter { graph.functions[$0].map { projectModules.contains($0.module) } ?? false }
         }
+        return true
+    }
+
+    static func provesAddedEntry(_ unit: SourceUnit, current: XcodeTestGraph,
+                                 base: [String: SwiftSourceSnapshot]) -> Bool {
+        guard let name = unit.independentAddedTestEntry, unit.headOnlyBodySupported == true,
+              XcodeFineSelector.isTestEntry(unit, in: current) else { return false }
+        return contextAllows(unit, name: name, existed: false, current: current, base: base)
+    }
+
+    private static func contextAllows(_ unit: SourceUnit, name: String, existed: Bool, current: XcodeTestGraph,
+                                      base: [String: SwiftSourceSnapshot]) -> Bool {
+        let module = String(unit.key.prefix { $0 != ":" })
+        let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
+        guard !owners.isEmpty, owners.allSatisfy({ $0.isTest && !$0.hasProductionRole && current.modules[$0.name] == module }),
+              current.unsupportedSourceInputs?[module]?.isEmpty ?? true,
+              current.unresolvedProductRoles?[module] == nil else { return false }
+        let headSources = Array(current.sources.values), baseSources = Array(base.values)
+        guard (headSources + baseSources).allSatisfy({ $0.helperNamesUnshadowed == true }) else { return false }
+        let headUnits = headSources.flatMap(\.units), baseUnits = baseSources.flatMap(\.units)
+        func snapshotsInModule(_ snapshots: [String: SwiftSourceSnapshot]) -> [SwiftSourceSnapshot] {
+            snapshots.filter { key, snapshot in
+                key.hasPrefix(module + ":") || snapshot.units.contains { $0.key.hasPrefix(module + ":") }
+            }.map(\.value)
+        }
+        let moduleSources = snapshotsInModule(current.sources)
+        let oldModuleSources = snapshotsInModule(base)
+        if unit.privateTestHelper?.localAttachmentState == true {
+            guard (moduleSources + oldModuleSources).allSatisfy({ $0.attachmentAddUnshadowed == true }) else { return false }
+        }
+        // No missing module source, legacy evidence, overload in another file, or
+        // inaccessible extension/alias may be mistaken for a closed caller set.
+        let capturedPaths = Set(moduleSources.flatMap(\.units).map { $0.region.path }).union(
+            current.sources.keys.filter { $0.hasPrefix(module + ":") }.map { String($0.dropFirst(module.count + 1)) })
+        guard current.targets.filter({ current.modules[$0.name] == module }).allSatisfy({ Set($0.sourceFiles).isSubset(of: capturedPaths) }),
+              (moduleSources + oldModuleSources).allSatisfy({ $0.identifierNames != nil && $0.helperSafeClasses != nil }),
+              moduleSources.filter({ !$0.units.contains { $0.region.path == unit.region.path } }).allSatisfy({ !$0.identifierNames!.contains(name) }),
+              oldModuleSources.filter({ !existed || !$0.units.contains { $0.region.path == unit.region.path } }).allSatisfy({ !$0.identifierNames!.contains(name) }),
+              safeHierarchy(unit.scope, module: module, sources: moduleSources),
+              safeHierarchy(unit.scope, module: module, sources: oldModuleSources),
+              !(headUnits + baseUnits).contains(where: { $0.kind == "extension" && [$0.scope, module + "." + $0.scope].contains(module + "." + unit.scope) }),
+              Set(headUnits.filter { $0.kind == "function" && $0.region.intersects(unit.region) }.map(\.key)) == [unit.key] else { return false }
         return true
     }
 

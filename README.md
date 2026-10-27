@@ -1057,7 +1057,10 @@ mapped app feature also changes.
 Private helper isolation is automatic and deliberately bounded. It supports a
 synchronous `private func` in a final test class, with an unambiguous source-defined
 inheritance chain ending at XCTestCase. Both source revisions must prove that all
-references are direct calls from bound test entries in the same class. Added
+references are direct calls from bound test entries or unchanged private helpers
+in the same class. Each intermediate helper must pass the same source and compiler
+checks, and the chain must terminate at bound test entries. Cycles, escaping
+references, and changed or deleted intermediate helpers retain fallback. Added
 helpers also require their name to be absent from the base module, so introducing
 an overload or changing an existing name's resolution cannot silently pass.
 The head graph must confirm the callers, complete test/lifecycle bindings, and
@@ -1065,9 +1068,13 @@ test-only ownership. The proof does not depend on UI feature mappings.
 
 The supported helper bodies use ordinary String/Bool/Int/Double or XCUIApplication/
 XCUIElement parameters, local `let` values, member queries, XCTest assertions, and
-NSPredicate construction. They cannot capture `self` or free project variables,
-write state, take inout/function-valued/default arguments, or contain closures or
-macros. Known global/shared-state and raw-pointer effects in project callees also
+NSPredicate construction, and direct calls to private helpers. Local screenshot
+attachments may be created with `XCTAttachment(screenshot:)`, assigned a `name`
+and `lifetime`, and submitted with XCTest's `add`. The proof tracks fresh local
+attachments and rejects shadowed attachment APIs; it does not exempt other shared
+state. Helpers cannot capture `self` or free project variables, take
+inout/function-valued/default arguments, or contain closures or macros. Known
+global/shared-state and raw-pointer effects in project callees also
 prevent isolation. Calls wrapped in other expressions (including operators,
 subscripts and string interpolation) or used as matching patterns are not treated
 as direct calls: they may create escaping autoclosures, including through custom
@@ -1457,11 +1464,19 @@ structural edits and opaque runtime calls. Whole-review fallback from an unrelat
 production change is not injected into a scope. These results describe selection
 policy, not proof that omitted changes cannot affect deferred regression tests.
 
-`excludedTestEntries` lists edited test entries the consumer executes separately.
+`excludedTestEntries` lists added or edited test entries the consumer executes separately.
 Their bodies do not become change roots in a helper scope when compiler evidence
 proves they are independent entries. Entries consumed by other tests remain roots.
-Exclusions apply only to supported surviving bodies after checking both source
-revisions; structural edits and macro/attribute uncertainty retain their fallbacks.
+Exclusions apply to supported surviving bodies after checking both source
+revisions. A newly added, ordinary zero-argument XCTest method may also be omitted
+as a change root when it belongs to an existing final test class with a proven
+XCTestCase inheritance chain, its name has no other references or declarations in
+the head module and is absent from the base module, and compiler consumers are
+limited to separately executed entries. This uses the same test-independence
+contract as surviving entries. The primary report still includes new tests;
+exclusion only changes the scoped roots, so a new test can still be selected as a
+consumer of a changed helper. Deletions, renames, ambiguous names, nonfinal classes,
+and macro/attribute uncertainty retain their structural fallbacks.
 Missing test roots or unresolved lifecycle bindings prevent independence from being
 proven, so those entries remain change roots and unresolved tests stay selected.
 Only provide entries your policy already executes. This does not exclude helpers,

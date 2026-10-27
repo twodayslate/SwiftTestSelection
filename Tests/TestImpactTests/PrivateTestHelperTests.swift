@@ -229,3 +229,174 @@ func compiledPrivateXCTestHelpersSelectOnlyProvenConsumers(added: Bool, safety: 
     #expect(mixedReport.explanations.contains { $0.test == unrelated && $0.kind == "explicitMapping" })
     #expect(mixedReport.diagnostics.isEmpty)
 }
+
+// The reopened #55 case combines three private helpers, a local screenshot
+// attachment, and a separately executed added entry in the same review scope.
+@Test(arguments: ["plain", "escape", "lifecycle", "state", "cycle", "changedAncestor"])
+func compiledPrivateHelperChainAndAddedEntry(safety: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("helper-chain-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let newEntry = """
+        func testUnavailableMessagesStillOffersLinkSharing() {
+            let app = XCUIApplication()
+            app.launchEnvironment["COC_UI_TEST_NOTE_MESSAGE_CARD_AVAILABLE"] = "0"
+            app.launch()
+            openNoteShareMenu(in: app)
+            XCTAssertFalse(app.buttons["Send in Messages"].isEnabled)
+            XCTAssertTrue(app.buttons["Link"].isEnabled)
+        }
+    """
+    let fixture = """
+    import XCTest
+    @MainActor final class NoteLinks: UITestCase {
+        func testDirect() { assertShareOptions(in: XCUIApplication()) }
+        func testSubmenu() { openShareSubmenu(in: XCUIApplication()) }
+        func testOuter() { openNoteShareMenu(in: XCUIApplication()) }
+        func testUnrelated() { XCTAssertTrue(true) }
+        private func openNoteShareMenu(in app: XCUIApplication) {
+            let options = app.buttons["note-navigation-menu"]
+            XCTAssertTrue(options.waitUntilExists(timeout: 5))
+            options.tap()
+            let menu = XCTAttachment(screenshot: app.screenshot())
+            menu.name = "Note options with Outline Activity and Share"
+            menu.lifetime = .keepAlways
+            add(menu)
+            openShareSubmenu(in: app)
+        }
+        private func openShareSubmenu(in app: XCUIApplication) {
+            let share = app.buttons["Share"]
+            XCTAssertTrue(share.waitUntilExists(timeout: 5))
+            XCTAssertFalse(app.buttons["Copy Link"].exists)
+            share.tap()
+            assertShareOptions(in: app)
+        }
+        \(sharingHelper)
+        // NEW_ENTRY
+    }
+    """
+    func variant(_ text: String) -> String {
+        switch safety {
+        case "escape": return text.replacingOccurrences(of: "openShareSubmenu(in: app)", with: "let callback = { [self] in openShareSubmenu(in: app) }; callback()")
+        case "lifecycle": return text.replacingOccurrences(of: "func testOuter()", with: "override func setUp()")
+        case "state": return "@MainActor var shared = false\n" + text.replacingOccurrences(of: "share.tap()", with: "shared = true; share.tap()")
+        case "cycle": return text.replacingOccurrences(of: "share.tap()", with: "share.tap(); openNoteShareMenu(in: app)")
+        default: return text
+        }
+    }
+    var before = variant(fixture)
+    let after = variant(fixture.replacingOccurrences(of: "// NEW_ENTRY", with: newEntry)
+        .replacingOccurrences(of: "    XCTAssertTrue(app.buttons[\"Content\"]", with: "    XCTAssertTrue(app.buttons[\"Send in Messages\"].exists)\n    XCTAssertTrue(app.buttons[\"Content\"]"))
+    if safety == "changedAncestor" { before = before.replacingOccurrences(of: "share.tap()", with: "share.doubleTap()") }
+    let files = ["UI.swift": after, "Support.swift": helperSupport]
+    for (path, source) in files { try Data(source.utf8).write(to: root.appendingPathComponent(path)) }
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let sil = root.appendingPathComponent("UI.sil")
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-module-name", "UI",
+        "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib",
+        root.appendingPathComponent("UI.swift").path, root.appendingPathComponent("Support.swift").path, "-o", sil.path], at: root)
+    let parsed = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
+    var graph = DependencyGraph(functions: parsed.functions)
+    XcodeCompilerGraph.resolveDispatch(&graph, tables: parsed.dispatchTargets)
+    let added = "UI/NoteLinks/testUnavailableMessagesStillOffersLinkSharing()"
+    let consumers = ["UI/NoteLinks/testDirect()", "UI/NoteLinks/testSubmenu()", "UI/NoteLinks/testOuter()", added]
+    let unrelated = "UI/Calendar/testCalendar()"
+    let tests = (consumers + ["UI/NoteLinks/testUnrelated()", unrelated]).filter { safety != "lifecycle" || !$0.contains("testOuter") }.sorted()
+    var current = XcodeTestGraph(targets: [.init(name: "UI", productType: "com.apple.product-type.bundle.ui-testing", sourceFiles: Set(files.keys))], tests: tests)
+    current.modules = ["UI": "UI"]
+    current.sources = Dictionary(uniqueKeysWithValues: files.map { ("UI:" + $0.key, SwiftSourceSnapshot.parse($0.value, path: $0.key, module: "UI")) })
+    current.mappings = UIFeatureMappings(features: [])
+    current.mappings?.sourceLocationPolicy = .diagnosticLineColumn
+    XcodeCompilerGraph.bind(tests: tests, modules: current.modules, sources: current.sources, graph: &graph)
+    #expect(tests.allSatisfy { graph.tests[$0]?.isEmpty == false && graph.testDiagnostics[$0]?.isEmpty ?? true })
+    current.dependencies = graph
+    current = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(current))
+    var base = current.sources
+    base["UI:UI.swift"] = SwiftSourceSnapshot.parse(before, path: "UI.swift", module: "UI")
+    let selfBase = base
+    func select(_ head: XcodeTestGraph, base: [String: SwiftSourceSnapshot]? = nil, excluded: Set<String> = [added]) -> ImpactReport {
+        XcodeHeadOnlySelector.select(current: head, source: .init(base: base ?? selfBase, mappings: current.mappings),
+            changes: [.init(path: "UI.swift")], baseRevision: "base", excludedTestEntries: excluded)
+    }
+    let report = select(current)
+    if safety != "plain" {
+        #expect(report.selectedTests.contains(unrelated), "\(safety): \(report)")
+        #expect(!report.diagnostics.isEmpty)
+        return
+    }
+    #expect(report.selectedTests == consumers.sorted(), "\(report)")
+    #expect(report.onlyTestingArguments == consumers.sorted().map { "-only-testing:" + $0 })
+    #expect(report.diagnostics.isEmpty, "\(report.diagnostics)")
+    #expect(report.explanations.allSatisfy { $0.kind == "dependency" && $0.reason.contains("private helper isolation") })
+    #expect(select(current, excluded: []).selectedTests == tests) // primary includes new entries
+
+    // Added-entry-only diff is already covered by the consumer's separate run.
+    var entryBase = base
+    entryBase["UI:UI.swift"] = SwiftSourceSnapshot.parse(after.replacingOccurrences(of: newEntry, with: ""), path: "UI.swift", module: "UI")
+    #expect(select(current, base: entryBase).selectedTests.isEmpty)
+    #expect(select(current, base: entryBase).diagnostics.isEmpty)
+    for fault in ["legacy", "missingRoot", "unknownConsumer", "ancestorState", "baseName", "otherFileName", "nonfinal", "unsupported", "attachmentAPI", "legacyAttachment"] {
+        var broken = current, old = entryBase
+        switch fault {
+        case "legacy":
+            for i in broken.sources["UI:UI.swift"]!.units.indices { broken.sources["UI:UI.swift"]!.units[i].independentAddedTestEntry = nil }
+        case "missingRoot": broken.dependencies!.tests[unrelated] = []
+        case "unknownConsumer": broken.dependencies!.functions[graph.tests[unrelated]!.first!]!.dependencies.formUnion(graph.tests[added]!)
+        case "ancestorState":
+            for id in graph.functions.keys where graph.functions[id]!.name.contains(".openShareSubmenu(") {
+                broken.dependencies!.functions[id]!.uncertainties.insert("Global state access")
+            }
+            old = base
+        case "attachmentAPI":
+            broken.sources["UI:Support.swift"] = SwiftSourceSnapshot.parse(helperSupport + "\nfunc add(_ attachment: XCTAttachment) {}", path: "Support.swift", module: "UI")
+            old = base
+        case "legacyAttachment": broken.sources["UI:Support.swift"]!.attachmentAddUnshadowed = nil; old = base
+        case "baseName": old["UI:Collision.swift"] = SwiftSourceSnapshot.parse("func testUnavailableMessagesStillOffersLinkSharing() {}", path: "Collision.swift", module: "UI")
+        case "otherFileName": broken.sources["UI:Collision.swift"] = SwiftSourceSnapshot.parse("func testUnavailableMessagesStillOffersLinkSharing() {}", path: "Collision.swift", module: "UI")
+        case "nonfinal": broken.sources["UI:UI.swift"] = SwiftSourceSnapshot.parse(after.replacingOccurrences(of: "final class NoteLinks", with: "class NoteLinks"), path: "UI.swift", module: "UI")
+        default: broken.sources["UI:UI.swift"] = SwiftSourceSnapshot.parse(after.replacingOccurrences(of: "func testUnavailable", with: "@objc func testUnavailable"), path: "UI.swift", module: "UI")
+        }
+        #expect(select(broken, base: old).selectedTests.contains(unrelated), "\(fault)")
+    }
+    // The public scope path reads actual base Git syntax and preserves retained
+    // graph identity, so this is the same query a consumer makes after capture.
+    try Data(before.utf8).write(to: root.appendingPathComponent("UI.swift"))
+    try JSONEncoder().encode(current.mappings).write(to: root.appendingPathComponent(".swift-test-selection.json"))
+    _ = try CommandRunner.run("git", ["init", "-q"], at: root)
+    _ = try CommandRunner.run("git", ["add", "UI.swift", "Support.swift", ".swift-test-selection.json"], at: root)
+    _ = try CommandRunner.run("git", ["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "base"], at: root)
+    try Data(after.utf8).write(to: root.appendingPathComponent("UI.swift"))
+    let scopes = try XcodeHeadOnlySelector.scopedReports(current: current,
+        requests: .init(scopes: [.init(name: "helpers", paths: ["UI.swift"], excludedTestEntries: [added])]),
+        changes: [.init(path: "UI.swift")], baseRevision: "HEAD", headRevision: "head", root: root,
+        mappingPath: ".swift-test-selection.json", documentation: [], buildEvidenceFailure: nil, retainedGraphPath: "/retained/head.json")
+    let scoped = try #require(scopes.first?.report)
+    #expect(scoped.selectedTests == report.selectedTests)
+    #expect(scoped.diagnostics.isEmpty)
+    #expect(scoped.buildArtifactPath == "/retained/head.json")
+    #expect(scoped.headRevision == "head")
+}
+
+@Test func attachmentProofDistinguishesLocalNamesFromShadowedAPIs() {
+    for text in ["func add(_ value: Int) {}", "let add = 1", "class Base { let add = 1 }", "extension XCTestCase { func add(_ value: Int) {} }"] {
+        #expect(SwiftSourceSnapshot.parse(text, path: "UI.swift", module: "UI").attachmentAddUnshadowed == false, "\(text)")
+    }
+    #expect(SwiftSourceSnapshot.parse("func unrelated() { let add = 1 }", path: "UI.swift", module: "UI").attachmentAddUnshadowed == true)
+    let body = """
+    private func captureMenuAttachment(in app: XCUIApplication) {
+        let menu = XCTAttachment(screenshot: app.screenshot())
+        menu.name = "Menu"
+        menu.lifetime = .keepAlways
+        add(menu)
+    }
+    """
+    let valid = helperFixture(body, call: "captureMenuAttachment(in: app)")
+    #expect(SwiftSourceSnapshot.parse(valid, path: "UI.swift", module: "UI").units.compactMap(\.privateTestHelper).first?.localAttachmentState == true)
+    for text in [valid.replacingOccurrences(of: "let menu = XCTAttachment(screenshot: app.screenshot())", with: "let menu = sharedAttachment"),
+                 valid.replacingOccurrences(of: "menu.name =", with: "app.name ="),
+                 valid.replacingOccurrences(of: "add(menu)", with: "add(app)"),
+                 valid.replacingOccurrences(of: "let menu =", with: "var menu ="),
+                 valid.replacingOccurrences(of: "menu.name =", with: "let menu = app; menu.name =")] {
+        #expect(SwiftSourceSnapshot.parse(text, path: "UI.swift", module: "UI").units.compactMap(\.privateTestHelper).isEmpty, "\(text)")
+    }
+}

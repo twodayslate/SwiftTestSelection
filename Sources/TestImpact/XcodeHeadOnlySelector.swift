@@ -98,6 +98,10 @@ enum XcodeHeadOnlySelector {
                 changed.append(unit)
                 continue
             }
+            // New independent entries are covered only by an explicit separate
+            // execution policy, after proving no existing source name is rebound.
+            if before.isEmpty, after.count == 1, let unit = after.first, excludedKeys.contains(key),
+               PrivateTestHelperIsolation.provesAddedEntry(unit, current: current, base: source.base) { continue }
             guard before.count == 1, after.count == 1, let a = before.first, let b = after.first,
                   a.kind == "function", b.kind == "function", a.region.path == b.region.path else {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \((before + after).first?.region.path ?? key)")
