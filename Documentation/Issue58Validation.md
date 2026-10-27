@@ -189,3 +189,27 @@ took 11.28 and 12.20 seconds, preserving the 12-test and 125-test sets with zero
 diagnostics. Both refreshed reports pass `verify-build` against the retained
 products. This was a source-proof refresh and analysis replay, not another
 application build, compiler extraction, or execution of application test bodies.
+
+
+SDK proof version 5 closes the imported-assertion escape: caller files must use
+plain imports from XCTest, Foundation, Swift, or UIKit before an enclosing
+assertion or Boolean negation is treated as nonescaping. Unknown, attributed,
+and declaration-scoped imports retain an explicit unresolved-binding fallback.
+The import check is computed once per file. Direct helper calls keep their
+precision, and UIKit remains supported for caller UI types without expanding the
+helper body's three-module query contract. Project module shadows are rejected.
+
+Compiled regression cases cover ordinary imports, scoped imports, an external
+re-export, nonescaping local-function traversal, and an import removed only at
+head. Both revisions compile. Graph JSON round trips preserve the new evidence;
+version-4 graphs with restored permissive reference flags require regeneration.
+A direct-call control retains precise selection despite an unrelated import.
+
+All 272 package tests pass in Xcode 26.6 debug and Xcode 27.0 release builds.
+An additional release replay refreshes source proofs from the retained exports,
+verifies identical declaration keys and source fingerprints, and preserves the
+12-test #55 and 125-test #58 selections with zero diagnostics. Refresh and
+encoding took 8.29 and 8.22 seconds; scoped analysis took 11.34 and 12.17 seconds.
+Both resulting reports pass `verify-build` against retained products. The original
+completed bundles were unchanged, with no additional application build, compiler
+extraction, or application test execution.

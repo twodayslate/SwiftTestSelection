@@ -102,10 +102,11 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
         }
         result.attachmentAddUnshadowed = !(identifiers["add"] ?? []).contains(where: PrivateTestHelperSyntax.shadowsAttachmentAdd)
-        result.helperReferences = identifiers.mapValues { SDKTestHelperSyntax.references($0, locations: locations) }
+        let callerImportsSupported = SDKTestHelperSyntax.callerImportsSupported(tree)
+        result.helperReferences = identifiers.mapValues { SDKTestHelperSyntax.references($0, locations: locations, callerImportsSupported: callerImportsSupported) }
         for tokens in identifiers.values {
             for signature in Set(tokens.compactMap(SDKTestHelperSyntax.referenceKey)) {
-                result.helperReferences![signature] = SDKTestHelperSyntax.references(tokens, locations: locations, matching: signature)
+                result.helperReferences![signature] = SDKTestHelperSyntax.references(tokens, locations: locations, callerImportsSupported: callerImportsSupported, matching: signature)
             }
         }
         result.sdkHelperNamesUnshadowed = SDKTestHelperSyntax.names.allSatisfy { name in

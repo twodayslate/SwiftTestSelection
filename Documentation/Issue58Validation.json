@@ -149,5 +149,36 @@
   "destination": "iPhone 17 Pro simulator, iOS 26.2",
   "sdkHelperProofVersion": 3,
   "privateHelperProofVersion": 5,
-  "measurementContext": "Fresh capture; concurrent release tests and another project build ran on the same host."
+  "measurementContext": "Fresh capture; concurrent release tests and another project build ran on the same host.",
+  "importBoundaryReview": {
+    "sdkHelperProofVersion": 5,
+    "privateHelperProofVersion": 5,
+    "packageTests": 272,
+    "toolchains": [
+      "Xcode 26.6 debug",
+      "Xcode 27.0 release"
+    ],
+    "sourceProofRefresh": "Retained source exports; identical declaration keys and fingerprints; original compiler graph and product evidence reused in separate graph files.",
+    "applicationBuild": false,
+    "compilerExtraction": false,
+    "applicationTestExecution": false,
+    "replays": [
+      {
+        "issue": 55,
+        "selectedTests": 12,
+        "diagnostics": [],
+        "proofRefreshAndEncodingSeconds": 8.288833975791931,
+        "selectionSeconds": 11.336189031600952,
+        "retainedVerification": true
+      },
+      {
+        "issue": 58,
+        "selectedTests": 125,
+        "diagnostics": [],
+        "proofRefreshAndEncodingSeconds": 8.220116972923279,
+        "selectionSeconds": 12.165043950080872,
+        "retainedVerification": true
+      }
+    ]
+  }
 }

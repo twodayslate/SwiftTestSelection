@@ -14,7 +14,7 @@ enum SDKTestHelperIsolation {
         if let reason = evidence.blocker ?? old.blocker { return reason }
         guard previous?.key == unit.key, previous?.region.path == unit.region.path,
               unit.headOnlyBodySupported == true, previous?.headOnlyBodySupported == true else { return "Changed header, ownership or unsupported attributes/macros" }
-        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedModules) else { return "Project module shadows a trusted SDK module" }
+        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules) else { return "Project module shadows a trusted SDK module" }
         let module = String(unit.key.prefix { $0 != ":" })
         let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
         guard !owners.isEmpty, owners.allSatisfy({ $0.isTest && !$0.hasProductionRole && current.modules[$0.name] == module }),
@@ -86,6 +86,9 @@ enum SDKTestHelperIsolation {
                 var declarations = 0
                 for (key, references) in referencesByFile {
                     let allUses = references[SDKTestHelperSyntax.canonicalName(name)]
+                    if allUses?.untrustedWrapperImports == true {
+                        return "Unresolved assertion/operator binding from untrusted caller imports in \(key) at lines \(allUses!.unsupportedLines.sorted())"
+                    }
                     if allUses?.unsupported == true {
                         return "Escaping, stored, nested or unresolved reference to \(name) in \(key) at lines \(allUses!.unsupportedLines.sorted())"
                     }
@@ -203,7 +206,7 @@ enum SDKTestHelperIsolation {
     /// from private helpers; caller closure is a separate proof.
     static func environmentBlocker(current: XcodeTestGraph, base: [String: SwiftSourceSnapshot],
                                    unownedBase: [String: SwiftSourceSnapshot] = [:], queriedMembers: Set<String>) -> String? {
-        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedModules) else { return "Project module shadows a trusted SDK module" }
+        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules) else { return "Project module shadows a trusted SDK module" }
         // Source snapshots (including saved captures) preserve backticks in
         // declaration spelling. Compare semantic names without altering source
         // fingerprints or requiring a fresh capture.

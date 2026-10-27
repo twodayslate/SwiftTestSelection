@@ -1128,6 +1128,15 @@ fallback. Overloads with different
 argument labels can be separated when the helper has no default/variadic arguments;
 ambiguous overloads remain conservative.
 
+Calls wrapped in XCTest assertions or Boolean negation require plain imports
+from `XCTest`, `Foundation`, `Swift`, or `UIKit` in the caller file at both
+revisions. UIKit is allowed for caller UI types; the helper body still uses the
+three-module query contract above. Unknown, attributed, or declaration-scoped
+imports can introduce escaping overloads with the same names, so these wrappers
+retain a conservative fallback with an unresolved-import diagnostic. Direct
+helper calls do not require this wrapper-specific import proof. Project modules
+shadowing any trusted module also retain fallback.
+
 Project SDK-name shadowing/subclasses, dynamic exposure, lifecycle use, escaping
 references, unsupported effects, missing bindings, and missing/version-mismatched
 proof evidence select the full inventory with `head_only_sdk_helper_boundary`.
@@ -1154,9 +1163,10 @@ remain conservative. Concrete project types cannot be ancestors of the trusted S
 classes; their same-named members and free functions do not replace SDK member
 calls. The compiler effect walk also rejects project callees outside the checked
 helper and its callbacks. Private proof
-version 5 and SDK proof version 4 reject older saved evidence. Version 4 requires
+version 5 and SDK proof version 5 reject older saved evidence. SDK version 5 requires
 assertion names to be free of lexical shadowing, including parameter, generic,
-and closure bindings. SDK version 3 captures fall back with a recapture diagnostic;
+and closure bindings, and verifies caller imports before trusting assertion or
+negation wrappers. SDK version 3 and 4 captures fall back with a recapture diagnostic;
 regenerate the graph from valid build artifacts (and sealed SIL when available)
 to restore precision without another baseline build. Caller
 proofs for both private and SDK helpers use a memoized work queue rather than

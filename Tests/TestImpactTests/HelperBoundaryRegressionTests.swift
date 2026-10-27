@@ -45,12 +45,12 @@ func evaluate(_ predicate: () -> Bool) -> Bool { predicate() }
 """
 
 
-private func boundaryGraph(_ files: [String: String], tests: [String], root: URL) throws -> XcodeTestGraph {
+private func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = []) throws -> XcodeTestGraph {
     for (path, text) in files { try Data(text.utf8).write(to: root.appendingPathComponent(path)) }
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let sil = root.appendingPathComponent("UI.sil")
     _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-module-name", "UI",
-        "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib"] + files.keys.sorted().map { root.appendingPathComponent($0).path } + ["-o", sil.path], at: root)
+        "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib"] + compilerArguments + files.keys.sorted().map { root.appendingPathComponent($0).path } + ["-o", sil.path], at: root)
     let parsed = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
     var graph = DependencyGraph(functions: parsed.functions)
     XcodeCompilerGraph.resolveDispatch(&graph, tables: parsed.dispatchTargets)
@@ -656,4 +656,88 @@ func reservedSDKNamesRejectLexicalBindings(source: String) {
     #expect(snapshot.diagnostics.isEmpty)
     #expect(snapshot.sdkHelperNamesUnshadowed == true)
     #expect(snapshot.helperNamesUnshadowed == true)
+}
+
+@Test(arguments: ["module", "scoped", "reexport", "baseOnly", "local", "direct"])
+func sdkImportedAssertionCannotHideEscapingCaller(scenario: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("imported-assertion-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let external = """
+    @MainActor public var saved: (() -> Bool)?
+    @MainActor public func XCTAssertTrue(_ expression: @autoclosure @escaping () -> Bool) { saved = expression }
+    """
+    let externalPath = root.appendingPathComponent("DeferredAssertions.swift")
+    try Data(external.utf8).write(to: externalPath)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "DeferredAssertions", externalPath.path, "-emit-module-path", root.appendingPathComponent("DeferredAssertions.swiftmodule").path], at: root)
+    let facade = root.appendingPathComponent("AssertionFacade.swift")
+    try Data("@_exported import DeferredAssertions".utf8).write(to: facade)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "AssertionFacade", "-I", root.path,
+        facade.path, "-emit-module-path", root.appendingPathComponent("AssertionFacade.swiftmodule").path], at: root)
+    var callers = """
+    import XCTest
+    import DeferredAssertions
+    @MainActor func arm(_ app: XCUIApplication) {
+        XCTAssertTrue(app.buttons["toggle"].checkValue("1"))
+    }
+    @MainActor final class Suite: XCTestCase {
+        func testArm() { arm(XCUIApplication()) }
+        func testConsume() { XCTAssertEqual(saved?() ?? false, true) }
+    }
+    """
+    if scenario == "scoped" { callers = callers.replacingOccurrences(of: "import DeferredAssertions", with: "import DeferredAssertions\nimport func DeferredAssertions.XCTAssertTrue") }
+    if scenario == "reexport" { callers = callers.replacingOccurrences(of: "import DeferredAssertions", with: "import AssertionFacade") }
+    if scenario == "local" { callers = callers.replacingOccurrences(of: "XCTAssertTrue(app.buttons[\"toggle\"].checkValue(\"1\"))", with: "func query() -> Bool { app.buttons[\"toggle\"].checkValue(\"1\") }; XCTAssertTrue(query())") }
+    if scenario == "direct" { callers = callers.replacingOccurrences(of: "XCTAssertTrue(app.buttons[\"toggle\"].checkValue(\"1\"))", with: "app.buttons[\"toggle\"].checkValue(\"1\")") }
+    let oldCallers = callers
+    if scenario == "baseOnly" {
+        callers = callers.replacingOccurrences(of: "import DeferredAssertions", with: "")
+            .replacingOccurrences(of: "saved?() ?? false", with: "true")
+    }
+    let tests = ["UI/Suite/testArm()", "UI/Suite/testConsume()"]
+    _ = try boundaryGraph(["Waiting.swift": oldSDKQuery, "Tests.swift": oldCallers], tests: tests, root: root, compilerArguments: ["-I", root.path])
+    var current = try boundaryGraph(["Waiting.swift": newSDKQuery, "Tests.swift": callers], tests: tests, root: root, compilerArguments: ["-I", root.path])
+    current = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(current))
+    var base = current.sources
+    base["UI:Waiting.swift"] = .parse(oldSDKQuery, path: "Waiting.swift", module: "UI")
+    base["UI:Tests.swift"] = .parse(oldCallers, path: "Tests.swift", module: "UI")
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    if scenario == "direct" {
+        #expect(report.selectedTests == [tests[0]])
+        #expect(report.diagnostics.isEmpty)
+    } else {
+        #expect(report.selectedTests == tests.sorted())
+        #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" && $0.message.contains("untrusted caller imports") })
+    }
+    // Simulate version 4, which marked imported wrappers as nonescaping. Its
+    // source evidence must never bypass the new import check after a round trip.
+    var legacy = current
+    var legacyBase = base
+    for key in legacy.sources.keys {
+        for i in legacy.sources[key]!.units.indices { legacy.sources[key]!.units[i].sdkTestHelper?.version = 4 }
+        for i in legacyBase[key]!.units.indices { legacyBase[key]!.units[i].sdkTestHelper?.version = 4 }
+        for reference in legacy.sources[key]!.helperReferences!.keys {
+            legacy.sources[key]!.helperReferences![reference]!.untrustedWrapperImports = nil
+            legacy.sources[key]!.helperReferences![reference]!.unsupported = false
+            legacy.sources[key]!.helperReferences![reference]!.unsupportedLines = []
+        }
+    }
+    legacy = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(legacy))
+    let stale = XcodeHeadOnlySelector.select(current: legacy, source: .init(base: legacyBase, mappings: current.mappings),
+        changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    #expect(stale.selectedTests == tests.sorted())
+    #expect(stale.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" && $0.message.contains("recapture") })
+}
+
+@Test(arguments: ["import UIKit", "import External", "import func External.XCTAssertTrue", "@testable import External", "@_exported import External"])
+func sdkWrapperImportBoundaryIncludesNegation(imported: String) {
+    let source = """
+    import XCTest
+    \(imported)
+    func arm() { if !query() { return }; XCTAssertTrue(query()) }
+    """
+    let snapshot = SwiftSourceSnapshot.parse(source, path: "Caller.swift", module: "UI")
+    #expect(snapshot.diagnostics.isEmpty)
+    #expect(snapshot.helperReferences?["query"]?.unsupported == (imported != "import UIKit"))
+    #expect((snapshot.helperReferences?["query"]?.untrustedWrapperImports == true) == (imported != "import UIKit"))
 }

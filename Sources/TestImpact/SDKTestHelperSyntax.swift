@@ -10,16 +10,20 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
     public var name: String
     public var blocker: String?
     public var queriedMembers: Set<String> = []
-    // Version 4 requires lexical assertion bindings to be unshadowed, including
-    // function/generic parameters and closure bindings. Version 3 did not.
-    static let currentVersion = 4
+    // Version 5 also proves the import boundary of enclosing assertion/operator
+    // calls. Version 4's lexical shadow checks could miss external overloads.
+    static let currentVersion = 5
     static let trustedModules: Set<String> = ["XCTest", "Foundation", "Swift"]
+    // UIKit is allowed in callers for UI types, not in the helper query body.
+    // These SDKs do not replace XCTest assertions or Swift's Bool negation.
+    static let trustedCallerModules = trustedModules.union(["UIKit"])
 
     public struct References: Codable, Sendable {
         public var declarations: Set<Int> = []
         public var callers: Set<Int> = []
         public var unsupported = false
         public var unsupportedLines: Set<Int> = []
+        public var untrustedWrapperImports: Bool? = nil
     }
 
     static let assertions: Set<String> = ["XCTAssert", "XCTAssertTrue", "XCTAssertFalse", "XCTAssertEqual", "XCTAssertNotEqual",
@@ -45,6 +49,7 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
             result[key, default: References()].callers.formUnion(evidence.callers)
             result[key, default: References()].unsupportedLines.formUnion(evidence.unsupportedLines)
             result[key, default: References()].unsupported = result[key]!.unsupported || evidence.unsupported
+            if evidence.untrustedWrapperImports == true { result[key]!.untrustedWrapperImports = true }
         }
         return result
     }
@@ -62,7 +67,18 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
         return canonicalName(token.text + "(" + call.arguments.map { ($0.label?.text ?? "_") + ":" }.joined() + ")")
     }
 
-    static func references(_ tokens: [TokenSyntax], locations: SourceLocationConverter, activeLocals: Set<Int> = [], matching signature: String? = nil) -> References {
+    /// Check imports once per source file. Declaration-scoped, attributed and
+    /// unknown imports may introduce or re-export a same-spelled callable.
+    static func callerImportsSupported(_ tree: SourceFileSyntax) -> Bool {
+        tree.tokens(viewMode: .sourceAccurate).allSatisfy { token in
+            guard token.tokenKind == .keyword(.import), let declaration = token.parent?.as(ImportDeclSyntax.self) else { return true }
+            return declaration.attributes.isEmpty && declaration.importKindSpecifier == nil &&
+                trustedCallerModules.contains(declaration.path.trimmedDescription)
+        }
+    }
+
+    static func references(_ tokens: [TokenSyntax], locations: SourceLocationConverter, callerImportsSupported: Bool,
+                           activeLocals: Set<Int> = [], matching signature: String? = nil) -> References {
         var result = References()
         for token in tokens {
             if let signature, let key = referenceKey(token), key != canonicalName(signature) { continue }
@@ -88,9 +104,12 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
             while let node = ancestor {
                 if let function = node.as(FunctionDeclSyntax.self) { caller = function; break }
                 if let outer = node.as(FunctionCallExprSyntax.self) {
-                    // XCTest's assertion parameters are synchronous autoclosures.
+                    // A bare assertion spelling is not proof of its binding:
+                    // imported overloads can store an escaping autoclosure.
+                    if !callerImportsSupported { result.untrustedWrapperImports = true; supported = false; break }
                     if !assertions.contains(outer.calledExpression.as(DeclReferenceExprSyntax.self)?.baseName.text ?? "") { supported = false; break }
                 } else if let prefix = node.as(PrefixOperatorExprSyntax.self) {
+                    if !callerImportsSupported { result.untrustedWrapperImports = true; supported = false; break }
                     if prefix.operator.text != "!" { supported = false; break }
                 } else if node.is(IfExprSyntax.self) || node.is(SwitchExprSyntax.self) || node.is(TryExprSyntax.self) {
                     // Structured control flow does not retain or escape the call.
@@ -115,7 +134,8 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
                 guard !activeLocals.contains(position), local.attributes.isEmpty, local.modifiers.isEmpty else { supported = false; break }
                 let name = local.name.identifier?.name ?? local.name.text
                 let uses = references(enclosing.tokens(viewMode: .sourceAccurate).filter { $0.identifier?.name == name },
-                                      locations: locations, activeLocals: activeLocals.union([position]))
+                                      locations: locations, callerImportsSupported: callerImportsSupported, activeLocals: activeLocals.union([position]))
+                if uses.untrustedWrapperImports == true { result.untrustedWrapperImports = true }
                 guard !uses.unsupported, uses.declarations.count == 1, !uses.callers.isEmpty else { supported = false; break }
                 caller = enclosing
             }
