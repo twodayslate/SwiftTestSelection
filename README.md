@@ -1147,7 +1147,7 @@ parameters for those queries; predicates and method references cannot escape or
 be stored in shared state. The method name and file path are unrestricted. This
 supports replacing a value predicate with an existence-and-value predicate.
 See the [real-project validation](Documentation/Issue58Validation.md) for the
-125-consumer selection and reproduction commands.
+current conservative result, the superseded 125-consumer experiment, and reproduction commands.
 
 The proof follows direct helper callers, including source-defined XCTest base
 classes and nonescaping local functions, to bound test entries. The head compiler
@@ -1211,12 +1211,22 @@ closure for opaque factories that could supply an SDK subclass with effectful
 overrides. Missing native or dynamic producer evidence retains a diagnostic and
 conservative selection; pure helpers that do not use SDK receivers do not need
 this audit. A `Void` or scalar return does not prove that an opaque call cannot
-supply receivers: callback arguments and output-pointer/inout channels also need
-evidence. Unknown dynamic callback producers retain fallback; resolved project
-implementations are followed through their compiler edges. A narrow source and
-compiler proof also supports a direct completion whose input is used only in
-`XCTAssertNil`/`XCTAssertNotNil` or directly interpolated into an `XCTFail` message. Missing saved callback evidence or unresolved
-assertion bindings retain fallback. Signature evidence must cover the caller
+supply receivers. The analyzer requires a captured implementation or an explicit
+SDK contract, rather than inferring safety from return-type names or callback
+syntax. This covers returned structs/enums, thrown errors, callbacks, output
+pointers and mutations of reachable state. Unknown producers retain fallback even
+when a completion only asserts its input is nil. Diagnostics identify the missing
+producer or storage declaration; they are uncertainty, not proven impact.
+
+Consumer and lifecycle storage accesses are also checked. Mutable/unknown fields
+and globals retain fallback; a narrow source proof supports immutable stored
+string literals without type annotations, wrappers or interpolation. Exact SDK
+gesture-velocity and keyboard-key constants are supported. The graph records field/global
+identities; old graphs missing that evidence must be regenerated from saved
+artifacts and sealed SIL. Module-fragment cache version 9 invalidates older
+fragments. This needs no baseline build and does not execute application tests.
+
+Signature evidence must cover the caller
 closure as well as the changed helper. When upgrading old graphs, regenerate from saved build artifacts
 and sealed SIL for the needed dependency modules too. The analysis caches both
 successful and failed producer checks within one immutable graph. SDK version 5 requires

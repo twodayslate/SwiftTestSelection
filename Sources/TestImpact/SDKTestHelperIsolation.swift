@@ -143,8 +143,8 @@ enum SDKTestHelperIsolation {
             guard !units.isEmpty, units.allSatisfy({ accepted.contains($0.key) }) else { return "Compiler caller has no verified source owner: \(node.name)" }
         }
         var receiverOrigins = SDKReceiverOrigins()
-        guard receiverOrigins.proves(tests: consumers, current: current, graph: graph) else {
-            return "Unproven SDK receiver origin in a consumer or its setup/factory dependencies"
+        if let reason = receiverOrigins.blocker(tests: consumers, current: current, graph: graph) {
+            return "Unproven SDK receiver origin: " + reason
         }
         return compilerEffectBlocker(unit, graph: graph, index: index)
     }

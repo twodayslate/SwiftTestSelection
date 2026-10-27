@@ -8,7 +8,6 @@ import Foundation
 /// Cache decisions for one immutable helper traversal and batch new symbols.
 struct ExternalHelperEffects {
     private var trusted: [String: Bool] = [:]
-    private var receiverTrusted: [String: Bool] = [:]
     private var receiverSDK: [String: Bool] = [:]
     // Compiler-emitted actor isolation checks have C ABI names, not Swift
     // declaration trees. Keep this exact; an arbitrary swift_* name is opaque.
@@ -32,99 +31,23 @@ struct ExternalHelperEffects {
     }
 
     mutating func allowsReceiverOrigins(_ symbols: Set<String>, resolve: ([String]) -> String? = Self.resolve) -> Bool {
-        resolveReceiverDeclarations(symbols, resolve: resolve)
-        return symbols.allSatisfy { Self.receiverRuntime.contains($0) || receiverTrusted[$0] == true }
+        unprovenReceiverOrigins(symbols, resolve: resolve).isEmpty
+    }
+
+    mutating func unprovenReceiverOrigins(_ symbols: Set<String>, resolve: ([String]) -> String? = Self.resolve) -> Set<String> {
+        symbols.subtracting(sdkReceiverDeclarations(symbols, resolve: resolve))
     }
 
     private mutating func resolveReceiverDeclarations(_ symbols: Set<String>, resolve: ([String]) -> String?) {
         // Key-path getter references are retained by SILParser. The completion
         // adapter transports NSError to a void callback, not an SDK receiver.
-        let missing = symbols.subtracting(Self.receiverRuntime).filter { receiverTrusted[$0] == nil }
+        let missing = symbols.subtracting(Self.receiverRuntime).filter { receiverSDK[$0] == nil }
         guard !missing.isEmpty else { return }
         let output = resolve(missing.sorted())
         let sdk = output.map { Self.trustedDeclarations($0, receiverOrigins: true) } ?? []
-        var allowed = sdk
-        for block in (output ?? "").components(separatedBy: "Demangling for ").dropFirst() {
-            let lines = block.components(separatedBy: .newlines)
-            guard let symbol = lines.first, !allowed.contains(symbol), Self.nonReceiverResult(lines.dropFirst()) else { continue }
-            allowed.insert(symbol)
-        }
         for symbol in missing {
             receiverSDK[symbol] = sdk.contains(symbol)
-            receiverTrusted[symbol] = allowed.contains(symbol)
         }
-    }
-
-    /// Check values leaving an opaque call: its result and callback arguments.
-    /// A void-returning factory can still supply a receiver through a callback.
-    /// Foreign reference, existential, generic and pointer results cannot prove
-    /// a receiver's class. Value results are inspected through generic wrappers
-    /// such as Optional/Array so they cannot hide an imported subclass.
-    static func nonReceiverResult(_ lines: ArraySlice<String>) -> Bool {
-        let nodes = lines.filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("kind=") }
-        let values = nodes.map { $0.trimmingCharacters(in: .whitespaces) }
-        let depths = nodes.map { $0.prefix { $0 == " " }.count }
-        guard values.first == "kind=Global", values.count > 1,
-              !values.contains("kind=InOut"),
-              !values.contains(where: { $0.contains("Pointer") || $0.contains("Unmanaged") }) else { return false }
-        func subtree(_ i: Int) -> Range<Int> {
-            var end = i + 1
-            while end < values.count && depths[end] > depths[i] { end += 1 }
-            return i..<end
-        }
-        let roots = values.indices.filter { depths[$0] == 2 }
-        let wrappers: Set<String> = ["kind=Function", "kind=Static", "kind=Getter", "kind=UnsafeMutableAddressor",
-            "kind=Allocator", "kind=Constructor", "kind=DefaultArgumentInitializer", "kind=KeyPathGetterThunkHelper",
-            "kind=ReabstractionThunkHelper"]
-        guard !roots.isEmpty, roots.allSatisfy({ wrappers.contains(values[$0]) || ["kind=ObjCAttribute", "kind=NonObjCAttribute"].contains(values[$0]) }) else { return false }
-        if roots.count == 1, values[roots[0]] == "kind=ReabstractionThunkHelper" {
-            let signatures = subtree(roots[0]).filter { values[$0] == "kind=Type" && depths[$0] == depths[roots[0]] + 2 }
-            return signatures.count == 2 && signatures.allSatisfy { i in
-                i + 1 < values.count && values[i + 1] == "kind=ImplFunctionType" &&
-                    !subtree(i).contains(where: { ["kind=ImplResult", "kind=ImplErrorResult", "kind=ImplYield"].contains(values[$0]) })
-            }
-        }
-        let candidates = values.indices.filter { values[$0] == "kind=ReturnType" }
-        var result: Range<Int>?
-        if values.contains("kind=DefaultArgumentInitializer") {
-            guard let arguments = values.indices.filter({ values[$0] == "kind=ArgumentTuple" }).min(by: { depths[$0] < depths[$1] }),
-                  let number = values.last(where: { $0.hasPrefix("kind=Number, index=") }),
-                  let parameter = Int(number.components(separatedBy: "=").last!), arguments + 2 < values.count,
-                  values[arguments + 2] == "kind=Tuple" else { return false }
-            let elements = subtree(arguments + 2).filter { values[$0] == "kind=TupleElement" && depths[$0] == depths[arguments + 2] + 2 }
-            guard elements.indices.contains(parameter) else { return false }
-            result = subtree(elements[parameter])
-        } else if let variable = values.firstIndex(of: "kind=Variable") {
-            guard let type = subtree(variable).first(where: { values[$0] == "kind=Type" && depths[$0] == depths[variable] + 2 }) else { return false }
-            result = subtree(type)
-        } else if let returned = candidates.min(by: { depths[$0] < depths[$1] }) {
-            result = subtree(returned)
-        }
-        guard let result else { return false }
-        let opaque = ["DependentGeneric", "ProtocolList", "BuiltinTypeName", "Metatype", "DynamicSelf", "TypeAlias"]
-        let typeKinds: Set<String> = ["kind=Structure", "kind=Enum", "kind=BoundGenericStructure", "kind=BoundGenericEnum",
-            "kind=Tuple", "kind=Class", "kind=FunctionType", "kind=AutoClosureType", "kind=NoEscapeFunctionType"]
-        // The shallowest argument tuple belongs to the declaration. Deeper
-        // tuples belong to callbacks it can invoke, including callbacks wrapped
-        // in Optional/collections. Their arguments flow back into the caller.
-        let arguments = values.indices.filter { values[$0] == "kind=ArgumentTuple" }
-        let argumentDepth = arguments.map { depths[$0] }.min()
-        let outputs = [result] + arguments.filter { depths[$0] > (argumentDepth ?? Int.max) }.map(subtree)
-        for output in outputs {
-            for i in output {
-                if values[i] == "kind=Type", i + 1 >= output.upperBound || !typeKinds.contains(values[i + 1]) { return false }
-                if opaque.contains(where: { values[i].contains($0) }) { return false }
-                if values[i] == "kind=Class" {
-                    // These SDK classes cannot be subclasses of XCTest receivers.
-                    guard i + 2 < output.upperBound, values[i + 1] == "kind=Module, text=\"__C\"",
-                          ["UIImage", "UIView", "NSError", "UIGraphicsImageRendererContext"].contains(where: {
-                              values[i + 2] == "kind=Identifier, text=\"" + $0 + "\""
-                          }) else { return false }
-                }
-                if values[i].contains("Pointer") || values[i].contains("Unmanaged") { return false }
-            }
-        }
-        return true
     }
 
     /// SIL's method display name omits argument labels and overload identity.
@@ -187,39 +110,53 @@ struct ExternalHelperEffects {
 
     static func allowsDynamicReceiverOrigins(_ node: FunctionNode) -> Bool { receiverDependencies(node) != nil }
 
-    private static let nonReceiverTypes: Set<String> = ["String", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Void",
-            "CGRect", "CGSize", "CGPoint", "CGVector", "TimeInterval", "Selector", "URL", "Date", "Data", "NSRange",
-            "UIDeviceOrientation", "UIContentSizeCategory", "XCUIKeyboardKey", "XCUIDevice", "UIDevice", "XCUIScreen", "XCUICoordinate",
-            "UIImage", "UIView", "UIApplication", "UIWindow", "UIScreen", "UIColor", "UserDefaults", "XCUISystem", "XCTestExpectation", "UIGraphicsImageRenderer", "UIGraphicsImageRendererFormat",
-            "UIGraphicsImageRendererContext", "NSFormatter", "NSDateFormatter", "DateFormatter", "ProcessInfo", "Optional", "Array", "Dictionary",
-            "Swift", "Foundation", "UIKit", "CoreGraphics", "XCTest"]
+    /// An opaque function can deliver receivers through returned aggregates,
+    /// thrown errors, callbacks or mutations of reachable state. Neither its
+    /// result spelling nor a consumer's callback syntax proves these channels
+    /// closed. Only explicit SDK contracts or resolved implementation edges do.
+    static func receiverDependencies(_ node: FunctionNode) -> Set<String>? {
+        try? receiverProof(node).get()
+    }
 
-    /// Follow concrete producer edges, not broad scalar-returning protocol
-    /// dispatch candidates (e.g. every Equatable implementation in the graph).
-    static func receiverDependencies(_ node: FunctionNode, assertedCallbacks: Set<String> = []) -> Set<String>? {
-        guard !node.dynamicDeclarations.isEmpty else { return (node.dynamicCallSignatures?.isEmpty ?? true) ? [] : nil }
-        guard let calls = node.dynamicCallSignatures else { return nil }
+    static func receiverProof(_ node: FunctionNode) -> Result<Set<String>, ImpactError> {
+        if let imported = node.uncertainties.sorted().first(where: { $0.hasPrefix("Imported conformance:") }) {
+            return .failure(ImpactError(imported))
+        }
+        let unresolved = node.uncertainties.filter { $0.hasPrefix("Unresolved project dispatch:") }.sorted()
+        guard let calls = node.dynamicCallSignatures else { return .failure(ImpactError("Missing dynamic-call signatures")) }
         var needsTargets = false
         var covered = Set<String>()
-        for call in calls {
+        for call in calls.sorted() {
             let parts = call.split(separator: " ", maxSplits: 2)
-            guard parts.count == 3 else { return nil }
-            guard let name = parts[1].split(separator: "!").first else { return nil }
+            guard parts.count == 3, let name = parts[1].split(separator: "!").first else {
+                return .failure(ImpactError("Malformed dynamic-call signature: " + call))
+            }
             let declaration = String(name)
             covered.insert(declaration)
-            guard let result = call.components(separatedBy: " -> ").last else { return nil }
-            let words = Set(result.split { !$0.isLetter && !$0.isNumber && $0 != "_" }.map(String.init))
-            // The first two arrows separate the receiver, arguments and result.
-            // Any additional arrow denotes a function-valued channel. Do not
-            // infer safety from a scalar result when callbacks or output buffers
-            // can deliver receivers. Known SDK contracts below remain explicit;
-            // resolved project implementations are followed normally.
-            let arrowParts = call.components(separatedBy: " -> ").count
-            let checkedCallback = arrowParts == 4 && assertedCallbacks.contains(declaration.components(separatedBy: ".").last ?? "")
-            let directOnly = (arrowParts == 3 || checkedCallback) &&
-                !call.contains("inout ") && !call.contains("Pointer") && !call.contains("Unmanaged")
-            if directOnly && (words.isSubset(of: nonReceiverTypes) || ["XCUIApplication.State", "XCUIElement.ElementType", "XCTWaiter.Result"].contains(result)) { continue }
-            if sdkDynamicSignatures.contains(call) || [
+            if sdkDynamicSignatures.contains(call) || receiverSDKSignatures.contains(call) { continue }
+            if let reason = unresolved.first(where: { $0 == "Unresolved project dispatch: " + declaration || $0.hasPrefix("Unresolved project dispatch: " + declaration + " (") }) {
+                return .failure(ImpactError(reason))
+            }
+            guard node.resolvedDynamicDeclarations.contains(where: { $0 == declaration || $0.hasPrefix(declaration + "@witness:") }),
+                  !node.dependencies.isEmpty else {
+                return .failure(ImpactError("Missing implementation or SDK origin contract for " + call))
+            }
+            needsTargets = true
+        }
+        if let reason = unresolved.first(where: { reason in
+            !covered.contains { reason == "Unresolved project dispatch: " + $0 || reason.hasPrefix("Unresolved project dispatch: " + $0 + " (") }
+        }) { return .failure(ImpactError(reason)) }
+        guard Set(node.dynamicDeclarations.map { $0.components(separatedBy: "@witness:")[0] }).isSubset(of: covered),
+              !node.dynamicDeclarations.isEmpty || calls.isEmpty else {
+            return .failure(ImpactError("Incomplete dynamic-call declarations/signatures"))
+        }
+        return .success(needsTargets ? node.dependencies.subtracting(node.compilerReferences ?? []) : [])
+    }
+
+    // Origin contracts only: these SDK operations do not inject a foreign
+    // XCTest receiver. They do not grant outgoing effect purity to a helper.
+    // No project declaration or return-type spelling belongs in this allowlist.
+    private static let receiverSDKSignatures: Set<String> = [
                 // UIKit supplies an unrelated renderer context, never an XCTest receiver.
                 "objc_method UIGraphicsImageRenderer.image!foreign : (UIGraphicsImageRenderer) -> ((UIGraphicsImageRendererContext) -> ()) -> UIImage",
                 "objc_method XCUIApplication.init!initializer.foreign : (XCUIApplication.Type) -> () -> XCUIApplication",
@@ -236,16 +173,36 @@ struct ExternalHelperEffects {
                 "objc_method XCUIElement.snapshot!foreign : (XCUIElement) -> () throws -> any XCUIElementSnapshot",
                 "objc_method XCUIElementAttributes.value!getter.foreign : <Self where Self : XCUIElementAttributes> (Self) -> () -> Any?",
                 "objc_method XCUIElementSnapshot.children!getter.foreign : <Self where Self : XCUIElementSnapshot> (Self) -> () -> [any XCUIElementSnapshot]",
-                "objc_method JSONSerialization.jsonObject!foreign : (JSONSerialization.Type) -> (Data, JSONSerialization.ReadingOptions) throws -> Any"
-
-            ].contains(call) { continue }
-            guard node.resolvedDynamicDeclarations.contains(where: { $0 == declaration || $0.hasPrefix(declaration + "@witness:") }),
-                  !node.dependencies.isEmpty else { return nil }
-            needsTargets = true
-        }
-        guard Set(node.dynamicDeclarations.map { $0.components(separatedBy: "@witness:")[0] }).isSubset(of: covered) else { return nil }
-        return needsTargets ? node.dependencies.subtracting(node.compilerReferences ?? []) : []
-    }
+                "objc_method JSONSerialization.jsonObject!foreign : (JSONSerialization.Type) -> (Data, JSONSerialization.ReadingOptions) throws -> Any",
+                "objc_super_method XCTestCase.deinit!deallocator.foreign : (XCTestCase) -> () -> ()",
+                "objc_super_method XCTest.setUp!foreign : (XCTest) -> () async throws -> ()",
+                "objc_super_method XCTest.tearDown!foreign : (XCTest) -> () async throws -> ()",
+                "objc_method XCTestCase.continueAfterFailure!setter.foreign : (XCTestCase) -> (Bool) -> ()",
+                "objc_method XCTestExpectation.fulfill!foreign : (XCTestExpectation) -> () -> ()",
+                "objc_method XCUIApplication.launch!foreign : (XCUIApplication) -> () -> ()",
+                "objc_method XCUIApplication.terminate!foreign : (XCUIApplication) -> () -> ()",
+                "objc_method XCUIApplication.launchEnvironment!getter.foreign : (XCUIApplication) -> () -> [String : String]",
+                "objc_method XCUIApplication.launchEnvironment!setter.foreign : (XCUIApplication) -> ([String : String]) -> ()",
+                "objc_method XCUIApplication.launchArguments!getter.foreign : (XCUIApplication) -> () -> [String]",
+                "objc_method XCUIApplication.launchArguments!setter.foreign : (XCUIApplication) -> ([String]) -> ()",
+                "objc_method XCUIApplication.state!getter.foreign : (XCUIApplication) -> () -> XCUIApplication.State",
+                "objc_method XCUIDevice.shared!getter.foreign : (XCUIDevice.Type) -> () -> XCUIDevice",
+                "objc_method XCUIDevice.orientation!getter.foreign : (XCUIDevice) -> () -> UIDeviceOrientation",
+                "objc_method XCUIDevice.orientation!setter.foreign : (XCUIDevice) -> (UIDeviceOrientation) -> ()",
+                "objc_method XCUIDevice.system!getter.foreign : (XCUIDevice) -> () -> XCUISystem",
+                "objc_method XCUISystem.open!foreign : (XCUISystem) -> (URL) -> ()",
+                "objc_method XCUIScreen.main!getter.foreign : (XCUIScreen.Type) -> () -> XCUIScreen",
+                "objc_method XCUIElement.coordinate!foreign : (XCUIElement) -> (CGVector) -> XCUICoordinate",
+                "objc_method XCUIElement.frame!getter.foreign : (XCUIElement) -> () -> CGRect",
+                "objc_method XCUIElement.swipeDown!foreign : (XCUIElement) -> (XCUIGestureVelocity) -> ()",
+                "objc_method XCUIElement.swipeUp!foreign : (XCUIElement) -> (XCUIGestureVelocity) -> ()",
+                "objc_method XCUICoordinate.tap!foreign : (XCUICoordinate) -> () -> ()",
+                "objc_method XCUICoordinate.press!foreign : (XCUICoordinate) -> (Double) -> ()",
+                "objc_method XCUICoordinate.press!foreign : (XCUICoordinate) -> (Double, XCUICoordinate) -> ()",
+                "objc_method XCUICoordinate.press!foreign : (XCUICoordinate) -> (Double, XCUICoordinate, XCUIGestureVelocity, Double) -> ()",
+                "objc_method XCUICoordinate.screenPoint!getter.foreign : (XCUICoordinate) -> () -> CGPoint",
+                "objc_method XCUICoordinate.withOffset!foreign : (XCUICoordinate) -> (CGVector) -> XCUICoordinate"
+    ]
 
     private static let sdkDynamicSignatures: Set<String> = {
         var calls: Set<String> = [

@@ -120,3 +120,16 @@ import Testing
         #expect(!ExternalHelperEffects.allowsDynamicCalls(node))
     }
 }
+
+@Test func sharedStateCaptureKeepsDeclarationIdentity() {
+    let sil = """
+    sil @entry : $@convention(thin) () -> () {
+      %0 = global_addr @shared : $*Optional<XCUIApplication>
+      %1 = ref_element_addr %self : $Suite, #Suite.app
+      %2 = tuple ()
+      return %2 : $()
+    } // end sil function 'entry'
+    """
+    let graph = SILParser.parse(sil, module: "UI", sourceRoot: URL(fileURLWithPath: "/tmp"))
+    #expect(graph.functions["entry"]?.stateAccesses == ["global:shared", "field:Suite.app"])
+}

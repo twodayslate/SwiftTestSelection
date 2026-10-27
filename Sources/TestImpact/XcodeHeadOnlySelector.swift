@@ -162,7 +162,8 @@ enum XcodeHeadOnlySelector {
                 // A failed helper effect proof needs its own explicit fallback,
                 // since SDK operations on a shared object can affect other tests.
                 if traversal.hasUnprovenCalleeEffects {
-                    fallback("head_only_helper_callee_effects", "Private helper caller chain reaches an unproven callee effect boundary: \(unit.region.path):\(unit.region.startLine)")
+                    let detail = traversal.receiverOriginBlocker.map { "; " + $0 } ?? ""
+                    fallback("head_only_helper_callee_effects", "Private helper caller chain reaches an unproven callee effect boundary: \(unit.region.path):\(unit.region.startLine)" + detail)
                 }
                 if !traversal.sharedStateSymbols.isEmpty {
                     fallback("head_only_helper_shared_state", "Shared state in private helper callers or callees cannot be isolated: \(unit.region.path):\(unit.region.startLine)")

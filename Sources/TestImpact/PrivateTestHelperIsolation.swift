@@ -15,6 +15,7 @@ enum PrivateTestHelperIsolation {
         fileprivate var externalEffects = ExternalHelperEffects()
         fileprivate var receiverOrigins = SDKReceiverOrigins()
         fileprivate var sdkEffectDeclarations: [String: [SourceUnit]] = [:]
+        fileprivate(set) var receiverOriginBlocker: String?
         private(set) var evaluationCount = 0
         fileprivate(set) var sharedStateSymbols = Set<String>()
         fileprivate(set) var hasUnprovenCalleeEffects = false
@@ -244,7 +245,8 @@ enum PrivateTestHelperIsolation {
             traversal.hasUnprovenCalleeEffects = true
             effectsSupported = false
         }
-        if usesSDKReceiver && !traversal.receiverOrigins.proves(tests: consumers, current: current, graph: graph) {
+        if usesSDKReceiver, let reason = traversal.receiverOrigins.blocker(tests: consumers, current: current, graph: graph) {
+            traversal.receiverOriginBlocker = reason
             traversal.hasUnprovenCalleeEffects = true
             effectsSupported = false
         }

@@ -1,415 +1,481 @@
 {
-  "originalBase": "55ee3b78dc0fae3478508e6e35b0decbadc397a7",
-  "originalHead": "0fcd75da18ddef3aa58160dbd3e2b32500793840",
-  "normalizedBase": "40c62f971f0aef63c902a14805cf4d821e6784fb",
-  "normalizedHead": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
-  "headBuilds": 1,
-  "baselineBuilds": 0,
-  "appTestBodiesExecuted": false,
-  "elapsedSeconds": 383.90360091599996,
-  "scopeSeconds": 42.24066710472107,
-  "totalTests": 2000,
-  "scopeDiagnostics": [],
-  "matchesAllHistoricalCompilerConsumers": true,
-  "selectedTests": [
-    "ChainOfCustodyUITests/CalendarContentUITests/testEventOnlyCalendarUsesEventPresentationAndCreation()",
-    "ChainOfCustodyUITests/CalendarContentUITests/testTodayButtonPutsCurrentDateAtTopOfList()",
-    "ChainOfCustodyUITests/CalendarCustomIconUITests/testAssignmentIconPickerCancelAndSave()",
-    "ChainOfCustodyUITests/CalendarCustomIconUITests/testEventCustomSymbolValidationPersistenceAndReset()",
-    "ChainOfCustodyUITests/CalendarCustomIconUITests/testNotificationEventUsesSavedCategoryColor()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testAllDayEventSurvivesDraggingThroughBothLayouts()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCalendarDetentsRemainInteractive()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitExpansionPreservesVisibleRow()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitTimelinePreviewPreservesVisibleRow()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineExpansionPreservesVisibleTime()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineListPreviewPreservesVisibleTime()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesCollapsedUntimedPanel()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesUntimedCategoryAndScrollPosition()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testContinuousLayoutReversalsRetainAllDayEvent()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testDenseActivityHeldDragReversesThroughLayouts()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testPopulatedListDragOpensAnchoredTimelineAndReturnsToList()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testSlowListToTimelineHoldsBeforeRelease()",
-    "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testSparseDateHeldReversalRetainsSectionSpacing()",
-    "ChainOfCustodyUITests/CalendarFilterUITests/testCalendarCanSwitchCalendarAndActivityViews()",
-    "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testActivityReasonSearchRespectsCategorySelection()",
-    "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testCalendarAndNotificationSettingsShareSubgroupPreferences()",
-    "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testCombinedCategoriesAffectCalendarAndSearchAndCanBeCleared()",
-    "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testFiltersRemainReachableWithAccessibilityTextAndLandscape()",
-    "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testHiddenCategoriesPersistAndShowAllRestoresCalendar()",
-    "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testSubgroupColorAndNotificationSettingsSaveAndCancel()",
-    "ChainOfCustodyUITests/CalendarModeTransitionUITests/testCalendarModesKeepTheirNavigationInteractive()",
-    "ChainOfCustodyUITests/CalendarPermissionUITests/testHolderCanCreateEventWhenEventsAreFilteredOut()",
-    "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testCalendarTabReselectionReturnsListToToday()",
-    "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesAtClampedLateNightDestination()",
-    "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesOnlyWhenAlreadyAtTodayInTimelineAndSplit()",
-    "ChainOfCustodyUITests/CalendarSearchRegressionUITests/testSplitSearchThenDraggingThroughTimelineToListKeepsContentVisible()",
-    "ChainOfCustodyUITests/CalendarSnapshotUITests/testDenseActivityTimeline()",
-    "ChainOfCustodyUITests/CalendarSnapshotUITests/testLandscapeCalendarSplit()",
-    "ChainOfCustodyUITests/CalendarSnapshotUITests/testLandscapeList()",
-    "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitCalendarSplit()",
-    "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitDayTimeline()",
-    "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitDayTimelineAtTopHour()",
-    "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitList()",
-    "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitSearchResults()",
-    "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAllDayEventFromSearch()",
-    "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAssignmentTitle()",
-    "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAssignmentTitleFromSearch()",
-    "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllSearchesBothCategoriesAndRestoresTimeline()",
-    "ChainOfCustodyUITests/CalendarUntimedHeaderUITests/testDenseUntimedHeaderCapsHeightAndScrollsIndependently()",
-    "ChainOfCustodyUITests/DepotAndDurationUITests/testDepotRecognitionEditorSupportsDirectAmountEntry()",
-    "ChainOfCustodyUITests/HolderRequestUITests/testHolderCanEditPauseScheduleAndSeeEvidenceRequirements()",
-    "ChainOfCustodyUITests/HolderRequestUITests/testNewPauseReusesApprovedSettingsWithoutChangingExistingRequests()",
-    "ChainOfCustodyUITests/HolderRequestUITests/testReleaseOptionsPersistAndEvidenceStartsApprovedRelease()",
-    "ChainOfCustodyUITests/NoteConversionUITests/testCancelStopsWorkAndKeepsSourceBlock()",
-    "ChainOfCustodyUITests/NoteConversionUITests/testExistingLinkConversionValidatesURLAndSavesPlayableVideo()",
-    "ChainOfCustodyUITests/NoteConversionUITests/testFailureKeepsConversionAvailableForRetry()",
-    "ChainOfCustodyUITests/NoteConversionUITests/testSavingContinuesWhenNavigatingAwayAndBack()",
-    "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConversionCountsAsOneBlockAfterReopeningAndReverting()",
-    "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConverterDetailsReversionKeepsRestoredLinkSelected()",
-    "ChainOfCustodyUITests/NoteEromeConversionUITests/testAutomaticallyConvertsEromeAlbumAfterSignIn()",
-    "ChainOfCustodyUITests/NoteEromeConversionUITests/testCancellingEromeSignInKeepsSourceForRetry()",
-    "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumOffersEveryVideoInsteadOfQualityVariants()",
-    "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumWithoutVideoKeepsBrowserAvailableForRetry()",
-    "ChainOfCustodyUITests/NoteRedditConversionUITests/testAutomaticallyConvertsRedditShareAfterSignIn()",
-    "ChainOfCustodyUITests/NoteRedditConversionUITests/testAutomaticallyUsesAvailableRedditMediaWithoutSignIn()",
-    "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditExternalFinderPreservesShareURLForRetry()",
-    "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditSignInKeepsSourceForRetry()",
-    "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditBrowserOffersMultipleAnimatedVideos()",
-    "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditEmbeddedPostStaysOnRedditUntilUserChoosesTheVideoSite()",
-    "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditExternalPostHandsOffToGenericFinderAndSavesChosenVideo()",
-    "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditPostWithoutMediaKeepsBrowserAvailableForRetry()",
-    "ChainOfCustodyUITests/NoteWebConversionUITests/testCancellingGenericPickerPreservesSourceAndAllowsRetry()",
-    "ChainOfCustodyUITests/NoteWebConversionUITests/testDirectVideoLinkConvertsWithoutChoosingFromAWebpage()",
-    "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversNewShadowPlayersAndSavesTheSelection()",
-    "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversVideosAfterSignIn()",
-    "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderPreviewsAndDownloadsSelectedVideo()",
-    "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderWithoutVideoKeepsPageAndRetryAvailable()",
-    "ChainOfCustodyUITests/NoteXConversionUITests/testAutomaticallyConvertsXPostAfterSignIn()",
-    "ChainOfCustodyUITests/NoteXConversionUITests/testCancellingXSignInKeepsSourceForRetry()",
-    "ChainOfCustodyUITests/NoteXConversionUITests/testXPostOffersAllVideosWhileSkippingPhotoAttachments()",
-    "ChainOfCustodyUITests/NoteXConversionUITests/testXPostWithoutMediaKeepsBrowserAvailableForRetry()",
-    "ChainOfCustodyUITests/NotificationSettingsUITests/testPermissionAndPreferencesSurviveRelaunch()",
-    "ChainOfCustodyUITests/NotificationSettingsUITests/testQuietHoursControlsAndPairingPreference()",
-    "ChainOfCustodyUITests/PairingNoteActivityUITests/testActivityShowsAuthorsSettingChangesAndJumpsToChangedBlock()",
-    "ChainOfCustodyUITests/PairingNoteRichTextUITests/testDoneFromNameFieldKeepsBothTextAndName()",
-    "ChainOfCustodyUITests/PairingNoteRichTextUITests/testEmptyTextAndDiscardingChanges()",
-    "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelStaysOpenAndSavesFormatting()",
-    "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelWithSelectAllStaysOpenAndSavesFormatting()",
-    "ChainOfCustodyUITests/PairingNotesEditingUITests/testCreatesTaggedFolderAndShowsItInNotes()",
-    "ChainOfCustodyUITests/PairingNotesMediaUITests/testBlockDetailsActionOpensTheInspector()",
-    "ChainOfCustodyUITests/PairingNotesMediaUITests/testDetailSwipesPreserveCarouselSelection()",
-    "ChainOfCustodyUITests/PairingNotesMediaUITests/testEnteringVideoRestoresChromeAfterHidingImageControls()",
-    "ChainOfCustodyUITests/PairingNotesMediaUITests/testFullScreenPagerAndSafariTabBarStaySynchronized()",
-    "ChainOfCustodyUITests/PairingNotesMediaUITests/testHoldingVideoTemporarilyDoublesPlaybackSpeed()",
-    "ChainOfCustodyUITests/PairingNotesMediaUITests/testImagePreviewCanZoomPanAndReset()",
-    "ChainOfCustodyUITests/PairingNotesMediaUITests/testPagingWithVisibleVideoControlsKeepsPagerAndCarouselsAligned()",
-    "ChainOfCustodyUITests/PairingNotesMediaUITests/testThumbnailFadeTracksScrollAndReversal()",
-    "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoAutoHideDoesNotInterruptTitleDragging()",
-    "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoControlsToggleTogetherAboveCarousel()",
-    "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoScrubbingLocksOrientationUntilTouchEnds()",
-    "ChainOfCustodyUITests/PairingNotesNavigationUITests/testNotesSearchFindsTagAssignedOnlyToABlock()",
-    "ChainOfCustodyUITests/PairingNotesTagManagementUITests/testRenamesTagWhileThumbnailAssetIsUnavailable()",
-    "ChainOfCustodyUITests/RecurringEventUITests/testAssignmentStatusIconsSaveAndCancelIndependently()",
-    "ChainOfCustodyUITests/RecurringEventUITests/testCommonAssignmentReusesAnUndatedOneOffAndSharesItsFilter()",
-    "ChainOfCustodyUITests/RecurringEventUITests/testCommonEventPrefillsRecurringSeries()",
-    "ChainOfCustodyUITests/RecurringEventUITests/testCommonGroupCanBeRestoredFromItsRecurringSeriesFilter()",
-    "ChainOfCustodyUITests/RecurringEventUITests/testCommonIconEditsFollowExistingOccurrencesUnlessCustomized()",
-    "ChainOfCustodyUITests/RecurringEventUITests/testCommonOneOffEventCanBeFilteredWithoutRepeat()",
-    "ChainOfCustodyUITests/RecurringEventUITests/testOccurrenceNotesRemainSeparateFromSeriesAndFilterControls()",
-    "ChainOfCustodyUITests/RecurringEventUITests/testPointPresetClearsPreviousAllDaySchedule()",
-    "ChainOfCustodyUITests/ScheduleDraftUITests/testAssignmentCancelKeepsOrDiscardsScheduleChanges()",
-    "ChainOfCustodyUITests/ScheduleDraftUITests/testEntryTypeSwitchKeepsDraftUntilDiscardIsConfirmed()",
-    "ChainOfCustodyUITests/ScheduleDraftUITests/testEventEndOfDayPersistsAndCancelDiscardsChanges()",
-    "ChainOfCustodyUITests/ScheduleDraftUITests/testNewDraftCancellationConfirmsOnlyAfterEditing()",
-    "ChainOfCustodyUITests/ScheduleDraftUITests/testRevertedScheduleChangesCancelWithoutConfirmation()",
-    "ChainOfCustodyUITests/ScheduleDraftUITests/testUnscheduledAssignmentAndInstantEventRemainAvailable()",
-    "ChainOfCustodyUITests/ScheduleEditorUITests/testAllDayCustomBoundaryDoesNotSpillIntoTheFollowingDay()",
-    "ChainOfCustodyUITests/ScheduleEditorUITests/testAllDayEventCanBecomeAnInstantThenATimedEventOnAnotherDate()",
-    "ChainOfCustodyUITests/ScheduleEditorUITests/testAssignmentAllDayPersistsAndHidesTimeControls()",
-    "ChainOfCustodyUITests/ScheduleEditorUITests/testDisablingAllDayRetainsEditedAndSavedMultiDayRanges()",
-    "ChainOfCustodyUITests/ScheduleEditorUITests/testEndOfDayConvertsToOneAllDayAssignmentAtCustomBoundary()",
-    "ChainOfCustodyUITests/ScheduleEditorUITests/testSchedulingAnExistingUndatedAssignmentPreservesItsDisplayedStart()",
-    "ChainOfCustodyUITests/ScheduleEditorUITests/testStartEditsPreserveExtendedEndOfDayRanges()",
-    "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testAllDayDatePersistsWhenPairingAndDeviceUseDifferentTimeZones()",
-    "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testAllDayEditorsKeepTheirDatesAfterPairingTimeZoneChanges()",
-    "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testCustomEndsAndDurationsPreserveTheSavedEditingTimeZone()",
-    "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testEndOfDayEditorsKeepTheirBoundaryAfterPairingTimeZoneChanges()",
-    "ChainOfCustodyUITests/SharingPeopleUITests/testRolesLeadSharingDetailsAndOwnerCanChangeRole()",
-    "ChainOfCustodyUITests/TabBarBadgeUITests/testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently()",
-    "ChainOfCustodyUITests/TabBarBadgeUITests/testNotesBadgeCanBeDisabledAndPreferencesSurviveRelaunch()"
-  ],
-  "excludedFallbackOnlyTest": "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesContent()",
-  "retainedVerification": {
-    "primary": true,
-    "scope": true
+  "currentValidation": {
+    "status": "conservative-fallback-required",
+    "historical125TestIsolationClaimSuperseded": true,
+    "issue58RemainsOpen": true,
+    "toolchain": "Xcode 27.0, Swift release build",
+    "packageTestsPassed": 308,
+    "additionalRetainedReplayTestsPassed": 1,
+    "releaseSuiteSeconds": 147.509,
+    "captureHelperTestsPassed": 6,
+    "releaseDistributionTestsPassed": 5,
+    "releaseDistributionTestsSkipped": 1,
+    "retainedValidation": {
+      "issue55": {
+        "selectedTestCount": 12,
+        "totalTests": 1972,
+        "diagnosticCount": 0,
+        "scopeSeconds": 11.626709938049316,
+        "verifyBuildExitCode": 0,
+        "baseRevision": "9b08b4be6acd35338c76e7b29ce0d0df7729aa50",
+        "headRevision": "30d8454622ced09ff42f60d6f9196453ad2f6526",
+        "selectedTests": [
+          "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testHolderLinkPreservesLockedContents()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerOffersLinkAndContentSharing()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMessageCardIsOfferedWhenCompositionIsAvailable()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteToolbarSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testOutlineCanShareContainerLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testUnavailableMessagesStillOffersLinkSharing()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testVeiledNoteLinkHasProtectedPreview()"
+        ],
+        "matchesPrevious12TestSelection": true
+      },
+      "issue58": {
+        "selectedTestCount": 2000,
+        "totalTests": 2000,
+        "diagnosticCount": 1929,
+        "scopeSeconds": 12.188868999481201,
+        "verifyBuildExitCode": 0,
+        "baseRevision": "40c62f971f0aef63c902a14805cf4d821e6784fb",
+        "headRevision": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
+        "all125KnownConsumersRetained": true,
+        "fallbackOnlyNoteLinksExampleRetained": true,
+        "selection": "complete enumerated inventory"
+      }
+    },
+    "sealedSILModulesReparsedPerFixture": 10,
+    "sourceDeclarationKeysAndFingerprintsUnchanged": true,
+    "compilerReferenceEdgesAndDynamicDeclarationsUnchanged": true,
+    "newApplicationBuilds": 0,
+    "baselineBuilds": 0,
+    "appTestBodiesExecuted": false,
+    "fullRunEquivalenceValidated": false,
+    "blockers": [
+      {
+        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Missing implementation or SDK origin contract for objc_method XCUIElement.pinch!foreign : (XCUIElement) -> (CGFloat, CGFloat) -> () in ChainOfCustodyUITests.PairingNotesMediaUITests.testImagePreviewCanZoomPanAndReset() (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
+        "code": "head_only_sdk_helper_boundary"
+      }
+    ],
+    "note": "SDK contracts are deliberately bounded. The reported blocker is the first missing proof, not an exhaustive list; adding that one contract does not establish isolation for the whole consumer closure."
   },
-  "capturedModules": 10,
-  "extractionDiagnostics": [],
-  "toolchain": "Xcode 27.0",
-  "destination": "iPhone 17 Pro simulator, iOS 26.2",
-  "sdkHelperProofVersion": 3,
-  "privateHelperProofVersion": 5,
-  "measurementContext": "Fresh capture; concurrent release tests and another project build ran on the same host.",
-  "importBoundaryReview": {
-    "sdkHelperProofVersion": 5,
+  "historicalValidation": {
+    "originalBase": "55ee3b78dc0fae3478508e6e35b0decbadc397a7",
+    "originalHead": "0fcd75da18ddef3aa58160dbd3e2b32500793840",
+    "normalizedBase": "40c62f971f0aef63c902a14805cf4d821e6784fb",
+    "normalizedHead": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
+    "headBuilds": 1,
+    "baselineBuilds": 0,
+    "appTestBodiesExecuted": false,
+    "elapsedSeconds": 383.90360091599996,
+    "scopeSeconds": 42.24066710472107,
+    "totalTests": 2000,
+    "scopeDiagnostics": [],
+    "matchesAllHistoricalCompilerConsumers": true,
+    "selectedTests": [
+      "ChainOfCustodyUITests/CalendarContentUITests/testEventOnlyCalendarUsesEventPresentationAndCreation()",
+      "ChainOfCustodyUITests/CalendarContentUITests/testTodayButtonPutsCurrentDateAtTopOfList()",
+      "ChainOfCustodyUITests/CalendarCustomIconUITests/testAssignmentIconPickerCancelAndSave()",
+      "ChainOfCustodyUITests/CalendarCustomIconUITests/testEventCustomSymbolValidationPersistenceAndReset()",
+      "ChainOfCustodyUITests/CalendarCustomIconUITests/testNotificationEventUsesSavedCategoryColor()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testAllDayEventSurvivesDraggingThroughBothLayouts()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCalendarDetentsRemainInteractive()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitExpansionPreservesVisibleRow()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitTimelinePreviewPreservesVisibleRow()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineExpansionPreservesVisibleTime()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineListPreviewPreservesVisibleTime()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesCollapsedUntimedPanel()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesUntimedCategoryAndScrollPosition()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testContinuousLayoutReversalsRetainAllDayEvent()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testDenseActivityHeldDragReversesThroughLayouts()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testPopulatedListDragOpensAnchoredTimelineAndReturnsToList()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testSlowListToTimelineHoldsBeforeRelease()",
+      "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testSparseDateHeldReversalRetainsSectionSpacing()",
+      "ChainOfCustodyUITests/CalendarFilterUITests/testCalendarCanSwitchCalendarAndActivityViews()",
+      "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testActivityReasonSearchRespectsCategorySelection()",
+      "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testCalendarAndNotificationSettingsShareSubgroupPreferences()",
+      "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testCombinedCategoriesAffectCalendarAndSearchAndCanBeCleared()",
+      "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testFiltersRemainReachableWithAccessibilityTextAndLandscape()",
+      "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testHiddenCategoriesPersistAndShowAllRestoresCalendar()",
+      "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testSubgroupColorAndNotificationSettingsSaveAndCancel()",
+      "ChainOfCustodyUITests/CalendarModeTransitionUITests/testCalendarModesKeepTheirNavigationInteractive()",
+      "ChainOfCustodyUITests/CalendarPermissionUITests/testHolderCanCreateEventWhenEventsAreFilteredOut()",
+      "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testCalendarTabReselectionReturnsListToToday()",
+      "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesAtClampedLateNightDestination()",
+      "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesOnlyWhenAlreadyAtTodayInTimelineAndSplit()",
+      "ChainOfCustodyUITests/CalendarSearchRegressionUITests/testSplitSearchThenDraggingThroughTimelineToListKeepsContentVisible()",
+      "ChainOfCustodyUITests/CalendarSnapshotUITests/testDenseActivityTimeline()",
+      "ChainOfCustodyUITests/CalendarSnapshotUITests/testLandscapeCalendarSplit()",
+      "ChainOfCustodyUITests/CalendarSnapshotUITests/testLandscapeList()",
+      "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitCalendarSplit()",
+      "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitDayTimeline()",
+      "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitDayTimelineAtTopHour()",
+      "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitList()",
+      "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitSearchResults()",
+      "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAllDayEventFromSearch()",
+      "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAssignmentTitle()",
+      "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAssignmentTitleFromSearch()",
+      "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllSearchesBothCategoriesAndRestoresTimeline()",
+      "ChainOfCustodyUITests/CalendarUntimedHeaderUITests/testDenseUntimedHeaderCapsHeightAndScrollsIndependently()",
+      "ChainOfCustodyUITests/DepotAndDurationUITests/testDepotRecognitionEditorSupportsDirectAmountEntry()",
+      "ChainOfCustodyUITests/HolderRequestUITests/testHolderCanEditPauseScheduleAndSeeEvidenceRequirements()",
+      "ChainOfCustodyUITests/HolderRequestUITests/testNewPauseReusesApprovedSettingsWithoutChangingExistingRequests()",
+      "ChainOfCustodyUITests/HolderRequestUITests/testReleaseOptionsPersistAndEvidenceStartsApprovedRelease()",
+      "ChainOfCustodyUITests/NoteConversionUITests/testCancelStopsWorkAndKeepsSourceBlock()",
+      "ChainOfCustodyUITests/NoteConversionUITests/testExistingLinkConversionValidatesURLAndSavesPlayableVideo()",
+      "ChainOfCustodyUITests/NoteConversionUITests/testFailureKeepsConversionAvailableForRetry()",
+      "ChainOfCustodyUITests/NoteConversionUITests/testSavingContinuesWhenNavigatingAwayAndBack()",
+      "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConversionCountsAsOneBlockAfterReopeningAndReverting()",
+      "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConverterDetailsReversionKeepsRestoredLinkSelected()",
+      "ChainOfCustodyUITests/NoteEromeConversionUITests/testAutomaticallyConvertsEromeAlbumAfterSignIn()",
+      "ChainOfCustodyUITests/NoteEromeConversionUITests/testCancellingEromeSignInKeepsSourceForRetry()",
+      "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumOffersEveryVideoInsteadOfQualityVariants()",
+      "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumWithoutVideoKeepsBrowserAvailableForRetry()",
+      "ChainOfCustodyUITests/NoteRedditConversionUITests/testAutomaticallyConvertsRedditShareAfterSignIn()",
+      "ChainOfCustodyUITests/NoteRedditConversionUITests/testAutomaticallyUsesAvailableRedditMediaWithoutSignIn()",
+      "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditExternalFinderPreservesShareURLForRetry()",
+      "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditSignInKeepsSourceForRetry()",
+      "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditBrowserOffersMultipleAnimatedVideos()",
+      "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditEmbeddedPostStaysOnRedditUntilUserChoosesTheVideoSite()",
+      "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditExternalPostHandsOffToGenericFinderAndSavesChosenVideo()",
+      "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditPostWithoutMediaKeepsBrowserAvailableForRetry()",
+      "ChainOfCustodyUITests/NoteWebConversionUITests/testCancellingGenericPickerPreservesSourceAndAllowsRetry()",
+      "ChainOfCustodyUITests/NoteWebConversionUITests/testDirectVideoLinkConvertsWithoutChoosingFromAWebpage()",
+      "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversNewShadowPlayersAndSavesTheSelection()",
+      "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversVideosAfterSignIn()",
+      "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderPreviewsAndDownloadsSelectedVideo()",
+      "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderWithoutVideoKeepsPageAndRetryAvailable()",
+      "ChainOfCustodyUITests/NoteXConversionUITests/testAutomaticallyConvertsXPostAfterSignIn()",
+      "ChainOfCustodyUITests/NoteXConversionUITests/testCancellingXSignInKeepsSourceForRetry()",
+      "ChainOfCustodyUITests/NoteXConversionUITests/testXPostOffersAllVideosWhileSkippingPhotoAttachments()",
+      "ChainOfCustodyUITests/NoteXConversionUITests/testXPostWithoutMediaKeepsBrowserAvailableForRetry()",
+      "ChainOfCustodyUITests/NotificationSettingsUITests/testPermissionAndPreferencesSurviveRelaunch()",
+      "ChainOfCustodyUITests/NotificationSettingsUITests/testQuietHoursControlsAndPairingPreference()",
+      "ChainOfCustodyUITests/PairingNoteActivityUITests/testActivityShowsAuthorsSettingChangesAndJumpsToChangedBlock()",
+      "ChainOfCustodyUITests/PairingNoteRichTextUITests/testDoneFromNameFieldKeepsBothTextAndName()",
+      "ChainOfCustodyUITests/PairingNoteRichTextUITests/testEmptyTextAndDiscardingChanges()",
+      "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelStaysOpenAndSavesFormatting()",
+      "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelWithSelectAllStaysOpenAndSavesFormatting()",
+      "ChainOfCustodyUITests/PairingNotesEditingUITests/testCreatesTaggedFolderAndShowsItInNotes()",
+      "ChainOfCustodyUITests/PairingNotesMediaUITests/testBlockDetailsActionOpensTheInspector()",
+      "ChainOfCustodyUITests/PairingNotesMediaUITests/testDetailSwipesPreserveCarouselSelection()",
+      "ChainOfCustodyUITests/PairingNotesMediaUITests/testEnteringVideoRestoresChromeAfterHidingImageControls()",
+      "ChainOfCustodyUITests/PairingNotesMediaUITests/testFullScreenPagerAndSafariTabBarStaySynchronized()",
+      "ChainOfCustodyUITests/PairingNotesMediaUITests/testHoldingVideoTemporarilyDoublesPlaybackSpeed()",
+      "ChainOfCustodyUITests/PairingNotesMediaUITests/testImagePreviewCanZoomPanAndReset()",
+      "ChainOfCustodyUITests/PairingNotesMediaUITests/testPagingWithVisibleVideoControlsKeepsPagerAndCarouselsAligned()",
+      "ChainOfCustodyUITests/PairingNotesMediaUITests/testThumbnailFadeTracksScrollAndReversal()",
+      "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoAutoHideDoesNotInterruptTitleDragging()",
+      "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoControlsToggleTogetherAboveCarousel()",
+      "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoScrubbingLocksOrientationUntilTouchEnds()",
+      "ChainOfCustodyUITests/PairingNotesNavigationUITests/testNotesSearchFindsTagAssignedOnlyToABlock()",
+      "ChainOfCustodyUITests/PairingNotesTagManagementUITests/testRenamesTagWhileThumbnailAssetIsUnavailable()",
+      "ChainOfCustodyUITests/RecurringEventUITests/testAssignmentStatusIconsSaveAndCancelIndependently()",
+      "ChainOfCustodyUITests/RecurringEventUITests/testCommonAssignmentReusesAnUndatedOneOffAndSharesItsFilter()",
+      "ChainOfCustodyUITests/RecurringEventUITests/testCommonEventPrefillsRecurringSeries()",
+      "ChainOfCustodyUITests/RecurringEventUITests/testCommonGroupCanBeRestoredFromItsRecurringSeriesFilter()",
+      "ChainOfCustodyUITests/RecurringEventUITests/testCommonIconEditsFollowExistingOccurrencesUnlessCustomized()",
+      "ChainOfCustodyUITests/RecurringEventUITests/testCommonOneOffEventCanBeFilteredWithoutRepeat()",
+      "ChainOfCustodyUITests/RecurringEventUITests/testOccurrenceNotesRemainSeparateFromSeriesAndFilterControls()",
+      "ChainOfCustodyUITests/RecurringEventUITests/testPointPresetClearsPreviousAllDaySchedule()",
+      "ChainOfCustodyUITests/ScheduleDraftUITests/testAssignmentCancelKeepsOrDiscardsScheduleChanges()",
+      "ChainOfCustodyUITests/ScheduleDraftUITests/testEntryTypeSwitchKeepsDraftUntilDiscardIsConfirmed()",
+      "ChainOfCustodyUITests/ScheduleDraftUITests/testEventEndOfDayPersistsAndCancelDiscardsChanges()",
+      "ChainOfCustodyUITests/ScheduleDraftUITests/testNewDraftCancellationConfirmsOnlyAfterEditing()",
+      "ChainOfCustodyUITests/ScheduleDraftUITests/testRevertedScheduleChangesCancelWithoutConfirmation()",
+      "ChainOfCustodyUITests/ScheduleDraftUITests/testUnscheduledAssignmentAndInstantEventRemainAvailable()",
+      "ChainOfCustodyUITests/ScheduleEditorUITests/testAllDayCustomBoundaryDoesNotSpillIntoTheFollowingDay()",
+      "ChainOfCustodyUITests/ScheduleEditorUITests/testAllDayEventCanBecomeAnInstantThenATimedEventOnAnotherDate()",
+      "ChainOfCustodyUITests/ScheduleEditorUITests/testAssignmentAllDayPersistsAndHidesTimeControls()",
+      "ChainOfCustodyUITests/ScheduleEditorUITests/testDisablingAllDayRetainsEditedAndSavedMultiDayRanges()",
+      "ChainOfCustodyUITests/ScheduleEditorUITests/testEndOfDayConvertsToOneAllDayAssignmentAtCustomBoundary()",
+      "ChainOfCustodyUITests/ScheduleEditorUITests/testSchedulingAnExistingUndatedAssignmentPreservesItsDisplayedStart()",
+      "ChainOfCustodyUITests/ScheduleEditorUITests/testStartEditsPreserveExtendedEndOfDayRanges()",
+      "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testAllDayDatePersistsWhenPairingAndDeviceUseDifferentTimeZones()",
+      "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testAllDayEditorsKeepTheirDatesAfterPairingTimeZoneChanges()",
+      "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testCustomEndsAndDurationsPreserveTheSavedEditingTimeZone()",
+      "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testEndOfDayEditorsKeepTheirBoundaryAfterPairingTimeZoneChanges()",
+      "ChainOfCustodyUITests/SharingPeopleUITests/testRolesLeadSharingDetailsAndOwnerCanChangeRole()",
+      "ChainOfCustodyUITests/TabBarBadgeUITests/testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently()",
+      "ChainOfCustodyUITests/TabBarBadgeUITests/testNotesBadgeCanBeDisabledAndPreferencesSurviveRelaunch()"
+    ],
+    "excludedFallbackOnlyTest": "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesContent()",
+    "retainedVerification": {
+      "primary": true,
+      "scope": true
+    },
+    "capturedModules": 10,
+    "extractionDiagnostics": [],
+    "toolchain": "Xcode 27.0",
+    "destination": "iPhone 17 Pro simulator, iOS 26.2",
+    "sdkHelperProofVersion": 3,
     "privateHelperProofVersion": 5,
-    "packageTests": 272,
-    "toolchains": [
-      "Xcode 26.6 debug",
-      "Xcode 27.0 release"
-    ],
-    "sourceProofRefresh": "Retained source exports; identical declaration keys and fingerprints; original compiler graph and product evidence reused in separate graph files.",
-    "applicationBuild": false,
-    "compilerExtraction": false,
-    "applicationTestExecution": false,
-    "replays": [
-      {
-        "issue": 55,
-        "selectedTests": 12,
-        "diagnostics": [],
-        "proofRefreshAndEncodingSeconds": 8.288833975791931,
-        "selectionSeconds": 11.336189031600952,
-        "retainedVerification": true
-      },
-      {
-        "issue": 58,
-        "selectedTests": 125,
-        "diagnostics": [],
-        "proofRefreshAndEncodingSeconds": 8.220116972923279,
-        "selectionSeconds": 12.165043950080872,
-        "retainedVerification": true
-      }
-    ]
-  },
-  "privateImportsAndLocalReferencesReview": {
-    "privateHelperProofVersion": 6,
-    "sdkHelperProofVersion": 5,
-    "packageTests": 276,
-    "toolchains": [
-      "Xcode 26.6 debug",
-      "Xcode 27.0 release"
-    ],
-    "localReferenceBenchmark": [
-      {
-        "functions": 40,
-        "sourceBytes": 1513,
-        "beforeReleaseSeconds": 0.1260850429534912,
-        "afterReleaseSeconds": 0.0017410516738891602,
-        "afterDebugSeconds": 0.02868497371673584
-      },
-      {
-        "functions": 100,
-        "sourceBytes": 3733,
-        "beforeReleaseSeconds": 1.8908610343933105,
-        "afterReleaseSeconds": 0.004104971885681152,
-        "afterDebugSeconds": 0.0698469877243042
-      },
-      {
-        "functions": 200,
-        "sourceBytes": 7633,
-        "beforeReleaseSeconds": 16.129142999649048,
-        "afterReleaseSeconds": 0.008023977279663086,
-        "afterDebugSeconds": 0.13935506343841553
-      }
-    ],
-    "replays": [
-      {
-        "issue": 55,
-        "selectedTests": 12,
-        "diagnostics": [],
-        "proofRefreshAndEncodingSeconds": 8.243751049041748,
-        "selectionSeconds": 11.198146939277649,
-        "retainedVerification": true
-      },
-      {
-        "issue": 58,
-        "selectedTests": 125,
-        "diagnostics": [],
-        "proofRefreshAndEncodingSeconds": 8.256766080856323,
-        "selectionSeconds": 12.035117030143738,
-        "retainedVerification": true
-      }
-    ],
-    "sourceProofRefresh": "Retained source exports; unchanged keys/fingerprints; original compiler and product evidence reused in separate graph files.",
-    "applicationBuild": false,
-    "compilerExtraction": false,
-    "applicationTestExecution": false
-  },
-  "historicalAttachmentBindingReview": {
-    "privateHelperProofVersion": 7,
-    "sdkHelperProofVersion": 5,
-    "packageTests": 278,
-    "toolchains": [
-      "Xcode 26.6 debug",
-      "Xcode 27.0 release"
-    ],
-    "compiledHistoricalBindingScenarios": 9,
-    "replays": [
-      {
-        "issue": 55,
-        "selectedTests": 12,
-        "diagnostics": [],
-        "proofRefreshAndEncodingSeconds": 8.378221035003662,
-        "selectionSeconds": 11.70521605014801,
-        "retainedVerification": true
-      },
-      {
-        "issue": 58,
-        "selectedTests": 125,
-        "diagnostics": [],
-        "proofRefreshAndEncodingSeconds": 8.260503053665161,
-        "selectionSeconds": 12.252003073692322,
-        "retainedVerification": true
-      }
-    ],
-    "sourceProofRefresh": "Retained source exports; unchanged keys/fingerprints; original compiler and product evidence reused in separate graph files.",
-    "applicationBuild": false,
-    "compilerExtraction": false,
-    "applicationTestExecution": false
-  },
-  "externalEffectsAndOverrideOwnershipReview": {
-    "privateHelperProofVersion": 7,
-    "sdkHelperProofVersion": 5,
-    "packageTests": 283,
-    "toolchains": [
-      "Xcode 26.6 debug",
-      "Xcode 27.0 release"
-    ],
-    "releaseIncludesRetainedReplayTest": true,
-    "replays": [
-      {
-        "issue": 55,
-        "selectedTests": 12,
-        "diagnostics": [],
-        "proofRefreshAndEncodingSeconds": 8.301185011863708,
-        "selectionSeconds": 11.915838956832886,
-        "retainedVerification": true
-      },
-      {
-        "issue": 58,
-        "selectedTests": 125,
-        "diagnostics": [],
-        "proofRefreshAndEncodingSeconds": 8.342995047569275,
-        "selectionSeconds": 12.209146976470947,
-        "retainedVerification": true
-      }
-    ],
-    "sourceProofRefresh": "Retained source exports; unchanged keys/fingerprints; original compiler and product evidence reused in separate graph files.",
-    "applicationBuild": false,
-    "compilerExtraction": false,
-    "applicationTestExecution": false
-  },
-  "dynamicCallsAndLexicalAncestryReview": {
-    "privateHelperProofVersion": 8,
-    "sdkHelperProofVersion": 5,
-    "moduleFragmentSchema": 8,
-    "packageTests": 289,
-    "toolchains": [
-      "Xcode 26.6 debug",
-      "Xcode 27.0 release"
-    ],
-    "releaseIncludesRetainedReplayTest": true,
-    "debugTestSeconds": 147.448,
-    "releaseTestSecondsIncludingReplays": 129.536,
-    "captureHelperTests": 6,
-    "releaseDistributionTestsPassed": 5,
-    "releaseDistributionTestsSkipped": 1,
-    "replays": [
-      {
-        "issue": 55,
-        "selectedTests": 12,
-        "diagnostics": [],
-        "sealedSILReparseSeconds": 4.184486031532288,
-        "proofAndSignatureRefreshAndEncodingSeconds": 12.296787977218628,
-        "selectionSeconds": 11.568602085113525,
-        "retainedVerification": true
-      },
-      {
-        "issue": 58,
-        "selectedTests": 125,
-        "diagnostics": [],
-        "sealedSILReparseSeconds": 4.12923002243042,
-        "proofAndSignatureRefreshAndEncodingSeconds": 12.304306983947754,
-        "selectionSeconds": 12.318745970726013,
-        "retainedVerification": true
-      }
-    ],
-    "sourceProofRefresh": "Retained exports; unchanged keys/fingerprints. Sealed UI SIL reparsed with matching compiler references and dynamic declarations before adding signature evidence to separate graphs.",
-    "sealedSILReparse": true,
-    "compilerInvocation": false,
-    "applicationBuild": false,
-    "applicationTestExecution": false
-  },
-  "overloadSubscriptAndReceiverOriginReview": {
-    "privateHelperProofVersion": 9,
-    "sdkHelperProofVersion": 5,
-    "moduleFragmentSchema": 8,
-    "packageTests": 300,
-    "toolchains": [
-      "Xcode 26.6 debug",
-      "Xcode 27.0 release"
-    ],
-    "releaseIncludesRetainedReplayTest": true,
-    "debugTestSeconds": 164.922,
-    "releaseTestSecondsIncludingReplays": 119.038,
-    "captureHelperTests": 6,
-    "releaseDistributionTestsPassed": 5,
-    "releaseDistributionTestsSkipped": 1,
-    "replays": [
-      {
-        "issue": 55,
-        "selectedTests": 12,
-        "diagnostics": [],
-        "allModuleEvidenceRefreshAndEncodingSeconds": 64.67585396766663,
-        "selectionSeconds": 11.996937036514282,
-        "retainedVerification": true
-      },
-      {
-        "issue": 58,
-        "selectedTests": 125,
-        "diagnostics": [],
-        "allModuleEvidenceRefreshAndEncodingSeconds": 64.8186160326004,
-        "selectionSeconds": 12.867406010627747,
-        "retainedVerification": true
-      }
-    ],
-    "sourceProofRefresh": "Retained exports with unchanged keys/fingerprints. All ten sealed SIL modules reparsed with matching compiler references and dynamic declarations. Final selection reuses separately refreshed graphs; original products and completed bundles unchanged.",
-    "sealedSILReparse": true,
-    "compilerInvocation": false,
-    "applicationBuild": false,
-    "applicationTestExecution": false
-  },
-  "callbackReceiverReview": {
-    "privateHelperProofVersion": 9,
-    "sdkHelperProofVersion": 5,
-    "moduleFragmentSchema": 8,
-    "packageTests": 305,
-    "toolchains": [
-      "Xcode 26.6 debug",
-      "Xcode 27.0 release"
-    ],
-    "releaseIncludesRetainedReplayTest": true,
-    "debugTestSeconds": 173.665,
-    "releaseTestSecondsIncludingReplays": 141.284,
-    "replays": [
-      {
-        "issue": 55,
-        "selectedTests": 12,
-        "diagnostics": [],
-        "selectionSeconds": 11.802082061767578,
-        "retainedVerification": true
-      },
-      {
-        "issue": 58,
-        "selectedTests": 125,
-        "diagnostics": [],
-        "selectionSeconds": 12.854551076889038,
-        "retainedVerification": true
-      }
-    ],
-    "sourceProofRefresh": "Retained source exports; unchanged declaration keys and fingerprints. Refreshed optional completion-input evidence; reused previously validated compiler signatures and products.",
-    "compilerInvocation": false,
-    "applicationBuild": false,
-    "applicationTestExecution": false
+    "measurementContext": "Fresh capture; concurrent release tests and another project build ran on the same host.",
+    "importBoundaryReview": {
+      "sdkHelperProofVersion": 5,
+      "privateHelperProofVersion": 5,
+      "packageTests": 272,
+      "toolchains": [
+        "Xcode 26.6 debug",
+        "Xcode 27.0 release"
+      ],
+      "sourceProofRefresh": "Retained source exports; identical declaration keys and fingerprints; original compiler graph and product evidence reused in separate graph files.",
+      "applicationBuild": false,
+      "compilerExtraction": false,
+      "applicationTestExecution": false,
+      "replays": [
+        {
+          "issue": 55,
+          "selectedTests": 12,
+          "diagnostics": [],
+          "proofRefreshAndEncodingSeconds": 8.288833975791931,
+          "selectionSeconds": 11.336189031600952,
+          "retainedVerification": true
+        },
+        {
+          "issue": 58,
+          "selectedTests": 125,
+          "diagnostics": [],
+          "proofRefreshAndEncodingSeconds": 8.220116972923279,
+          "selectionSeconds": 12.165043950080872,
+          "retainedVerification": true
+        }
+      ]
+    },
+    "privateImportsAndLocalReferencesReview": {
+      "privateHelperProofVersion": 6,
+      "sdkHelperProofVersion": 5,
+      "packageTests": 276,
+      "toolchains": [
+        "Xcode 26.6 debug",
+        "Xcode 27.0 release"
+      ],
+      "localReferenceBenchmark": [
+        {
+          "functions": 40,
+          "sourceBytes": 1513,
+          "beforeReleaseSeconds": 0.1260850429534912,
+          "afterReleaseSeconds": 0.0017410516738891602,
+          "afterDebugSeconds": 0.02868497371673584
+        },
+        {
+          "functions": 100,
+          "sourceBytes": 3733,
+          "beforeReleaseSeconds": 1.8908610343933105,
+          "afterReleaseSeconds": 0.004104971885681152,
+          "afterDebugSeconds": 0.0698469877243042
+        },
+        {
+          "functions": 200,
+          "sourceBytes": 7633,
+          "beforeReleaseSeconds": 16.129142999649048,
+          "afterReleaseSeconds": 0.008023977279663086,
+          "afterDebugSeconds": 0.13935506343841553
+        }
+      ],
+      "replays": [
+        {
+          "issue": 55,
+          "selectedTests": 12,
+          "diagnostics": [],
+          "proofRefreshAndEncodingSeconds": 8.243751049041748,
+          "selectionSeconds": 11.198146939277649,
+          "retainedVerification": true
+        },
+        {
+          "issue": 58,
+          "selectedTests": 125,
+          "diagnostics": [],
+          "proofRefreshAndEncodingSeconds": 8.256766080856323,
+          "selectionSeconds": 12.035117030143738,
+          "retainedVerification": true
+        }
+      ],
+      "sourceProofRefresh": "Retained source exports; unchanged keys/fingerprints; original compiler and product evidence reused in separate graph files.",
+      "applicationBuild": false,
+      "compilerExtraction": false,
+      "applicationTestExecution": false
+    },
+    "historicalAttachmentBindingReview": {
+      "privateHelperProofVersion": 7,
+      "sdkHelperProofVersion": 5,
+      "packageTests": 278,
+      "toolchains": [
+        "Xcode 26.6 debug",
+        "Xcode 27.0 release"
+      ],
+      "compiledHistoricalBindingScenarios": 9,
+      "replays": [
+        {
+          "issue": 55,
+          "selectedTests": 12,
+          "diagnostics": [],
+          "proofRefreshAndEncodingSeconds": 8.378221035003662,
+          "selectionSeconds": 11.70521605014801,
+          "retainedVerification": true
+        },
+        {
+          "issue": 58,
+          "selectedTests": 125,
+          "diagnostics": [],
+          "proofRefreshAndEncodingSeconds": 8.260503053665161,
+          "selectionSeconds": 12.252003073692322,
+          "retainedVerification": true
+        }
+      ],
+      "sourceProofRefresh": "Retained source exports; unchanged keys/fingerprints; original compiler and product evidence reused in separate graph files.",
+      "applicationBuild": false,
+      "compilerExtraction": false,
+      "applicationTestExecution": false
+    },
+    "externalEffectsAndOverrideOwnershipReview": {
+      "privateHelperProofVersion": 7,
+      "sdkHelperProofVersion": 5,
+      "packageTests": 283,
+      "toolchains": [
+        "Xcode 26.6 debug",
+        "Xcode 27.0 release"
+      ],
+      "releaseIncludesRetainedReplayTest": true,
+      "replays": [
+        {
+          "issue": 55,
+          "selectedTests": 12,
+          "diagnostics": [],
+          "proofRefreshAndEncodingSeconds": 8.301185011863708,
+          "selectionSeconds": 11.915838956832886,
+          "retainedVerification": true
+        },
+        {
+          "issue": 58,
+          "selectedTests": 125,
+          "diagnostics": [],
+          "proofRefreshAndEncodingSeconds": 8.342995047569275,
+          "selectionSeconds": 12.209146976470947,
+          "retainedVerification": true
+        }
+      ],
+      "sourceProofRefresh": "Retained source exports; unchanged keys/fingerprints; original compiler and product evidence reused in separate graph files.",
+      "applicationBuild": false,
+      "compilerExtraction": false,
+      "applicationTestExecution": false
+    },
+    "dynamicCallsAndLexicalAncestryReview": {
+      "privateHelperProofVersion": 8,
+      "sdkHelperProofVersion": 5,
+      "moduleFragmentSchema": 8,
+      "packageTests": 289,
+      "toolchains": [
+        "Xcode 26.6 debug",
+        "Xcode 27.0 release"
+      ],
+      "releaseIncludesRetainedReplayTest": true,
+      "debugTestSeconds": 147.448,
+      "releaseTestSecondsIncludingReplays": 129.536,
+      "captureHelperTests": 6,
+      "releaseDistributionTestsPassed": 5,
+      "releaseDistributionTestsSkipped": 1,
+      "replays": [
+        {
+          "issue": 55,
+          "selectedTests": 12,
+          "diagnostics": [],
+          "sealedSILReparseSeconds": 4.184486031532288,
+          "proofAndSignatureRefreshAndEncodingSeconds": 12.296787977218628,
+          "selectionSeconds": 11.568602085113525,
+          "retainedVerification": true
+        },
+        {
+          "issue": 58,
+          "selectedTests": 125,
+          "diagnostics": [],
+          "sealedSILReparseSeconds": 4.12923002243042,
+          "proofAndSignatureRefreshAndEncodingSeconds": 12.304306983947754,
+          "selectionSeconds": 12.318745970726013,
+          "retainedVerification": true
+        }
+      ],
+      "sourceProofRefresh": "Retained exports; unchanged keys/fingerprints. Sealed UI SIL reparsed with matching compiler references and dynamic declarations before adding signature evidence to separate graphs.",
+      "sealedSILReparse": true,
+      "compilerInvocation": false,
+      "applicationBuild": false,
+      "applicationTestExecution": false
+    },
+    "overloadSubscriptAndReceiverOriginReview": {
+      "privateHelperProofVersion": 9,
+      "sdkHelperProofVersion": 5,
+      "moduleFragmentSchema": 8,
+      "packageTests": 300,
+      "toolchains": [
+        "Xcode 26.6 debug",
+        "Xcode 27.0 release"
+      ],
+      "releaseIncludesRetainedReplayTest": true,
+      "debugTestSeconds": 164.922,
+      "releaseTestSecondsIncludingReplays": 119.038,
+      "captureHelperTests": 6,
+      "releaseDistributionTestsPassed": 5,
+      "releaseDistributionTestsSkipped": 1,
+      "replays": [
+        {
+          "issue": 55,
+          "selectedTests": 12,
+          "diagnostics": [],
+          "allModuleEvidenceRefreshAndEncodingSeconds": 64.67585396766663,
+          "selectionSeconds": 11.996937036514282,
+          "retainedVerification": true
+        },
+        {
+          "issue": 58,
+          "selectedTests": 125,
+          "diagnostics": [],
+          "allModuleEvidenceRefreshAndEncodingSeconds": 64.8186160326004,
+          "selectionSeconds": 12.867406010627747,
+          "retainedVerification": true
+        }
+      ],
+      "sourceProofRefresh": "Retained exports with unchanged keys/fingerprints. All ten sealed SIL modules reparsed with matching compiler references and dynamic declarations. Final selection reuses separately refreshed graphs; original products and completed bundles unchanged.",
+      "sealedSILReparse": true,
+      "compilerInvocation": false,
+      "applicationBuild": false,
+      "applicationTestExecution": false
+    },
+    "callbackReceiverReview": {
+      "privateHelperProofVersion": 9,
+      "sdkHelperProofVersion": 5,
+      "moduleFragmentSchema": 8,
+      "packageTests": 305,
+      "toolchains": [
+        "Xcode 26.6 debug",
+        "Xcode 27.0 release"
+      ],
+      "releaseIncludesRetainedReplayTest": true,
+      "debugTestSeconds": 173.665,
+      "releaseTestSecondsIncludingReplays": 141.284,
+      "replays": [
+        {
+          "issue": 55,
+          "selectedTests": 12,
+          "diagnostics": [],
+          "selectionSeconds": 11.802082061767578,
+          "retainedVerification": true
+        },
+        {
+          "issue": 58,
+          "selectedTests": 125,
+          "diagnostics": [],
+          "selectionSeconds": 12.854551076889038,
+          "retainedVerification": true
+        }
+      ],
+      "sourceProofRefresh": "Retained source exports; unchanged declaration keys and fingerprints. Refreshed optional completion-input evidence; reused previously validated compiler signatures and products.",
+      "compilerInvocation": false,
+      "applicationBuild": false,
+      "applicationTestExecution": false
+    }
   }
 }

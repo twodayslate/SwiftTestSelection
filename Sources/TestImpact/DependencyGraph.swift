@@ -33,6 +33,8 @@ public struct FunctionNode: Codable, Sendable {
     /// Full SIL method reference and formal type for every dynamic call.
     /// Nil means legacy or incomplete evidence; display names lose overloads.
     public var dynamicCallSignatures: Set<String>? = nil
+    /// Exact shared-field/global references. Nil means missing capture evidence.
+    public var stateAccesses: Set<String>? = nil
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>

@@ -1258,25 +1258,34 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
     }
 }
 
-@Test(arguments: ["sdk", "native", "dynamic", "dynamicConcrete", "callback", "dynamicCallback", "optionalCallback", "pointer", "assertedCallback", "multilineAssertedCallback", "localAssertedCallback", "reportedCallback"], [false, true]) func helpersRejectOpaqueReceiverFactories(kind: String, sdkBoundary: Bool) throws {
+@Test(arguments: ["sdk", "native", "dynamic", "dynamicConcrete", "callback", "dynamicCallback", "optionalCallback", "pointer", "assertedCallback", "multilineAssertedCallback", "localAssertedCallback", "reportedCallback", "box", "enum", "throws", "shadow", "opaqueVoid", "opaqueScalar", "reflection", "globalReceiver"], [false, true]) func helpersRejectOpaqueReceiverFactories(kind: String, sdkBoundary: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-receiver-" + UUID().uuidString)
     let externalRoot = root.appendingPathComponent("External")
     try FileManager.default.createDirectory(at: externalRoot, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let external = """
     import XCTest
-    @MainActor public class StatefulApp: XCUIApplication {
-        public override var exists: Bool {
+    @MainActor public class StatefulApp: XCUIApplication, Error, @unchecked Sendable {
+        public override var exists: Swift.Bool {
             UserDefaults.standard.set(true, forKey: "review57-sharedFlag")
             return true
         }
     }
     """
     let factory = """
+    @MainActor public class Bool: StatefulApp, @unchecked Sendable {}
+    @frozen public struct AppBox { public let app: XCUIApplication }
+    public enum AppChoice { case app(XCUIApplication) }
+    @MainActor public func makeBox() -> AppBox { AppBox(app: StatefulApp()) }
+    @MainActor public func makeChoice() -> AppChoice { .app(StatefulApp()) }
+    @MainActor public func throwApp() throws { throw StatefulApp() }
+    public func opaqueVoid() {}
+    public func opaqueScalar() -> Swift.Bool { true }
     @MainActor public func provideApp(_ receive: (XCUIApplication) -> Void) { receive(StatefulApp()) }
     @MainActor public func provideOptionalApp(_ receive: ((XCUIApplication) -> Void)?) { receive?(StatefulApp()) }
     @MainActor public func fillApp(_ result: UnsafeMutablePointer<XCUIApplication>) { result.pointee = StatefulApp() }
     extension XCUIApplication {
+        @MainActor @objc public class func makeShadow() -> Bool { Bool() }
         @MainActor @objc public class func reportReviewError(_ receive: (Error?) -> Void) { receive(nil) }
         @MainActor @objc public class func provideArray(_ values: [String], receive: (XCUIApplication) -> Void) { receive(StatefulApp()) }
         @MainActor @objc public class func provideReviewApp(_ receive: (XCUIApplication) -> Void) { receive(StatefulApp()) }
@@ -1349,11 +1358,21 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
         }
         """#
     }
+    if kind == "box" { support = "import XCTest\nimport AttachmentSupport\n@MainActor func makeApp() -> XCUIApplication { makeBox().app }" }
+    if kind == "enum" { support = "import XCTest\nimport AttachmentSupport\n@MainActor func makeApp() -> XCUIApplication { switch makeChoice() { case .app(let app): return app } }" }
+    if kind == "throws" { support = "import XCTest\nimport AttachmentSupport\n@MainActor func makeApp() -> XCUIApplication { do { try throwApp() } catch { return error as! XCUIApplication }; return XCUIApplication() }" }
+    if kind == "shadow" { support = "import XCTest\nimport AttachmentSupport\n@MainActor func makeApp() -> XCUIApplication { XCUIApplication.makeShadow() }" }
+    if ["opaqueVoid", "opaqueScalar"].contains(kind) { support = "import XCTest\nimport AttachmentSupport\n@MainActor func makeApp() -> XCUIApplication { _ = \(kind)(); return XCUIApplication() }" }
+    if kind == "reflection" { support = "import XCTest\nimport Foundation\n@MainActor func makeApp() -> XCUIApplication { let type = NSClassFromString(\"AttachmentSupport.StatefulApp\") as! XCUIApplication.Type; return type.init() }" }
+    if kind == "globalReceiver" {
+        support = "import XCTest\nimport AttachmentSupport\n@MainActor var sharedReceiver = XCUIApplication()\n@MainActor func makeApp() -> XCUIApplication { sharedReceiver }\n@MainActor func replaceReceiver() { sharedReceiver = StatefulApp() }"
+        before = before.replacingOccurrences(of: "func testConsume() {", with: "func testConsume() { replaceReceiver();")
+    }
     let after = sdkBoundary ? before.replacingOccurrences(of: "return waitForExistence(timeout: 1)", with: "return waitForExistence(timeout: 1) && exists") : before.replacingOccurrences(of: "XCTAssertNotNil(app)", with: "XCTAssertNotNil(app); XCTAssertTrue(app.exists)")
     let tests = ["UI/Suite/testCapture()", "UI/Suite/testConsume()"]
     let old = try boundaryGraph(["Tests.swift": before, "Imports.swift": support, "ExternalImports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
     let current = try boundaryGraph(["Tests.swift": after, "Imports.swift": support, "ExternalImports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
     let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: current.mappings), changes: [.init(path: "Tests.swift")], baseRevision: "base")
-    #expect(report.selectedTests == (["sdk", "assertedCallback", "multilineAssertedCallback", "localAssertedCallback", "reportedCallback"].contains(kind) ? [tests[0]] : tests.sorted()))
-    #expect(["sdk", "assertedCallback", "multilineAssertedCallback", "localAssertedCallback", "reportedCallback"].contains(kind) ? report.diagnostics.isEmpty : report.diagnostics.contains { sdkBoundary ? $0.message.contains("receiver origin") : $0.code == "head_only_helper_callee_effects" })
+    #expect(report.selectedTests == ((kind == "sdk") ? [tests[0]] : tests.sorted()))
+    #expect((kind == "sdk") ? report.diagnostics.isEmpty : report.diagnostics.contains { sdkBoundary ? $0.message.contains("receiver origin") : $0.code == "head_only_helper_callee_effects" })
 }

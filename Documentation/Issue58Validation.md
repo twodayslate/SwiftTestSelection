@@ -1,5 +1,50 @@
 # Issue #58: SDK extension helper precision
 
+## Current status: conservative fallback required
+
+The earlier 125-test results below are **historical and superseded**. Review
+found that signature-only and callback-only receiver proofs could miss opaque
+producers and shared-storage injection. They must not be used as evidence that
+this historical revision is safe to gate on a 125-test selection.
+
+The current analyzer requires captured producer implementations or explicit SDK
+contracts, audits shared receiver storage, and reports a concrete blocker when
+that evidence is missing. All 125 known consumers remain selected. The retained
+#58 case falls back to its complete 2,000-test inventory; narrowing still needs
+stronger evidence. #55's immutable literal fixture state remains supported.
+The release replay selected **12 of 1,972 tests with zero diagnostics** for #55
+in **11.63 seconds**. For #58 it selected **all 2,000 tests** in **12.19 seconds**,
+retaining all 125 known consumers and the fallback-only NoteLinks example. Both
+reports passed `verify-build` against the retained products.
+
+The #58 report's `head_only_sdk_helper_boundary` diagnostic identifies:
+
+```text
+Missing implementation or SDK origin contract for
+objc_method XCUIElement.pinch!foreign : (XCUIElement) -> (CGFloat, CGFloat) -> ()
+in ChainOfCustodyUITests.PairingNotesMediaUITests.testImagePreviewCanZoomPanAndReset()
+```
+
+This is the first missing proof in that traversal, not a finding that `pinch`
+itself is unsafe or that adding one contract proves the entire consumer closure.
+The current bounded contracts do not justify the earlier precision claim. #58
+remains open for stronger evidence and a sound narrowing implementation.
+
+All **308 package tests plus one temporary retained replay test** passed in the
+release run (**147.509 seconds**, Xcode 27.0). Capture helper tests passed (6);
+release-distribution tests passed (5, with 1 platform-specific skip). The review
+reparsed all ten sealed SIL modules for each fixture, preserving compiler
+reference edges and dynamic declarations, and refreshed source evidence with
+unchanged declaration keys and fingerprints. The final replay reused that
+compiler evidence. No new consuming-app build or baseline build was performed.
+These are local replay measurements, not controlled end-to-end benchmarks.
+
+The machine-readable file separates `currentValidation` from
+`historicalValidation`. No application test bodies were executed; selection and
+`verify-build` do not establish full-run equivalence.
+
+## Historical validation (superseded)
+
 The release analyzer was validated against the historical ChainOfCustody #299
 `waitForValue(_:timeout:)` edit. The scope contains only
 `ChainOfCustodyUITests/XCUIElement+Waiting.swift`, with the consumer's two

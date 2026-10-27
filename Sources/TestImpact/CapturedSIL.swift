@@ -227,6 +227,9 @@ struct CapturedSIL: Sendable {
                     if let before = old.compilerReferences, let after = node.compilerReferences {
                         old.compilerReferences = before.union(after)
                     } else { old.compilerReferences = nil }
+                    if let before = old.stateAccesses, let after = node.stateAccesses {
+                        old.stateAccesses = before.union(after)
+                    } else { old.stateAccesses = nil }
                     if let before = old.dynamicCallSignatures, let after = node.dynamicCallSignatures {
                         old.dynamicCallSignatures = before.union(after)
                     } else { old.dynamicCallSignatures = nil }

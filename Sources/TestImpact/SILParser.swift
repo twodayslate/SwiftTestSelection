@@ -203,6 +203,7 @@ public enum SILParser {
                     if line.split(separator: " ", maxSplits: 2)[1] == "shared" { sharedSymbols.insert(match[0]) }
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
                     current!.dynamicCallSignatures = []
+                    current!.stateAccesses = []
                     // Canonical capture can retain source parameter names (e.g.
                     // Element), while replay usually spells them τ_0_0. A local
                     // nominal type may have the same name; it is not that receiver.
@@ -272,6 +273,18 @@ public enum SILParser {
             }
             if line.containsASCII("apply "), let match = Pattern.groups(Expressions.apply, in: line), !knownValues.contains(match[0]) {
                 current!.uncertainties.insert("Indirect function invocation")
+            }
+            if line.containsASCII("global_addr ") || line.containsASCII("global_value ") {
+                if let start = line.firstIndex(of: "@") {
+                    let end = line[start...].firstIndex(of: " ") ?? line.endIndex
+                    current!.stateAccesses?.insert("global:" + line[line.index(after: start)..<end])
+                } else { current!.stateAccesses = nil }
+            }
+            if line.containsASCII("ref_element_addr ") {
+                if let start = line.firstIndex(of: "#") {
+                    let end = line[start...].firstIndex(where: { $0 == "," || $0 == " " }) ?? line.endIndex
+                    current!.stateAccesses?.insert("field:" + line[line.index(after: start)..<end])
+                } else { current!.stateAccesses = nil }
             }
             if line.containsASCII("global_addr ") || line.containsASCII("global_value ") {
                 current!.uncertainties.insert("Global state access")

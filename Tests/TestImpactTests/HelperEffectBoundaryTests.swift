@@ -157,63 +157,6 @@ func attachmentOverrideAuditUsesAncestryAtBothRevisions(scenario: String) {
     }
 }
 
-@Test func receiverOriginDemanglingUsesTheOuterResult() {
-    let tree = """
-    kind=Global
-      kind=Function
-        kind=Module, text="Factory"
-        kind=Identifier, text="run"
-        kind=Type
-          kind=FunctionType
-            kind=ArgumentTuple
-              kind=Type
-                kind=FunctionType
-                  kind=ArgumentTuple
-                    kind=Type
-                      kind=Tuple
-                  kind=ReturnType
-                    kind=Type
-                      kind=Class
-                        kind=Module, text="Factory"
-                        kind=Identifier, text="CustomApp"
-            kind=ReturnType
-              kind=Type
-                kind=Tuple
-    """
-    #expect(ExternalHelperEffects.nonReceiverResult(ArraySlice(tree.components(separatedBy: .newlines))))
-    var returnsOpaque = tree
-    returnsOpaque.replaceSubrange(tree.range(of: "kind=Tuple", options: .backwards)!, with: "kind=ProtocolList")
-    #expect(!ExternalHelperEffects.nonReceiverResult(ArraySlice(returnsOpaque.components(separatedBy: .newlines))))
-}
-
-@Test(arguments: ["Class", "DependentGenericParamType", "ProtocolList", "BuiltinTypeName", "TypeAlias", "OpaqueReturnTypeOf", "UnknownFutureType"])
-func receiverOriginRejectsWrappedOpaqueResults(kind: String) {
-    let tree = """
-    kind=Global
-      kind=Function
-        kind=Module, text="Factory"
-        kind=Identifier, text="make"
-        kind=Type
-          kind=FunctionType
-            kind=ArgumentTuple
-              kind=Type
-                kind=Tuple
-            kind=ReturnType
-              kind=Type
-                kind=BoundGenericEnum
-                  kind=Type
-                    kind=Enum
-                      kind=Module, text="Swift"
-                      kind=Identifier, text="Optional"
-                  kind=TypeList
-                    kind=Type
-                      kind=\(kind)
-                        kind=Module, text="Factory"
-                        kind=Identifier, text="CustomApp"
-    """
-    #expect(!ExternalHelperEffects.nonReceiverResult(ArraySlice(tree.components(separatedBy: .newlines))))
-}
-
 @Test func receiverOriginCacheDoesNotGrantEffectTrust() {
     let output = """
     Demangling for foreign-value
@@ -237,7 +180,7 @@ func receiverOriginRejectsWrappedOpaqueResults(kind: String) {
     let first = proof.allowsReceiverOrigins(["foreign-value"], resolve: resolve)
     let cached = proof.allowsReceiverOrigins(["foreign-value"], resolve: resolve)
     let effect = proof.allows(["foreign-value"], resolve: resolve)
-    #expect(first && cached)
+    #expect(!first && !cached)
     #expect(!effect)
     #expect(calls == 2)
 }
@@ -280,35 +223,6 @@ func subscriptBindingEvidenceAccountsForImplicitLabelsAndDefaults(declaration: S
 }
 
 
-@Test(arguments: [false, true]) func receiverOriginChecksCallbackArguments(opaque: Bool) {
-    let argument = opaque ? "Class" : "Structure"
-    let module = opaque ? "Foreign" : "Swift"
-    let name = opaque ? "CustomApp" : "Bool"
-    let tree = """
-    kind=Global
-      kind=Function
-        kind=Module, text="Foreign"
-        kind=Identifier, text="provide"
-        kind=Type
-          kind=FunctionType
-            kind=ArgumentTuple
-              kind=Type
-                kind=NoEscapeFunctionType
-                  kind=ArgumentTuple
-                    kind=Type
-                      kind=\(argument)
-                        kind=Module, text="\(module)"
-                        kind=Identifier, text="\(name)"
-                  kind=ReturnType
-                    kind=Type
-                      kind=Tuple
-            kind=ReturnType
-              kind=Type
-                kind=Tuple
-    """
-    #expect(ExternalHelperEffects.nonReceiverResult(ArraySlice(tree.components(separatedBy: .newlines))) == !opaque)
-}
-
 @Test(arguments: ["(XCUIApplication) -> ()", "((XCUIApplication) -> ())?", "inout XCUIApplication", "UnsafeMutablePointer<XCUIApplication>"])
 func receiverDynamicOutputChannelsRequireProducerEdges(argument: String) {
     var node = FunctionNode(id: "caller", module: "UI", name: "caller", dependencies: ["direct"], dynamicDeclarations: ["Factory.provide"])
@@ -321,61 +235,117 @@ func receiverDynamicOutputChannelsRequireProducerEdges(argument: String) {
 }
 
 
-@Test(arguments: ["assertion", "stored", "forwarded", "cast", "returned", "implicit", "untrusted", "mixed", "reported", "forwardedMessage"])
-func callbackInputEvidenceRequiresDirectNilAssertions(kind: String) {
-    let closure: String
-    switch kind {
-    case "stored": closure = "value in saved = value"
-    case "forwarded": closure = "value in consume(value)"
-    case "cast": closure = "value in XCTAssertNil(value as? XCUIApplication)"
-    case "returned": closure = "value in return value"
-    case "implicit": closure = "XCTAssertNil($0)"
-    case "reported": closure = #"value in if let value { XCTFail("Failed: \(value)") }; finished.fulfill()"#
-    case "forwardedMessage": closure = #"value in XCTFail("Failed: \(consume(value))")"#
-    default: closure = "value in XCTAssertNil(value); finished.fulfill()"
-    }
-    let other = kind == "mixed" ? "Factory.run { value in saved = value }" : ""
-    let source = "import XCTest\n" + (kind == "untrusted" ? "import Foreign\n" : "") + "func test() { Factory.run { \(closure) }; \(other) }"
-    let snapshot = SwiftSourceSnapshot.parse(source, path: "Tests.swift", module: "UI")
-    let evidence = snapshot.units.first { $0.helperCallableName == "test" }?.assertedCallbackInputs
-    #expect((evidence?["run"]?.isEmpty == false) == ["assertion", "reported"].contains(kind))
-}
-
-@Test(arguments: ["sdk", "external", "missing", "unrelatedClosure"])
-func callbackInputEvidenceRequiresCompilerBindings(kind: String) throws {
-    let source = "import XCTest\nfunc test() { Factory.run { value in XCTAssertNil(value) } }"
-    var snapshot = SwiftSourceSnapshot.parse(source, path: "Tests.swift", module: "UI")
-    if kind == "missing" { for i in snapshot.units.indices { snapshot.units[i].assertedCallbackInputs = nil } }
-    let region = SourceRegion(path: "Tests.swift", startLine: 2, endLine: 2)
-    var caller = FunctionNode(id: "caller", module: "UI", name: "test", regions: [region], dependencies: ["callback"], dynamicDeclarations: ["Factory.run"])
-    caller.compilerReferences = ["callback"]
-    caller.dynamicCallSignatures = ["objc_method Factory.run!foreign : (Factory.Type) -> ((XCUIApplication) -> ()) -> ()"]
-    let assertion = kind == "external" ? "$s7Foreign7consumeyyF" : "$s6XCTest13XCTAssertTrue__4file4lineySbyKXK_SSyXKs12StaticStringVSutF"
-    var callback = FunctionNode(id: "callback", module: "UI", name: "closure #1", regions: [region], dependencies: [assertion])
-    callback.compilerReferences = [assertion]; callback.dynamicCallSignatures = []
-    var functions = [caller.id: caller, callback.id: callback]
-    if kind == "unrelatedClosure" {
-        // An implicit assertion can inherit earlier capture locations, spanning
-        // the real completion despite calling unrelated project helpers.
-        var other = FunctionNode(id: "other", module: "UI", name: "implicit closure #1", regions: [.init(path: "Tests.swift", startLine: 1, endLine: 2)], dependencies: ["$s7Foreign7consumeyyF"])
-        other.compilerReferences = other.dependencies; other.dynamicCallSignatures = []
-        functions[other.id] = other
-        functions[caller.id]!.compilerReferences!.insert(other.id)
-        functions[caller.id]!.dependencies.insert(other.id)
-    }
-    let graph = DependencyGraph(functions: functions, tests: ["UI/Suite/test()": [caller.id]])
-    var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
-    current.sources = ["UI:Tests.swift": snapshot]; current.dependencies = graph
-    let restored = try GraphArchive.decode(GraphArchive.encode(current))
-    var origins = SDKReceiverOrigins()
-    let safe = origins.proves(tests: Set(current.tests), current: restored, graph: try #require(restored.dependencies))
-    #expect(safe == (["sdk", "unrelatedClosure"].contains(kind)))
-}
-
-
 @Test func rendererCallbackDoesNotGrantOutgoingEffectTrust() {
     var node = FunctionNode(id: "render", module: "UI", name: "render", dynamicDeclarations: ["UIGraphicsImageRenderer.image"])
     node.dynamicCallSignatures = ["objc_method UIGraphicsImageRenderer.image!foreign : (UIGraphicsImageRenderer) -> ((UIGraphicsImageRendererContext) -> ()) -> UIImage"]
     #expect(ExternalHelperEffects.receiverDependencies(node) == [])
     #expect(!ExternalHelperEffects.allowsDynamicCalls(node))
+}
+
+@Test(arguments: ["Bool", "Swift.Bool", "Void", "()", "Int", "String", "UIImage", "[String]", "(Bool, Int)", "Any?", "AppBox", "AppChoice"])
+func opaqueDynamicResultsRequireImplementations(result: String) {
+    var node = FunctionNode(id: "caller", module: "UI", name: "caller", dependencies: ["direct"], dynamicDeclarations: ["Factory.make"])
+    node.compilerReferences = ["direct"]
+    node.dynamicCallSignatures = ["objc_method Factory.make!foreign : (Factory.Type) -> () -> \(result)"]
+    #expect(ExternalHelperEffects.receiverDependencies(node) == nil)
+    node.resolvedDynamicDeclarations = ["Factory.make"]
+    node.dependencies.insert("producer")
+    #expect(ExternalHelperEffects.receiverDependencies(node) == ["producer"])
+}
+
+@Test(arguments: ["literal", "mutable", "typed", "computed", "interpolated", "untrusted", "duplicate"])
+func receiverStoredStateRequiresImmutableLiteralEvidence(kind: String) throws {
+    let declarations: String
+    switch kind {
+    case "mutable": declarations = "var text = \"id\""
+    case "typed": declarations = "let text: String = \"id\""
+    case "computed": declarations = "var text: String { \"id\" }"
+    case "interpolated": declarations = #"let text = "id \(make())""#
+    case "duplicate": declarations = "let text = \"id\"; var text = \"other\""
+    default: declarations = "let text = \"id\""
+    }
+    let source = (kind == "untrusted" ? "import Foreign\n" : "import XCTest\n") + "class Suite { \(declarations) }"
+    let snapshot = SwiftSourceSnapshot.parse(source, path: "State.swift", module: "UI")
+    #expect(snapshot.literalStoredProperties?["Suite.text"] == (kind == "literal"))
+    var node = FunctionNode(id: "entry", module: "UI", name: "entry", regions: [.init(path: "State.swift", startLine: 2, endLine: 2)], uncertainties: ["Shared state access"])
+    node.compilerReferences = []; node.dynamicCallSignatures = []; node.stateAccesses = ["field:Suite.text"]
+    var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
+    current.sources = ["UI:State.swift": snapshot]
+    current.dependencies = .init(functions: [node.id: node], tests: [current.tests[0]: [node.id]])
+    let restored = try GraphArchive.decode(GraphArchive.encode(current))
+    var origins = SDKReceiverOrigins()
+    #expect(origins.proves(tests: Set(current.tests), current: restored, graph: restored.dependencies!) == (kind == "literal"))
+    current.dependencies!.functions[node.id]!.stateAccesses = nil
+    var legacy = SDKReceiverOrigins()
+    #expect(legacy.blocker(tests: Set(current.tests), current: current, graph: current.dependencies!)?.contains("recapture") == true)
+}
+
+@Test(arguments: [false, true], [false, true])
+func stateAccessEvidenceRoundTripsWithOptionalCallEvidence(references: Bool, calls: Bool) throws {
+    var node = FunctionNode(id: "entry", module: "UI", name: "entry")
+    node.compilerReferences = references ? [] : nil
+    node.dynamicCallSignatures = calls ? [] : nil
+    node.stateAccesses = ["global:shared", "field:Suite.app"]
+    var graph = XcodeTestGraph(targets: [], tests: [])
+    graph.dependencies = .init(functions: [node.id: node])
+    let restored = try GraphArchive.decode(GraphArchive.encode(graph)).dependencies!.functions[node.id]!
+    #expect(restored.compilerReferences == node.compilerReferences)
+    #expect(restored.dynamicCallSignatures == node.dynamicCallSignatures)
+    #expect(restored.stateAccesses == node.stateAccesses)
+}
+
+@Test(arguments: ["Imported conformance: Foreign", "Unresolved project dispatch: Factory.make"])
+func resolvedOriginEdgesDoNotHideUnresolvedDispatch(uncertainty: String) {
+    var node = FunctionNode(id: "caller", module: "UI", name: "caller", dependencies: ["producer"], uncertainties: [uncertainty], dynamicDeclarations: ["Factory.make"])
+    node.compilerReferences = []; node.dynamicCallSignatures = ["class_method Factory.make : (Factory) -> () -> XCUIApplication"]
+    node.resolvedDynamicDeclarations = ["Factory.make"]
+    #expect(ExternalHelperEffects.receiverDependencies(node) == nil)
+}
+
+@Test(arguments: ["XCUIGestureVelocityFast", "XCUIKeyboardKeyDelete", "XCUIKeyboardKeyForged", "sharedReceiver"])
+func receiverGlobalsRequireExactSDKContracts(name: String) {
+    var node = FunctionNode(id: "entry", module: "UI", name: "entry", regions: [.init(path: "Tests.swift", startLine: 1, endLine: 1)], uncertainties: ["Global state access", "Shared state access"])
+    node.compilerReferences = []; node.dynamicCallSignatures = []; node.stateAccesses = ["global:" + name]
+    var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
+    current.sources["UI:Tests.swift"] = .parse("func test() {}", path: "Tests.swift", module: "UI")
+    let graph = DependencyGraph(functions: [node.id: node], tests: [current.tests[0]: [node.id]])
+    var origins = SDKReceiverOrigins()
+    #expect(origins.proves(tests: Set(current.tests), current: current, graph: graph) == ["XCUIGestureVelocityFast", "XCUIKeyboardKeyDelete"].contains(name))
+}
+
+@Test(arguments: ["final", "open", "missing", "wrongBody"])
+func finalXCTestConstructorClosesOnlyDescendantWarnings(kind: String) {
+    var snapshot = SwiftSourceSnapshot.parse("import XCTest\n\(kind == "open" ? "" : "final ")class Suite: XCTestCase {}", path: "Tests.swift", module: "UI")
+    if kind == "missing" { snapshot.classFinality = nil }
+    let region = SourceRegion(path: "Tests.swift", startLine: 2, endLine: 2)
+    var node = FunctionNode(id: "allocator", module: "UI", name: kind == "wrongBody" ? "Suite.make()" : "Suite.__allocating_init()", regions: [region], dependencies: ["initializer"], uncertainties: ["Unresolved project dispatch: Suite.init (incomplete override ancestry)"], dynamicDeclarations: ["Suite.init"])
+    node.compilerReferences = []; node.dynamicCallSignatures = ["objc_method Suite.init!initializer.foreign : (Suite.Type) -> () -> Suite"]
+    node.resolvedDynamicDeclarations = ["Suite.init"]
+    var initializer = FunctionNode(id: "initializer", module: "UI", name: "Suite.init()", regions: [region])
+    initializer.compilerReferences = []; initializer.dynamicCallSignatures = []
+    var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
+    current.sources = ["UI:Tests.swift": snapshot]
+    let graph = DependencyGraph(functions: [node.id: node, initializer.id: initializer], tests: [current.tests[0]: [node.id]])
+    var origins = SDKReceiverOrigins()
+    #expect(origins.proves(tests: Set(current.tests), current: current, graph: graph) == (kind == "final"))
+}
+
+@Test(arguments: ["synthetic", "called", "missingBody", "nonfinal"])
+func ancestorAllocationRootsRequireFinalConcreteTest(kind: String) {
+    let source = "import XCTest\nclass Parent: XCTestCase {}\n\(kind == "nonfinal" ? "" : "final ")class Suite: Parent {}"
+    let snapshot = SwiftSourceSnapshot.parse(source, path: "Tests.swift", module: "UI")
+    let region = SourceRegion(path: "Tests.swift", startLine: 2, endLine: 2)
+    var allocator = FunctionNode(id: "allocator", module: "UI", name: "Parent.__allocating_init()", regions: [region], dependencies: ["initializer"], uncertainties: ["Unresolved project dispatch: Parent.init (incomplete override ancestry)"], dynamicDeclarations: ["Parent.init"])
+    allocator.compilerReferences = []; allocator.dynamicCallSignatures = ["objc_method Parent.init!initializer.foreign : (Parent.Type) -> () -> Parent"]
+    allocator.resolvedDynamicDeclarations = ["Parent.init"]
+    var initializer = FunctionNode(id: "initializer", module: "UI", name: "Parent.init()", regions: [region])
+    initializer.compilerReferences = []; initializer.dynamicCallSignatures = []
+    var entry = FunctionNode(id: "entry", module: "UI", name: "Suite.test()", regions: [.init(path: "Tests.swift", startLine: 3, endLine: 3)])
+    entry.compilerReferences = kind == "called" ? ["allocator"] : []; entry.dynamicCallSignatures = []; entry.dependencies = entry.compilerReferences!
+    var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
+    current.modules = ["UI": "UI"]; current.sources = ["UI:Tests.swift": snapshot]
+    let roots: Set<String> = kind == "missingBody" ? ["entry", "allocator"] : ["entry", "allocator", "initializer"]
+    let graph = DependencyGraph(functions: [entry.id: entry, allocator.id: allocator, initializer.id: initializer], tests: [current.tests[0]: roots])
+    var origins = SDKReceiverOrigins()
+    #expect(origins.proves(tests: Set(current.tests), current: current, graph: graph) == (kind == "synthetic"))
 }
