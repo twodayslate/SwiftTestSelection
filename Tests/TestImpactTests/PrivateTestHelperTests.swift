@@ -161,7 +161,7 @@ func compiledPrivateXCTestHelpersSelectOnlyProvenConsumers(added: Bool, safety: 
     }
     legacyProof = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(legacyProof))
     #expect(select(legacyProof).selectedTests.contains(tests[3]))
-    for version in [nil, 0, 1, 2, PrivateTestHelperSyntax.currentProofVersion + 1] as [Int?] {
+    for version in [nil, 0, 1, 2, 3, PrivateTestHelperSyntax.currentProofVersion + 1] as [Int?] {
         var staleProof = current
         for i in staleProof.sources["UI:UI.swift"]!.units.indices {
             staleProof.sources["UI:UI.swift"]!.units[i].privateTestHelper?.proofVersion = version
@@ -169,6 +169,12 @@ func compiledPrivateXCTestHelpersSelectOnlyProvenConsumers(added: Bool, safety: 
         staleProof = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(staleProof))
         #expect(select(staleProof).selectedTests.contains(tests[3]))
     }
+    var missingEffects = current
+    for i in missingEffects.sources["UI:UI.swift"]!.units.indices {
+        missingEffects.sources["UI:UI.swift"]!.units[i].privateTestHelper?.calleeEffectsSupported = nil
+    }
+    #expect(select(missingEffects).selectedTests == tests.sorted())
+    #expect(select(missingEffects).diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
     var state = current
     let helperIDs = graph.functions.values.filter { $0.name.contains(added ? ".navigationTab(" : ".assertShareOptions(") }.map(\.id)
     #expect(!helperIDs.isEmpty)

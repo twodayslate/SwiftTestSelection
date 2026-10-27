@@ -7,7 +7,8 @@ import Foundation
 /// trusted XCTest query/expectation effect contract at both source revisions.
 enum SDKTestHelperIsolation {
     static func blocker(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
-                        base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex) -> String? {
+                        base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex,
+                        unownedBase: [String: SwiftSourceSnapshot] = [:]) -> String? {
         guard let evidence = unit.sdkTestHelper, let old = previous?.sdkTestHelper,
               evidence.version == SDKTestHelperSyntax.currentVersion, old.version == evidence.version else { return "Missing supported base/head SDK helper evidence" }
         if let reason = evidence.blocker ?? old.blocker { return reason }
@@ -27,7 +28,7 @@ enum SDKTestHelperIsolation {
         let captured = Set(headSources.keys.map { String($0.dropFirst(module.count + 1)) })
         guard current.targets.filter({ current.modules[$0.name] == module }).allSatisfy({ Set($0.sourceFiles).isSubset(of: captured) }),
               Set(headSources.keys) == Set(baseSources.keys) else { return "Missing base/head module sources" }
-        let sources = Array(current.sources.values) + Array(base.values)
+        let sources = Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)
         guard sources.allSatisfy({ $0.diagnostics.isEmpty && $0.helperReferences != nil && $0.sdkHelperNamesUnshadowed == true && $0.dispatchMembers != nil && $0.dispatchOverrides != nil && $0.superclasses != nil }) else { return "Missing reference evidence or shadowed XCTest/query/operator names" }
         let sdkClasses: Set<String> = ["XCUIElement", "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter"]
         guard sources.allSatisfy({ snapshot in
@@ -74,6 +75,11 @@ enum SDKTestHelperIsolation {
             }
             guard current.sources.filter({ !$0.key.hasPrefix(module + ":") }).values.allSatisfy({ $0.identifierNames?.contains(name) == false }),
                   base.filter({ !$0.key.hasPrefix(module + ":") }).values.allSatisfy({ $0.identifierNames?.contains(name) == false }) else { return "Helper name is referenced outside the owning test module: \(name)" }
+            for (path, snapshot) in unownedBase.sorted(by: { $0.key < $1.key }) {
+                guard let names = snapshot.identifierNames, !names.contains(name) else {
+                    return "Base source outside the head inventory may reference \(name); ownership/callers are unresolved: \(path)"
+                }
+            }
             let ids = symbols(callee)
             guard !ids.isEmpty else { return "Missing compiled helper: \(name)" }
             let paths = index.paths(to: ids)

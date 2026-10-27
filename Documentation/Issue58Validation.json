@@ -6,8 +6,8 @@
   "headBuilds": 1,
   "baselineBuilds": 0,
   "appTestBodiesExecuted": false,
-  "elapsedSeconds": 232.238834209,
-  "scopeSeconds": 5.264704942703247,
+  "elapsedSeconds": 232.570843083,
+  "scopeSeconds": 5.512614011764526,
   "totalTests": 2000,
   "scopeDiagnostics": [],
   "matchesAllHistoricalCompilerConsumers": true,
@@ -147,5 +147,6 @@
   "extractionDiagnostics": [],
   "toolchain": "Xcode 27.0",
   "destination": "iPhone 17 Pro simulator, iOS 26.2",
-  "sdkHelperProofVersion": 2
+  "sdkHelperProofVersion": 2,
+  "privateHelperProofVersion": 4
 }

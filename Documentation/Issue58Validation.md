@@ -14,8 +14,8 @@ All explanations have kind `dependency` and identify the SDK-helper proof.
 
 One head build captured supplementary SIL for all ten modules, with no compiler
 replay or extraction diagnostics. No base build or baseline graph was supplied.
-Build, capture and selection took **232.24 seconds**; the additional scoped query
-took **5.26 seconds**. Both the primary and scoped reports passed `verify-build`
+Build, capture and selection took **232.57 seconds**; the additional scoped query
+took **5.51 seconds**. Both the primary and scoped reports passed `verify-build`
 against the retained products. The primary report still selects the full inventory
 for other changes in the review; scoped helper precision does not waive those
 fallbacks. This is selection/build-compatibility evidence, not a full-versus-selected
@@ -73,3 +73,13 @@ old/future evidence, and removed base callers outside
 the requested file scope. An initial real-graph replay exposed repeated symbol
 scanning while matching callers to tests; caching those symbols and indexing test
 roots reduced that replay from 91.69 to 12.15 seconds with the same selection.
+
+The PR #57 review fixes also inspect base Swift files absent from the head
+inventory and require transitive effect evidence for private callees (proof
+version 4). The full release suite passes 254 tests. Eight compiled regression
+cases cover direct/transitive mutations, unsupported effects through an upstream
+caller, recursion, a pure callee, deleted/out-of-target caller files, and an
+unrelated base-only file. A fresh #55 capture still selects 12 of 1,972 tests with
+zero scope diagnostics; its build/capture/selection took 259.18 seconds and its
+scope took 2.55 seconds. Both primary and scope reports passed retained-product
+verification.

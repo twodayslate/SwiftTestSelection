@@ -10,6 +10,8 @@ struct XcodeHeadOnlySources {
     var base: [String: SwiftSourceSnapshot]
     var mappings: UIFeatureMappings?
     var diagnostics: [String] = []
+    /// Git sources absent from the captured head inventory have unknown base ownership.
+    var unownedBaseSources: [String: SwiftSourceSnapshot] = [:]
 
     static func read(current: XcodeTestGraph, changes: [FileChange], base: String, root: URL, mappingPath: String) throws -> Self {
         var result = Self(base: current.sources)
@@ -32,6 +34,22 @@ struct XcodeHeadOnlySources {
             } else {
                 result.base.removeValue(forKey: key)
                 result.diagnostics.append("No base source boundary for \(path) at \(base)")
+            }
+        }
+        if !callerModules.isEmpty {
+            // Deleted/out-of-target files cannot be found by iterating the head
+            // inventory. Inspect their base syntax without inventing module ownership.
+            let captured = Set(current.sources.keys.compactMap { key in key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) } })
+            let listing = try CommandRunner.run("git", ["ls-tree", "-r", "--name-only", "-z", base, "--"], at: root, allowFailure: true)
+            if listing.status != 0 { result.diagnostics.append("Cannot enumerate base sources at \(base)") }
+            else {
+                for path in listing.stdout.split(separator: 0).map({ String(decoding: $0, as: UTF8.self) }).sorted()
+                    where path.hasSuffix(".swift") && !captured.contains(path) {
+                    let data = try CommandRunner.run("git", ["show", base + ":" + path], at: root, allowFailure: true)
+                    if data.status == 0, let text = String(data: data.stdout, encoding: .utf8) {
+                        result.unownedBaseSources[path] = .parse(text, path: path, module: "")
+                    } else { result.diagnostics.append("Cannot read unowned base source \(path) at \(base)") }
+                }
             }
         }
         let mapping = try CommandRunner.run("git", ["show", base + ":" + mappingPath], at: root, allowFailure: true)
@@ -102,7 +120,7 @@ enum XcodeHeadOnlySelector {
             if after.count == 1, let unit = after.first, (unit.sdkTestHelper != nil || ["XCUIElement", "XCTest.XCUIElement"].contains(unit.scope)),
                let graph = current.dependencies, let index = dependencyIndex {
                 if let blocker = SDKTestHelperIsolation.blocker(unit, previous: before.count == 1 ? before.first : nil,
-                                                               current: current, base: source.base, graph: graph, index: index) {
+                                                               current: current, base: source.base, graph: graph, index: index, unownedBase: source.unownedBaseSources) {
                     fallback("head_only_sdk_helper_boundary", "SDK test helper isolation is unproven: \(blocker) (\(unit.region.path):\(unit.region.startLine))")
                 } else {
                     isolatedHelpers.insert(key)
@@ -118,6 +136,10 @@ enum XcodeHeadOnlySelector {
                     fallback("head_only_helper_proof_version", "Private helper proof is missing or uses an unsupported version; recapture the head graph: \(unit.region.path)")
                     continue
                 }
+                if proofs.contains(where: { $0.calleeEffectsSupported != true }) {
+                    fallback("head_only_helper_callee_effects", "Private helper reaches an unproven callee effect boundary: \(unit.region.path):\(unit.region.startLine)")
+                    continue
+                }
                 var traversal = PrivateTestHelperIsolation.Traversal()
                 if PrivateTestHelperIsolation.proves(unit, previous: before.first, current: current, base: source.base,
                                                      graph: graph, index: index, traversal: &traversal) {
@@ -129,6 +151,9 @@ enum XcodeHeadOnlySelector {
                 // ordinary production fields have useful compiler dependencies.
                 // A failed helper effect proof needs its own explicit fallback,
                 // since SDK operations on a shared object can affect other tests.
+                if traversal.hasUnprovenCalleeEffects {
+                    fallback("head_only_helper_callee_effects", "Private helper caller chain reaches an unproven callee effect boundary: \(unit.region.path):\(unit.region.startLine)")
+                }
                 if !traversal.sharedStateSymbols.isEmpty {
                     fallback("head_only_helper_shared_state", "Shared state in private helper callers or callees cannot be isolated: \(unit.region.path):\(unit.region.startLine)")
                 }

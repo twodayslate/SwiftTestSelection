@@ -10,11 +10,13 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    static let currentProofVersion = 3
+    static let currentProofVersion = 4
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
     public var localAttachmentState: Bool? = nil
+    /// Every direct private callee has a supported transitive effect body.
+    public var calleeEffectsSupported: Bool? = nil
 
     public struct Statement: Codable, Sendable {
         public var signature: String
@@ -128,7 +130,9 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             callers.insert(locations.location(for: caller.positionAfterSkippingLeadingTrivia).line)
         }
         guard !callers.isEmpty else { return nil }
-        return Self(name: name, callerLines: callers, proofVersion: currentProofVersion, statements: statements(in: function), localAttachmentState: attachmentState)
+        let effects = safeCalleeEffects(function, in: type)
+        return Self(name: name, callerLines: callers, proofVersion: currentProofVersion, statements: statements(in: function),
+                    localAttachmentState: attachmentState || (effects ?? false), calleeEffectsSupported: effects != nil)
     }
 
     /// Added entries may be omitted only under an explicit separate-execution
@@ -144,6 +148,41 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
               type.parent?.is(CodeBlockItemSyntax.self) == true, safeSuperclass(type) != nil,
               references.allSatisfy({ $0.id == function.name.id }) else { return nil }
         return function.name.identifier?.name ?? function.name.text
+    }
+
+    /// Outbound effects are separate from the inbound caller proof: walking
+    /// both directions in one recursion would falsely reject ordinary chains.
+    /// A nil result is unsupported; true propagates local attachment effects.
+    private static func safeCalleeEffects(_ function: FunctionDeclSyntax, in type: ClassDeclSyntax) -> Bool? {
+        let methods = Dictionary(grouping: type.memberBlock.members.compactMap { $0.decl.as(FunctionDeclSyntax.self) }
+            .filter { $0.modifiers.map(\.name.text) == ["private"] }, by: { $0.name.text })
+        var active = Set<SyntaxIdentifier>(), failed = Set<SyntaxIdentifier>()
+        var completed: [SyntaxIdentifier: Bool] = [:]
+        func visit(_ function: FunctionDeclSyntax) -> Bool? {
+            if let cached = completed[function.id] { return cached }
+            guard !active.contains(function.id), !failed.contains(function.id) else { return nil }
+            active.insert(function.id)
+            defer { active.remove(function.id) }
+            func check() -> Bool? {
+                guard function.attributes.allSatisfy({ $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor" }),
+                      function.genericParameterClause == nil, function.genericWhereClause == nil,
+                      function.signature.effectSpecifiers == nil,
+                      !function.name.text.hasPrefix("test"), !SDKTestHelperSyntax.lifecycle.contains(function.name.text),
+                      var attachments = safeBody(function, in: type), let body = function.body else { return nil }
+                for token in body.tokens(viewMode: .sourceAccurate) {
+                    guard let reference = token.parent?.as(DeclReferenceExprSyntax.self), reference.baseName.id == token.id,
+                          reference.parent?.as(MemberAccessExprSyntax.self)?.declName.id != reference.id,
+                          let candidates = methods[reference.baseName.text] else { continue }
+                    guard candidates.count == 1, let callee = candidates.first, let effects = visit(callee) else { return nil }
+                    attachments = attachments || effects
+                }
+                return attachments
+            }
+            if let result = check() { completed[function.id] = result; return result }
+            failed.insert(function.id)
+            return nil
+        }
+        return visit(function)
     }
 
     private static func safeBody(_ function: FunctionDeclSyntax, in type: ClassDeclSyntax) -> Bool? {

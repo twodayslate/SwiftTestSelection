@@ -1059,7 +1059,12 @@ synchronous `private func` in a final test class, with an unambiguous source-def
 inheritance chain ending at XCTestCase. Both source revisions must prove that all
 references are direct calls from bound test entries or unchanged private helpers
 in the same class. Each intermediate helper must pass the same source and compiler
-checks, and the chain must terminate at bound test entries. Cycles, escaping
+checks, and the chain must terminate at bound test entries. Direct private callees
+also require a supported transitive effect body, including when invoked inside
+a newly added assertion. Unsupported, recursive, ambiguous or missing callee
+effect evidence selects the full inventory with `head_only_helper_callee_effects`;
+SDK mutations such as `UserDefaults.set` cannot be treated as harmless merely
+because SIL represents them as Objective-C dispatch. Cycles, escaping
 references, and changed or deleted intermediate helpers retain fallback. Added
 helpers also require their name to be absent from the base module, so introducing
 an overload or changing an existing name's resolution cannot silently pass.
@@ -1114,7 +1119,11 @@ classes and nonescaping local functions, to bound test entries. The head compile
 graph must confirm those paths and contain no unaccounted-for callers. Both source
 revisions are checked across the owning test module, including callers outside a
 requested file scope, so removed calls cannot disappear from the proof. This reads
-base source from Git; it does not build the base revision. Overloads with different
+base source from Git; it does not build the base revision. Base Swift files absent
+from the head inventory are also inspected. References to the helper or its caller
+chain in those files retain an explicit fallback because their old module ownership
+cannot be established from the head. Unrelated base-only files do not alone force
+fallback. Overloads with different
 argument labels can be separated when the helper has no default/variadic arguments;
 ambiguous overloads remain conservative.
 

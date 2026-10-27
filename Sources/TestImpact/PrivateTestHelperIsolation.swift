@@ -13,6 +13,7 @@ enum PrivateTestHelperIsolation {
         fileprivate var completed: [String: Bool] = [:]
         private(set) var evaluationCount = 0
         fileprivate(set) var sharedStateSymbols = Set<String>()
+        fileprivate(set) var hasUnprovenCalleeEffects = false
 
         fileprivate mutating func begin(_ key: String) {
             active.insert(key)
@@ -41,10 +42,13 @@ enum PrivateTestHelperIsolation {
     private static func provesUncached(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
                                       base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex,
                                       traversal: inout Traversal) -> Bool {
+        if [unit.privateTestHelper, previous?.privateTestHelper].compactMap({ $0 }).contains(where: {
+            $0.proofVersion == PrivateTestHelperSyntax.currentProofVersion && $0.calleeEffectsSupported != true
+        }) { traversal.hasUnprovenCalleeEffects = true }
         guard let syntax = unit.privateTestHelper, syntax.proofVersion == PrivateTestHelperSyntax.currentProofVersion,
-              syntax.statements != nil, unit.headOnlyBodySupported == true,
+              syntax.statements != nil, syntax.calleeEffectsSupported == true, unit.headOnlyBodySupported == true,
               previous == nil || (previous?.headOnlyBodySupported == true &&
-                  previous?.privateTestHelper.map { $0.proofVersion == PrivateTestHelperSyntax.currentProofVersion && syntax.preservesEffects(of: $0) } == true),
+                  previous?.privateTestHelper.map { $0.proofVersion == PrivateTestHelperSyntax.currentProofVersion && $0.calleeEffectsSupported == true && syntax.preservesEffects(of: $0) } == true),
               current.tests.allSatisfy({ test in
                   guard let roots = graph.tests[test], !roots.isEmpty, graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
                   return roots.allSatisfy { graph.functions[$0] != nil }
