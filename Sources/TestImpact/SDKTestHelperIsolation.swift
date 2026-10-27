@@ -130,7 +130,7 @@ enum SDKTestHelperIsolation {
                 accepted.insert(key)
             }
         }
-        let ids = symbols(unit), paths = index.paths(to: symbols(unit))
+        let paths = index.paths(to: symbols(unit))
         let consumers = Set(current.tests.filter { paths.path(from: graph.tests[$0] ?? []) != nil })
         guard !consumers.isEmpty, consumers.isSubset(of: expectedEntries) else { return "Compiler consumers outside the verified source caller graph" }
         // Check all compiler callers, not just one selected explanation path.
@@ -141,6 +141,10 @@ enum SDKTestHelperIsolation {
                 region.path == unit.region.path && region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine
             } }
             guard !units.isEmpty, units.allSatisfy({ accepted.contains($0.key) }) else { return "Compiler caller has no verified source owner: \(node.name)" }
+        }
+        var receiverOrigins = SDKReceiverOrigins()
+        guard receiverOrigins.proves(tests: consumers, current: current, graph: graph) else {
+            return "Unproven SDK receiver origin in a consumer or its setup/factory dependencies"
         }
         return compilerEffectBlocker(unit, graph: graph, index: index)
     }
@@ -345,6 +349,13 @@ enum SDKTestHelperIsolation {
                     guard let name = parts.last, members.contains(String(name)) else { return true }
                     let owner = parts.dropLast().joined(separator: ".")
                     let declarations = snapshot.units.filter { canonicalName($0.scope) == owner }
+                    if name == "subscript" {
+                        let subscripts = declarations.filter { $0.fingerprint.hasPrefix("subscriptDecl[") }
+                        // A labeled-only subscript cannot replace the one-argument
+                        // SDK getter. Missing evidence, defaults and variadics
+                        // that admit an unlabeled argument remain conservative.
+                        if !subscripts.isEmpty, subscripts.allSatisfy({ $0.subscriptAcceptsSingleUnlabeledArgument == false }) { return true }
+                    }
                     let methods = declarations.filter { $0.helperCallableName.map(canonicalName) == String(name) }
                     let typesAtOwner = declarations.filter { $0.kind == "type" }
                     // A protocol requirement has no implementation to replace

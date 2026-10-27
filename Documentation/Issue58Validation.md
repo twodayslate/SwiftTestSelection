@@ -349,3 +349,44 @@ application build, or application test execution is involved.
 
 UI SIL reparse took 4.18/4.13 seconds for #55/#58; total source/signature refresh and
 encoding took 12.30/12.30 seconds. Scoped selection took 11.57/12.32 seconds.
+
+
+### Overload pairing, subscripts, and receiver origins
+
+Private source proof version 9 pairs query argument labels with exact SIL formal
+signatures. It rejects crossed label/type overloads and mixed call shapes that
+cannot be disambiguated by the saved compiler evidence. Subscripts are included
+in the historical binding audit; labeled external getters cannot inherit the SDK
+identifier-getter contract. An unrelated labeled collection subscript does not
+broaden selection.
+
+Both helper contracts now inspect consumer and lifecycle dependencies for native
+or dynamic factories that could supply imported subclasses with stateful SDK
+method overrides. Known SDK declarations remain trusted primitives. Project-owned
+bodies require complete saved compiler references and dynamic signatures; opaque
+external producers retain an explicit conservative fallback. Origin checks are
+cached separately from outgoing effect contracts. Exact compiler-generated async
+completion adapters are supported across both validated toolchains.
+
+Compiled regressions exercise these cases using a separate imported support
+module, alongside ordinary SDK controls. Parser and archive tests cover stale or
+missing evidence, malformed method names, transitive call shapes, and nested
+return types. Existing selection regressions remain covered.
+
+All **300 package tests pass** with Xcode 26.6 debug (164.922 seconds) and
+Xcode 27.0 release. The release run includes the retained replay test, for
+**301 tests total** in 119.038 seconds. Capture-helper checks pass six tests;
+release-distribution checks pass five with one platform-specific skip.
+
+The retained replays preserve exactly **12 tests for #55** and **125 for #58**,
+with zero diagnostics; both final reports pass `verify-build`. All ten sealed SIL
+modules were reparsed, checking original compiler-reference edges and dynamic
+declarations before adding signature evidence. Source proofs retain unchanged
+keys and fingerprints. This evidence refresh and encoding took 64.68/64.82
+seconds for #55/#58. Final scoped selection reused those separately refreshed
+graphs and took 12.00/12.87 seconds.
+
+The original completed bundles and products remain unchanged. No compiler
+invocation, application build, or application test bodies were executed. These
+checks validate the selection regressions and retained-build compatibility;
+full-run equivalence remains a consumer CI adoption check.

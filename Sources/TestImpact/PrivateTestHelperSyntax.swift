@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 8 checks SDK call labels as well as compiler method signatures.
-    static let currentProofVersion = 8
+    // Version 9 couples overload labels to signatures and audits subscripts.
+    static let currentProofVersion = 9
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -26,6 +26,9 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var attachmentEffectMembers: Set<String>? = nil
     /// All transitive SDK bindings, even when the helper creates no attachment.
     public var sdkEffectMembers: Set<String>? = nil
+    /// Call shapes across the checked transitive body. Ambiguous overload sets
+    /// cannot prove a binding when SIL omits labels and source call-site identity.
+    public var sdkCallShapes: [String: Set<[String]>]? = nil
 
     public struct Statement: Codable, Sendable {
         public var signature: String
@@ -153,11 +156,12 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         guard !callers.isEmpty else { return nil }
         var effectCallees: [String: Int] = [:]
         var attachmentMembers = Set<String>(), sdkMembers = Set<String>()
+        var callShapes: [String: Set<[String]>] = [:]
         let effects = importsSupported ? safeCalleeEffects(function, in: type, locations: locations,
-            proven: &effectCallees, attachmentMembers: &attachmentMembers, sdkMembers: &sdkMembers) : nil
+            proven: &effectCallees, attachmentMembers: &attachmentMembers, sdkMembers: &sdkMembers, callShapes: &callShapes) : nil
         return Self(name: name, callerLines: callers, proofVersion: currentProofVersion, statements: statements(in: function),
                     localAttachmentState: attachmentState || (effects ?? false), calleeEffectsSupported: effects != nil, effectCalleeLines: effects == nil ? nil : effectCallees,
-                    attachmentEffectMembers: effects == nil ? nil : attachmentMembers, sdkEffectMembers: effects == nil ? nil : sdkMembers)
+                    attachmentEffectMembers: effects == nil ? nil : attachmentMembers, sdkEffectMembers: effects == nil ? nil : sdkMembers, sdkCallShapes: effects == nil ? nil : callShapes)
     }
 
     /// Added entries may be omitted only under an explicit separate-execution
@@ -181,7 +185,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     /// A nil result is unsupported; true propagates local attachment effects.
     private static func safeCalleeEffects(_ function: FunctionDeclSyntax, in type: ClassDeclSyntax,
                                           locations: SourceLocationConverter, proven: inout [String: Int],
-                                          attachmentMembers: inout Set<String>, sdkMembers: inout Set<String>) -> Bool? {
+                                          attachmentMembers: inout Set<String>, sdkMembers: inout Set<String>,
+                                          callShapes: inout [String: Set<[String]>]) -> Bool? {
         let methods = Dictionary(grouping: type.memberBlock.members.compactMap { $0.decl.as(FunctionDeclSyntax.self) }
             .filter { $0.modifiers.map(\.name.text) == ["private"] }, by: { $0.name.text })
         var usesAttachments = false, memberNames = Set<String>()
@@ -204,10 +209,17 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
                       let attachments = safeBody(candidate, in: type, validateDynamicCallShapes: true), let body = candidate.body else { return nil }
                 var callees: [FunctionDeclSyntax] = [], seen = Set<SyntaxIdentifier>()
                 for token in body.tokens(viewMode: .sourceAccurate) {
+                    if let subscriptCall = token.parent?.as(SubscriptCallExprSyntax.self), subscriptCall.leftSquare.id == token.id {
+                        memberNames.insert("subscript")
+                    }
                     if let reference = token.parent?.as(DeclReferenceExprSyntax.self), reference.baseName.id == token.id {
                         let name = SDKTestHelperSyntax.canonicalName(reference.baseName.text)
                         if reference.parent?.as(MemberAccessExprSyntax.self)?.declName.id == reference.id {
                             memberNames.insert(name)
+                            if let member = reference.parent?.as(MemberAccessExprSyntax.self),
+                               let call = member.parent?.as(FunctionCallExprSyntax.self), call.calledExpression.id == member.id {
+                                callShapes[name, default: []].insert(call.arguments.map { SDKTestHelperSyntax.canonicalName($0.label?.text ?? "_") })
+                            }
                         } else if ["XCTAttachment", "NSPredicate", "XCUIElement"].contains(name) {
                             memberNames.insert("init")
                             if name == "XCTAttachment" { usesAttachments = true }
@@ -262,6 +274,12 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         let allowedGlobals = assertions.union(["NSPredicate", "XCUIElement", "XCTAttachment"])
         var attachments = Set<String>(), writesAttachment = false
         func references(_ node: Syntax) -> Bool {
+            if validateDynamicCallShapes, let call = node.as(SubscriptCallExprSyntax.self) {
+                // The SDK query subscript takes one unlabeled identifier. SIL
+                // erases labels, so a labeled external getter can look identical.
+                guard call.arguments.count == 1, call.arguments.first?.label == nil,
+                      call.trailingClosure == nil, call.additionalTrailingClosures.isEmpty else { return false }
+            }
             if validateDynamicCallShapes, let member = node.as(MemberAccessExprSyntax.self),
                ExternalHelperEffects.sdkCallLabels[SDKTestHelperSyntax.canonicalName(member.declName.baseName.text)] != nil {
                 // A method value loses its labels at the eventual call site.

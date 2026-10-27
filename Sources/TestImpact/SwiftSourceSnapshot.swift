@@ -41,6 +41,8 @@ public struct SourceUnit: Codable, Sendable {
     public var helperCallableName: String? = nil
     public var helperReferenceSignature: String? = nil
     public var helperCallerSupported: Bool? = nil
+    /// Whether this subscript can compete with the SDK identifier getter.
+    public var subscriptAcceptsSingleUnlabeledArgument: Bool? = nil
 
     static func withLocations(_ values: [String], syntax: String) -> String {
         values.isEmpty ? syntax : syntax + "@locations[" +
@@ -308,7 +310,17 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 helperReferenceSignature: node.as(FunctionDeclSyntax.self).flatMap { function in
                     function.signature.parameterClause.parameters.allSatisfy { $0.defaultValue == nil && $0.ellipsis == nil } ? SDKTestHelperSyntax.signature(function) : nil
                 },
-                helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported)))
+                helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported),
+                subscriptAcceptsSingleUnlabeledArgument: node.as(SubscriptDeclSyntax.self).map { declaration in
+                    let parameters = Array(declaration.parameterClause.parameters)
+                    return parameters.indices.contains { i in
+                        let parameter = parameters[i]
+                        let label = parameter.secondName == nil ? "_" : SDKTestHelperSyntax.canonicalName(parameter.firstName.text)
+                        return label == "_" && parameters.indices.allSatisfy { j in
+                            i == j || parameters[j].defaultValue != nil || parameters[j].ellipsis != nil
+                        }
+                    }
+                }))
         }
         func walk(_ node: Syntax, scope: [String]) {
             if let item = node.as(CodeBlockItemSyntax.self), !item.item.is(DeclSyntax.self) {

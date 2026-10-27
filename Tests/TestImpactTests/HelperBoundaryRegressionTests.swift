@@ -1118,3 +1118,199 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
     #expect(report.selectedTests == (kind == "current" ? [tests[0]] : tests.sorted()))
     #expect(kind == "current" ? report.diagnostics.isEmpty : report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
 }
+
+@Test(arguments: ["sdk", "labeled", "escaped"]) func privateHelperValidatesDynamicSubscriptLabels(kind: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-import-history-" + UUID().uuidString)
+    let externalRoot = FileManager.default.temporaryDirectory.appendingPathComponent("review57-external-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: externalRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: externalRoot) }
+    let externalCall = kind != "sdk"
+    let call = kind == "escaped" ? "buttons[`tracking`: \"item\"].exists" : externalCall ? "buttons[tracking: \"item\"].exists" : "buttons[\"item\"].exists"
+    let external = """
+    import XCTest
+    extension XCUIElementQuery {
+        @MainActor @objc public dynamic subscript(tracking value: String) -> XCUIElement {
+            @objc(reviewElementForIdentifier:) get {
+                UserDefaults.standard.set(true, forKey: "review57-sharedFlag")
+                return self[value]
+            }
+        }
+    }
+    """
+    let source = externalRoot.appendingPathComponent("AttachmentSupport.swift")
+    try Data(external.utf8).write(to: source)
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "AttachmentSupport", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", source.path, "-emit-module-path", externalRoot.appendingPathComponent("AttachmentSupport.swiftmodule").path], at: root)
+    let before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCapture() { capture(XCUIApplication()) }
+        private func capture(_ app: XCUIApplication) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            add(attachment)
+        }
+        func testConsume() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "review57-sharedFlag")) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "add(attachment)", with: "add(attachment); XCTAssertTrue(app.\(call))")
+    let tests = ["UI/Suite/testCapture()", "UI/Suite/testConsume()"]
+    let old = try boundaryGraph(["Tests.swift": before, "Imports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
+    try JSONEncoder().encode(old.mappings).write(to: root.appendingPathComponent(".swift-test-selection.json"))
+    _ = try CommandRunner.run("git", ["init", "-q"], at: root)
+    _ = try CommandRunner.run("git", ["add", "Tests.swift", "Imports.swift", ".swift-test-selection.json"], at: root)
+    _ = try CommandRunner.run("git", ["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "base"], at: root)
+    let current = try boundaryGraph(["Tests.swift": after, "Imports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
+    let scopes = try XcodeHeadOnlySelector.scopedReports(current: current,
+        requests: .init(scopes: [.init(name: "helper", paths: ["Tests.swift"])]),
+        changes: [.init(path: "Tests.swift"), .init(path: "Imports.swift")],
+        baseRevision: "HEAD", headRevision: "head", root: root, mappingPath: ".swift-test-selection.json",
+        documentation: [], buildEvidenceFailure: nil)
+    let report = try #require(scopes.first?.report)
+    #expect(report.selectedTests == (externalCall ? tests.sorted() : [tests[0]]))
+    #expect(externalCall ? report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" } : report.diagnostics.isEmpty)
+}
+
+
+@Test(arguments: ["sdk", "predicate", "element", "external", "mixed", "reverse", "default"]) func privateHelperCouplesMatchingLabelsAndTypes(kind: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-import-history-" + UUID().uuidString)
+    let externalRoot = FileManager.default.temporaryDirectory.appendingPathComponent("review57-external-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: externalRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: externalRoot) }
+    let externalCall = ["external", "mixed", "reverse", "default"].contains(kind)
+    let call: String
+    switch kind {
+    case "predicate": call = "buttons.matching(NSPredicate(value: true)).firstMatch.exists"
+    case "element": call = "buttons.matching(.button, identifier: nil).firstMatch.exists"
+    case "default": call = "buttons.matching(.button).firstMatch.exists"
+    case "reverse": call = "buttons.matching(identifier: NSPredicate(value: true)).firstMatch.exists"
+    case "external", "mixed": call = "buttons.matching(\"item\").firstMatch.exists"
+    default: call = "buttons.matching(identifier: \"item\").firstMatch.exists"
+    }
+    let external = """
+    import XCTest
+    extension XCUIElementQuery {
+        @MainActor @objc(reviewMatching:) public dynamic func matching(_ value: String) -> XCUIElementQuery {
+            UserDefaults.standard.set(true, forKey: "review57-sharedFlag")
+            return self.matching(identifier: value)
+        }
+        @MainActor @objc(reviewMatchingType:tracking:) public dynamic func matching(_ value: XCUIElement.ElementType, tracking: String? = nil) -> XCUIElementQuery {
+            UserDefaults.standard.set(true, forKey: "review57-sharedFlag")
+            return self.matching(value, identifier: tracking)
+        }
+        @MainActor @objc(reviewMatchingPredicate:) public dynamic func matching(identifier value: NSPredicate) -> XCUIElementQuery {
+            UserDefaults.standard.set(true, forKey: "review57-sharedFlag")
+            return self.matching(value)
+        }
+    }
+    """
+    let source = externalRoot.appendingPathComponent("AttachmentSupport.swift")
+    try Data(external.utf8).write(to: source)
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "AttachmentSupport", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", source.path, "-emit-module-path", externalRoot.appendingPathComponent("AttachmentSupport.swiftmodule").path], at: root)
+    let before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCapture() { capture(XCUIApplication()) }
+        private func capture(_ app: XCUIApplication) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            add(attachment)
+        }
+        func testConsume() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "review57-sharedFlag")) }
+    }
+    """
+    var after = before.replacingOccurrences(of: "add(attachment)", with: "add(attachment); XCTAssertTrue(app.\(call))")
+    if kind == "mixed" {
+        after = after.replacingOccurrences(of: "add(attachment);", with: "add(attachment); XCTAssertTrue(app.buttons.matching(identifier: \"safe\").firstMatch.exists);")
+    }
+    let tests = ["UI/Suite/testCapture()", "UI/Suite/testConsume()"]
+    let old = try boundaryGraph(["Tests.swift": before, "Imports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
+    try JSONEncoder().encode(old.mappings).write(to: root.appendingPathComponent(".swift-test-selection.json"))
+    _ = try CommandRunner.run("git", ["init", "-q"], at: root)
+    _ = try CommandRunner.run("git", ["add", "Tests.swift", "Imports.swift", ".swift-test-selection.json"], at: root)
+    _ = try CommandRunner.run("git", ["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "base"], at: root)
+    let current = try boundaryGraph(["Tests.swift": after, "Imports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
+    let scopes = try XcodeHeadOnlySelector.scopedReports(current: current,
+        requests: .init(scopes: [.init(name: "helper", paths: ["Tests.swift"])]),
+        changes: [.init(path: "Tests.swift"), .init(path: "Imports.swift")],
+        baseRevision: "HEAD", headRevision: "head", root: root, mappingPath: ".swift-test-selection.json",
+        documentation: [], buildEvidenceFailure: nil)
+    let report = try #require(scopes.first?.report)
+    #expect(report.selectedTests == (externalCall ? tests.sorted() : [tests[0]]))
+    #expect(externalCall ? report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" } : report.diagnostics.isEmpty)
+    if kind == "sdk" {
+        let restored = try GraphArchive.decode(GraphArchive.encode(current))
+        let precise = XcodeHeadOnlySelector.select(current: restored, source: .init(base: old.sources, mappings: current.mappings),
+            changes: [.init(path: "Tests.swift")], baseRevision: "base")
+        #expect(precise.selectedTests == [tests[0]])
+        for atHead in [false, true] {
+            var incomplete = atHead ? current : old
+            for i in incomplete.sources["UI:Tests.swift"]!.units.indices {
+                incomplete.sources["UI:Tests.swift"]!.units[i].privateTestHelper?.sdkCallShapes = nil
+            }
+            let fallback = XcodeHeadOnlySelector.select(current: atHead ? incomplete : current,
+                source: .init(base: atHead ? old.sources : incomplete.sources, mappings: current.mappings),
+                changes: [.init(path: "Tests.swift")], baseRevision: "base")
+            #expect(fallback.selectedTests == tests.sorted())
+            #expect(fallback.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
+        }
+    }
+}
+
+@Test(arguments: ["sdk", "native", "dynamic", "dynamicConcrete"], [false, true]) func helpersRejectOpaqueReceiverFactories(kind: String, sdkBoundary: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-receiver-" + UUID().uuidString)
+    let externalRoot = root.appendingPathComponent("External")
+    try FileManager.default.createDirectory(at: externalRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let external = """
+    import XCTest
+    @MainActor public class StatefulApp: XCUIApplication {
+        public override var exists: Bool {
+            UserDefaults.standard.set(true, forKey: "review57-sharedFlag")
+            return true
+        }
+    }
+    """
+    let factory = """
+    extension XCUIApplication {
+        @MainActor @objc public class func makeReviewApp() -> XCUIApplication { StatefulApp() }
+        @MainActor @objc public class func makeConcreteApp() -> StatefulApp { StatefulApp() }
+    }
+    """
+    let source = externalRoot.appendingPathComponent("AttachmentSupport.swift")
+    try Data((external + "\n" + factory).utf8).write(to: source)
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "AttachmentSupport", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", source.path, "-emit-module-path", externalRoot.appendingPathComponent("AttachmentSupport.swiftmodule").path], at: root)
+    var before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCapture() { capture(makeApp()) }
+        private func capture(_ app: XCUIApplication) { XCTAssertNotNil(app) }
+        func testConsume() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "review57-sharedFlag")) }
+    }
+    """
+    if sdkBoundary {
+        before = """
+        import XCTest
+        @MainActor extension XCUIElement {
+            func readiness() -> Bool { return waitForExistence(timeout: 1) }
+        }
+        @MainActor final class Suite: XCTestCase {
+            func testCapture() { XCTAssertTrue(makeApp().readiness()) }
+            func testConsume() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "review57-sharedFlag")) }
+        }
+        """
+    }
+    var support = "import XCTest\nimport AttachmentSupport\n@MainActor func makeApp() -> XCUIApplication { StatefulApp() }"
+    if kind == "sdk" { support = "import XCTest\n@MainActor func makeApp() -> XCUIApplication { XCUIApplication() }" }
+    if kind == "dynamic" { support = "import XCTest\nimport AttachmentSupport\n@MainActor func makeApp() -> XCUIApplication { XCUIApplication.makeReviewApp() }" }
+    if kind == "dynamicConcrete" { support = "import XCTest\nimport AttachmentSupport\n@MainActor func makeApp() -> XCUIApplication { XCUIApplication.makeConcreteApp() }" }
+    let after = sdkBoundary ? before.replacingOccurrences(of: "return waitForExistence(timeout: 1)", with: "return waitForExistence(timeout: 1) && exists") : before.replacingOccurrences(of: "XCTAssertNotNil(app)", with: "XCTAssertNotNil(app); XCTAssertTrue(app.exists)")
+    let tests = ["UI/Suite/testCapture()", "UI/Suite/testConsume()"]
+    let old = try boundaryGraph(["Tests.swift": before, "Imports.swift": support], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
+    let current = try boundaryGraph(["Tests.swift": after, "Imports.swift": support], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: current.mappings), changes: [.init(path: "Tests.swift")], baseRevision: "base")
+    #expect(report.selectedTests == (kind == "sdk" ? [tests[0]] : tests.sorted()))
+    #expect(kind == "sdk" ? report.diagnostics.isEmpty : report.diagnostics.contains { sdkBoundary ? $0.message.contains("receiver origin") : $0.code == "head_only_helper_callee_effects" })
+}

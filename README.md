@@ -1198,11 +1198,22 @@ remain conservative. Concrete project types cannot be ancestors of the trusted S
 classes; their same-named members and free functions do not replace SDK member
 calls. The compiler effect walk also rejects project callees outside the checked
 helper and its callbacks. Private proof
-version 8 and SDK proof version 5 reject older saved evidence. Private version 8
+version 9 and SDK proof version 5 reject older saved evidence. Private version 9
 records all SDK member bindings across the checked callee bodies and validates
-argument labels and method references, extending version 7’s attachment audit and
-version 6’s import validation. Version-7 and older private proofs require
-regeneration. SDK version 5 requires
+argument labels and method references. It also audits subscript bindings at both
+revisions and requires overload labels to agree with the compiler signature.
+Labeled subscripts and ambiguous mixed query overloads retain conservative
+fallback: the saved SIL does not identify which source call produced each method
+reference, so a valid call cannot justify another unproven call. Version-8 and
+older private proofs require
+regeneration. Both helper contracts also check the compiled consumer and lifecycle
+closure for opaque factories that could supply an SDK subclass with effectful
+overrides. Missing native or dynamic producer evidence retains a diagnostic and
+conservative selection; pure helpers that do not use SDK receivers do not need
+this audit. Signature evidence must cover the caller closure as well as the
+changed helper. When upgrading old graphs, regenerate from saved build artifacts
+and sealed SIL for the needed dependency modules too. The analysis caches both
+successful and failed producer checks within one immutable graph. SDK version 5 requires
 assertion names to be free of lexical shadowing, including parameter, generic,
 and closure bindings, and verifies caller imports before trusting assertion or
 negation wrappers. SDK version 3 and 4 captures fall back with a recapture diagnostic;

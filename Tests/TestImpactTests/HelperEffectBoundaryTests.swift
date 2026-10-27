@@ -114,3 +114,167 @@ func attachmentOverrideAuditUsesAncestryAtBothRevisions(scenario: String) {
     let unknown = proof.allows(["swift_unrecognizedRuntimeEffect"], resolve: { _ in nil })
     #expect(!unknown)
 }
+
+@Test func queryOverloadsRequireCompatibleSourceShapes() {
+    let prefix = "objc_method XCUIElementQuery.matching!foreign : (XCUIElementQuery) -> "
+    var node = FunctionNode(id: "helper", module: "UI", name: "helper", dynamicDeclarations: ["XCUIElementQuery.matching"])
+    node.dynamicCallSignatures = [prefix + "(String) -> XCUIElementQuery"]
+    #expect(!ExternalHelperEffects.allowsDynamicCalls(node))
+    #expect(!ExternalHelperEffects.allowsDynamicCalls(node, sourceCallShapes: ["matching": [["_"]]]))
+    #expect(!ExternalHelperEffects.allowsDynamicCalls(node, sourceCallShapes: ["matching": [["_"], ["identifier"]]]))
+    #expect(ExternalHelperEffects.allowsDynamicCalls(node, sourceCallShapes: ["matching": [["identifier"]]]))
+    node.dynamicCallSignatures = [prefix + "(NSPredicate) -> XCUIElementQuery"]
+    #expect(!ExternalHelperEffects.allowsDynamicCalls(node, sourceCallShapes: ["matching": [["identifier"]]]))
+    #expect(ExternalHelperEffects.allowsDynamicCalls(node, sourceCallShapes: ["matching": [["_"]]]))
+}
+
+@Test func privateHelperPreservesTransitiveQueryBindingEvidence() throws {
+    let source = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCapture() { capture(XCUIApplication()) }
+        private func capture(_ app: XCUIApplication) { check(app) }
+        private func check(_ app: XCUIApplication) {
+            XCTAssertTrue(app.buttons["item"].exists)
+            XCTAssertTrue(app.buttons.`matching`(`identifier`: "item").firstMatch.exists)
+        }
+    }
+    """
+    let snapshot = SwiftSourceSnapshot.parse(source, path: "Tests.swift", module: "UI")
+    let proof = try #require(snapshot.units.first { $0.privateTestHelper?.name == "capture" }?.privateTestHelper)
+    #expect(proof.calleeEffectsSupported == true)
+    #expect(proof.sdkEffectMembers?.contains("subscript") == true)
+    #expect(proof.sdkCallShapes?["matching"] == [["identifier"]])
+    let restored = try JSONDecoder().decode(PrivateTestHelperSyntax.self, from: JSONEncoder().encode(proof))
+    #expect(restored.sdkCallShapes == proof.sdkCallShapes)
+    // A deleted project subscript must be audited even when the surviving head
+    // expression now resolves to the ordinary SDK identifier getter.
+    let old = SwiftSourceSnapshot.parse("extension XCUIElementQuery { subscript(_ id: String) -> XCUIElement { effect() } }", path: "Old.swift", module: "UI")
+    let empty = SwiftSourceSnapshot.parse("", path: "Old.swift", module: "UI")
+    for revisions in [[[old], [empty]], [[empty], [old]]] {
+        #expect(!SDKTestHelperIsolation.memberBindingsUnshadowed(revisions: revisions,
+            members: proof.sdkEffectMembers!, sdkOwners: ["XCUIElementQuery"]))
+    }
+}
+
+@Test func receiverOriginDemanglingUsesTheOuterResult() {
+    let tree = """
+    kind=Global
+      kind=Function
+        kind=Module, text="Factory"
+        kind=Identifier, text="run"
+        kind=Type
+          kind=FunctionType
+            kind=ArgumentTuple
+              kind=Type
+                kind=FunctionType
+                  kind=ArgumentTuple
+                    kind=Type
+                      kind=Tuple
+                  kind=ReturnType
+                    kind=Type
+                      kind=Class
+                        kind=Module, text="Factory"
+                        kind=Identifier, text="CustomApp"
+            kind=ReturnType
+              kind=Type
+                kind=Tuple
+    """
+    #expect(ExternalHelperEffects.nonReceiverResult(ArraySlice(tree.components(separatedBy: .newlines))))
+    var returnsOpaque = tree
+    returnsOpaque.replaceSubrange(tree.range(of: "kind=Tuple", options: .backwards)!, with: "kind=ProtocolList")
+    #expect(!ExternalHelperEffects.nonReceiverResult(ArraySlice(returnsOpaque.components(separatedBy: .newlines))))
+}
+
+@Test(arguments: ["Class", "DependentGenericParamType", "ProtocolList", "BuiltinTypeName", "TypeAlias", "OpaqueReturnTypeOf", "UnknownFutureType"])
+func receiverOriginRejectsWrappedOpaqueResults(kind: String) {
+    let tree = """
+    kind=Global
+      kind=Function
+        kind=Module, text="Factory"
+        kind=Identifier, text="make"
+        kind=Type
+          kind=FunctionType
+            kind=ArgumentTuple
+              kind=Type
+                kind=Tuple
+            kind=ReturnType
+              kind=Type
+                kind=BoundGenericEnum
+                  kind=Type
+                    kind=Enum
+                      kind=Module, text="Swift"
+                      kind=Identifier, text="Optional"
+                  kind=TypeList
+                    kind=Type
+                      kind=\(kind)
+                        kind=Module, text="Factory"
+                        kind=Identifier, text="CustomApp"
+    """
+    #expect(!ExternalHelperEffects.nonReceiverResult(ArraySlice(tree.components(separatedBy: .newlines))))
+}
+
+@Test func receiverOriginCacheDoesNotGrantEffectTrust() {
+    let output = """
+    Demangling for foreign-value
+    kind=Global
+      kind=Function
+        kind=Module, text="Foreign"
+        kind=Identifier, text="value"
+        kind=Type
+          kind=FunctionType
+            kind=ArgumentTuple
+              kind=Type
+                kind=Tuple
+            kind=ReturnType
+              kind=Type
+                kind=Structure
+                  kind=Module, text="Swift"
+                  kind=Identifier, text="Bool"
+    """
+    var proof = ExternalHelperEffects(), calls = 0
+    let resolve: ([String]) -> String? = { _ in calls += 1; return output }
+    let first = proof.allowsReceiverOrigins(["foreign-value"], resolve: resolve)
+    let cached = proof.allowsReceiverOrigins(["foreign-value"], resolve: resolve)
+    let effect = proof.allows(["foreign-value"], resolve: resolve)
+    #expect(first && cached)
+    #expect(!effect)
+    #expect(calls == 2)
+}
+
+@Test(arguments: ["subscript(safe index: Int) -> Int { 0 }", "subscript(index: Int) -> Int { 0 }", "subscript(_ index: Int, flag: Bool = false) -> Int { 0 }", "subscript(_ indices: Int...) -> Int { 0 }"])
+func subscriptBindingEvidenceAccountsForImplicitLabelsAndDefaults(declaration: String) throws {
+    let snapshot = SwiftSourceSnapshot.parse("extension Collection { \(declaration) }", path: "Types.swift", module: "UI")
+    let unit = try #require(snapshot.units.first { $0.kind == "state" })
+    #expect(unit.subscriptAcceptsSingleUnlabeledArgument == !declaration.contains("safe index"))
+}
+
+@Test func receiverOriginsRequireCompleteSavedBodies() {
+    var node = FunctionNode(id: "$s2UI5entryyyF", module: "UI", name: "entry", regions: [.init(path: "Tests.swift", startLine: 1, endLine: 1)], dynamicDeclarations: ["XCUIApplication.factory"])
+    node.compilerReferences = []
+    node.dynamicCallSignatures = []
+    #expect(!ExternalHelperEffects.allowsDynamicReceiverOrigins(node))
+    node.dynamicCallSignatures = ["objc_method XCUIApplication.factory!foreign : (XCUIApplication.Type) -> () -> XCUIApplication"]
+    #expect(!ExternalHelperEffects.allowsDynamicReceiverOrigins(node))
+    node.dynamicCallSignatures = ["objc_method XCUIApplication.factory!foreign : (XCUIApplication.Type) -> () -> ForeignApp"]
+    #expect(!ExternalHelperEffects.allowsDynamicReceiverOrigins(node))
+    node.dynamicDeclarations = []
+    node.dynamicCallSignatures = nil
+    var origins = SDKReceiverOrigins()
+    let graph = DependencyGraph(functions: [node.id: node], tests: ["UI/Suite/test()": [node.id]])
+    var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
+    current.sources["UI:Tests.swift"] = SwiftSourceSnapshot.parse("func entry() {}", path: "Tests.swift", module: "UI")
+    let complete = origins.proves(tests: ["UI/Suite/test()"], current: current, graph: graph)
+    #expect(!complete)
+}
+
+@Test func malformedDynamicReceiverEvidenceFallsBack() {
+    var node = FunctionNode(id: "helper", module: "UI", name: "helper", dynamicDeclarations: ["XCUIApplication.factory"])
+    node.dynamicCallSignatures = ["objc_method ! : () -> Bool"]
+    #expect(!ExternalHelperEffects.allowsDynamicReceiverOrigins(node))
+    #expect(!ExternalHelperEffects.allowsDynamicCalls(node))
+    node.dynamicDeclarations = []
+    node.dynamicCallSignatures = ["objc_method XCUIApplication.factory!foreign : (XCUIApplication.Type) -> () -> XCUIApplication"]
+    #expect(!ExternalHelperEffects.allowsDynamicReceiverOrigins(node))
+    #expect(!ExternalHelperEffects.allowsDynamicCalls(node))
+}
