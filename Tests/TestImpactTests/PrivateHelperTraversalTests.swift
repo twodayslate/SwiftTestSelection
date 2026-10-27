@@ -103,6 +103,10 @@ func privateHelperDiamondTraversalIsBounded(depth: Int) throws {
         else if name == "leaf" { dependencies = [] }
         else { let level = Int(name.dropFirst())!; dependencies = level == depth - 1 ? ["leaf"] : ["a\(level+1)","b\(level+1)"] }
         nodes[name] = FunctionNode(id: name, module: "UI", name: "Suite." + name + "()", regions: [unit.region], dependencies: dependencies)
+        // This synthetic graph models complete current compiler evidence.
+        nodes[name]!.compilerReferences = dependencies
+        nodes[name]!.dynamicCallSignatures = []
+        nodes[name]!.receiverTypeOrigins = []; nodes[name]!.receiverGenericCalls = []
     }
     var graph = DependencyGraph(functions: nodes)
     let tests = ["UI/Suite/testEntry()"]

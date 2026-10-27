@@ -1223,14 +1223,24 @@ older private proofs require
 regeneration. Both helper contracts also check the compiled consumer and lifecycle
 closure for opaque factories that could supply an SDK subclass with effectful
 overrides. Missing native or dynamic producer evidence retains a diagnostic and
-conservative selection; pure helpers that do not use SDK receivers do not need
-this audit. A `Void` or scalar return does not prove that an opaque call cannot
+conservative selection. Assertion-only helpers also require this audit because
+opaque caller or lifecycle code can register XCTest callbacks. A `Void` or scalar return does not prove that an opaque call cannot
 supply receivers. The analyzer requires a captured implementation or an explicit
 SDK contract, rather than inferring safety from return-type names or callback
 syntax. This covers returned structs/enums, thrown errors, callbacks, output
 pointers and mutations of reachable state. Unknown producers retain fallback even
 when a completion only asserts its input is nil. Diagnostics identify the missing
 producer or storage declaration; they are uncertainty, not proven impact.
+
+XCTest callbacks are a separate effect boundary: assertions and waits can invoke
+project failure-recording methods or observers through the framework binary,
+without a caller edge in SIL. Both helper contracts inspect base/head source
+inventories, including base-only files, for recording/execution hooks, other
+XCTest subclass overrides outside the bound lifecycle, and observer registration
+or conformance. Unproven callback effects retain conservative selection with an
+explicit diagnostic. Ordinary lifecycle overrides remain supported when their
+captured implementations pass the caller audit. Missing source evidence declines
+the proof; existing evidence can be refreshed without rebuilding the application.
 
 Receiver-origin trust uses explicit SDK declaration contracts, not blanket trust
 of a module. Reflective factories such as Swift's `_typeByName`, unknown decoding

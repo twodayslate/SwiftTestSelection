@@ -28,6 +28,7 @@ enum SDKTestHelperIsolation {
         let captured = Set(headSources.keys.map { String($0.dropFirst(module.count + 1)) })
         guard current.targets.filter({ current.modules[$0.name] == module }).allSatisfy({ Set($0.sourceFiles).isSubset(of: captured) }),
               Set(headSources.keys) == Set(baseSources.keys) else { return "Missing base/head module sources" }
+        if let reason = XCTestCallbackIsolation.blocker(current: current, base: base, unownedBase: unownedBase) { return reason }
         if let reason = environmentBlocker(current: current, base: base, unownedBase: unownedBase,
                                            queriedMembers: evidence.queriedMembers.union(old.queriedMembers)) { return reason }
         if let reason = effectBindingBlocker(unit, previous: previous, current: current, base: base, unownedBase: unownedBase) { return reason }

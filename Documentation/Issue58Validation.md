@@ -13,7 +13,7 @@ that evidence is missing. All 125 known consumers remain selected. The retained
 #58 case falls back to its complete 2,000-test inventory; narrowing still needs
 stronger evidence. #55's immutable literal fixture state remains supported.
 The release replay selected **12 of 1,972 tests with zero diagnostics** for #55
-in **14.03 seconds**. For #58 it selected **all 2,000 tests** in **14.54 seconds**,
+in **15.28 seconds**. For #58 it selected **all 2,000 tests** in **15.70 seconds**,
 retaining all 125 known consumers and the fallback-only NoteLinks example. Both
 reports passed `verify-build` against the retained products.
 
@@ -30,14 +30,14 @@ itself is unsafe or that adding one contract proves the entire consumer closure.
 The current bounded contracts do not justify the earlier precision claim. #58
 remains open for stronger evidence and a sound narrowing implementation.
 
-All **324 package tests** passed in release (**128.010 seconds**, Xcode 27.0)
-and debug (**217.347 seconds**, Xcode 26.6). A separate temporary retained replay
+All **326 package tests** passed in release (**137.905 seconds**, Xcode 27.0)
+and debug (**234.341 seconds**, Xcode 26.6). A separate temporary retained replay
 test passed both fixtures. Capture helper tests passed (6); release-distribution
-tests passed (5, with 1 platform-specific skip). The review reparsed the sealed
-UI module for each fixture, preserving compiler reference edges and dynamic
-declarations, and refreshed source evidence with unchanged declaration keys and
-fingerprints. Other modules retained their saved evidence; missing current
-evidence remains conservative. The final replay reused that compiler evidence.
+tests passed (5, with 1 platform-specific skip). The final replay reused the previously
+verified compiler evidence, including the sealed UI-module reparse, and refreshed
+source proofs with unchanged declaration keys and fingerprints. Compiler reference
+edges and dynamic declarations remain unchanged. Missing current evidence remains
+conservative; this callback validation required no SIL reparse.
 No new consuming-app build or baseline build was performed. These are local
 replay measurements, not controlled end-to-end benchmarks.
 
@@ -94,6 +94,25 @@ switched, with exactly one predecessor. Mutation, aliases, multiple predecessors
 and mixed reachable bridge calls retain fallback. This preserves #55 without
 trusting live erased bridges. JSON/compact archives retain the new evidence, and
 cache version 11 requires older module fragments to be regenerated.
+
+### XCTest callback effect review
+
+The helper proof now checks source inventories at both revisions for XCTest
+failure-recording and execution hooks, inherited/custom framework overrides,
+and observation registration or conformance. Base-only and unowned source files
+remain part of this check. Bound lifecycle hooks are audited through their
+compiled roots. Assertion-only helpers now also audit opaque caller/lifecycle
+implementations; imported setup code cannot acquire trust merely because the
+helper uses no UI-element receiver.
+
+Sixteen compiled cases cover both helper paths with direct, inherited and legacy
+recording hooks, observers, removed hooks, opaque imported setup, missing compiler
+evidence, and ordinary controls. Source tests cover escaped names, other framework
+callbacks, aliases, unrelated declarations, and missing evidence at head, base,
+and in unowned files. The runtime regression executes a small XCTest fixture:
+the former one-test selection passes incorrectly, whereas the corrected selection
+and the full fixture both detect the reader's failure. This is a synthetic
+regression; consuming-application test bodies were not executed.
 
 ## Historical validation (superseded)
 

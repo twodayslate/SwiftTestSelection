@@ -1435,3 +1435,99 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
 @Test(arguments: [false, true]) func opaqueErasedBridgeCastRetainsFallback(sdkBoundary: Bool) throws {
     try helpersRejectOpaqueReceiverFactories(kind: "erasedCast", sdkBoundary: sdkBoundary)
 }
+
+@Test(arguments: ["record", "inherited", "legacy", "observer", "removed", "externalSetup", "missing", "ordinary"], [false, true])
+func helperFailureCallbacksRetainFallback(kind: String, sdkBoundary: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("callback-effects-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let record = kind == "legacy"
+        ? "override func recordFailure(withDescription description: String, inFile file: String, atLine line: Int, expected: Bool) { recordedFailure = true }"
+        : "override func record(_ issue: XCTIssue) { recordedFailure = true }"
+    let inherited = ["inherited", "removed"].contains(kind)
+    let hook = ["ordinary", "observer", "externalSetup", "missing"].contains(kind) ? "" : record
+    let parent = inherited ? "Base" : "XCTestCase"
+    let setup = kind == "observer" ? "override func setUp() { XCTestObservationCenter.shared.addTestObserver(Observer()) }" : kind == "externalSetup" ? "override func setUp() { installCallbacks() }" : ""
+    var before = """
+    import XCTest
+    var recordedFailure = false
+    @MainActor final class Writer: \(parent) {
+        func testCapture() { outer() }
+        private func outer() { inner() }
+        private func inner() { XCTAssertTrue(true) }
+        \(inherited ? "" : hook)
+        \(setup)
+    }
+    final class Reader: XCTestCase {
+        func testConsume() { XCTAssertFalse(recordedFailure) }
+    }
+    """
+    if sdkBoundary {
+        before = before.replacingOccurrences(of: "func testCapture() { outer() }", with: "func testCapture() { XCTAssertTrue(XCUIApplication().readiness()) }") + "\n@MainActor extension XCUIElement { func readiness() -> Bool { return waitForExistence(timeout: 1) } }"
+    }
+    var support = "import XCTest\nclass Base: XCTestCase { " + (inherited ? hook : "") + " }\n" +
+        (kind == "observer" ? "class Observer: NSObject, XCTestObservation { func testCase(_ testCase: XCTestCase, didRecord issue: XCTIssue) { recordedFailure = true } }" : "")
+    var compilerArguments: [String] = []
+    if kind == "externalSetup" {
+        let external = root.appendingPathComponent("External")
+        try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+        let file = external.appendingPathComponent("SetupSupport.swift")
+        try Data("""
+        import XCTest
+        final class Observer: NSObject, XCTestObservation {
+            func testCase(_ testCase: XCTestCase, didRecord issue: XCTIssue) {
+                UserDefaults.standard.set(true, forKey: "callback-regression")
+            }
+        }
+        public func installHooks() { XCTestObservationCenter.shared.addTestObserver(Observer()) }
+        """.utf8).write(to: file)
+        let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "SetupSupport", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", file.path, "-emit-module-path", external.appendingPathComponent("SetupSupport.swiftmodule").path], at: root)
+        support += "\nimport SetupSupport\nfunc installCallbacks() { installHooks() }"
+        before = before.replacingOccurrences(of: "XCTAssertFalse(recordedFailure)", with: "XCTAssertFalse(UserDefaults.standard.bool(forKey: \"callback-regression\"))")
+        compilerArguments = ["-I", external.path]
+    }
+    let after = sdkBoundary ? before.replacingOccurrences(of: "return waitForExistence(timeout: 1)", with: "return waitForExistence(timeout: 1) && exists") : before.replacingOccurrences(of: "XCTAssertTrue(true)", with: "XCTAssertTrue(true); XCTAssertTrue(false)")
+    let tests = ["UI/Writer/testCapture()", "UI/Reader/testConsume()"]
+    let old = try boundaryGraph(["Tests.swift": before, "Hooks.swift": support], tests: tests, root: root, compilerArguments: compilerArguments)
+    var current = try boundaryGraph(["Tests.swift": after, "Hooks.swift": kind == "removed" ? "import XCTest\nclass Base: XCTestCase {}" : support], tests: tests, root: root, compilerArguments: compilerArguments)
+    if kind == "missing" {
+        let entry = try #require(current.dependencies?.functions.values.first { $0.name == "Writer.testCapture()" })
+        current.dependencies!.functions[entry.id]!.receiverGenericCalls = nil
+    }
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: current.mappings), changes: [.init(path: "Tests.swift")], baseRevision: "base")
+    #expect(report.selectedTests == (kind == "ordinary" ? [tests[0]] : tests.sorted()))
+    #expect(kind == "ordinary" ? report.diagnostics.isEmpty : report.diagnostics.contains {
+        kind == "externalSetup" ? $0.message.contains("external producer") : kind == "missing" ? $0.message.contains("recapture") : $0.message.contains("callback")
+    })
+    if kind == "record" && !sdkBoundary {
+        // Execute the small fixture as well as inspecting its selection. The
+        // callback suppresses the original failure; only the reader exposes it.
+        let main = root.appendingPathComponent("main.swift")
+        try Data("""
+        import XCTest
+        recordedFailure = false
+        let suite = XCTestSuite(name: "Callback regression")
+        suite.addTest(Writer.defaultTestSuite)
+        if CommandLine.arguments.contains("--full") { suite.addTest(Reader.defaultTestSuite) }
+        suite.run()
+        exit(suite.testRun?.hasSucceeded == true ? 0 : 1)
+        """.utf8).write(to: main)
+        let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let developer = platform + "/Developer/"
+        let binary = root.appendingPathComponent("callback-regression")
+        var arguments = ["swiftc", "-F", developer + "Library/Frameworks", "-I", developer + "usr/lib", "-L", developer + "usr/lib"]
+        for directory in ["Library/Frameworks", "Library/PrivateFrameworks", "usr/lib"] {
+            arguments += ["-Xlinker", "-rpath", "-Xlinker", developer + directory]
+        }
+        arguments += [root.appendingPathComponent("Tests.swift").path, root.appendingPathComponent("Hooks.swift").path, main.path, "-o", binary.path]
+        _ = try CommandRunner.run("xcrun", arguments, at: root)
+        let narrow = try CommandRunner.run(binary.path, [], at: root, allowFailure: true)
+        let full = try CommandRunner.run(binary.path, ["--full"], at: root, allowFailure: true)
+        let selected = try CommandRunner.run(binary.path, report.selectedTests.contains(tests[1]) ? ["--full"] : [], at: root, allowFailure: true)
+        #expect(narrow.status == 0)
+        #expect(full.status == 1)
+        #expect(String(decoding: full.stdout + full.stderr, as: UTF8.self).contains("testConsume"))
+        #expect(selected.status == full.status)
+    }
+}

@@ -14,6 +14,8 @@ enum PrivateTestHelperIsolation {
         fileprivate var sdkEffectIDs: [String: Set<String>] = [:]
         fileprivate var externalEffects = ExternalHelperEffects()
         fileprivate var receiverOrigins = SDKReceiverOrigins()
+        fileprivate var callbacksChecked = false
+        fileprivate var callbackBlocker: String?
         fileprivate var sdkEffectDeclarations: [String: [SourceUnit]] = [:]
         fileprivate(set) var receiverOriginBlocker: String?
         private(set) var evaluationCount = 0
@@ -97,6 +99,15 @@ enum PrivateTestHelperIsolation {
               }) else { return nil }
         guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules),
               (Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)).allSatisfy({ $0.helperNamesUnshadowed == true }) else {
+            traversal.hasUnprovenCalleeEffects = true
+            return nil
+        }
+        if !traversal.callbacksChecked {
+            traversal.callbackBlocker = XCTestCallbackIsolation.blocker(current: current, base: base, unownedBase: unownedBase)
+            traversal.callbacksChecked = true
+        }
+        if let reason = traversal.callbackBlocker {
+            traversal.receiverOriginBlocker = reason
             traversal.hasUnprovenCalleeEffects = true
             return nil
         }
@@ -211,16 +222,12 @@ enum PrivateTestHelperIsolation {
         // uncertainty alone is not a route into this private, nonescaping method.
         let projectModules = Set(current.modules.values)
         var pending = Array(ids), visited = Set<String>(), effectsSupported = proof.sdkBindingsSupported
-        var usesSDKReceiver = false
         var external = Set<String>()
         while let id = pending.popLast() {
             guard visited.insert(id).inserted else { continue }
             guard let node = graph.functions[id], projectModules.contains(node.module), node.hasProjectRuntimeContext else {
                 external.insert(id)
                 continue
-            }
-            usesSDKReceiver = usesSDKReceiver || node.dynamicDeclarations.contains { declaration in
-                ["XCUIElement.", "XCUIElementQuery.", "XCUIApplication."].contains { declaration.hasPrefix($0) }
             }
             // XCTest attachment setters do not require a blanket effect
             // exemption. Reads of other objects, including assertion
@@ -245,7 +252,9 @@ enum PrivateTestHelperIsolation {
             traversal.hasUnprovenCalleeEffects = true
             effectsSupported = false
         }
-        if usesSDKReceiver, let reason = traversal.receiverOrigins.blocker(tests: consumers, current: current, graph: graph) {
+        // Opaque caller/lifecycle code can register XCTest callbacks even for
+        // assertion-only helpers that never touch an XCUIElement receiver.
+        if let reason = traversal.receiverOrigins.blocker(tests: consumers, current: current, graph: graph) {
             traversal.receiverOriginBlocker = reason
             traversal.hasUnprovenCalleeEffects = true
             effectsSupported = false
