@@ -1210,8 +1210,14 @@ regeneration. Both helper contracts also check the compiled consumer and lifecyc
 closure for opaque factories that could supply an SDK subclass with effectful
 overrides. Missing native or dynamic producer evidence retains a diagnostic and
 conservative selection; pure helpers that do not use SDK receivers do not need
-this audit. Signature evidence must cover the caller closure as well as the
-changed helper. When upgrading old graphs, regenerate from saved build artifacts
+this audit. A `Void` or scalar return does not prove that an opaque call cannot
+supply receivers: callback arguments and output-pointer/inout channels also need
+evidence. Unknown dynamic callback producers retain fallback; resolved project
+implementations are followed through their compiler edges. A narrow source and
+compiler proof also supports a direct completion whose input is used only in
+`XCTAssertNil`/`XCTAssertNotNil` or directly interpolated into an `XCTFail` message. Missing saved callback evidence or unresolved
+assertion bindings retain fallback. Signature evidence must cover the caller
+closure as well as the changed helper. When upgrading old graphs, regenerate from saved build artifacts
 and sealed SIL for the needed dependency modules too. The analysis caches both
 successful and failed producer checks within one immutable graph. SDK version 5 requires
 assertion names to be free of lexical shadowing, including parameter, generic,

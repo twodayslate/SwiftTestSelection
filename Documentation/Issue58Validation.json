@@ -378,5 +378,38 @@
     "compilerInvocation": false,
     "applicationBuild": false,
     "applicationTestExecution": false
+  },
+  "callbackReceiverReview": {
+    "privateHelperProofVersion": 9,
+    "sdkHelperProofVersion": 5,
+    "moduleFragmentSchema": 8,
+    "packageTests": 305,
+    "toolchains": [
+      "Xcode 26.6 debug",
+      "Xcode 27.0 release"
+    ],
+    "releaseIncludesRetainedReplayTest": true,
+    "debugTestSeconds": 173.665,
+    "releaseTestSecondsIncludingReplays": 141.284,
+    "replays": [
+      {
+        "issue": 55,
+        "selectedTests": 12,
+        "diagnostics": [],
+        "selectionSeconds": 11.802082061767578,
+        "retainedVerification": true
+      },
+      {
+        "issue": 58,
+        "selectedTests": 125,
+        "diagnostics": [],
+        "selectionSeconds": 12.854551076889038,
+        "retainedVerification": true
+      }
+    ],
+    "sourceProofRefresh": "Retained source exports; unchanged declaration keys and fingerprints. Refreshed optional completion-input evidence; reused previously validated compiler signatures and products.",
+    "compilerInvocation": false,
+    "applicationBuild": false,
+    "applicationTestExecution": false
   }
 }

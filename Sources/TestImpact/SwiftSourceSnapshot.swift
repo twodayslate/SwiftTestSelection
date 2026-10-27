@@ -41,6 +41,8 @@ public struct SourceUnit: Codable, Sendable {
     public var helperCallableName: String? = nil
     public var helperReferenceSignature: String? = nil
     public var helperCallerSupported: Bool? = nil
+    /// Completion inputs consumed only by nil assertions or failure messages; compiler bindings still require verification.
+    public var assertedCallbackInputs: [String: [SourceRegion]]? = nil
     /// Whether this subscript can compete with the SDK identifier getter.
     public var subscriptAcceptsSingleUnlabeledArgument: Bool? = nil
 
@@ -311,6 +313,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     function.signature.parameterClause.parameters.allSatisfy { $0.defaultValue == nil && $0.ellipsis == nil } ? SDKTestHelperSyntax.signature(function) : nil
                 },
                 helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported),
+                assertedCallbackInputs: node.as(FunctionDeclSyntax.self).map { SDKCallbackInputs.evidence($0, importsSupported: callerImportsSupported, locations: locations) },
                 subscriptAcceptsSingleUnlabeledArgument: node.as(SubscriptDeclSyntax.self).map { declaration in
                     let parameters = Array(declaration.parameterClause.parameters)
                     return parameters.indices.contains { i in

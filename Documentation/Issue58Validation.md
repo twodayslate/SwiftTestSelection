@@ -390,3 +390,42 @@ The original completed bundles and products remain unchanged. No compiler
 invocation, application build, or application test bodies were executed. These
 checks validate the selection regressions and retained-build compatibility;
 full-run equivalence remains a consumer CI adoption check.
+
+
+### Callback and output-channel receiver review
+
+Opaque receiver checks now inspect callback arguments as well as return types.
+A native or dynamic factory returning `Void` cannot bypass the audit by delivering
+an SDK subclass through a callback, optional callback, or output pointer. Resolved
+project implementations remain traversable; unavailable producer evidence is
+conservative.
+
+A narrow completion contract preserves the real gesture-helper case: the source
+must pass one direct callback whose input is used only as the first argument of
+`XCTAssertNil`/`XCTAssertNotNil` or directly interpolated into an `XCTFail` message.
+Shorthand optional-error unwrapping is supported. Compiler edges must independently establish
+trusted SDK assertion bindings. Storing, returning, casting or forwarding the
+input, unknown imports, mixed calls, missing metadata and external assertion
+bindings retain fallback. The optional evidence survives graph archives. Its
+source scan visits each saved declaration once, including local functions that
+share that source unit.
+Explicit closures are matched through their ending line because multiline calls
+and earlier capture locations can overlap implicit assertion autoclosures.
+An exact UIKit renderer callback contract and XCTest expectation construction
+remain supported without granting outgoing effect purity. No project-specific
+function or type names are trusted.
+
+All **305 package tests pass** with Xcode 26.6 debug (173.665 seconds) and
+Xcode 27.0 release. The release run includes the retained replay test:
+**306 tests total**, 141.284 seconds. Compiled controls cover direct, multiline,
+local-function and error-reporting completions as well as all unsafe factory
+variants. Source/archive tests cover missing evidence, external assertion bindings,
+forwarded expressions and overlapping implicit autoclosure locations.
+
+Retained replays select exactly **12 tests for #55** and **125 for #58**, with
+zero diagnostics, and both final reports pass `verify-build`. Scoped selection
+took 11.80/12.85 seconds. Source evidence was refreshed from the retained exports,
+checking unchanged declaration keys and fingerprints. The previously validated
+compiler signatures and products were reused. Original completed bundles remain
+unchanged; no compiler invocation, application build, or application test bodies
+were executed. Full-run equivalence remains a consumer CI adoption check.

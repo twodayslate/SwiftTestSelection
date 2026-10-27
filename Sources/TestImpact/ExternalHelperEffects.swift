@@ -55,7 +55,8 @@ struct ExternalHelperEffects {
         }
     }
 
-    /// Read the declaration's result, not a nested autoclosure's return type.
+    /// Check values leaving an opaque call: its result and callback arguments.
+    /// A void-returning factory can still supply a receiver through a callback.
     /// Foreign reference, existential, generic and pointer results cannot prove
     /// a receiver's class. Value results are inspected through generic wrappers
     /// such as Optional/Array so they cannot hide an imported subclass.
@@ -64,7 +65,8 @@ struct ExternalHelperEffects {
         let values = nodes.map { $0.trimmingCharacters(in: .whitespaces) }
         let depths = nodes.map { $0.prefix { $0 == " " }.count }
         guard values.first == "kind=Global", values.count > 1,
-              !values.contains("kind=InOut") else { return false }
+              !values.contains("kind=InOut"),
+              !values.contains(where: { $0.contains("Pointer") || $0.contains("Unmanaged") }) else { return false }
         func subtree(_ i: Int) -> Range<Int> {
             var end = i + 1
             while end < values.count && depths[end] > depths[i] { end += 1 }
@@ -102,17 +104,25 @@ struct ExternalHelperEffects {
         let opaque = ["DependentGeneric", "ProtocolList", "BuiltinTypeName", "Metatype", "DynamicSelf", "TypeAlias"]
         let typeKinds: Set<String> = ["kind=Structure", "kind=Enum", "kind=BoundGenericStructure", "kind=BoundGenericEnum",
             "kind=Tuple", "kind=Class", "kind=FunctionType", "kind=AutoClosureType", "kind=NoEscapeFunctionType"]
-        for i in result {
-            if values[i] == "kind=Type", i + 1 >= result.upperBound || !typeKinds.contains(values[i + 1]) { return false }
-            if opaque.contains(where: { values[i].contains($0) }) { return false }
-            if values[i] == "kind=Class" {
-                // These SDK classes cannot be subclasses of XCTest receivers.
-                guard i + 2 < result.upperBound, values[i + 1] == "kind=Module, text=\"__C\"",
-                      ["UIImage", "UIView", "NSError", "UIGraphicsImageRendererContext"].contains(where: {
-                          values[i + 2] == "kind=Identifier, text=\"" + $0 + "\""
-                      }) else { return false }
+        // The shallowest argument tuple belongs to the declaration. Deeper
+        // tuples belong to callbacks it can invoke, including callbacks wrapped
+        // in Optional/collections. Their arguments flow back into the caller.
+        let arguments = values.indices.filter { values[$0] == "kind=ArgumentTuple" }
+        let argumentDepth = arguments.map { depths[$0] }.min()
+        let outputs = [result] + arguments.filter { depths[$0] > (argumentDepth ?? Int.max) }.map(subtree)
+        for output in outputs {
+            for i in output {
+                if values[i] == "kind=Type", i + 1 >= output.upperBound || !typeKinds.contains(values[i + 1]) { return false }
+                if opaque.contains(where: { values[i].contains($0) }) { return false }
+                if values[i] == "kind=Class" {
+                    // These SDK classes cannot be subclasses of XCTest receivers.
+                    guard i + 2 < output.upperBound, values[i + 1] == "kind=Module, text=\"__C\"",
+                          ["UIImage", "UIView", "NSError", "UIGraphicsImageRendererContext"].contains(where: {
+                              values[i + 2] == "kind=Identifier, text=\"" + $0 + "\""
+                          }) else { return false }
+                }
+                if values[i].contains("Pointer") || values[i].contains("Unmanaged") { return false }
             }
-            if values[i].contains("Pointer") || values[i].contains("Unmanaged") { return false }
         }
         return true
     }
@@ -186,7 +196,7 @@ struct ExternalHelperEffects {
 
     /// Follow concrete producer edges, not broad scalar-returning protocol
     /// dispatch candidates (e.g. every Equatable implementation in the graph).
-    static func receiverDependencies(_ node: FunctionNode) -> Set<String>? {
+    static func receiverDependencies(_ node: FunctionNode, assertedCallbacks: Set<String> = []) -> Set<String>? {
         guard !node.dynamicDeclarations.isEmpty else { return (node.dynamicCallSignatures?.isEmpty ?? true) ? [] : nil }
         guard let calls = node.dynamicCallSignatures else { return nil }
         var needsTargets = false
@@ -199,8 +209,19 @@ struct ExternalHelperEffects {
             covered.insert(declaration)
             guard let result = call.components(separatedBy: " -> ").last else { return nil }
             let words = Set(result.split { !$0.isLetter && !$0.isNumber && $0 != "_" }.map(String.init))
-            if words.isSubset(of: nonReceiverTypes) || ["XCUIApplication.State", "XCUIElement.ElementType", "XCTWaiter.Result"].contains(result) { continue }
+            // The first two arrows separate the receiver, arguments and result.
+            // Any additional arrow denotes a function-valued channel. Do not
+            // infer safety from a scalar result when callbacks or output buffers
+            // can deliver receivers. Known SDK contracts below remain explicit;
+            // resolved project implementations are followed normally.
+            let arrowParts = call.components(separatedBy: " -> ").count
+            let checkedCallback = arrowParts == 4 && assertedCallbacks.contains(declaration.components(separatedBy: ".").last ?? "")
+            let directOnly = (arrowParts == 3 || checkedCallback) &&
+                !call.contains("inout ") && !call.contains("Pointer") && !call.contains("Unmanaged")
+            if directOnly && (words.isSubset(of: nonReceiverTypes) || ["XCUIApplication.State", "XCUIElement.ElementType", "XCTWaiter.Result"].contains(result)) { continue }
             if sdkDynamicSignatures.contains(call) || [
+                // UIKit supplies an unrelated renderer context, never an XCTest receiver.
+                "objc_method UIGraphicsImageRenderer.image!foreign : (UIGraphicsImageRenderer) -> ((UIGraphicsImageRendererContext) -> ()) -> UIImage",
                 "objc_method XCUIApplication.init!initializer.foreign : (XCUIApplication.Type) -> () -> XCUIApplication",
                 "objc_method XCUIApplication.init!initializer.foreign : (XCUIApplication.Type) -> (String) -> XCUIApplication",
                 "objc_super_method XCTestCase.init!initializer.foreign : (XCTestCase.Type) -> () -> XCTestCase",
@@ -285,7 +306,7 @@ struct ExternalHelperEffects {
         var importedTypes: Set<String> = ["XCTAttachment", "XCUIApplication", "XCUIElement", "XCUIElementType", "XCUIScreenshot",
             "XCTestCase", "XCTest", "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter", "XCTWaiterResult"]
         if receiverOrigins {
-            importedTypes.formUnion(["NSDateFormatter", "UIDeviceOrientation", "XCUIKeyboardKey", "UIContentSizeCategory",
+            importedTypes.formUnion(["XCTestExpectation", "NSDateFormatter", "UIDeviceOrientation", "XCUIKeyboardKey", "UIContentSizeCategory",
                 "UIGraphicsImageRenderer", "UIGraphicsImageRendererFormat", "CGRect", "CGSize", "CGPoint", "CGVector", "XCUIApplicationState"])
         }
         var accepted = Set(owners.filter { modules.contains($0.value) }.keys)

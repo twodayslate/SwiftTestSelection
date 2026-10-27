@@ -278,3 +278,104 @@ func subscriptBindingEvidenceAccountsForImplicitLabelsAndDefaults(declaration: S
     #expect(!ExternalHelperEffects.allowsDynamicReceiverOrigins(node))
     #expect(!ExternalHelperEffects.allowsDynamicCalls(node))
 }
+
+
+@Test(arguments: [false, true]) func receiverOriginChecksCallbackArguments(opaque: Bool) {
+    let argument = opaque ? "Class" : "Structure"
+    let module = opaque ? "Foreign" : "Swift"
+    let name = opaque ? "CustomApp" : "Bool"
+    let tree = """
+    kind=Global
+      kind=Function
+        kind=Module, text="Foreign"
+        kind=Identifier, text="provide"
+        kind=Type
+          kind=FunctionType
+            kind=ArgumentTuple
+              kind=Type
+                kind=NoEscapeFunctionType
+                  kind=ArgumentTuple
+                    kind=Type
+                      kind=\(argument)
+                        kind=Module, text="\(module)"
+                        kind=Identifier, text="\(name)"
+                  kind=ReturnType
+                    kind=Type
+                      kind=Tuple
+            kind=ReturnType
+              kind=Type
+                kind=Tuple
+    """
+    #expect(ExternalHelperEffects.nonReceiverResult(ArraySlice(tree.components(separatedBy: .newlines))) == !opaque)
+}
+
+@Test(arguments: ["(XCUIApplication) -> ()", "((XCUIApplication) -> ())?", "inout XCUIApplication", "UnsafeMutablePointer<XCUIApplication>"])
+func receiverDynamicOutputChannelsRequireProducerEdges(argument: String) {
+    var node = FunctionNode(id: "caller", module: "UI", name: "caller", dependencies: ["direct"], dynamicDeclarations: ["Factory.provide"])
+    node.compilerReferences = ["direct"]
+    node.dynamicCallSignatures = ["objc_method Factory.provide!foreign : (Factory.Type) -> (\(argument)) -> ()"]
+    #expect(ExternalHelperEffects.receiverDependencies(node) == nil)
+    node.resolvedDynamicDeclarations = ["Factory.provide"]
+    node.dependencies.insert("producer")
+    #expect(ExternalHelperEffects.receiverDependencies(node) == ["producer"])
+}
+
+
+@Test(arguments: ["assertion", "stored", "forwarded", "cast", "returned", "implicit", "untrusted", "mixed", "reported", "forwardedMessage"])
+func callbackInputEvidenceRequiresDirectNilAssertions(kind: String) {
+    let closure: String
+    switch kind {
+    case "stored": closure = "value in saved = value"
+    case "forwarded": closure = "value in consume(value)"
+    case "cast": closure = "value in XCTAssertNil(value as? XCUIApplication)"
+    case "returned": closure = "value in return value"
+    case "implicit": closure = "XCTAssertNil($0)"
+    case "reported": closure = #"value in if let value { XCTFail("Failed: \(value)") }; finished.fulfill()"#
+    case "forwardedMessage": closure = #"value in XCTFail("Failed: \(consume(value))")"#
+    default: closure = "value in XCTAssertNil(value); finished.fulfill()"
+    }
+    let other = kind == "mixed" ? "Factory.run { value in saved = value }" : ""
+    let source = "import XCTest\n" + (kind == "untrusted" ? "import Foreign\n" : "") + "func test() { Factory.run { \(closure) }; \(other) }"
+    let snapshot = SwiftSourceSnapshot.parse(source, path: "Tests.swift", module: "UI")
+    let evidence = snapshot.units.first { $0.helperCallableName == "test" }?.assertedCallbackInputs
+    #expect((evidence?["run"]?.isEmpty == false) == ["assertion", "reported"].contains(kind))
+}
+
+@Test(arguments: ["sdk", "external", "missing", "unrelatedClosure"])
+func callbackInputEvidenceRequiresCompilerBindings(kind: String) throws {
+    let source = "import XCTest\nfunc test() { Factory.run { value in XCTAssertNil(value) } }"
+    var snapshot = SwiftSourceSnapshot.parse(source, path: "Tests.swift", module: "UI")
+    if kind == "missing" { for i in snapshot.units.indices { snapshot.units[i].assertedCallbackInputs = nil } }
+    let region = SourceRegion(path: "Tests.swift", startLine: 2, endLine: 2)
+    var caller = FunctionNode(id: "caller", module: "UI", name: "test", regions: [region], dependencies: ["callback"], dynamicDeclarations: ["Factory.run"])
+    caller.compilerReferences = ["callback"]
+    caller.dynamicCallSignatures = ["objc_method Factory.run!foreign : (Factory.Type) -> ((XCUIApplication) -> ()) -> ()"]
+    let assertion = kind == "external" ? "$s7Foreign7consumeyyF" : "$s6XCTest13XCTAssertTrue__4file4lineySbyKXK_SSyXKs12StaticStringVSutF"
+    var callback = FunctionNode(id: "callback", module: "UI", name: "closure #1", regions: [region], dependencies: [assertion])
+    callback.compilerReferences = [assertion]; callback.dynamicCallSignatures = []
+    var functions = [caller.id: caller, callback.id: callback]
+    if kind == "unrelatedClosure" {
+        // An implicit assertion can inherit earlier capture locations, spanning
+        // the real completion despite calling unrelated project helpers.
+        var other = FunctionNode(id: "other", module: "UI", name: "implicit closure #1", regions: [.init(path: "Tests.swift", startLine: 1, endLine: 2)], dependencies: ["$s7Foreign7consumeyyF"])
+        other.compilerReferences = other.dependencies; other.dynamicCallSignatures = []
+        functions[other.id] = other
+        functions[caller.id]!.compilerReferences!.insert(other.id)
+        functions[caller.id]!.dependencies.insert(other.id)
+    }
+    let graph = DependencyGraph(functions: functions, tests: ["UI/Suite/test()": [caller.id]])
+    var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
+    current.sources = ["UI:Tests.swift": snapshot]; current.dependencies = graph
+    let restored = try GraphArchive.decode(GraphArchive.encode(current))
+    var origins = SDKReceiverOrigins()
+    let safe = origins.proves(tests: Set(current.tests), current: restored, graph: try #require(restored.dependencies))
+    #expect(safe == (["sdk", "unrelatedClosure"].contains(kind)))
+}
+
+
+@Test func rendererCallbackDoesNotGrantOutgoingEffectTrust() {
+    var node = FunctionNode(id: "render", module: "UI", name: "render", dynamicDeclarations: ["UIGraphicsImageRenderer.image"])
+    node.dynamicCallSignatures = ["objc_method UIGraphicsImageRenderer.image!foreign : (UIGraphicsImageRenderer) -> ((UIGraphicsImageRendererContext) -> ()) -> UIImage"]
+    #expect(ExternalHelperEffects.receiverDependencies(node) == [])
+    #expect(!ExternalHelperEffects.allowsDynamicCalls(node))
+}
