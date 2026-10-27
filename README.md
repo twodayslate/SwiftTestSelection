@@ -1107,7 +1107,7 @@ trusted `XCTest`, `Foundation`, or `Swift` modules. Project SDK module shadows a
 untrusted re-exports retain fallback. Both revisions must use only
 supported element queries (`exists`, `value`, `isEnabled`, `isHittable`,
 `isSelected`), primitive parameters, local predicates/expectations, and
-`XCTWaiter.wait`. A local `NSPredicate` callback may capture `self` and primitive
+`XCTWaiter.wait`, or bounded `waitForExistence`/`waitForNonExistence` calls. A local `NSPredicate` callback may capture `self` and primitive
 parameters for those queries; predicates and method references cannot escape or
 be stored in shared state. The method name and file path are unrestricted. This
 supports replacing a value predicate with an existence-and-value predicate.
@@ -1117,8 +1117,9 @@ See the [real-project validation](Documentation/Issue58Validation.md) for the
 The proof follows direct helper callers, including source-defined XCTest base
 classes and nonescaping local functions, to bound test entries. The head compiler
 graph must confirm those paths and contain no unaccounted-for callers. Both source
-revisions are checked across the owning test module, including callers outside a
-requested file scope, so removed calls cannot disappear from the proof. This reads
+revisions are checked across all captured source files, including callers outside a
+requested file scope and files captured by another target at head, so removed calls
+and target-membership changes cannot hide old dependencies. This reads
 base source from Git; it does not build the base revision. Base Swift files absent
 from the head inventory are also inspected. References to the helper or its caller
 chain in those files retain an explicit fallback because their old module ownership
@@ -1138,6 +1139,13 @@ SDK query contract, not measured coverage or a general SDK effect analysis.
 A mixed review still processes every other change normally; isolated helpers do
 not suppress production, configuration, graph, or build-evidence fallbacks. Scoped
 queries can use the same single captured head graph to separate those policies.
+Private-helper effect evidence records the exact checked declarations. Both source
+revisions must have unambiguous private callee bindings, and every project callee
+reached in the head compiler graph must belong to a checked declaration. An inherited
+overload or an unchecked project extension retains `head_only_helper_callee_effects`
+fallback. Private proof version 5 and SDK proof version 3 reject older saved evidence. Caller
+proofs use a memoized work queue rather than recursive stack frames.
+
 Dependency explanations identify the verified private-helper proof. No baseline
 build, additional SIL extraction, or user-maintained helper mapping is required.
 

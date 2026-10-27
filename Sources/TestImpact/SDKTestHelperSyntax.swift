@@ -10,7 +10,7 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
     public var name: String
     public var blocker: String?
     public var queriedMembers: Set<String> = []
-    static let currentVersion = 2
+    static let currentVersion = 3
     static let trustedModules: Set<String> = ["XCTest", "Foundation", "Swift"]
 
     public struct References: Codable, Sendable {
@@ -130,7 +130,7 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
             evidence.blocker = "Helper file imports modules outside the trusted XCTest/Foundation/Swift boundary"; return evidence
         }
         evidence.queriedMembers = Set(function.tokens(viewMode: .sourceAccurate).map(\.text)).intersection(
-            ["exists", "value", "isEnabled", "isHittable", "isSelected", "evaluate", "wait"])
+            ["exists", "value", "isEnabled", "isHittable", "isSelected", "evaluate", "wait", "waitForExistence", "waitForNonExistence"])
         guard callerSupported(function), ext.inheritanceClause == nil, ext.genericWhereClause == nil,
               function.genericParameterClause == nil, function.genericWhereClause == nil,
               function.signature.effectSpecifiers == nil, function.signature.returnClause?.type.trimmedDescription == "Bool" else {
@@ -197,6 +197,16 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
                 if let op = expression.as(BinaryOperatorExprSyntax.self) { return ["==", "!=", "&&", "||"].contains(op.operator.text) }
                 if let cast = expression.as(UnresolvedAsExprSyntax.self) { return cast.questionOrExclamationMark?.text == "?" }
                 if let type = expression.as(TypeExprSyntax.self) { return type.type.trimmedDescription == "String" }
+                if let call = expression.as(FunctionCallExprSyntax.self) {
+                    let bare = call.calledExpression.as(DeclReferenceExprSyntax.self)?.baseName.text
+                    let member = call.calledExpression.as(MemberAccessExprSyntax.self)
+                    let name = bare ?? (member?.base.map(isSelf) == true ? member?.declName.baseName.text : nil)
+                    if let name, ["waitForExistence", "waitForNonExistence"].contains(name), arguments(call, ["timeout"]),
+                       let timeout = call.arguments.first?.expression,
+                       locals[timeout.trimmedDescription] == .number || timeout.is(IntegerLiteralExprSyntax.self) || timeout.is(FloatLiteralExprSyntax.self) {
+                        waited = true; return true
+                    }
+                }
                 guard let call = expression.as(FunctionCallExprSyntax.self), let member = call.calledExpression.as(MemberAccessExprSyntax.self),
                       let receiver = member.base?.as(DeclReferenceExprSyntax.self)?.baseName.text else { return false }
                 if locals[receiver] == .predicate && member.declName.baseName.text == "evaluate" {
@@ -234,6 +244,9 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
                 return true
             }
             guard let body = function.body else { return false }
+            if body.statements.count == 1, let expression = body.statements.first?.item.as(ExprSyntax.self) {
+                return query(expression) && waited
+            }
             return statements(body.statements) && waited
         }
     }

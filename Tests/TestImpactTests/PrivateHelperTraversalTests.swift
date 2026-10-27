@@ -71,7 +71,7 @@ func privateHelperAttachmentsRetainSharedStateChecks(location: String) throws {
     #expect(!isolated)
     #expect(report.selectedTests == tests.sorted())
     #expect(report.diagnostics.contains { $0.code == "head_only_helper_shared_state" })
-    for version in [nil, 1, 2, 3, PrivateTestHelperSyntax.currentProofVersion + 1] as [Int?] {
+    for version in [nil, 1, 2, 3, 4, PrivateTestHelperSyntax.currentProofVersion + 1] as [Int?] {
         var stale = current
         for i in stale.sources["UI:UI.swift"]!.units.indices {
             stale.sources["UI:UI.swift"]!.units[i].privateTestHelper?.proofVersion = version

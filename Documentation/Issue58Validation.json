@@ -6,8 +6,8 @@
   "headBuilds": 1,
   "baselineBuilds": 0,
   "appTestBodiesExecuted": false,
-  "elapsedSeconds": 232.570843083,
-  "scopeSeconds": 5.512614011764526,
+  "elapsedSeconds": 383.90360091599996,
+  "scopeSeconds": 42.24066710472107,
   "totalTests": 2000,
   "scopeDiagnostics": [],
   "matchesAllHistoricalCompilerConsumers": true,
@@ -147,6 +147,7 @@
   "extractionDiagnostics": [],
   "toolchain": "Xcode 27.0",
   "destination": "iPhone 17 Pro simulator, iOS 26.2",
-  "sdkHelperProofVersion": 2,
-  "privateHelperProofVersion": 4
+  "sdkHelperProofVersion": 3,
+  "privateHelperProofVersion": 5,
+  "measurementContext": "Fresh capture; concurrent release tests and another project build ran on the same host."
 }

@@ -11,6 +11,7 @@ enum PrivateTestHelperIsolation {
     struct Traversal {
         fileprivate var active = Set<String>()
         fileprivate var completed: [String: Bool] = [:]
+        fileprivate var sdkEffectIDs: [String: Set<String>] = [:]
         private(set) var evaluationCount = 0
         fileprivate(set) var sharedStateSymbols = Set<String>()
         fileprivate(set) var hasUnprovenCalleeEffects = false
@@ -30,18 +31,54 @@ enum PrivateTestHelperIsolation {
     static func proves(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
                        base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex,
                        traversal: inout Traversal) -> Bool {
-        guard !traversal.active.contains(unit.key) else { return false }
-        if let completed = traversal.completed[unit.key] { return completed }
-        traversal.begin(unit.key)
-        let result = provesUncached(unit, previous: previous, current: current, base: base, graph: graph, index: index, traversal: &traversal)
-        traversal.active.remove(unit.key)
-        traversal.completed[unit.key] = result
-        return result
+        // Keep the graph traversal on the heap. Even modest chains overflow
+        // Swift Testing's worker stack in unoptimized builds with recursive proofs.
+        enum Work {
+            case enter(SourceUnit, SourceUnit?)
+            case finish(Prepared)
+        }
+        var pending: [Work] = [.enter(unit, previous)]
+        while let work = pending.popLast() {
+            switch work {
+            case let .enter(candidate, prior):
+                if traversal.completed[candidate.key] != nil { continue }
+                guard !traversal.active.contains(candidate.key) else {
+                    traversal.completed[candidate.key] = false
+                    continue
+                }
+                traversal.begin(candidate.key)
+                guard let proof = prepare(candidate, previous: prior, current: current, base: base,
+                                          graph: graph, index: index, traversal: &traversal) else {
+                    traversal.active.remove(candidate.key)
+                    traversal.completed[candidate.key] = false
+                    continue
+                }
+                pending.append(.finish(proof))
+                for (caller, old) in proof.helpers.reversed() { pending.append(.enter(caller, old)) }
+            case let .finish(proof):
+                let key = proof.unit.key
+                let callersProven = proof.helpers.allSatisfy { traversal.completed[$0.0.key] == true }
+                let result = traversal.completed[key] != false && callersProven &&
+                    finish(proof, current: current, graph: graph, index: index, traversal: &traversal)
+                traversal.active.remove(key)
+                traversal.completed[key] = result
+            }
+        }
+        return traversal.completed[unit.key] == true
     }
 
-    private static func provesUncached(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
-                                      base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex,
-                                      traversal: inout Traversal) -> Bool {
+    private struct Prepared {
+        var unit: SourceUnit
+        var syntax: PrivateTestHelperSyntax
+        var ids: Set<String>
+        var effectIDs: Set<String>
+        var callers: [SourceUnit]
+        var helpers: [(SourceUnit, SourceUnit)]
+    }
+
+    private static func prepare(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
+                                base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex,
+                                traversal: inout Traversal) -> Prepared? {
         if [unit.privateTestHelper, previous?.privateTestHelper].compactMap({ $0 }).contains(where: {
             $0.proofVersion == PrivateTestHelperSyntax.currentProofVersion && $0.calleeEffectsSupported != true
         }) { traversal.hasUnprovenCalleeEffects = true }
@@ -52,39 +89,66 @@ enum PrivateTestHelperIsolation {
               current.tests.allSatisfy({ test in
                   guard let roots = graph.tests[test], !roots.isEmpty, graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
                   return roots.allSatisfy { graph.functions[$0] != nil }
-              }) else { return false }
-        guard contextAllows(unit, name: syntax.name, existed: previous != nil, current: current, base: base) else { return false }
+              }) else { return nil }
+        guard contextAllows(unit, name: syntax.name, existed: previous != nil, current: current, base: base) else { return nil }
         let module = String(unit.key.prefix { $0 != ":" })
         let headUnits = current.sources.values.flatMap(\.units), baseUnits = base.values.flatMap(\.units)
         let ids = symbols(unit, graph: graph, index: index)
-        guard !ids.isEmpty else { return false }
-        let paths = index.paths(to: ids)
+        guard !ids.isEmpty else { return nil }
         var callers = headUnits.filter { $0.region.path == unit.region.path && $0.key.hasPrefix(module + ":") &&
             $0.kind == "function" && syntax.callerLines.contains($0.region.startLine) }
-        guard callers.count == syntax.callerLines.count else { return false }
+        guard callers.count == syntax.callerLines.count else { return nil }
         if let previous, let oldSyntax = previous.privateTestHelper {
             let oldCallers = baseUnits.filter { $0.region.path == previous.region.path && $0.key.hasPrefix(module + ":") &&
                 $0.kind == "function" && oldSyntax.callerLines.contains($0.region.startLine) }
-            guard oldCallers.count == oldSyntax.callerLines.count else { return false }
+            guard oldCallers.count == oldSyntax.callerLines.count else { return nil }
             // Changed/deleted headers have no historical graph proof. Even old
             // callers which stopped calling the helper must survive as entries.
             for old in oldCallers {
                 let surviving = headUnits.filter { $0.key == old.key && $0.region.path == old.region.path }
-                guard surviving.count == 1 else { return false }
+                guard surviving.count == 1 else { return nil }
                 callers += surviving
             }
         }
         callers = Dictionary(grouping: callers, by: \.key).values.compactMap(\.first)
+        var helpers: [(SourceUnit, SourceUnit)] = []
         for caller in callers {
-            guard caller.headOnlyBodySupported == true else { return false }
+            guard caller.headOnlyBodySupported == true else { return nil }
             if XcodeFineSelector.isTestEntry(caller, in: current) { continue }
             let old = baseUnits.filter { $0.key == caller.key && $0.region.path == caller.region.path }
             // Only unchanged intermediate helpers may extend the inbound proof.
             // In particular, a head graph says nothing about removed old effects.
             guard old.count == 1, let prior = old.first,
-                  caller.privateTestHelper?.statements?.map(\.signature) == prior.privateTestHelper?.statements?.map(\.signature),
-                  proves(caller, previous: prior, current: current, base: base, graph: graph, index: index, traversal: &traversal) else { return false }
+                  caller.privateTestHelper?.statements?.map(\.signature) == prior.privateTestHelper?.statements?.map(\.signature) else { return nil }
+            helpers.append((caller, prior))
         }
+        guard let effectUnits = effectDeclarations(unit, syntax: syntax, sources: current.sources),
+              previous == nil || effectDeclarations(previous!, syntax: previous!.privateTestHelper!, sources: base) != nil else {
+            traversal.hasUnprovenCalleeEffects = true
+            return nil
+        }
+        if traversal.sdkEffectIDs[module] == nil {
+            let sdk = headUnits.filter { $0.key.hasPrefix(module + ":") && $0.sdkTestHelper?.version == SDKTestHelperSyntax.currentVersion &&
+                $0.sdkTestHelper?.blocker == nil && $0.headOnlyBodySupported == true }
+            let supported = sdk.filter { callee in
+                let owners = current.targets.filter { $0.sourceFiles.contains(callee.region.path) }
+                let old = baseUnits.filter { $0.key == callee.key && $0.region.path == callee.region.path }
+                return !owners.isEmpty && owners.allSatisfy { $0.isTest && !$0.hasProductionRole && current.modules[$0.name] == module } &&
+                    old.count == 1 && old[0].headOnlyBodySupported == true && old[0].sdkTestHelper?.version == SDKTestHelperSyntax.currentVersion && old[0].sdkTestHelper?.blocker == nil
+            }
+            let queries = Set(supported.flatMap { $0.sdkTestHelper!.queriedMembers }).union(
+                baseUnits.filter { old in supported.contains { $0.key == old.key && $0.region.path == old.region.path } }.compactMap(\.sdkTestHelper).flatMap(\.queriedMembers))
+            traversal.sdkEffectIDs[module] = SDKTestHelperIsolation.environmentBlocker(current: current, base: base, queriedMembers: queries) == nil
+                ? supported.reduce(into: Set<String>()) { $0.formUnion(symbols($1, graph: graph, index: index)) } : []
+        }
+        let effectIDs = effectUnits.reduce(into: traversal.sdkEffectIDs[module] ?? []) { $0.formUnion(symbols($1, graph: graph, index: index)) }
+        return Prepared(unit: unit, syntax: syntax, ids: ids, effectIDs: effectIDs, callers: callers, helpers: helpers)
+    }
+
+    private static func finish(_ proof: Prepared, current: XcodeTestGraph, graph: DependencyGraph,
+                               index: DependencyIndex, traversal: inout Traversal) -> Bool {
+        let callers = proof.callers, syntax = proof.syntax, ids = proof.ids
+        let paths = index.paths(to: ids)
         let entries = callers.filter { XcodeFineSelector.isTestEntry($0, in: current) }
         let entrySymbols = entries.reduce(into: Set<String>()) { $0.formUnion(symbols($1, graph: graph, index: index)) }
         let helperSymbols = callers.filter { !XcodeFineSelector.isTestEntry($0, in: current) }
@@ -104,7 +168,7 @@ enum PrivateTestHelperIsolation {
         // including extension helpers reached from the changed body. SDK runtime
         // uncertainty alone is not a route into this private, nonescaping method.
         let projectModules = Set(current.modules.values)
-        var pending = Array(ids), visited = Set<String>()
+        var pending = Array(ids), visited = Set<String>(), effectsSupported = true
         while let id = pending.popLast() {
             guard visited.insert(id).inserted, let node = graph.functions[id] else { continue }
             // XCTest attachment setters do not require a blanket effect
@@ -114,11 +178,46 @@ enum PrivateTestHelperIsolation {
             if projectModules.contains(node.module) && node.hasProjectRuntimeContext &&
                 !node.uncertainties.isDisjoint(with: unsafeEffects) {
                 if node.uncertainties.contains("Shared state access") { traversal.sharedStateSymbols.insert(id) }
-                return false
+                effectsSupported = false
+            }
+            if projectModules.contains(node.module) && node.hasProjectRuntimeContext && !proof.effectIDs.contains(id) {
+                traversal.hasUnprovenCalleeEffects = true
+                effectsSupported = false
             }
             pending += node.dependencies.filter { graph.functions[$0].map { projectModules.contains($0.module) } ?? false }
         }
-        return true
+        return effectsSupported
+    }
+
+    /// The source effect walk is deliberately not an overload resolver. Reject
+    /// competing same-class, inherited or global declarations at both revisions,
+    /// then check the actual head compiler callees against the resulting regions.
+    private static func effectDeclarations(_ unit: SourceUnit, syntax: PrivateTestHelperSyntax,
+                                           sources: [String: SwiftSourceSnapshot]) -> [SourceUnit]? {
+        guard let lines = syntax.effectCalleeLines, !lines.isEmpty else { return nil }
+        let module = String(unit.key.prefix { $0 != ":" })
+        let snapshots = sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value)
+        let units = snapshots.flatMap(\.units)
+        var scopes: Set<String> = ["", unit.scope], pending = [unit.scope]
+        while let name = pending.popLast() {
+            let qualified = name.hasPrefix(module + ".") ? name : module + "." + name
+            for snapshot in snapshots {
+                if let parent = snapshot.helperSafeClasses?[qualified] {
+                    let local = parent.hasPrefix(module + ".") ? String(parent.dropFirst(module.count + 1)) : parent
+                    if scopes.insert(local).inserted { pending.append(local) }
+                }
+            }
+        }
+        var result: [SourceUnit] = []
+        for (name, line) in lines {
+            let matches = units.filter { $0.kind == "function" && $0.helperCallableName == name &&
+                (scopes.contains($0.scope) || scopes.contains(String($0.scope.dropFirst(module.count + 1))) && $0.scope.hasPrefix(module + ".")) }
+            guard matches.count == 1, let declaration = matches.first,
+                  declaration.scope == unit.scope, declaration.region.path == unit.region.path,
+                  declaration.region.startLine == line else { return nil }
+            result.append(declaration)
+        }
+        return result
     }
 
     static func provesAddedEntry(_ unit: SourceUnit, current: XcodeTestGraph,

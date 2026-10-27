@@ -10,13 +10,16 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    static let currentProofVersion = 4
+    static let currentProofVersion = 5
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
     public var localAttachmentState: Bool? = nil
     /// Every direct private callee has a supported transitive effect body.
     public var calleeEffectsSupported: Bool? = nil
+    /// Exact same-class declarations whose bodies were checked, including self.
+    /// Compiler callees must belong to these regions, not merely share a name.
+    public var effectCalleeLines: [String: Int]? = nil
 
     public struct Statement: Codable, Sendable {
         public var signature: String
@@ -130,9 +133,10 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             callers.insert(locations.location(for: caller.positionAfterSkippingLeadingTrivia).line)
         }
         guard !callers.isEmpty else { return nil }
-        let effects = safeCalleeEffects(function, in: type)
+        var effectCallees: [String: Int] = [:]
+        let effects = safeCalleeEffects(function, in: type, locations: locations, proven: &effectCallees)
         return Self(name: name, callerLines: callers, proofVersion: currentProofVersion, statements: statements(in: function),
-                    localAttachmentState: attachmentState || (effects ?? false), calleeEffectsSupported: effects != nil)
+                    localAttachmentState: attachmentState || (effects ?? false), calleeEffectsSupported: effects != nil, effectCalleeLines: effects == nil ? nil : effectCallees)
     }
 
     /// Added entries may be omitted only under an explicit separate-execution
@@ -153,7 +157,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     /// Outbound effects are separate from the inbound caller proof: walking
     /// both directions in one recursion would falsely reject ordinary chains.
     /// A nil result is unsupported; true propagates local attachment effects.
-    private static func safeCalleeEffects(_ function: FunctionDeclSyntax, in type: ClassDeclSyntax) -> Bool? {
+    private static func safeCalleeEffects(_ function: FunctionDeclSyntax, in type: ClassDeclSyntax,
+                                          locations: SourceLocationConverter, proven: inout [String: Int]) -> Bool? {
         let methods = Dictionary(grouping: type.memberBlock.members.compactMap { $0.decl.as(FunctionDeclSyntax.self) }
             .filter { $0.modifiers.map(\.name.text) == ["private"] }, by: { $0.name.text })
         var active = Set<SyntaxIdentifier>(), failed = Set<SyntaxIdentifier>()
@@ -178,7 +183,11 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
                 }
                 return attachments
             }
-            if let result = check() { completed[function.id] = result; return result }
+            if let result = check() {
+                completed[function.id] = result
+                proven[function.name.text] = locations.location(for: function.positionAfterSkippingLeadingTrivia).line
+                return result
+            }
             failed.insert(function.id)
             return nil
         }

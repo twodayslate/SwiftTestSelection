@@ -14,9 +14,11 @@ All explanations have kind `dependency` and identify the SDK-helper proof.
 
 One head build captured supplementary SIL for all ten modules, with no compiler
 replay or extraction diagnostics. No base build or baseline graph was supplied.
-Build, capture and selection took **232.57 seconds**; the additional scoped query
-took **5.51 seconds**. Both the primary and scoped reports passed `verify-build`
-against the retained products. The primary report still selects the full inventory
+Build, capture and selection took **383.90 seconds**; the additional scoped query
+took **42.24 seconds**. Both the primary and scoped reports passed `verify-build`
+against the retained products. This run overlapped release tests and another
+project build on the same host; it is not a controlled performance comparison.
+The expanded cross-target base audit is included in the scope timing. The primary report still selects the full inventory
 for other changes in the review; scoped helper precision does not waive those
 fallbacks. This is selection/build-compatibility evidence, not a full-versus-selected
 execution comparison: no application test bodies were executed.
@@ -83,3 +85,18 @@ unrelated base-only file. A fresh #55 capture still selects 12 of 1,972 tests wi
 zero scope diagnostics; its build/capture/selection took 259.18 seconds and its
 scope took 2.55 seconds. Both primary and scope reports passed retained-product
 verification.
+
+The follow-up binding review adds exact declaration evidence (private proof
+version 5), rejects inherited/global overload ambiguity at both source revisions,
+and checks compiler callees against the proved effects. Read-only SDK waiting
+wrappers use SDK proof version 3, including bounded existence/nonexistence waits.
+The base audit now reads captured files across targets as well as base-only files,
+so a target-membership change cannot conceal an old caller.
+
+The Xcode 26.6 debug CI crash was reproduced as a worker-thread stack overflow in
+`PrivateTestHelperIsolation`. Replacing recursive caller proofs with a memoized
+work queue fixes the existing depth-25 diamond regression. All 257 tests pass in
+both Xcode 26.6 debug and Xcode 27.0 release builds. The additional compiled cases
+cover same-file/separate-file inherited overloads, base-only ambiguity, unproved
+project effects, and a caller file moved to another target. Python capture tests
+pass (6); distribution tests pass (6 run, one platform-dependent skip).

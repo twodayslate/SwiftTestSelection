@@ -28,21 +28,8 @@ enum SDKTestHelperIsolation {
         let captured = Set(headSources.keys.map { String($0.dropFirst(module.count + 1)) })
         guard current.targets.filter({ current.modules[$0.name] == module }).allSatisfy({ Set($0.sourceFiles).isSubset(of: captured) }),
               Set(headSources.keys) == Set(baseSources.keys) else { return "Missing base/head module sources" }
-        let sources = Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)
-        guard sources.allSatisfy({ $0.diagnostics.isEmpty && $0.helperReferences != nil && $0.sdkHelperNamesUnshadowed == true && $0.dispatchMembers != nil && $0.dispatchOverrides != nil && $0.superclasses != nil }) else { return "Missing reference evidence or shadowed XCTest/query/operator names" }
-        let sdkClasses: Set<String> = ["XCUIElement", "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter"]
-        guard sources.allSatisfy({ snapshot in
-            snapshot.superclasses!.values.flatMap { $0 }.allSatisfy { !sdkClasses.contains($0.split(separator: ".").last.map(String.init) ?? $0) }
-        }) else { return "Project subclass can override the trusted SDK query APIs" }
-        let queryOverrides = evidence.queriedMembers.union(old.queriedMembers)
-        guard sources.allSatisfy({ snapshot in
-            snapshot.dispatchOverrides!.allSatisfy { !queryOverrides.contains($0.split(separator: ".").last.map(String.init) ?? $0) }
-        }) else { return "Project override can replace a trusted SDK query (including through a type alias)" }
-        let protected: Set<String> = ["XCUIElement.exists", "XCUIElement.value", "XCUIElement.isEnabled", "XCUIElement.isHittable", "XCUIElement.isSelected",
-            "NSPredicate.evaluate", "NSPredicate.init", "XCTNSPredicateExpectation.init", "XCTWaiter.wait"]
-        guard sources.allSatisfy({ snapshot in
-            snapshot.dispatchMembers!.allSatisfy { member in !protected.contains(member) && !protected.contains(String(member.split(separator: ".").suffix(2).joined(separator: "."))) }
-        }) else { return "Project declarations shadow the trusted SDK query APIs" }
+        if let reason = environmentBlocker(current: current, base: base, unownedBase: unownedBase,
+                                           queriedMembers: evidence.queriedMembers.union(old.queriedMembers)) { return reason }
         let headUnits = headSources.values.flatMap(\.units), oldUnits = baseSources.values.flatMap(\.units)
         let byKey = Dictionary(grouping: headUnits, by: \.key), oldByKey = Dictionary(grouping: oldUnits, by: \.key)
         let headByFile = Dictionary(grouping: headUnits.filter { $0.kind == "function" }, by: { $0.region.path })
@@ -150,4 +137,27 @@ enum SDKTestHelperIsolation {
         }
         return nil
     }
+    /// Shared effect boundary for changed SDK helpers and SDK callees reached
+    /// from private helpers; caller closure is a separate proof.
+    static func environmentBlocker(current: XcodeTestGraph, base: [String: SwiftSourceSnapshot],
+                                   unownedBase: [String: SwiftSourceSnapshot] = [:], queriedMembers: Set<String>) -> String? {
+        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedModules) else { return "Project module shadows a trusted SDK module" }
+        let sources = Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)
+        guard sources.allSatisfy({ $0.diagnostics.isEmpty && $0.helperReferences != nil && $0.sdkHelperNamesUnshadowed == true && $0.dispatchMembers != nil && $0.dispatchOverrides != nil && $0.superclasses != nil }) else { return "Missing reference evidence or shadowed XCTest/query/operator names" }
+        let sdkClasses: Set<String> = ["XCUIElement", "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter"]
+        guard sources.allSatisfy({ snapshot in
+            snapshot.superclasses!.values.flatMap { $0 }.allSatisfy { !sdkClasses.contains($0.split(separator: ".").last.map(String.init) ?? $0) }
+        }) else { return "Project subclass can override the trusted SDK query APIs" }
+        let queryOverrides = queriedMembers
+        guard sources.allSatisfy({ snapshot in
+            snapshot.dispatchOverrides!.allSatisfy { !queryOverrides.contains($0.split(separator: ".").last.map(String.init) ?? $0) }
+        }) else { return "Project override can replace a trusted SDK query (including through a type alias)" }
+        let protected: Set<String> = ["XCUIElement.exists", "XCUIElement.value", "XCUIElement.isEnabled", "XCUIElement.isHittable", "XCUIElement.isSelected",
+            "NSPredicate.evaluate", "NSPredicate.init", "XCTNSPredicateExpectation.init", "XCTWaiter.wait", "XCUIElement.waitForExistence", "XCUIElement.waitForNonExistence"]
+        guard sources.allSatisfy({ snapshot in
+            snapshot.dispatchMembers!.allSatisfy { member in !protected.contains(member) && !protected.contains(String(member.split(separator: ".").suffix(2).joined(separator: "."))) }
+        }) else { return "Project declarations shadow the trusted SDK query APIs" }
+        return nil
+    }
+
 }

@@ -148,3 +148,133 @@ func privateHelperAssertionsValidateCalleeEffects(scenario: String) throws {
         #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
     }
 }
+
+@Test(arguments: ["sameFile", "otherFile", "baseOnly"])
+func privateHelperRejectsInheritedOverloadBinding(scenario: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-binding-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    var before = """
+    import XCTest
+    @MainActor class Base: XCTestCase {
+        func action(_ value: Int) -> Bool {
+            UserDefaults.standard.set(true, forKey: "shared-mode")
+            return true
+        }
+    }
+    @MainActor final class Suite: Base {
+        func testCaller() { candidate() }
+        private func candidate() {
+            XCTAssertTrue(true)
+        }
+        private func action(_ value: String) -> Bool { return true }
+    }
+    @MainActor final class Other: XCTestCase {
+        func testObserve() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "shared-mode")) }
+    }
+    """
+    let inherited = """
+    @MainActor class Base: XCTestCase {
+        func action(_ value: Int) -> Bool {
+            UserDefaults.standard.set(true, forKey: "shared-mode")
+            return true
+        }
+    }
+    """
+    if scenario == "baseOnly" {
+        before = before.replacingOccurrences(of: "XCTAssertTrue(true)", with: "XCTAssertTrue(action(\"value\"))")
+    }
+    var after = scenario == "baseOnly"
+        ? before.replacingOccurrences(of: inherited, with: "@MainActor class Base: XCTestCase {}")
+            .replacingOccurrences(of: "XCTAssertTrue(action(\"value\"))", with: "XCTAssertTrue(action(\"value\")); XCTAssertTrue(true)")
+        : before.replacingOccurrences(of: "XCTAssertTrue(true)", with: "XCTAssertTrue(true); XCTAssertTrue(action(1))")
+    var files: [String: String] = [:], base: [String: SwiftSourceSnapshot] = [:]
+    if scenario == "otherFile" {
+        before = before.replacingOccurrences(of: inherited, with: "")
+        after = after.replacingOccurrences(of: inherited, with: "")
+        files["Base.swift"] = "import XCTest\n" + inherited
+        base["UI:Base.swift"] = .parse(files["Base.swift"]!, path: "Base.swift", module: "UI")
+    }
+    files["UI.swift"] = after
+    let tests = ["UI/Suite/testCaller()", "UI/Other/testObserve()"]
+    let current = try boundaryGraph(files, tests: tests, root: root)
+    base["UI:UI.swift"] = .parse(before, path: "UI.swift", module: "UI")
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base, mappings: current.mappings), changes: [.init(path: "UI.swift")], baseRevision: "base")
+    let graph = current.dependencies!
+    let effect = Set(graph.functions.values.filter { $0.name.contains("Base.action(") }.map(\.id))
+    if scenario != "baseOnly" { #expect(DependencyIndex(graph).paths(to: effect).path(from: graph.tests[tests[0]]!) != nil) }
+    #expect(report.selectedTests == tests.sorted())
+    #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
+}
+
+@Test func sdkHelperScopesAuditSourcesMovedToAnotherTarget() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-target-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let tests = ["UI/Sharing/testChange()", "UI/Sharing/testAnother()", "UI/Notes/testUnrelated()"]
+    let files = ["Waiting.swift": newSDKQuery, "Tests.swift": sdkQueryCallers]
+    var current = try boundaryGraph(files, tests: tests, root: root)
+    let movedHead = "func unrelated() {}"
+    try Data(movedHead.utf8).write(to: root.appendingPathComponent("Moved.swift"))
+    let sil = root.appendingPathComponent("Other.sil")
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-module-name", "Other", root.appendingPathComponent("Moved.swift").path, "-o", sil.path], at: root)
+    let parsed = try SILParser.parse(file: sil, module: "Other", sourceRoot: root)
+    current.dependencies!.functions.merge(parsed.functions) { _, new in new }
+    current.targets.append(.init(name: "Other", productType: "com.apple.product-type.framework", sourceFiles: ["Moved.swift"]))
+    current.modules["Other"] = "Other"
+    current.sources["Other:Moved.swift"] = .parse(movedHead, path: "Moved.swift", module: "Other")
+    let movedBase = "import XCTest\n@MainActor func oldRoute() { XCTAssertTrue(XCUIApplication().buttons[\"toggle\"].checkValue(\"1\")) }"
+    let baseTests = sdkQueryCallers.replacingOccurrences(of: "func testUnrelated() { XCTAssertTrue(evaluate { true }) }", with: "func testUnrelated() { oldRoute() }")
+    for (path, text) in ["Waiting.swift": oldSDKQuery, "Tests.swift": baseTests, "Moved.swift": movedBase] {
+        try Data(text.utf8).write(to: root.appendingPathComponent(path))
+    }
+    try JSONEncoder().encode(current.mappings).write(to: root.appendingPathComponent(".swift-test-selection.json"))
+    _ = try CommandRunner.run("git", ["init", "-q"], at: root)
+    _ = try CommandRunner.run("git", ["add", "Waiting.swift", "Tests.swift", "Moved.swift", ".swift-test-selection.json"], at: root)
+    _ = try CommandRunner.run("git", ["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "base"], at: root)
+    for (path, text) in files.merging(["Moved.swift": movedHead], uniquingKeysWith: { _, new in new }) {
+        try Data(text.utf8).write(to: root.appendingPathComponent(path))
+    }
+    let source = try XcodeHeadOnlySources.read(current: current, changes: [.init(path: "Waiting.swift")], base: "HEAD", root: root, mappingPath: ".swift-test-selection.json")
+    #expect(source.base["Other:Moved.swift"]?.identifierNames?.contains("checkValue") == true)
+    let scopes = try XcodeHeadOnlySelector.scopedReports(current: current,
+        requests: .init(scopes: [.init(name: "waiting", paths: ["Waiting.swift"])]),
+        changes: [.init(path: "Waiting.swift"), .init(path: "Tests.swift"), .init(path: "Moved.swift")],
+        baseRevision: "HEAD", headRevision: "head", root: root, mappingPath: ".swift-test-selection.json",
+        documentation: [], buildEvidenceFailure: nil)
+    let report = try #require(scopes.first?.report)
+    #expect(report.selectedTests == tests.sorted())
+    #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" })
+}
+
+@Test func privateHelperRejectsUnprovenCompiledCallee() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("helper-compiled-effects-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCaller() { candidate(XCUIApplication().buttons["toggle"]) }
+        private func candidate(_ element: XCUIElement) {
+            XCTAssertTrue(true)
+        }
+    }
+    @MainActor extension XCUIElement {
+        func changeMode() -> Bool {
+            UserDefaults.standard.set(true, forKey: "shared-mode")
+            return true
+        }
+    }
+    @MainActor final class Other: XCTestCase {
+        func testObserve() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "shared-mode")) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "XCTAssertTrue(true)", with: "XCTAssertTrue(true); XCTAssertTrue(element.changeMode())")
+    let tests = ["UI/Suite/testCaller()", "UI/Other/testObserve()"]
+    var current = try boundaryGraph(["UI.swift": after], tests: tests, root: root)
+    current = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(current))
+    let base = ["UI:UI.swift": SwiftSourceSnapshot.parse(before, path: "UI.swift", module: "UI")]
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base, mappings: current.mappings), changes: [.init(path: "UI.swift")], baseRevision: "base")
+    #expect(report.selectedTests == tests.sorted())
+    #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
+}
