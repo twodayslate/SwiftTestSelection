@@ -933,3 +933,91 @@ func privateAttachmentAuditsHistoricalBindings(scenario: String) throws {
     let externalOverride = SwiftSourceSnapshot.parse("import XCTest\nextension XCTAttachment { convenience init(screenshot: XCUIScreenshot) { fatalError() } }", path: "External.swift", module: "Other")
     #expect(!SDKTestHelperIsolation.memberBindingsUnshadowed(revisions: [[externalOverride], []], members: ["init"], sdkOwners: owners))
 }
+
+@Test func privateHelperRejectsCrossFileImportedEffect() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-import-history-" + UUID().uuidString)
+    let externalRoot = FileManager.default.temporaryDirectory.appendingPathComponent("review57-external-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: externalRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: externalRoot) }
+    let external = """
+    import XCTest
+    extension XCUIApplication {
+        @MainActor public func markReviewFlag() -> Bool {
+            UserDefaults.standard.set(true, forKey: "review57-sharedFlag")
+            return true
+        }
+    }
+    """
+    let source = externalRoot.appendingPathComponent("AttachmentSupport.swift")
+    try Data(external.utf8).write(to: source)
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "AttachmentSupport", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", source.path, "-emit-module-path", externalRoot.appendingPathComponent("AttachmentSupport.swiftmodule").path], at: root)
+    let before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCapture() { capture(XCUIApplication()) }
+        private func capture(_ app: XCUIApplication) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            add(attachment)
+        }
+        func testConsume() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "review57-sharedFlag")) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "add(attachment)", with: "add(attachment); XCTAssertTrue(app.markReviewFlag())")
+    let tests = ["UI/Suite/testCapture()", "UI/Suite/testConsume()"]
+    let old = try boundaryGraph(["Tests.swift": before, "Imports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
+    try JSONEncoder().encode(old.mappings).write(to: root.appendingPathComponent(".swift-test-selection.json"))
+    _ = try CommandRunner.run("git", ["init", "-q"], at: root)
+    _ = try CommandRunner.run("git", ["add", "Tests.swift", "Imports.swift", ".swift-test-selection.json"], at: root)
+    _ = try CommandRunner.run("git", ["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "base"], at: root)
+    let current = try boundaryGraph(["Tests.swift": after, "Imports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
+    let graph = try #require(current.dependencies)
+    let importedReferences = Set(graph.functions.values.flatMap(\.dependencies).filter { $0.contains("AttachmentSupport") })
+    #expect(!importedReferences.isEmpty)
+    let effectCallers = Set(graph.functions.values.filter { !$0.dependencies.isDisjoint(with: importedReferences) }.map(\.id))
+    _ = try #require(DependencyIndex(graph).paths(to: effectCallers).path(from: graph.tests[tests[0]] ?? []))
+    let scopes = try XcodeHeadOnlySelector.scopedReports(current: current,
+        requests: .init(scopes: [.init(name: "helper", paths: ["Tests.swift"])]),
+        changes: [.init(path: "Tests.swift"), .init(path: "Imports.swift")],
+        baseRevision: "HEAD", headRevision: "head", root: root, mappingPath: ".swift-test-selection.json",
+        documentation: [], buildEvidenceFailure: nil)
+    let report = try #require(scopes.first?.report)
+    #expect(report.selectedTests == tests.sorted())
+    #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
+}
+
+@Test(arguments: [false, true]) func privateHelperIgnoresUnrelatedPropertyOverrides(overrides: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-unrelated-override-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCapture() { capture(XCUIApplication()) }
+        private func capture(_ app: XCUIApplication) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "Menu"
+            add(attachment)
+        }
+        func testOther() { XCTAssertTrue(XCUIApplication().exists) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "add(attachment)", with: "add(attachment); XCTAssertTrue(app.exists)")
+    var support = """
+    class Label {
+        var name: String { "Label" }
+    }
+    class OtherLabel: Label {
+        override var name: String { "Other" }
+    }
+    """
+    if !overrides { support = support.replacingOccurrences(of: "override var name", with: "var otherName") }
+    let tests = ["UI/Suite/testCapture()", "UI/Suite/testOther()"]
+    let current = try boundaryGraph(["Tests.swift": after, "Support.swift": support], tests: tests, root: root)
+    var base = current.sources
+    base["UI:Tests.swift"] = .parse(before, path: "Tests.swift", module: "UI")
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base, mappings: current.mappings), changes: [.init(path: "Tests.swift")], baseRevision: "base")
+    #expect(report.selectedTests == [tests[0]])
+    #expect(report.diagnostics.isEmpty)
+}

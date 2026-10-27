@@ -280,3 +280,30 @@ reusing the compiler graph and product evidence. It preserves exactly 12 tests f
 Both reports pass `verify-build`. The completed retained bundles were unchanged;
 no additional application build, compiler extraction, or application test execution
 was performed.
+
+
+External helper callees now require compiler-resolved declaration ownership rather
+than being skipped when they have no local SIL body. The compiled regression uses
+an extension from a binary support module imported by a sibling file. An assertion
+added to the private helper calls that extension and writes shared state; selection
+now includes both the caller and state consumer with an explicit callee-effect
+diagnostic. Ownership resolution is batched and cached per traversal, and unknown
+symbols or unavailable/malformed demangling results fail conservatively. SDK
+constructor thunks retain precision without treating every Clang-imported symbol
+as trusted. No new source-proof version or capture format is introduced.
+
+Attachment override checks now resolve class ancestry at each revision. An unused,
+unrelated class overriding `name` no longer broadens a local attachment helper edit
+to all tests. Tests cover both the compiled override/control cases and known SDK
+ancestry, aliases, unresolved parents, nested declarations, cycles, ambiguous
+classes, and missing evidence. All historical attachment checks remain active.
+
+All 283 package tests pass in Xcode 26.6 debug and Xcode 27.0 release builds.
+The release run also includes the retained replay test (284 tests total). Fresh
+source-proof refreshes verify identical declaration keys and fingerprints before
+reusing the original compiler graph and products in separate graph files. The
+replays preserve exactly 12 tests for #55 and 125 for #58 with zero diagnostics,
+and both reports pass `verify-build`. Refresh and encoding took 8.30 and
+8.34 seconds; selection took 11.92 and 12.21 seconds. The original completed
+bundles were unchanged. No application build, compiler extraction, or application
+test bodies were executed.

@@ -122,7 +122,7 @@ enum SILOwnership {
                 let node = nodes[index]
                 guard node.depth == depth else { return nil }
                 // These attributes precede, but do not own, the declaration.
-                if depth == 1 && ["kind=DynamicAttribute", "kind=ObjCAttribute"].contains(node.value) { index += 1; continue }
+                if depth == 1 && ["kind=DynamicAttribute", "kind=ObjCAttribute", "kind=NonObjCAttribute"].contains(node.value) { index += 1; continue }
                 if let module = node.module { return .declaration(module) }
                 if node.value == "kind=ProtocolWitness" {
                     index += 1

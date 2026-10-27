@@ -12,6 +12,7 @@ enum PrivateTestHelperIsolation {
         fileprivate var active = Set<String>()
         fileprivate var completed: [String: Bool] = [:]
         fileprivate var sdkEffectIDs: [String: Set<String>] = [:]
+        fileprivate var externalEffects = ExternalHelperEffects()
         fileprivate var sdkEffectDeclarations: [String: [SourceUnit]] = [:]
         private(set) var evaluationCount = 0
         fileprivate(set) var sharedStateSymbols = Set<String>()
@@ -171,12 +172,10 @@ enum PrivateTestHelperIsolation {
             // subclass's initializer. Ordinary member overrides can, so audit
             // those names even when an alias hides the superclass.
             let dynamicMembers = attachmentBindings.subtracting(["init"])
-            attachmentBindingsSupported = revisions.joined().allSatisfy({ snapshot in
-                snapshot.dispatchOverrides?.allSatisfy {
-                    !dynamicMembers.contains(SDKTestHelperSyntax.canonicalName($0).split(separator: ".").last.map(String.init) ?? "")
-                } == true
-            }) && SDKTestHelperIsolation.memberBindingsUnshadowed(revisions: revisions,
-                members: attachmentBindings, sdkOwners: owners, provenHelpers: traversal.sdkEffectDeclarations[module] ?? [])
+            attachmentBindingsSupported = SDKTestHelperIsolation.overridesUnshadowed(revisions: revisions,
+                members: dynamicMembers, sdkReceivers: owners.subtracting(["NSObject", "NSObjectProtocol"])) &&
+                SDKTestHelperIsolation.memberBindingsUnshadowed(revisions: revisions,
+                    members: attachmentBindings, sdkOwners: owners, provenHelpers: traversal.sdkEffectDeclarations[module] ?? [])
             // Still walk the head's compiler effects so existing shared-state
             // diagnostics survive even when the historical binding is unproven.
             if !attachmentBindingsSupported { traversal.hasUnprovenCalleeEffects = true }
@@ -209,8 +208,13 @@ enum PrivateTestHelperIsolation {
         // uncertainty alone is not a route into this private, nonescaping method.
         let projectModules = Set(current.modules.values)
         var pending = Array(ids), visited = Set<String>(), effectsSupported = proof.attachmentBindingsSupported
+        var external = Set<String>()
         while let id = pending.popLast() {
-            guard visited.insert(id).inserted, let node = graph.functions[id] else { continue }
+            guard visited.insert(id).inserted else { continue }
+            guard let node = graph.functions[id], projectModules.contains(node.module), node.hasProjectRuntimeContext else {
+                external.insert(id)
+                continue
+            }
             // XCTest attachment setters do not require a blanket effect
             // exemption. Reads of other objects, including assertion
             // autoclosures in this region, must retain their state checks.
@@ -224,7 +228,11 @@ enum PrivateTestHelperIsolation {
                 traversal.hasUnprovenCalleeEffects = true
                 effectsSupported = false
             }
-            pending += node.dependencies.filter { graph.functions[$0].map { projectModules.contains($0.module) } ?? false }
+            pending += node.dependencies
+        }
+        if !traversal.externalEffects.allows(external) {
+            traversal.hasUnprovenCalleeEffects = true
+            effectsSupported = false
         }
         return effectsSupported
     }

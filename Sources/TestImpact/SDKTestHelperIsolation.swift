@@ -241,6 +241,52 @@ enum SDKTestHelperIsolation {
         return nil
     }
 
+    /// Overrides matter only when their declaring class can be a receiver of
+    /// the SDK call. Resolve each revision independently; aliases, missing class
+    /// declarations and cycles cannot establish an unrelated hierarchy.
+    static func overridesUnshadowed(revisions: [[SwiftSourceSnapshot]], members: Set<String>, sdkReceivers: Set<String>) -> Bool {
+        let canonical = SDKTestHelperSyntax.canonicalName
+        for revision in revisions {
+            guard revision.allSatisfy({ $0.dispatchOverrides != nil && $0.superclasses != nil && $0.typeAliases != nil }) else { return false }
+            let parents = Dictionary(grouping: revision.flatMap { $0.superclasses!.map { (canonical($0.key), $0.value) } }, by: { $0.0 })
+            let aliases = Set(revision.flatMap { $0.typeAliases! }.map(canonical))
+            var results: [String: Bool] = [:]
+            func unrelated(_ owner: String) -> Bool {
+                if let result = results[owner] { return result }
+                var pending = owner, seen = Set<String>()
+                while seen.insert(pending).inserted {
+                    let module = pending.split(separator: ".").first.map(String.init) ?? ""
+                    if aliases.contains(pending) { return false }
+                    guard let candidates = parents[pending], candidates.count == 1 else { return false }
+                    let supers = candidates[0].1
+                    if supers.isEmpty { return true }
+                    guard supers.count == 1, let nominal = SwiftSourceSnapshot.nominalTypeName(supers[0]) else { return false }
+                    let name = canonical(nominal)
+                    if aliases.contains(name) || aliases.contains(module + "." + name) { return false }
+                    let matches = parents.keys.filter { $0 == name || $0 == module + "." + name || $0.hasPrefix(module + ".") && $0.hasSuffix("." + name) }
+                    if matches.count == 1 { pending = matches[0]; continue }
+                    guard matches.isEmpty else { return false }
+                    if sdkReceivers.contains(name.split(separator: ".").last.map(String.init) ?? name) { return false }
+                    // A direct subclass of NSObject cannot also be a subclass
+                    // of an unrelated precompiled XCTest receiver class.
+                    return ["NSObject", "Foundation.NSObject"].contains(name)
+                }
+                return false
+            }
+            for snapshot in revision {
+                for spelling in snapshot.dispatchOverrides! {
+                    let parts = canonical(spelling).split(separator: ".")
+                    guard let member = parts.last, members.contains(String(member)) else { continue }
+                    let owner = parts.dropLast().joined(separator: ".")
+                    let result = unrelated(owner)
+                    results[owner] = result
+                    if !result { return false }
+                }
+            }
+        }
+        return true
+    }
+
     /// A concrete project nominal cannot be an ancestor of a precompiled SDK
     /// class. Protocol, alias and unresolved owners cannot establish that fact.
     /// Use separate revision inventories so a head declaration cannot resolve an

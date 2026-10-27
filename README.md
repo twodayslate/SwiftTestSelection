@@ -1088,7 +1088,19 @@ construction inside assertions or downstream private helpers. A removed project
 overload cannot acquire the SDK effect contract merely because the head graph
 now calls the SDK. Protocol requirements without implementations and unrelated
 concrete initializers do not replace that call; protocol default implementations
-and unresolved bindings retain `head_only_helper_callee_effects`.
+and unresolved bindings retain `head_only_helper_callee_effects`. Property overrides
+are checked against the declaring class's ancestry at each revision: a proven
+unrelated class does not invalidate the attachment contract. Missing, ambiguous,
+aliased, or cyclic ancestry remains conservative.
+
+Private helper effects also validate external callees, including references whose
+SIL bodies are absent from the saved graph. Selection batches these symbols through
+`xcrun swift-demangle --expand --tree-only` and caches results within each helper
+traversal. Only recognized SDK declaration owners (and known Clang-imported XCTest/Foundation
+types) receive the SDK contract. Unknown owners, unavailable demangling,
+and external extensions exposed through another file's import retain
+`head_only_helper_callee_effects`. The checks use existing graph evidence without
+an additional build or SIL extraction.
 Helpers cannot capture `self` or free project variables, take
 inout/function-valued/default arguments, or contain closures or macros. Known
 global/shared-state and raw-pointer effects in project callees also
