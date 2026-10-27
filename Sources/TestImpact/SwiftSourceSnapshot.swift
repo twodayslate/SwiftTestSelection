@@ -33,8 +33,21 @@ public struct SourceUnit: Codable, Sendable {
     /// source-location default. Separate dimensions avoid line-only changes
     /// affecting callers of a file-only default.
     public var callerLocations: [String: String]? = nil
-    /// Syntax proof for a private helper referenced only by direct test calls.
+    /// Syntax proof for a private helper referenced only by direct test/helper calls.
     public var privateTestHelper: PrivateTestHelperSyntax? = nil
+    /// Closed name evidence for a separately executed added XCTest entry.
+    public var independentAddedTestEntry: String? = nil
+    public var sdkTestHelper: SDKTestHelperSyntax? = nil
+    public var helperCallableName: String? = nil
+    public var helperReferenceSignature: String? = nil
+    public var helperCallerSupported: Bool? = nil
+    /// Source overload shapes paired with SIL signatures during receiver audits.
+    public var receiverCallShapes: [String: Set<[String]>]? = nil
+    public var receiverImportsSupported: Bool? = nil
+    /// Captured struct/enum identity; classes cannot use value-type metatype rules.
+    public var receiverValueType: Bool? = nil
+    /// Whether this subscript can compete with the SDK identifier getter.
+    public var subscriptAcceptsSingleUnlabeledArgument: Bool? = nil
 
     static func withLocations(_ values: [String], syntax: String) -> String {
         values.isEmpty ? syntax : syntax + "@locations[" +
@@ -61,6 +74,13 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     public var identifierNames: Set<String>? = nil
     public var helperSafeClasses: [String: String]? = nil
     public var helperNamesUnshadowed: Bool? = nil
+    public var attachmentAddUnshadowed: Bool? = nil
+    public var helperReferences: [String: SDKTestHelperSyntax.References]? = nil
+    public var sdkHelperNamesUnshadowed: Bool? = nil
+    /// Stored properties proven to be immutable, inferred string literals.
+    /// All other declarations explicitly carry false, including duplicates.
+    public var literalStoredProperties: [String: Bool]? = nil
+    public var classFinality: [String: Bool]? = nil
 
     /// Match specialized superclass references to their nominal declarations.
     /// Parse the type so nested arguments, function types and qualification do
@@ -92,7 +112,21 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         result.helperNamesUnshadowed = PrivateTestHelperSyntax.reservedNames.allSatisfy { name in
             !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
         }
+        result.attachmentAddUnshadowed = !(identifiers["add"] ?? []).contains(where: PrivateTestHelperSyntax.shadowsAttachmentAdd)
+        let callerImportsSupported = SDKTestHelperSyntax.callerImportsSupported(tree)
+        let referenceAnalysis = SDKHelperReferenceAnalysis(identifiers: identifiers, locations: locations, callerImportsSupported: callerImportsSupported)
+        result.helperReferences = identifiers.mapValues { referenceAnalysis.references($0) }
+        for tokens in identifiers.values {
+            for signature in Set(tokens.compactMap(SDKTestHelperSyntax.referenceKey)) {
+                result.helperReferences![signature] = referenceAnalysis.references(tokens, matching: signature)
+            }
+        }
+        result.sdkHelperNamesUnshadowed = SDKTestHelperSyntax.names.allSatisfy { name in
+            !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
+        }
         result.helperSafeClasses = [:]
+        result.literalStoredProperties = [:]
+        result.classFinality = [:]
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
         // Preserve syntax structure, token kinds and literal contents, but not
         // trivia. Location values belong to their expression, not the whole file.
@@ -197,6 +231,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 node.children(viewMode: .sourceAccurate).contains(where: containsOpaqueResult)
         }
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String]) {
+            if let function = node.as(FunctionDeclSyntax.self), ["!", "==", "!=", "&&", "||"].contains(function.name.text) {
+                result.sdkHelperNamesUnshadowed = false
+            }
             if let alias = node.as(TypeAliasDeclSyntax.self) {
                 result.typeAliases!.insert(([module] + scope + [alias.name.text]).joined(separator: "."))
             }
@@ -264,6 +301,18 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 bodySupported = enclosingSupported && attributes.count == function.attributes.count && attributes.allSatisfy { $0 == "MainActor" } &&
                     !hasOpaqueResult && !hasMacro
             }
+            if let variable = node.as(VariableDeclSyntax.self) {
+                for binding in variable.bindings {
+                    guard let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text else { continue }
+                    let member = (scope + [SDKTestHelperSyntax.canonicalName(name)]).joined(separator: ".")
+                    let literal = binding.initializer?.value.as(StringLiteralExprSyntax.self)
+                    let safe = callerImportsSupported && !scope.isEmpty && variable.bindingSpecifier.text == "let" &&
+                        variable.attributes.isEmpty && variable.modifiers.allSatisfy { ["private", "fileprivate", "internal"].contains($0.name.text) } &&
+                        binding.typeAnnotation == nil && binding.accessorBlock == nil &&
+                        literal?.segments.allSatisfy { $0.is(StringSegmentSyntax.self) } == true
+                    result.literalStoredProperties![member] = (result.literalStoredProperties![member] ?? true) && safe
+                }
+            }
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
@@ -276,7 +325,27 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 locationDefaultNames: defaultNames, invocationNames: calls.names,
                 callerLocations: calls.locations,
                 privateTestHelper: node.as(FunctionDeclSyntax.self).flatMap {
-                    PrivateTestHelperSyntax.prove($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [], locations: locations)
+                    PrivateTestHelperSyntax.prove($0, importsSupported: callerImportsSupported, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [], locations: locations)
+                }, independentAddedTestEntry: node.as(FunctionDeclSyntax.self).flatMap {
+                    PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
+                }, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },
+                helperReferenceSignature: node.as(FunctionDeclSyntax.self).flatMap { function in
+                    function.signature.parameterClause.parameters.allSatisfy { $0.defaultValue == nil && $0.ellipsis == nil } ? SDKTestHelperSyntax.signature(function) : nil
+                },
+                helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported),
+                receiverCallShapes: SDKReceiverCallSyntax.shapes(in: node),
+                receiverImportsSupported: callerImportsSupported,
+                receiverValueType: node.is(StructDeclSyntax.self) || node.is(EnumDeclSyntax.self),
+                subscriptAcceptsSingleUnlabeledArgument: node.as(SubscriptDeclSyntax.self).map { declaration in
+                    let parameters = Array(declaration.parameterClause.parameters)
+                    return parameters.indices.contains { i in
+                        let parameter = parameters[i]
+                        let label = parameter.secondName == nil ? "_" : SDKTestHelperSyntax.canonicalName(parameter.firstName.text)
+                        return label == "_" && parameters.indices.allSatisfy { j in
+                            i == j || parameters[j].defaultValue != nil || parameters[j].ellipsis != nil
+                        }
+                    }
                 }))
         }
         func walk(_ node: Syntax, scope: [String]) {
@@ -288,6 +357,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 for child in node.children(viewMode: .sourceAccurate) { walk(child, scope: scope) }
             } else if let value = node.as(ClassDeclSyntax.self) {
                 let names = scope + [value.name.text]
+                let className = (scope + [value.name.identifier?.name ?? value.name.text]).joined(separator: ".")
+                result.classFinality![className] = (result.classFinality![className] ?? true) && value.modifiers.contains { $0.name.text == "final" }
                 if scope.isEmpty, let parent = PrivateTestHelperSyntax.safeSuperclass(value) {
                     result.helperSafeClasses![module + "." + value.name.text] = parent
                 }
@@ -320,7 +391,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 add(node, header: Syntax(value.with(\.body, nil)), kind: "function", scope: scope)
             } else if node.is(InitializerDeclSyntax.self) || node.is(DeinitializerDeclSyntax.self) || node.is(VariableDeclSyntax.self) || node.is(SubscriptDeclSyntax.self) {
                 add(node, header: node, kind: "state", scope: scope)
-            } else if node.is(ImportDeclSyntax.self) {
+            } else if let imported = node.as(ImportDeclSyntax.self) {
+                if imported.attributes.contains(where: { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "_exported" }),
+                   !SDKTestHelperSyntax.trustedModules.contains(imported.path.trimmedDescription) {
+                    result.sdkHelperNamesUnshadowed = false
+                    result.helperNamesUnshadowed = false
+                }
                 add(node, header: node, kind: "import", scope: scope)
             } else if node.is(DeclSyntax.self) && !node.is(IfConfigDeclSyntax.self) {
                 add(node, header: node, kind: "declaration", scope: scope)

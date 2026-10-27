@@ -118,13 +118,20 @@ public enum SILParser {
         static let location = try! NSRegularExpression(pattern: #"\bloc (?:\* )?"((?:[^"\\]|\\.)+)":([0-9]+):[0-9]+"#)
         static let function = try! NSRegularExpression(pattern: #"@([^\s:]+)\s*:"#)
         static let dispatch = try! NSRegularExpression(pattern: #"#([^\s:]+).*:\s*@([^\s:]+)"#)
-        static let reference = try! NSRegularExpression(pattern: #"(%[\w]+) = (?:function_ref|dynamic_function_ref|previous_dynamic_function_ref) @([^\s:]+)"#)
+        static let reference = try! NSRegularExpression(pattern: #"^(%[\w]+) = (?:function_ref|dynamic_function_ref|previous_dynamic_function_ref) @([^\s:]+)"#)
         static let method = try! NSRegularExpression(pattern: #"\b(class_method|super_method|witness_method|objc_method|objc_super_method)\b.*#([^\s:]+)"#)
         static let witnessType = try! NSRegularExpression(pattern: #"\bwitness_method \$([\w.]+),"#)
         static let witnessTable = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+)* ([\w.]+): [\w.]+ module [\w]+ \{"#)
         static let externalWitness = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+| \[[^\]]+\])* ([\w.]+): ([\w.]+) module ([\w]+)$"#)
         static let value = try! NSRegularExpression(pattern: #"^(%[\w]+) ="#)
-        static let conversion = try! NSRegularExpression(pattern: #"(%[\w]+) = (?:thin_to_thick_function|convert_function|convert_escape_to_noescape|copy_value|move_value|begin_borrow|partial_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
+        static let conversion = try! NSRegularExpression(pattern: #"^(%[\w]+) = (?:thin_to_thick_function|convert_function|convert_escape_to_noescape|copy_value|move_value|begin_borrow|partial_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
+        static let metatype = try! NSRegularExpression(pattern: #"@(?:thick|thin|objc_metatype) ([^\r\n]+?)\.(?:Type|Protocol)(?=[, )]|$)"#)
+        static let metatypeParameter = try! NSRegularExpression(pattern: #"(%[\w]+) : \$@(?:thick|thin|objc_metatype) ([^\r\n]+?)\.(?:Type|Protocol)(?=[, )]|$)"#)
+        static let valueReference = try! NSRegularExpression(pattern: #"%[\w]+"#)
+        static let block = try! NSRegularExpression(pattern: #"^(bb[0-9]+)[(:]"#)
+        static let nilSwitch = try! NSRegularExpression(pattern: #"^switch_enum_addr (%[\w]+), case #Optional.some!enumelt: (bb[0-9]+), case #Optional.none!enumelt: bb[0-9]+(?:,|$)"#)
+        static let receiverCast = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?(?:unconditional_checked_cast(?:_addr|_value)?|checked_cast(?:_addr|_value)?_br|unchecked_(?:addr|trivial_bit|bitwise)_cast)\b.*? to (.+)"#)
+        static let genericApply = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?(?:apply|try_apply|begin_apply|partial_apply)(?: \[[^\]]*\])* (%[\w]+)<"#)
         static let apply = try! NSRegularExpression(pattern: #"\b(?:apply|try_apply|begin_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
     }
 
@@ -149,8 +156,16 @@ public enum SILParser {
         var pendingLocation: SourceRegion?
         var locations: [String: ClosedRange<Int>] = [:]
         var knownValues = Set<String>()
+        var directReferences: [String: String] = [:]
+        var recentInstructions: [String] = []
+        var currentBlock = ""
+        var nilSomePredecessors: [String: String] = [:]
+        var unreachableNilSome = false
         var witnessType: String?
         var genericParameters: Set<String>?
+        var metatypeInputs: [String: Set<String>] = [:]
+        var headerMetatypeCounts: [String: Int] = [:]
+        var usedMetatypeInputs = Set<String>()
 
         func location(_ line: String) -> SourceRegion? {
             guard line.containsASCII("loc "), let fields = Pattern.groups(Expressions.location, in: line),
@@ -181,8 +196,14 @@ public enum SILParser {
             }
         }
 
+        static func metatypes(_ line: String) -> [String] {
+            let text = line as NSString
+            return Expressions.metatype.matches(in: line, range: NSRange(location: 0, length: text.length)).map { text.substring(with: $0.range(at: 1)) }
+        }
+
         func consume(_ raw: String) {
             let line = raw.trimmingSILWhitespace()
+            guard !line.isEmpty else { return }
             if current == nil {
                 if line.hasPrefix("sil_witness_table") {
                     witnessType = Pattern.groups(Expressions.witnessTable, in: line)?.first
@@ -202,6 +223,17 @@ public enum SILParser {
                     }
                     if line.split(separator: " ", maxSplits: 2)[1] == "shared" { sharedSymbols.insert(match[0]) }
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
+                    current!.dynamicCallSignatures = []
+                    current!.stateAccesses = []
+                    current!.receiverTypeOrigins = []
+                    current!.receiverGenericCalls = []
+                    directReferences = [:]
+                    recentInstructions = []; currentBlock = ""; nilSomePredecessors = [:]; unreachableNilSome = false
+                    metatypeInputs = [:]; usedMetatypeInputs = []; headerMetatypeCounts = [:]
+                    for type in Self.metatypes(line) {
+                        current!.receiverTypeOrigins?.insert("input:" + type)
+                        headerMetatypeCounts[type, default: 0] += 1
+                    }
                     // Canonical capture can retain source parameter names (e.g.
                     // Element), while replay usually spells them τ_0_0. A local
                     // nominal type may have the same name; it is not that receiver.
@@ -223,6 +255,13 @@ public enum SILParser {
                 current!.regions = locations.map {
                     SourceRegion(path: $0.key, startLine: $0.value.lowerBound, endLine: $0.value.upperBound)
                 }.sorted { ($0.path, $0.startLine) < ($1.path, $1.startLine) }
+                // Static methods receive an implicit class metatype even when
+                // they construct a literal SDK class and never use that input.
+                // Only remove an origin when every matching SSA input is unused
+                // outside debug instructions. Forwarded/aliased inputs remain.
+                for (type, values) in metatypeInputs where values.count == headerMetatypeCounts[type] && values.isDisjoint(with: usedMetatypeInputs) {
+                    current!.receiverTypeOrigins?.remove("input:" + type)
+                }
                 current!.compilerReferences = current!.dependencies
                 functions[current!.id] = current!
                 current = nil
@@ -231,9 +270,95 @@ public enum SILParser {
             if let found = location(line) { addLocation(found) }
             if line.hasPrefix("//") { return }
 
+            if line.hasPrefix("bb"), let block = Pattern.groups(Expressions.block, in: line)?.first {
+                currentBlock = block
+                let predecessors = line.components(separatedBy: "// Preds: ")
+                unreachableNilSome = predecessors.count == 2 && nilSomePredecessors[block] == predecessors[1].trimmingCharacters(in: .whitespaces)
+                recentInstructions = []
+            }
+            // At -Onone an Optional<Any>.none still has an unreachable `.some`
+            // bridge block. Prove only a fresh stack slot initialized to none
+            // and switched immediately, with a single compiler-listed predecessor.
+            // Any intervening instruction, alias, or second predecessor declines.
+            if line.hasPrefix("switch_enum_addr "), let branch = Pattern.groups(Expressions.nilSwitch, in: line), recentInstructions.count == 2,
+               recentInstructions[0].hasPrefix(branch[0] + " = alloc_stack $Optional<Any>,"),
+               recentInstructions[1].hasPrefix("inject_enum_addr " + branch[0] + ", #Optional.none!enumelt,"), !currentBlock.isEmpty {
+                nilSomePredecessors[branch[1]] = currentBlock
+            }
+            defer {
+                if !line.hasPrefix("bb") {
+                    recentInstructions.append(line)
+                    if recentInstructions.count > 2 { recentInstructions.removeFirst() }
+                }
+            }
+
+            if line.hasPrefix("bb0(") {
+                let text = line as NSString
+                for match in Expressions.metatypeParameter.matches(in: line, range: NSRange(location: 0, length: text.length)) {
+                    metatypeInputs[text.substring(with: match.range(at: 2)), default: []].insert(text.substring(with: match.range(at: 1)))
+                }
+            } else if !metatypeInputs.isEmpty && !line.hasPrefix("debug_value ") && !line.hasPrefix("debug_value_addr ") {
+                let instruction = String(line.components(separatedBy: " // ")[0])
+                let text = instruction as NSString
+                for match in Expressions.valueReference.matches(in: instruction, range: NSRange(location: 0, length: text.length)) {
+                    usedMetatypeInputs.insert(text.substring(with: match.range))
+                }
+            }
+            if line.containsASCII("cast"), let target = Pattern.groups(Expressions.receiverCast, in: line)?.first {
+                // Casts may invoke _ObjectiveCBridgeable witnesses without a
+                // function_ref edge. Retain the destination, including metatypes.
+                // unchecked_ref_cast only preserves an existing object identity;
+                // its producer is audited, and no bridge witness can run.
+                let addressType = target.components(separatedBy: " in ")[0]
+                var depth = 0, type = ""
+                for c in addressType {
+                    if c == "," && depth == 0 { break }
+                    if c == "<" || c == "[" { depth += 1 }
+                    if c == ">" || c == "]" { depth -= 1 }
+                    type.append(c)
+                }
+                current!.receiverTypeOrigins?.insert("cast:" + type.trimmingCharacters(in: CharacterSet(charactersIn: "$ ")))
+            }
+            if line.containsASCII(" = enum ") {
+                if let start = line.firstIndex(of: "#") {
+                    let end = line[start...].firstIndex(where: { $0 == "!" || $0 == "," || $0 == " " }) ?? line.endIndex
+                    current!.receiverTypeOrigins?.insert("enum:" + line[line.index(after: start)..<end])
+                } else { current!.receiverTypeOrigins = nil }
+            }
+            if line.containsASCII(" = metatype ") {
+                let types = Self.metatypes(line)
+                if types.isEmpty { current!.receiverTypeOrigins = nil }
+                else { current!.receiverTypeOrigins?.formUnion(types.map { "literal:" + $0 }) }
+            } else if line.containsASCII("value_metatype ") || line.containsASCII("existential_metatype ") {
+                current!.receiverTypeOrigins?.insert("dynamic")
+            }
             if line.containsASCII("function_ref "), let match = Pattern.groups(Expressions.reference, in: line) {
                 knownValues.insert(match[0])
                 current!.dependencies.insert(match[1])
+                directReferences[match[0]] = match[1]
+            }
+            if line.containsASCII("apply"), let match = Expressions.genericApply.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) {
+                let text = line as NSString
+                let value = text.substring(with: match.range(at: 1))
+                if let symbol = directReferences[value] {
+                    let tail = text.substring(from: match.range.location + match.range.length)
+                    var depth = 1, arguments = ""
+                    var previous: Character?
+                    for c in tail {
+                        if c == "<" { depth += 1 }
+                        if c == ">" && previous != "-" { depth -= 1 }
+                        if depth == 0 { break }
+                        arguments.append(c)
+                        previous = c
+                    }
+                    if depth == 0 {
+                        let proof = unreachableNilSome && symbol == SDKReceiverContracts.objectBridge ? SDKReceiverContracts.unreachableNil : arguments
+                        current!.receiverGenericCalls?.insert(symbol + "\t" + proof)
+                    }
+                    else { current!.receiverGenericCalls = nil }
+                }
+                // Generic witness/dynamic calls have no function_ref identity;
+                // receiverProof checks their dispatch evidence independently.
             }
             if line.containsASCII(" = keypath ") {
                 // Key paths carry getter/setter and captured-index equality/hash
@@ -257,15 +382,33 @@ public enum SILParser {
                 if match[0] == "witness_method", genericParameters == nil {
                     current!.uncertainties.insert("Unresolved project dispatch: " + declaration)
                 }
+                if let start = line.range(of: "#" + match[1]),
+                   let end = line.range(of: match[0] == "witness_method" ? " : $" : ", $", range: start.upperBound..<line.endIndex) {
+                    let signature = String(line[start.upperBound..<end.lowerBound])
+                    current!.dynamicCallSignatures?.insert(match[0] + " " + match[1] + signature)
+                } else { current!.dynamicCallSignatures = nil }
                 current!.dynamicDeclarations.insert(declaration)
                 current!.uncertainties.insert("Dynamic dispatch: \(match[0]) \(match[1])")
             }
             // Retain dependency flow through common function-value conversions.
             if line.containsASCII(" = "), let match = Pattern.groups(Expressions.conversion, in: line), knownValues.contains(match[1]) {
                 knownValues.insert(match[0])
+                if let symbol = directReferences[match[1]] { directReferences[match[0]] = symbol }
             }
             if line.containsASCII("apply "), let match = Pattern.groups(Expressions.apply, in: line), !knownValues.contains(match[0]) {
                 current!.uncertainties.insert("Indirect function invocation")
+            }
+            if line.containsASCII("global_addr ") || line.containsASCII("global_value ") {
+                if let start = line.firstIndex(of: "@") {
+                    let end = line[start...].firstIndex(of: " ") ?? line.endIndex
+                    current!.stateAccesses?.insert("global:" + line[line.index(after: start)..<end])
+                } else { current!.stateAccesses = nil }
+            }
+            if line.containsASCII("ref_element_addr ") {
+                if let start = line.firstIndex(of: "#") {
+                    let end = line[start...].firstIndex(where: { $0 == "," || $0 == " " }) ?? line.endIndex
+                    current!.stateAccesses?.insert("field:" + line[line.index(after: start)..<end])
+                } else { current!.stateAccesses = nil }
             }
             if line.containsASCII("global_addr ") || line.containsASCII("global_value ") {
                 current!.uncertainties.insert("Global state access")

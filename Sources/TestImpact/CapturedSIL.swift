@@ -227,6 +227,18 @@ struct CapturedSIL: Sendable {
                     if let before = old.compilerReferences, let after = node.compilerReferences {
                         old.compilerReferences = before.union(after)
                     } else { old.compilerReferences = nil }
+                    if let before = old.stateAccesses, let after = node.stateAccesses {
+                        old.stateAccesses = before.union(after)
+                    } else { old.stateAccesses = nil }
+                    if let before = old.dynamicCallSignatures, let after = node.dynamicCallSignatures {
+                        old.dynamicCallSignatures = before.union(after)
+                    } else { old.dynamicCallSignatures = nil }
+                    if let before = old.receiverTypeOrigins, let after = node.receiverTypeOrigins {
+                        old.receiverTypeOrigins = before.union(after)
+                    } else { old.receiverTypeOrigins = nil }
+                    if let before = old.receiverGenericCalls, let after = node.receiverGenericCalls {
+                        old.receiverGenericCalls = before.union(after)
+                    } else { old.receiverGenericCalls = nil }
                     old.dynamicDeclarations.formUnion(node.dynamicDeclarations)
                     old.uncertainties.formUnion(node.uncertainties)
                     old.regions = Set(old.regions + node.regions).sorted { ($0.path, $0.startLine, $0.endLine) < ($1.path, $1.startLine, $1.endLine) }

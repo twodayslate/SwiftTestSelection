@@ -1050,14 +1050,22 @@ are conservatively unsupported. This also applies to attributes
 on enclosing types: an attached macro can synthesize other declarations from a
 changed body. Test-entry selection retains the existing test-independence assumption.
 Declared UI feature mappings narrow runtime uncertainty only when all changed
-bodies belong to production code, proven test entries, or isolated private helpers.
+bodies belong to production code, proven test entries, or isolated private/SDK helpers.
 Other mixed helper or lifecycle edits retain their runtime fallbacks even when a
 mapped app feature also changes.
 
 Private helper isolation is automatic and deliberately bounded. It supports a
 synchronous `private func` in a final test class, with an unambiguous source-defined
 inheritance chain ending at XCTestCase. Both source revisions must prove that all
-references are direct calls from bound test entries in the same class. Added
+references are direct calls from bound test entries or unchanged private helpers
+in the same class. Each intermediate helper must pass the same source and compiler
+checks, and the chain must terminate at bound test entries. Direct private callees
+also require a supported transitive effect body, including when invoked inside
+a newly added assertion. Unsupported, recursive, ambiguous or missing callee
+effect evidence selects the full inventory with `head_only_helper_callee_effects`;
+SDK mutations such as `UserDefaults.set` cannot be treated as harmless merely
+because SIL represents them as Objective-C dispatch. Cycles, escaping
+references, and changed or deleted intermediate helpers retain fallback. Added
 helpers also require their name to be absent from the base module, so introducing
 an overload or changing an existing name's resolution cannot silently pass.
 The head graph must confirm the callers, complete test/lifecycle bindings, and
@@ -1065,14 +1073,70 @@ test-only ownership. The proof does not depend on UI feature mappings.
 
 The supported helper bodies use ordinary String/Bool/Int/Double or XCUIApplication/
 XCUIElement parameters, local `let` values, member queries, XCTest assertions, and
-NSPredicate construction. They cannot capture `self` or free project variables,
-write state, take inout/function-valued/default arguments, or contain closures or
-macros. Known global/shared-state and raw-pointer effects in project callees also
-prevent isolation. Calls wrapped in other expressions (including operators,
+NSPredicate construction, and direct calls to private helpers. Local screenshot
+attachments may be created with `XCTAttachment(screenshot:)`, assigned a `name`
+and `lifetime`, and submitted with XCTest's `add`. The proof tracks fresh local
+attachments and rejects shadowed attachment APIs; it does not exempt other shared
+state. Private helper files must use plain imports from `XCTest`, `Foundation`,
+`Swift`, or `UIKit` before SDK-named effects are trusted. Unknown, attributed,
+or declaration-scoped imports retain `head_only_helper_callee_effects` fallback;
+an external type named `XCTAttachment` cannot acquire XCTest's effect contract.
+Untrusted re-exports and project modules shadowing these SDKs also prevent
+isolation. Attachment constructors and member bindings are also audited at base
+and head, including deleted source files, inherited members, aliases, and
+construction inside assertions or downstream private helpers. A removed project
+overload cannot acquire the SDK effect contract merely because the head graph
+now calls the SDK. Protocol requirements without implementations and unrelated
+concrete initializers do not replace that call; protocol default implementations
+and unresolved bindings retain `head_only_helper_callee_effects`. Property overrides
+are checked against the declaring class's ancestry at each revision: a proven
+unrelated class does not invalidate the attachment contract. Missing, ambiguous,
+aliased, or cyclic ancestry remains conservative.
+
+Private helper effects also validate external callees, including references whose
+SIL bodies are absent from the saved graph. Selection batches these symbols through
+`xcrun swift-demangle --expand --tree-only` and caches results within each helper
+traversal. Only recognized SDK declaration owners (and known Clang-imported XCTest/Foundation
+types) receive the SDK contract. Unknown owners, unavailable demangling,
+and external extensions exposed through another file's import retain
+`head_only_helper_callee_effects`. Dynamic calls also require complete SIL method
+signatures and matching source argument labels; a method name alone cannot
+establish its implementation. Unknown calls, overloads, method values that lose
+binding information, and incomplete evidence retain the diagnostic fallback.
+Supported navigation actions must remain standalone statements preserved from
+the base; hiding an action inside an added assertion does not establish isolation.
+SDK member bindings are audited at both revisions even when a helper creates no
+attachment. Nested aliases and inherited nested types cannot be resolved to an
+unrelated module-level namesake.
+
+Receiver audits also pair method and subscript labels with the compiled signature,
+including every use of a method name in a source body. Method values, foreign
+overloads, unproven enum arguments, and dynamic or forwarded class metatypes
+retain fallback. Captured structs and enums may participate through their checked
+implementations; local SDK namesakes cannot establish an SDK signature. A reference to an SDK constructor does not prove that it was
+called with the SDK class: the captured metatype must also be established.
+Implicit static-method metatype inputs are ignored only when SIL proves that
+they are unused outside debug instructions; forwarding or copying them retains
+the origin check.
+Clang-imported class thunks require an explicit SDK symbol contract because
+Objective-C categories share the same imported class owner.
+
+Older graphs without dynamic-call or receiver-type evidence require regeneration from the existing
+build artifacts and sealed SIL capture. Source-proof refresh alone is insufficient;
+reparsing valid saved SIL requires no application rebuild or test execution.
+Helpers cannot capture `self` or free project variables, take
+inout/function-valued/default arguments, or contain closures or macros. Known
+global/shared-state and raw-pointer effects in project callees also
+prevent isolation. Attachment handling never waives compiler-observed state
+checks, including in assertion autoclosures. A failed helper proof that encounters
+shared state selects the full inventory with `head_only_helper_shared_state`,
+because shared objects can affect tests beyond the compiled caller paths.
+Calls wrapped in other expressions (including operators,
 subscripts and string interpolation) or used as matching patterns are not treated
 as direct calls: they may create escaping autoclosures, including through custom
 `~=` operators in guard/while/for/catch patterns. Stored proof versions must match
-the current escape analysis; older or unknown versions retain fallback. For an existing helper, all old statements must
+the current proof analysis; older or unknown versions select the full inventory
+with `head_only_helper_proof_version` and require a fresh head capture. For an existing helper, all old statements must
 remain unchanged and in order; only standalone XCTest assertions may be added.
 Removing/replacing/reordering statements or changing local bindings/control flow
 retains runtime fallback because head edges cannot prove the effects of old calls.
@@ -1084,9 +1148,135 @@ As with test-entry selection, tests must be independent: this is a proof of the
 helper's callers, not a general effect system for SDK implementations or a proof
 that separately executed tests cannot communicate through external state.
 
+Head-only selection also recognizes a bounded read-only waiting contract for
+internal Swift methods in `XCUIElement` extensions whose file imports only the
+trusted `XCTest`, `Foundation`, or `Swift` modules. Project SDK module shadows and
+untrusted re-exports retain fallback. Both revisions must use only
+supported element queries (`exists`, `value`, `isEnabled`, `isHittable`,
+`isSelected`), primitive parameters, local predicates/expectations, and
+`XCTWaiter.wait`, or bounded `waitForExistence`/`waitForNonExistence` calls. A local `NSPredicate` callback may capture `self` and primitive
+parameters for those queries; predicates and method references cannot escape or
+be stored in shared state. The method name and file path are unrestricted. This
+supports replacing a value predicate with an existence-and-value predicate.
+See the [real-project validation](Documentation/Issue58Validation.md) for the
+current conservative result, the superseded 125-consumer experiment, and reproduction commands.
+
+The proof follows direct helper callers, including source-defined XCTest base
+classes and nonescaping local functions, to bound test entries. The head compiler
+graph must confirm those paths and contain no unaccounted-for callers. Both source
+revisions are checked across all captured source files, including callers outside a
+requested file scope and files captured by another target at head, so removed calls
+and target-membership changes cannot hide old dependencies. This reads
+base source from Git; it does not build the base revision. Base Swift files absent
+from the head inventory are also inspected. References to the helper or its caller
+chain in those files retain an explicit fallback because their old module ownership
+cannot be established from the head. Unrelated base-only files do not alone force
+fallback. Overloads with different
+argument labels can be separated when the helper has no default/variadic arguments;
+ambiguous overloads remain conservative.
+
+Calls wrapped in XCTest assertions or Boolean negation require plain imports
+from `XCTest`, `Foundation`, `Swift`, or `UIKit` in the caller file at both
+revisions. UIKit is allowed for caller UI types; the helper body still uses the
+three-module query contract above. Unknown, attributed, or declaration-scoped
+imports can introduce escaping overloads with the same names, so these wrappers
+retain a conservative fallback with an unresolved-import diagnostic. Direct
+helper calls do not require this wrapper-specific import proof; independent
+receiver-origin checks still require trusted imports wherever nominal SDK types
+or overloads are established. Project modules
+shadowing any trusted module also retain fallback.
+
+Project SDK-name shadowing/subclasses, dynamic exposure, lifecycle use, escaping
+references, unsupported effects, missing bindings, and missing/version-mismatched
+proof evidence select the full inventory with `head_only_sdk_helper_boundary`.
+That diagnostic names the blocking evidence. Successful selections carry a
+`dependency` explanation identifying the verified SDK-helper boundary. As with
+other test-only precision, this relies on test independence and the documented
+SDK query contract, not measured coverage or a general SDK effect analysis.
+
 A mixed review still processes every other change normally; isolated helpers do
 not suppress production, configuration, graph, or build-evidence fallbacks. Scoped
 queries can use the same single captured head graph to separate those policies.
+Private-helper effect evidence records the exact checked declarations. Both source
+revisions must have unambiguous private callee bindings, and every project callee
+reached in the head compiler graph must belong to a checked declaration. An inherited
+overload or an unchecked project extension retains `head_only_helper_callee_effects`
+fallback. SDK callee effects also require unambiguous overload candidates at both revisions,
+including declarations removed from the head inventory. Queried SDK member names
+are audited across both revisions regardless of their declared owner, including
+inherited and type-aliased project members. Backticked identifiers are normalized
+when auditing fresh and saved source evidence, including declaration and call
+argument labels. Equivalent saved reference keys are merged so callers and escape
+warnings cannot disappear. Unresolved owners and protocol implementations
+remain conservative. Concrete project types cannot be ancestors of the trusted SDK
+classes; their same-named members and free functions do not replace SDK member
+calls. The compiler effect walk also rejects project callees outside the checked
+helper and its callbacks. Private proof
+version 9 and SDK proof version 5 reject older saved evidence. Private version 9
+records all SDK member bindings across the checked callee bodies and validates
+argument labels and method references. It also audits subscript bindings at both
+revisions and requires overload labels to agree with the compiler signature.
+Labeled subscripts and ambiguous mixed query overloads retain conservative
+fallback: the saved SIL does not identify which source call produced each method
+reference, so a valid call cannot justify another unproven call. Version-8 and
+older private proofs require
+regeneration. Both helper contracts also check the compiled consumer and lifecycle
+closure for opaque factories that could supply an SDK subclass with effectful
+overrides. Missing native or dynamic producer evidence retains a diagnostic and
+conservative selection. Assertion-only helpers also require this audit because
+opaque caller or lifecycle code can register XCTest callbacks. A `Void` or scalar return does not prove that an opaque call cannot
+supply receivers. The analyzer requires a captured implementation or an explicit
+SDK contract, rather than inferring safety from return-type names or callback
+syntax. This covers returned structs/enums, thrown errors, callbacks, output
+pointers and mutations of reachable state. Unknown producers retain fallback even
+when a completion only asserts its input is nil. Diagnostics identify the missing
+producer or storage declaration; they are uncertainty, not proven impact.
+
+XCTest callbacks are a separate effect boundary: assertions and waits can invoke
+project failure-recording methods or observers through the framework binary,
+without a caller edge in SIL. Both helper contracts inspect base/head source
+inventories, including base-only files, for recording/execution hooks, other
+XCTest subclass overrides outside the bound lifecycle, and observer registration
+or conformance. Unproven callback effects retain conservative selection with an
+explicit diagnostic. Ordinary lifecycle overrides remain supported when their
+captured implementations pass the caller audit. Missing source evidence declines
+the proof; existing evidence can be refreshed without rebuilding the application.
+
+Receiver-origin trust uses explicit SDK declaration contracts, not blanket trust
+of a module. Reflective factories such as Swift's `_typeByName`, unknown decoding
+APIs, erased Objective-C bridging, and casts to receiver classes or metatypes
+retain fallback. Casts to proven builtin value types remain supported. Generic SDK operations
+also require captured call substitutions: a builtin collection can supply known
+witnesses, while an arbitrary collection or value-protocol implementation cannot.
+All uses and captured fragments must satisfy the contract. Missing generic-call
+evidence in older graphs requires regeneration from retained artifacts and sealed
+SIL; it is never interpreted as proof that no receiver can be produced.
+
+Consumer and lifecycle storage accesses are also checked. Mutable/unknown fields
+and globals retain fallback; a narrow source proof supports immutable stored
+string literals without type annotations, wrappers or interpolation. Exact SDK
+gesture-velocity and keyboard-key constants are supported. The graph records field/global
+identities; old graphs missing that evidence must be regenerated from saved
+artifacts and sealed SIL. Module-fragment cache version 11 invalidates older
+fragments. This needs no baseline build and does not execute application tests.
+
+Signature evidence must cover the caller
+closure as well as the changed helper. When upgrading old graphs, regenerate from saved build artifacts
+and sealed SIL for the needed dependency modules too. The analysis caches both
+successful and failed producer checks within one immutable graph. SDK version 5 requires
+assertion names to be free of lexical shadowing, including parameter, generic,
+and closure bindings, and verifies caller imports before trusting assertion or
+negation wrappers. SDK version 3 and 4 captures fall back with a recapture diagnostic;
+regenerate the graph from valid build artifacts (and sealed SIL when available)
+to restore precision without another baseline build. Caller
+proofs for both private and SDK helpers use a memoized work queue rather than
+recursive stack frames. The private callee-effect analysis also uses an iterative
+work queue with cycle detection and shared-callee reuse.
+Local-function source analysis uses the file's identifier index, caches reference
+classifications and caller resolutions, and traverses local relationships
+iteratively. Name and signature lookups share that work; cycles, escapes, and
+ambiguous local declarations still retain fallback.
+
 Dependency explanations identify the verified private-helper proof. No baseline
 build, additional SIL extraction, or user-maintained helper mapping is required.
 
@@ -1457,11 +1647,19 @@ structural edits and opaque runtime calls. Whole-review fallback from an unrelat
 production change is not injected into a scope. These results describe selection
 policy, not proof that omitted changes cannot affect deferred regression tests.
 
-`excludedTestEntries` lists edited test entries the consumer executes separately.
+`excludedTestEntries` lists added or edited test entries the consumer executes separately.
 Their bodies do not become change roots in a helper scope when compiler evidence
 proves they are independent entries. Entries consumed by other tests remain roots.
-Exclusions apply only to supported surviving bodies after checking both source
-revisions; structural edits and macro/attribute uncertainty retain their fallbacks.
+Exclusions apply to supported surviving bodies after checking both source
+revisions. A newly added, ordinary zero-argument XCTest method may also be omitted
+as a change root when it belongs to an existing final test class with a proven
+XCTestCase inheritance chain, its name has no other references or declarations in
+the head module and is absent from the base module, and compiler consumers are
+limited to separately executed entries. This uses the same test-independence
+contract as surviving entries. The primary report still includes new tests;
+exclusion only changes the scoped roots, so a new test can still be selected as a
+consumer of a changed helper. Deletions, renames, ambiguous names, nonfinal classes,
+and macro/attribute uncertainty retain their structural fallbacks.
 Missing test roots or unresolved lifecycle bindings prevent independence from being
 proven, so those entries remain change roots and unresolved tests stay selected.
 Only provide entries your policy already executes. This does not exclude helpers,
