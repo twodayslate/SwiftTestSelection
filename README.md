@@ -1154,7 +1154,11 @@ remain conservative. Concrete project types cannot be ancestors of the trusted S
 classes; their same-named members and free functions do not replace SDK member
 calls. The compiler effect walk also rejects project callees outside the checked
 helper and its callbacks. Private proof
-version 5 and SDK proof version 3 reject older saved evidence. Caller
+version 5 and SDK proof version 4 reject older saved evidence. Version 4 requires
+assertion names to be free of lexical shadowing, including parameter, generic,
+and closure bindings. SDK version 3 captures fall back with a recapture diagnostic;
+regenerate the graph from valid build artifacts (and sealed SIL when available)
+to restore precision without another baseline build. Caller
 proofs for both private and SDK helpers use a memoized work queue rather than
 recursive stack frames. The private callee-effect analysis also uses an iterative
 work queue with cycle detection and shared-callee reuse.

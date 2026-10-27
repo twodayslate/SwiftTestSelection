@@ -62,7 +62,19 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
 
     static func shadowsReservedName(_ token: TokenSyntax) -> Bool {
         guard let parent = token.parent else { return false }
-        return parent.as(FunctionDeclSyntax.self)?.name.id == token.id ||
+        // Only the internal parameter name is a lexical binding. An external
+        // argument label alone cannot replace the XCTest function in a body.
+        if let parameter = parent.as(FunctionParameterSyntax.self) {
+            return (parameter.secondName ?? parameter.firstName).id == token.id
+        }
+        if let parameter = parent.as(ClosureParameterSyntax.self) {
+            return (parameter.secondName ?? parameter.firstName).id == token.id
+        }
+        return parent.as(GenericParameterSyntax.self)?.name.id == token.id ||
+            parent.as(ClosureShorthandParameterSyntax.self)?.name.id == token.id ||
+            parent.as(ClosureCaptureSyntax.self)?.name?.id == token.id ||
+            parent.as(AssociatedTypeDeclSyntax.self)?.name.id == token.id ||
+            parent.as(FunctionDeclSyntax.self)?.name.id == token.id ||
             parent.as(ClassDeclSyntax.self)?.name.id == token.id || parent.as(StructDeclSyntax.self)?.name.id == token.id ||
             parent.as(EnumDeclSyntax.self)?.name.id == token.id || parent.as(ProtocolDeclSyntax.self)?.name.id == token.id ||
             parent.as(TypeAliasDeclSyntax.self)?.name.id == token.id || parent.is(IdentifierPatternSyntax.self)

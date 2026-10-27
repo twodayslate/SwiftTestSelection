@@ -569,3 +569,91 @@ func sdkCallerSignaturesNormalizeEscapedNamesAndLabels(scenario: String) throws 
     #expect(merged["ready(timeout:)"]?.unsupported == true)
     #expect(merged["ready(timeout:)"]?.unsupportedLines == [14])
 }
+
+@Test(arguments: ["plain", "escaped", "generic"])
+func sdkAssertionShadowCannotHideEscapingCaller(scenario: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("assertion-shadow-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    var callers = """
+    import XCTest
+    @MainActor var saved: (() -> Bool)?
+    struct DeferredAssertion {
+        @MainActor func callAsFunction(_ value: @autoclosure @escaping () -> Bool) { saved = value }
+    }
+    @MainActor func arm(_ app: XCUIApplication, XCTAssertTrue: DeferredAssertion) {
+        XCTAssertTrue(app.buttons["toggle"].checkValue("1"))
+    }
+    @MainActor final class Suite: XCTestCase {
+        func testArm() { arm(XCUIApplication(), XCTAssertTrue: DeferredAssertion()) }
+        func testConsume() { XCTAssertTrue(saved?() ?? false) }
+    }
+    """
+    if scenario == "escaped" {
+        callers = callers.replacingOccurrences(of: "XCTAssertTrue: DeferredAssertion", with: "`XCTAssertTrue`: DeferredAssertion")
+    } else if scenario == "generic" {
+        callers = """
+        import XCTest
+        @MainActor var saved: (() -> Bool)?
+        class DeferredAssertion {
+            @MainActor required init(_ value: @autoclosure @escaping () -> Bool) { saved = value }
+        }
+        @MainActor func arm<XCTAssertTrue: DeferredAssertion>(_ app: XCUIApplication, assertion: XCTAssertTrue.Type) {
+            XCTAssertTrue(app.buttons["toggle"].checkValue("1"))
+        }
+        @MainActor final class Suite: XCTestCase {
+            func testArm() { arm(XCUIApplication(), assertion: DeferredAssertion.self) }
+            func testConsume() { XCTAssertTrue(saved?() ?? false) }
+        }
+        """
+    }
+    let tests = ["UI/Suite/testArm()", "UI/Suite/testConsume()"]
+    let current = try boundaryGraph(["Waiting.swift": newSDKQuery, "Tests.swift": callers], tests: tests, root: root)
+    #expect(current.sources["UI:Tests.swift"]?.sdkHelperNamesUnshadowed == false)
+    var base = current.sources
+    base["UI:Waiting.swift"] = .parse(oldSDKQuery, path: "Waiting.swift", module: "UI")
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    #expect(report.selectedTests == tests.sorted())
+    #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" })
+    // Version 3 captures incorrectly marked these bindings safe. Do not reuse
+    // that proof, even when the graph's other fields claim to be unshadowed.
+    var legacy = current
+    var legacyBase = base
+    for key in legacy.sources.keys {
+        legacy.sources[key]!.sdkHelperNamesUnshadowed = true
+        legacy.sources[key]!.helperNamesUnshadowed = true
+        legacyBase[key]!.sdkHelperNamesUnshadowed = true
+        legacyBase[key]!.helperNamesUnshadowed = true
+        for i in legacy.sources[key]!.units.indices { legacy.sources[key]!.units[i].sdkTestHelper?.version = 3 }
+        for i in legacyBase[key]!.units.indices { legacyBase[key]!.units[i].sdkTestHelper?.version = 3 }
+    }
+    legacy = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(legacy))
+    let stale = XcodeHeadOnlySelector.select(current: legacy, source: .init(base: legacyBase, mappings: current.mappings),
+        changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    #expect(stale.selectedTests == tests.sorted())
+    #expect(stale.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" && $0.message.contains("recapture") })
+}
+
+@Test(arguments: [
+    "func f(XCTAssertTrue: Int) {}",
+    "func f(_ `XCTAssertTrue`: Int) {}",
+    "func f<XCTAssertTrue>(_ value: XCTAssertTrue) {}",
+    "let body = { (XCTAssertTrue: Int) in XCTAssertTrue }",
+    "let body = { XCTAssertTrue in XCTAssertTrue }",
+    "let body = { [XCTAssertTrue = replacement] in XCTAssertTrue }",
+    "protocol P { associatedtype XCTAssertTrue }"
+])
+func reservedSDKNamesRejectLexicalBindings(source: String) {
+    let snapshot = SwiftSourceSnapshot.parse(source, path: "UI.swift", module: "UI")
+    #expect(snapshot.diagnostics.isEmpty)
+    #expect(snapshot.sdkHelperNamesUnshadowed == false)
+    #expect(snapshot.helperNamesUnshadowed == false)
+}
+
+@Test func assertionArgumentLabelAloneDoesNotShadowSDKBinding() {
+    let source = "func helper(XCTAssertTrue assertion: Int) { XCTAssertTrue(assertion > 0) }"
+    let snapshot = SwiftSourceSnapshot.parse(source, path: "UI.swift", module: "UI")
+    #expect(snapshot.diagnostics.isEmpty)
+    #expect(snapshot.sdkHelperNamesUnshadowed == true)
+    #expect(snapshot.helperNamesUnshadowed == true)
+}

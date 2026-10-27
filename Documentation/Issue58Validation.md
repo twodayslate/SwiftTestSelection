@@ -165,3 +165,27 @@ The additional release replay preserves the #55/#58 selections of 12 and 125
 tests with zero diagnostics. Scoped analysis took 11.31 and 12.07 seconds, and
 both reports pass `verify-build` against the retained products. These checks
 execute no application test bodies.
+
+The assertion-binding review expands lexical shadow detection to function and
+closure parameters, closure capture bindings, generic parameters, and associated
+types. External argument labels do not count as local bindings. Compiled cases
+cover callable assertion parameters (including backticked names) and a generic
+constructor that stores an escaping callback; the later callback consumer is
+retained through conservative selection.
+
+SDK proof version 4 invalidates version-3 evidence that could incorrectly claim
+these bindings were safe. The legacy-graph regression restores the old permissive
+flags and verifies fallback with a recapture diagnostic. Existing version-3
+retained graphs must have their source proof evidence regenerated before helper
+precision can be relied on.
+
+All 270 package tests pass in Xcode 26.6 debug and Xcode 27.0 release builds.
+An additional release replay refreshed source proof evidence from each retained
+source export, asserting identical declaration keys and source fingerprints
+before reusing the original compiler graph and product evidence. Separate graph
+files were written; the completed retained bundles were not modified. Refresh
+and encoding took 8.08 seconds for #55 and 8.12 seconds for #58. Selection then
+took 11.28 and 12.20 seconds, preserving the 12-test and 125-test sets with zero
+diagnostics. Both refreshed reports pass `verify-build` against the retained
+products. This was a source-proof refresh and analysis replay, not another
+application build, compiler extraction, or execution of application test bodies.

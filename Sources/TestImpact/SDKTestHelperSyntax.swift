@@ -10,7 +10,9 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
     public var name: String
     public var blocker: String?
     public var queriedMembers: Set<String> = []
-    static let currentVersion = 3
+    // Version 4 requires lexical assertion bindings to be unshadowed, including
+    // function/generic parameters and closure bindings. Version 3 did not.
+    static let currentVersion = 4
     static let trustedModules: Set<String> = ["XCTest", "Foundation", "Swift"]
 
     public struct References: Codable, Sendable {

@@ -10,7 +10,7 @@ enum SDKTestHelperIsolation {
                         base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex,
                         unownedBase: [String: SwiftSourceSnapshot] = [:]) -> String? {
         guard let evidence = unit.sdkTestHelper, let old = previous?.sdkTestHelper,
-              evidence.version == SDKTestHelperSyntax.currentVersion, old.version == evidence.version else { return "Missing supported base/head SDK helper evidence" }
+              evidence.version == SDKTestHelperSyntax.currentVersion, old.version == evidence.version else { return "Missing supported base/head SDK helper evidence; recapture the head graph" }
         if let reason = evidence.blocker ?? old.blocker { return reason }
         guard previous?.key == unit.key, previous?.region.path == unit.region.path,
               unit.headOnlyBodySupported == true, previous?.headOnlyBodySupported == true else { return "Changed header, ownership or unsupported attributes/macros" }
