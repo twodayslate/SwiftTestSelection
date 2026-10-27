@@ -146,3 +146,22 @@ The additional retained-graph replay passes in release, preserving the 12-test
 #55 set and the 125-test #58 set with zero diagnostics. Selection took 11.26 and
 12.06 seconds respectively, and both resulting reports pass `verify-build`.
 No application test bodies were executed by these replays.
+
+Declaration signatures and call-reference signatures now share the same escaped
+identifier normalization as SDK member audits. Saved reference maps merge all
+semantically equivalent keys, preserving declaration lines, caller lines, escape
+flags, and unsupported-reference locations. Already-canonical maps remain shared
+through copy-on-write. Existing capture evidence remains usable without a schema
+version change.
+
+Compiled regressions cover historical overloads with escaped method names or
+argument labels, including raw signatures restored from saved graph JSON. Caller
+regressions verify fresh and saved mixed-spelling references, precise selection
+when calls survive, and conservative fallback when an escaped base caller is
+removed outside the requested scope.
+
+All 267 package tests pass in Xcode 26.6 debug and Xcode 27.0 release builds.
+The additional release replay preserves the #55/#58 selections of 12 and 125
+tests with zero diagnostics. Scoped analysis took 11.31 and 12.07 seconds, and
+both reports pass `verify-build` against the retained products. These checks
+execute no application test bodies.

@@ -31,6 +31,8 @@ enum SDKTestHelperIsolation {
         if let reason = environmentBlocker(current: current, base: base, unownedBase: unownedBase,
                                            queriedMembers: evidence.queriedMembers.union(old.queriedMembers)) { return reason }
         if let reason = effectBindingBlocker(unit, previous: previous, current: current, base: base, unownedBase: unownedBase) { return reason }
+        let headReferences = headSources.mapValues { SDKTestHelperSyntax.canonicalReferences($0.helperReferences!) }
+        let baseReferences = baseSources.mapValues { SDKTestHelperSyntax.canonicalReferences($0.helperReferences!) }
         let headUnits = headSources.values.flatMap(\.units), oldUnits = baseSources.values.flatMap(\.units)
         let byKey = Dictionary(grouping: headUnits, by: \.key), oldByKey = Dictionary(grouping: oldUnits, by: \.key)
         let headByFile = Dictionary(grouping: headUnits.filter { $0.kind == "function" }, by: { $0.region.path })
@@ -80,14 +82,14 @@ enum SDKTestHelperIsolation {
             let paths = index.paths(to: ids)
             active.insert(callee.key)
             var callerKeys = Set<String>()
-            for (snapshots, units) in [(headSources, headByFile), (baseSources, oldByFile)] {
+            for (referencesByFile, units) in [(headReferences, headByFile), (baseReferences, oldByFile)] {
                 var declarations = 0
-                for (key, snapshot) in snapshots {
-                    let allUses = snapshot.helperReferences?[name]
+                for (key, references) in referencesByFile {
+                    let allUses = references[SDKTestHelperSyntax.canonicalName(name)]
                     if allUses?.unsupported == true {
                         return "Escaping, stored, nested or unresolved reference to \(name) in \(key) at lines \(allUses!.unsupportedLines.sorted())"
                     }
-                    guard let uses = snapshot.helperReferences?[callee.helperReferenceSignature ?? name] else { continue }
+                    guard let uses = references[SDKTestHelperSyntax.canonicalName(callee.helperReferenceSignature ?? name)] else { continue }
                     declarations += uses.declarations.count
                     guard !uses.unsupported else { return "Escaping, stored, nested or unresolved reference to \(name) in \(key) at lines \(uses.unsupportedLines.sorted())" }
                     let path = String(key.dropFirst(module.count + 1))
@@ -155,9 +157,9 @@ enum SDKTestHelperIsolation {
         for (snapshots, declaration) in [(current.sources, unit), (base, old)] {
             let units = snapshots.values.flatMap(\.units)
             let candidates = units.filter { candidate in
-                guard candidate.kind == "function", candidate.helperCallableName == name else { return false }
+                guard candidate.kind == "function", candidate.helperCallableName.map(SDKTestHelperSyntax.canonicalName) == SDKTestHelperSyntax.canonicalName(name) else { return false }
                 guard let a = candidate.helperReferenceSignature, let b = declaration.helperReferenceSignature else { return true }
-                return a == b
+                return SDKTestHelperSyntax.canonicalName(a) == SDKTestHelperSyntax.canonicalName(b)
             }
             guard candidates.count == 1, candidates[0].key == declaration.key,
                   candidates[0].region.path == declaration.region.path else { return "Ambiguous base/head SDK callee overload: \(name)" }
@@ -205,7 +207,7 @@ enum SDKTestHelperIsolation {
         // Source snapshots (including saved captures) preserve backticks in
         // declaration spelling. Compare semantic names without altering source
         // fingerprints or requiring a fresh capture.
-        func canonicalName(_ name: String) -> String { name.replacingOccurrences(of: "`", with: "") }
+        let canonicalName = SDKTestHelperSyntax.canonicalName
         let queriedMembers = Set(queriedMembers.map(canonicalName))
         let sources = Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)
         guard sources.allSatisfy({ $0.diagnostics.isEmpty && $0.helperReferences != nil && $0.sdkHelperNamesUnshadowed == true && $0.dispatchMembers != nil && $0.dispatchOverrides != nil && $0.superclasses != nil && $0.typeAliases != nil }) else { return "Missing reference evidence or shadowed XCTest/query/operator names" }

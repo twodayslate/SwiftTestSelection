@@ -279,7 +279,8 @@ func privateHelperRejectsInheritedOverloadBinding(scenario: String) throws {
     #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
 }
 
-@Test func privateSDKCalleeRejectsHistoricalOverload() throws {
+@Test(arguments: ["plain", "name", "label"])
+func privateSDKCalleeRejectsHistoricalOverload(escaping: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-sdk-binding-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -305,20 +306,32 @@ func privateHelperRejectsInheritedOverloadBinding(scenario: String) throws {
     let oldSDK = headSDK + """
 
     @MainActor extension XCUIElement {
-        func ready(timeout: Int) -> Bool {
+        func \(escaping == "name" ? "`ready`" : "ready")(\(escaping == "label" ? "`timeout`" : "timeout"): Int) -> Bool {
             UserDefaults.standard.set(true, forKey: "shared-mode")
             return true
         }
     }
     """
     let tests = ["UI/Suite/testCaller()", "UI/Other/testObserve()"]
-    let old = try boundaryGraph(["UI.swift": before, "SDK.swift": oldSDK], tests: tests, root: root)
+    var old = try boundaryGraph(["UI.swift": before, "SDK.swift": oldSDK], tests: tests, root: root)
     let current = try boundaryGraph(["UI.swift": after, "SDK.swift": headSDK], tests: tests, root: root)
     let oldGraph = old.dependencies!
     let matches = oldGraph.functions.values.filter { $0.name.contains("ready") }
     let effect = Set(matches.filter { $0.id.contains("Si") }.map(\.id))
     #expect(!effect.isEmpty)
     #expect(DependencyIndex(oldGraph).paths(to: effect).path(from: oldGraph.tests[tests[0]]!) != nil)
+    // Model a saved pre-normalization snapshot, where signatures retained raw
+    // name/label spelling. Selection must normalize these without recapture.
+    if escaping != "plain" {
+        for i in old.sources["UI:SDK.swift"]!.units.indices {
+            if old.sources["UI:SDK.swift"]!.units[i].fingerprint.contains("`ready`") ||
+                old.sources["UI:SDK.swift"]!.units[i].fingerprint.contains("`timeout`") {
+                old.sources["UI:SDK.swift"]!.units[i].helperReferenceSignature = escaping == "name" ? "`ready`(timeout:)" : "ready(`timeout`:)"
+            }
+        }
+    }
+    #expect(old.sources["UI:SDK.swift"]!.units.filter { $0.helperReferenceSignature?.contains("`") == true }.count == (escaping == "plain" ? 0 : 1))
+    old = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(old))
     let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: current.mappings), changes: [.init(path: "UI.swift")], baseRevision: "base")
     #expect(report.selectedTests == tests.sorted())
     #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
@@ -484,4 +497,75 @@ func sdkQueryMemberAuditDistinguishesConcreteOwners(kind: String) {
     """
     current.sources = ["UI:" + path: .parse(conditional, path: path, module: "UI")]
     #expect(SDKTestHelperIsolation.environmentBlocker(current: current, base: [:], queriedMembers: ["value"]) != nil)
+}
+
+@Test(arguments: ["fresh", "saved", "removedCaller"])
+func sdkCallerSignaturesNormalizeEscapedNamesAndLabels(scenario: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("sdk-signatures-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import XCTest
+    @MainActor extension XCUIElement {
+        func checkWait(timeout: TimeInterval) -> Bool { waitForExistence(timeout: timeout) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "{ waitForExistence", with: "{ exists && waitForExistence")
+    let callers = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testPlain() { XCTAssertTrue(XCUIApplication().buttons["toggle"].checkWait(timeout: 1)) }
+        func testEscaped() { XCTAssertTrue(XCUIApplication().buttons["toggle"].`checkWait`(`timeout`: 2)) }
+        func testUnrelated() { XCTAssertTrue(true) }
+    }
+    """
+    let headCallers = scenario == "removedCaller" ? callers.replacingOccurrences(
+        of: "XCTAssertTrue(XCUIApplication().buttons[\"toggle\"].`checkWait`(`timeout`: 2))", with: "XCTAssertTrue(true)") : callers
+    let tests = ["UI/Suite/testPlain()", "UI/Suite/testEscaped()", "UI/Suite/testUnrelated()"]
+    var old = try boundaryGraph(["Waiting.swift": before, "Tests.swift": callers], tests: tests, root: root)
+    var current = try boundaryGraph(["Waiting.swift": after, "Tests.swift": headCallers], tests: tests, root: root)
+    #expect(old.sources["UI:Tests.swift"]?.helperReferences?["checkWait(timeout:)"]?.callers.count == 2)
+    #expect(old.sources["UI:Tests.swift"]?.helperReferences?["`checkWait`(`timeout`:)"] == nil)
+    if scenario != "fresh" {
+        // Older captures split callers among raw keys. Preserve the aggregate
+        // name entry but partition signature entries exactly as those captures did.
+        func legacy(_ snapshot: SwiftSourceSnapshot) throws -> SwiftSourceSnapshot {
+            var snapshot = snapshot
+            let line = try #require(snapshot.units.first { $0.helperCallableName == "testEscaped" }?.region.startLine)
+            var plain = try #require(snapshot.helperReferences?["checkWait(timeout:)"])
+            var escaped = plain
+            escaped.callers.formIntersection([line])
+            plain.callers.remove(line)
+            snapshot.helperReferences!["checkWait(timeout:)"] = plain
+            snapshot.helperReferences!["`checkWait`(`timeout`:)"] = escaped
+            return snapshot
+        }
+        old.sources["UI:Tests.swift"] = try legacy(old.sources["UI:Tests.swift"]!)
+        current.sources["UI:Tests.swift"] = try legacy(current.sources["UI:Tests.swift"]!)
+        old = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(old))
+        current = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(current))
+    }
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: current.mappings),
+        changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    if scenario == "removedCaller" {
+        #expect(report.selectedTests == tests.sorted())
+        #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" })
+    } else {
+        #expect(report.selectedTests == tests.prefix(2).sorted())
+        #expect(report.diagnostics.isEmpty, "\(report.diagnostics)")
+    }
+}
+
+@Test func canonicalSDKReferencesMergeAllEvidence() {
+    var plain = SDKTestHelperSyntax.References()
+    plain.declarations = [2]; plain.callers = [5]
+    var escaped = SDKTestHelperSyntax.References()
+    escaped.declarations = [8]; escaped.callers = [11]
+    escaped.unsupported = true; escaped.unsupportedLines = [14]
+    let merged = SDKTestHelperSyntax.canonicalReferences(["ready(timeout:)": plain, "`ready`(`timeout`:)": escaped])
+    #expect(merged.count == 1)
+    #expect(merged["ready(timeout:)"]?.declarations == [2, 8])
+    #expect(merged["ready(timeout:)"]?.callers == [5, 11])
+    #expect(merged["ready(timeout:)"]?.unsupported == true)
+    #expect(merged["ready(timeout:)"]?.unsupportedLines == [14])
 }

@@ -25,8 +25,30 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
     static let names = assertions.union(["XCUIElement", "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter", "String", "Bool", "TimeInterval", "Double"])
     static let lifecycle: Set<String> = ["setUp", "setUpWithError", "tearDown", "tearDownWithError", "setUpClass", "tearDownClass", "defaultTestSuite", "testInvocations"]
 
+    /// Swift backticks quote an identifier without changing its identity. Apply
+    /// this to saved evidence too; source fingerprints keep their original text.
+    static func canonicalName(_ spelling: String) -> String {
+        spelling.contains("`") ? spelling.replacingOccurrences(of: "`", with: "") : spelling
+    }
+
+    /// Older captures can contain multiple raw keys for one Swift signature.
+    /// Merge all evidence; choosing one key could lose callers or escape flags.
+    static func canonicalReferences(_ references: [String: References]) -> [String: References] {
+        // Leave the common, already-canonical map shared through copy-on-write.
+        var result = references
+        for (key, evidence) in references where key.contains("`") {
+            result.removeValue(forKey: key)
+            let key = canonicalName(key)
+            result[key, default: References()].declarations.formUnion(evidence.declarations)
+            result[key, default: References()].callers.formUnion(evidence.callers)
+            result[key, default: References()].unsupportedLines.formUnion(evidence.unsupportedLines)
+            result[key, default: References()].unsupported = result[key]!.unsupported || evidence.unsupported
+        }
+        return result
+    }
+
     static func signature(_ function: FunctionDeclSyntax) -> String {
-        function.name.text + "(" + function.signature.parameterClause.parameters.map { $0.firstName.text + ":" }.joined() + ")"
+        canonicalName(function.name.text + "(" + function.signature.parameterClause.parameters.map { $0.firstName.text + ":" }.joined() + ")")
     }
 
     static func referenceKey(_ token: TokenSyntax) -> String? {
@@ -35,13 +57,13 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
         var expression = Syntax(reference)
         if let member = reference.parent?.as(MemberAccessExprSyntax.self), member.declName.id == reference.id { expression = Syntax(member) }
         guard let call = expression.parent?.as(FunctionCallExprSyntax.self), call.calledExpression.id == expression.id else { return nil }
-        return token.text + "(" + call.arguments.map { ($0.label?.text ?? "_") + ":" }.joined() + ")"
+        return canonicalName(token.text + "(" + call.arguments.map { ($0.label?.text ?? "_") + ":" }.joined() + ")")
     }
 
     static func references(_ tokens: [TokenSyntax], locations: SourceLocationConverter, activeLocals: Set<Int> = [], matching signature: String? = nil) -> References {
         var result = References()
         for token in tokens {
-            if let signature, let key = referenceKey(token), key != signature { continue }
+            if let signature, let key = referenceKey(token), key != canonicalName(signature) { continue }
             func reject() {
                 result.unsupported = true
                 result.unsupportedLines.insert(locations.location(for: token.positionAfterSkippingLeadingTrivia).line)
