@@ -278,3 +278,91 @@ func privateHelperRejectsInheritedOverloadBinding(scenario: String) throws {
     #expect(report.selectedTests == tests.sorted())
     #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
 }
+
+@Test func privateSDKCalleeRejectsHistoricalOverload() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-sdk-binding-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCaller() { candidate(XCUIApplication().buttons["toggle"]) }
+        private func candidate(_ element: XCUIElement) {
+            XCTAssertTrue(element.ready(timeout: 1))
+        }
+    }
+    @MainActor final class Other: XCTestCase {
+        func testObserve() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "shared-mode")) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "XCTAssertTrue(element.ready(timeout: 1))", with: "XCTAssertTrue(element.ready(timeout: 1)); XCTAssertTrue(true)")
+    let headSDK = """
+    import XCTest
+    @MainActor extension XCUIElement {
+        func ready(timeout: TimeInterval) -> Bool { waitForExistence(timeout: timeout) }
+    }
+    """
+    let oldSDK = headSDK + """
+
+    @MainActor extension XCUIElement {
+        func ready(timeout: Int) -> Bool {
+            UserDefaults.standard.set(true, forKey: "shared-mode")
+            return true
+        }
+    }
+    """
+    let tests = ["UI/Suite/testCaller()", "UI/Other/testObserve()"]
+    let old = try boundaryGraph(["UI.swift": before, "SDK.swift": oldSDK], tests: tests, root: root)
+    let current = try boundaryGraph(["UI.swift": after, "SDK.swift": headSDK], tests: tests, root: root)
+    let oldGraph = old.dependencies!
+    let matches = oldGraph.functions.values.filter { $0.name.contains("ready") }
+    let effect = Set(matches.filter { $0.id.contains("Si") }.map(\.id))
+    #expect(!effect.isEmpty)
+    #expect(DependencyIndex(oldGraph).paths(to: effect).path(from: oldGraph.tests[tests[0]]!) != nil)
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: current.mappings), changes: [.init(path: "UI.swift")], baseRevision: "base")
+    #expect(report.selectedTests == tests.sorted())
+    #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
+}
+
+@Test func sdkWaitRejectsInheritedProjectOverload() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-sdk-wait-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import XCTest
+    @MainActor extension XCUIElement {
+        func checkWait() -> Bool { waitForExistence(timeout: 1.0) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "timeout: 1.0", with: "timeout: 1")
+    let support = """
+    import XCTest
+    @MainActor extension NSObject {
+        func waitForExistence(timeout: Int) -> Bool {
+            UserDefaults.standard.set(true, forKey: "shared-mode")
+            return true
+        }
+    }
+    @MainActor final class Suite: XCTestCase {
+        func testCaller() { XCTAssertTrue(XCUIApplication().buttons["toggle"].checkWait()) }
+    }
+    @MainActor final class Other: XCTestCase {
+        func testObserve() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "shared-mode")) }
+    }
+    """
+    let tests = ["UI/Suite/testCaller()", "UI/Other/testObserve()"]
+    let old = try boundaryGraph(["Waiting.swift": before, "Tests.swift": support], tests: tests, root: root)
+    let current = try boundaryGraph(["Waiting.swift": after, "Tests.swift": support], tests: tests, root: root)
+    let graph = current.dependencies!
+    let ids = Set(graph.functions.values.filter { $0.name == "NSObject.waitForExistence(timeout:)" }.map(\.id))
+    #expect(!ids.isEmpty)
+    #expect(DependencyIndex(graph).paths(to: ids).path(from: graph.tests[tests[0]]!) != nil)
+    #expect(DependencyIndex(old.dependencies!).paths(to: ids).path(from: old.dependencies!.tests[tests[0]]!) == nil)
+    let helper = try #require(current.sources["UI:Waiting.swift"]?.units.first { $0.sdkTestHelper != nil })
+    let oldHelper = try #require(old.sources["UI:Waiting.swift"]?.units.first { $0.sdkTestHelper != nil })
+    #expect(SDKTestHelperIsolation.compilerEffectBlocker(oldHelper, graph: old.dependencies!, index: DependencyIndex(old.dependencies!)) == nil)
+    #expect(SDKTestHelperIsolation.compilerEffectBlocker(helper, graph: graph, index: DependencyIndex(graph))?.contains("Project implementation") == true)
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    #expect(report.selectedTests == tests.sorted())
+    #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" })
+}

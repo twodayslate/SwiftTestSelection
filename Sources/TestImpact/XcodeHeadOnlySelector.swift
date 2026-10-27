@@ -152,7 +152,7 @@ enum XcodeHeadOnlySelector {
                 }
                 var traversal = PrivateTestHelperIsolation.Traversal()
                 if PrivateTestHelperIsolation.proves(unit, previous: before.first, current: current, base: source.base,
-                                                     graph: graph, index: index, traversal: &traversal) {
+                                                     graph: graph, index: index, traversal: &traversal, unownedBase: source.unownedBaseSources) {
                     isolatedHelpers.insert(key)
                     changed.append(unit)
                     continue

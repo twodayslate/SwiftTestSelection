@@ -30,6 +30,7 @@ enum SDKTestHelperIsolation {
               Set(headSources.keys) == Set(baseSources.keys) else { return "Missing base/head module sources" }
         if let reason = environmentBlocker(current: current, base: base, unownedBase: unownedBase,
                                            queriedMembers: evidence.queriedMembers.union(old.queriedMembers)) { return reason }
+        if let reason = effectBindingBlocker(unit, previous: previous, current: current, base: base, unownedBase: unownedBase) { return reason }
         let headUnits = headSources.values.flatMap(\.units), oldUnits = baseSources.values.flatMap(\.units)
         let byKey = Dictionary(grouping: headUnits, by: \.key), oldByKey = Dictionary(grouping: oldUnits, by: \.key)
         let headByFile = Dictionary(grouping: headUnits.filter { $0.kind == "function" }, by: { $0.region.path })
@@ -120,23 +121,66 @@ enum SDKTestHelperIsolation {
             } }
             guard !units.isEmpty, units.allSatisfy({ accepted.contains($0.key) }) else { return "Compiler caller has no verified source owner: \(node.name)" }
         }
-        // The changed body and its callbacks may query only the trusted SDK APIs.
-        // Compiler-observed state/pointer effects always retain conservative coverage.
-        var pending = Array(ids), visited = Set<String>()
-        while let id = pending.popLast() {
-            guard visited.insert(id).inserted, let node = graph.functions[id] else { continue }
-            if node.module == module && node.hasProjectRuntimeContext &&
-                !node.uncertainties.isDisjoint(with: ["Global state access", "Shared state access", "Raw pointer operation"]) { return "Compiler-observed state or pointer effect: \(node.name)" }
-            for dependency in node.dependencies {
-                guard let target = graph.functions[dependency] else { continue }
-                if target.hasProjectRuntimeContext && target.module != module {
-                    return "Project implementation outside the trusted SDK boundary: \(target.name)"
-                }
-                if target.module == module { pending.append(dependency) }
+        return compilerEffectBlocker(unit, graph: graph, index: index)
+    }
+
+    /// A head binding does not identify its old overload. Reject competing
+    /// declarations at either revision, including default/variadic signatures
+    /// and declarations removed from the captured head inventory.
+    static func effectBindingBlocker(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
+                                     base: [String: SwiftSourceSnapshot],
+                                     unownedBase: [String: SwiftSourceSnapshot] = [:]) -> String? {
+        guard let name = unit.helperCallableName, let old = previous,
+              old.key == unit.key, old.region.path == unit.region.path,
+              let evidence = unit.sdkTestHelper, let prior = old.sdkTestHelper,
+              evidence.version == SDKTestHelperSyntax.currentVersion, prior.version == evidence.version,
+              evidence.blocker == nil, prior.blocker == nil,
+              unit.headOnlyBodySupported == true, old.headOnlyBodySupported == true else { return "Missing supported base/head SDK callee effects" }
+        for (snapshots, declaration) in [(current.sources, unit), (base, old)] {
+            let units = snapshots.values.flatMap(\.units)
+            let candidates = units.filter { candidate in
+                guard candidate.kind == "function", candidate.helperCallableName == name else { return false }
+                guard let a = candidate.helperReferenceSignature, let b = declaration.helperReferenceSignature else { return true }
+                return a == b
+            }
+            guard candidates.count == 1, candidates[0].key == declaration.key,
+                  candidates[0].region.path == declaration.region.path else { return "Ambiguous base/head SDK callee overload: \(name)" }
+            let owners = Set(units.filter { $0.kind == "function" && $0.region.intersects(declaration.region) }.map(\.key))
+            guard owners == [declaration.key] else { return "Ambiguous SDK callee source region: \(name)" }
+        }
+        for (path, snapshot) in unownedBase.sorted(by: { $0.key < $1.key }) {
+            guard snapshot.identifierNames?.contains(name) == false else {
+                return "Base source outside the head inventory may declare SDK callee \(name): \(path)"
             }
         }
         return nil
     }
+
+    /// The read-only syntax language cannot invoke other project functions.
+    /// Inspect actual compiler targets so inherited SDK-name overloads cannot
+    /// acquire trusted effects merely by spelling waitForExistence, etc.
+    static func compilerEffectBlocker(_ unit: SourceUnit, graph: DependencyGraph, index: DependencyIndex) -> String? {
+        let module = String(unit.key.prefix { $0 != ":" })
+        let ids = Set((index.byFile[unit.region.path] ?? []).filter { id in
+            graph.functions[id]?.module == module && graph.functions[id]!.regions.contains {
+                $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine
+            }
+        })
+        guard !ids.isEmpty else { return "Missing compiled SDK callee: \(unit.helperCallableName ?? unit.key)" }
+        var pending = Array(ids), visited = Set<String>()
+        while let id = pending.popLast() {
+            guard visited.insert(id).inserted, let node = graph.functions[id] else { continue }
+            if node.hasProjectRuntimeContext {
+                guard ids.contains(id) else { return "Project implementation outside the trusted SDK boundary: \(node.name)" }
+                if !node.uncertainties.isDisjoint(with: ["Global state access", "Shared state access", "Raw pointer operation"]) {
+                    return "Compiler-observed state or pointer effect: \(node.name)"
+                }
+            }
+            pending += node.dependencies.filter { graph.functions[$0]?.hasProjectRuntimeContext == true }
+        }
+        return nil
+    }
+
     /// Shared effect boundary for changed SDK helpers and SDK callees reached
     /// from private helpers; caller closure is a separate proof.
     static func environmentBlocker(current: XcodeTestGraph, base: [String: SwiftSourceSnapshot],
@@ -152,6 +196,10 @@ enum SDKTestHelperIsolation {
         guard sources.allSatisfy({ snapshot in
             snapshot.dispatchOverrides!.allSatisfy { !queryOverrides.contains($0.split(separator: ".").last.map(String.init) ?? $0) }
         }) else { return "Project override can replace a trusted SDK query (including through a type alias)" }
+        let waitNames = queriedMembers.intersection(["waitForExistence", "waitForNonExistence"])
+        guard sources.allSatisfy({ snapshot in
+            snapshot.units.allSatisfy { $0.helperCallableName.map { !waitNames.contains($0) } ?? true }
+        }) else { return "Project declaration can replace a trusted SDK wait overload" }
         let protected: Set<String> = ["XCUIElement.exists", "XCUIElement.value", "XCUIElement.isEnabled", "XCUIElement.isHittable", "XCUIElement.isSelected",
             "NSPredicate.evaluate", "NSPredicate.init", "XCTNSPredicateExpectation.init", "XCTWaiter.wait", "XCUIElement.waitForExistence", "XCUIElement.waitForNonExistence"]
         guard sources.allSatisfy({ snapshot in

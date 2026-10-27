@@ -30,7 +30,7 @@ enum PrivateTestHelperIsolation {
 
     static func proves(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
                        base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex,
-                       traversal: inout Traversal) -> Bool {
+                       traversal: inout Traversal, unownedBase: [String: SwiftSourceSnapshot] = [:]) -> Bool {
         // Keep the graph traversal on the heap. Even modest chains overflow
         // Swift Testing's worker stack in unoptimized builds with recursive proofs.
         enum Work {
@@ -48,7 +48,7 @@ enum PrivateTestHelperIsolation {
                 }
                 traversal.begin(candidate.key)
                 guard let proof = prepare(candidate, previous: prior, current: current, base: base,
-                                          graph: graph, index: index, traversal: &traversal) else {
+                                          graph: graph, index: index, traversal: &traversal, unownedBase: unownedBase) else {
                     traversal.active.remove(candidate.key)
                     traversal.completed[candidate.key] = false
                     continue
@@ -78,7 +78,7 @@ enum PrivateTestHelperIsolation {
 
     private static func prepare(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
                                 base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex,
-                                traversal: inout Traversal) -> Prepared? {
+                                traversal: inout Traversal, unownedBase: [String: SwiftSourceSnapshot]) -> Prepared? {
         if [unit.privateTestHelper, previous?.privateTestHelper].compactMap({ $0 }).contains(where: {
             $0.proofVersion == PrivateTestHelperSyntax.currentProofVersion && $0.calleeEffectsSupported != true
         }) { traversal.hasUnprovenCalleeEffects = true }
@@ -134,11 +134,13 @@ enum PrivateTestHelperIsolation {
                 let owners = current.targets.filter { $0.sourceFiles.contains(callee.region.path) }
                 let old = baseUnits.filter { $0.key == callee.key && $0.region.path == callee.region.path }
                 return !owners.isEmpty && owners.allSatisfy { $0.isTest && !$0.hasProductionRole && current.modules[$0.name] == module } &&
-                    old.count == 1 && old[0].headOnlyBodySupported == true && old[0].sdkTestHelper?.version == SDKTestHelperSyntax.currentVersion && old[0].sdkTestHelper?.blocker == nil
+                    old.count == 1 && old[0].headOnlyBodySupported == true && old[0].sdkTestHelper?.version == SDKTestHelperSyntax.currentVersion && old[0].sdkTestHelper?.blocker == nil &&
+                    SDKTestHelperIsolation.effectBindingBlocker(callee, previous: old[0], current: current, base: base, unownedBase: unownedBase) == nil &&
+                    SDKTestHelperIsolation.compilerEffectBlocker(callee, graph: graph, index: index) == nil
             }
             let queries = Set(supported.flatMap { $0.sdkTestHelper!.queriedMembers }).union(
                 baseUnits.filter { old in supported.contains { $0.key == old.key && $0.region.path == old.region.path } }.compactMap(\.sdkTestHelper).flatMap(\.queriedMembers))
-            traversal.sdkEffectIDs[module] = SDKTestHelperIsolation.environmentBlocker(current: current, base: base, queriedMembers: queries) == nil
+            traversal.sdkEffectIDs[module] = SDKTestHelperIsolation.environmentBlocker(current: current, base: base, unownedBase: unownedBase, queriedMembers: queries) == nil
                 ? supported.reduce(into: Set<String>()) { $0.formUnion(symbols($1, graph: graph, index: index)) } : []
         }
         let effectIDs = effectUnits.reduce(into: traversal.sdkEffectIDs[module] ?? []) { $0.formUnion(symbols($1, graph: graph, index: index)) }

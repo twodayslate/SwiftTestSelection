@@ -100,3 +100,13 @@ both Xcode 26.6 debug and Xcode 27.0 release builds. The additional compiled cas
 cover same-file/separate-file inherited overloads, base-only ambiguity, unproved
 project effects, and a caller file moved to another target. Python capture tests
 pass (6); distribution tests pass (6 run, one platform-dependent skip).
+
+The SDK binding follow-up closes effect proofs over actual compiler targets and
+checks competing overload candidates at both revisions. A project-defined
+inherited `waitForExistence`/`waitForNonExistence` implementation cannot gain the
+trusted SDK contract from its name; a removed overload cannot disappear from a
+private helper's historical effect proof. Unknown base-file ownership is included
+in this audit. These are selection-time checks over the existing version-5 private
+and version-3 SDK metadata, so their evidence schemas do not change. Both new
+compiled regressions pass, along with all 259 package tests in Xcode 26.6 debug
+and Xcode 27.0 release builds.

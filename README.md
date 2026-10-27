@@ -1143,7 +1143,11 @@ Private-helper effect evidence records the exact checked declarations. Both sour
 revisions must have unambiguous private callee bindings, and every project callee
 reached in the head compiler graph must belong to a checked declaration. An inherited
 overload or an unchecked project extension retains `head_only_helper_callee_effects`
-fallback. Private proof version 5 and SDK proof version 3 reject older saved evidence. Caller
+fallback. SDK callee effects also require unambiguous overload candidates at both revisions,
+including declarations removed from the head inventory. Trusted SDK wait names do
+not exempt inherited project implementations: the compiler effect walk rejects
+project callees outside the checked helper and its callbacks. Private proof
+version 5 and SDK proof version 3 reject older saved evidence. Caller
 proofs use a memoized work queue rather than recursive stack frames.
 
 Dependency explanations identify the verified private-helper proof. No baseline
