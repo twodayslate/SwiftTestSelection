@@ -910,7 +910,7 @@ func privateAttachmentAuditsHistoricalBindings(scenario: String) throws {
         #expect(report.diagnostics.isEmpty)
         var incomplete = current
         for i in incomplete.sources["UI:Tests.swift"]!.units.indices {
-            incomplete.sources["UI:Tests.swift"]!.units[i].privateTestHelper?.attachmentEffectMembers = nil
+            incomplete.sources["UI:Tests.swift"]!.units[i].privateTestHelper?.sdkEffectMembers = nil
         }
         incomplete = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(incomplete))
         let missing = XcodeHeadOnlySelector.select(current: incomplete, source: .init(base: old.sources, mappings: current.mappings),
@@ -934,16 +934,21 @@ func privateAttachmentAuditsHistoricalBindings(scenario: String) throws {
     #expect(!SDKTestHelperIsolation.memberBindingsUnshadowed(revisions: [[externalOverride], []], members: ["init"], sdkOwners: owners))
 }
 
-@Test func privateHelperRejectsCrossFileImportedEffect() throws {
+@Test(arguments: ["direct", "dynamic", "overload", "labels", "escapedLabels", "reference"])
+func privateHelperRejectsCrossFileImportedEffect(kind: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-import-history-" + UUID().uuidString)
     let externalRoot = FileManager.default.temporaryDirectory.appendingPathComponent("review57-external-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: externalRoot, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: externalRoot) }
+    let method = kind == "overload" ? "screenshot(_ value: Bool)" : ["labels", "escapedLabels", "reference"].contains(kind) ? "waitForExistence(harmful value: Double)" : "markReviewFlag()"
+    var call = kind == "overload" ? "screenshot(true)" : kind == "labels" ? "waitForExistence(harmful: 1)" : "markReviewFlag()"
+    if kind == "escapedLabels" { call = "`waitForExistence`(`harmful`: 1)" }
+    if kind == "reference" { call = "waitForExistence(harmful:)(1)" }
     let external = """
     import XCTest
-    extension XCUIApplication {
-        @MainActor public func markReviewFlag() -> Bool {
+    extension XCUIElement {
+        @MainActor \(kind == "direct" ? "" : "@objc dynamic") public func \(method) -> Bool {
             UserDefaults.standard.set(true, forKey: "review57-sharedFlag")
             return true
         }
@@ -964,7 +969,7 @@ func privateAttachmentAuditsHistoricalBindings(scenario: String) throws {
         func testConsume() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "review57-sharedFlag")) }
     }
     """
-    let after = before.replacingOccurrences(of: "add(attachment)", with: "add(attachment); XCTAssertTrue(app.markReviewFlag())")
+    let after = before.replacingOccurrences(of: "add(attachment)", with: "add(attachment); XCTAssertTrue(app.\(call))")
     let tests = ["UI/Suite/testCapture()", "UI/Suite/testConsume()"]
     let old = try boundaryGraph(["Tests.swift": before, "Imports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
     try JSONEncoder().encode(old.mappings).write(to: root.appendingPathComponent(".swift-test-selection.json"))
@@ -974,8 +979,9 @@ func privateAttachmentAuditsHistoricalBindings(scenario: String) throws {
     let current = try boundaryGraph(["Tests.swift": after, "Imports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
     let graph = try #require(current.dependencies)
     let importedReferences = Set(graph.functions.values.flatMap(\.dependencies).filter { $0.contains("AttachmentSupport") })
-    #expect(!importedReferences.isEmpty)
-    let effectCallers = Set(graph.functions.values.filter { !$0.dependencies.isDisjoint(with: importedReferences) }.map(\.id))
+    let dynamicCallers = Set(graph.functions.values.filter { $0.dynamicDeclarations.contains(where: { $0.contains(kind == "overload" ? "screenshot" : ["labels", "escapedLabels", "reference"].contains(kind) ? "waitForExistence" : "markReviewFlag") }) }.map(\.id))
+    #expect(kind == "direct" ? !importedReferences.isEmpty : !dynamicCallers.isEmpty)
+    let effectCallers = Set(graph.functions.values.filter { !$0.dependencies.isDisjoint(with: importedReferences) }.map(\.id)).union(dynamicCallers)
     _ = try #require(DependencyIndex(graph).paths(to: effectCallers).path(from: graph.tests[tests[0]] ?? []))
     let scopes = try XcodeHeadOnlySelector.scopedReports(current: current,
         requests: .init(scopes: [.init(name: "helper", paths: ["Tests.swift"])]),
@@ -1020,4 +1026,95 @@ func privateAttachmentAuditsHistoricalBindings(scenario: String) throws {
     let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base, mappings: current.mappings), changes: [.init(path: "Tests.swift")], baseRevision: "base")
     #expect(report.selectedTests == [tests[0]])
     #expect(report.diagnostics.isEmpty)
+}
+
+@Test(arguments: [false, true], [false, true])
+func privateHelperRejectsNestedAliasOverride(shadow: Bool, attachment: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-nested-alias-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    var before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCapture() { capture(Namespace.Child()) }
+        private func capture(_ app: XCUIApplication) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            add(attachment)
+        }
+        func testConsume() { XCTAssertFalse(sharedFlag) }
+    }
+    """
+    if !attachment {
+        before = before.replacingOccurrences(of: "let attachment = XCTAttachment(screenshot: app.screenshot())", with: "let image = app.screenshot()")
+            .replacingOccurrences(of: "add(attachment)", with: "XCTAssertNotNil(image)")
+    }
+    let statement = attachment ? "add(attachment)" : "XCTAssertNotNil(image)"
+    let after = before.replacingOccurrences(of: statement, with: statement + "; XCTAssertTrue(app.exists)")
+    let prefix = """
+    import XCTest
+    @MainActor var sharedFlag = false
+    \(shadow ? "class Parent {}" : "")
+    enum Namespace {
+        typealias Parent = XCUIApplication
+        @MainActor class Child: Parent {
+    """
+    let oldExtra = prefix + """
+            override func screenshot() -> XCUIScreenshot { sharedFlag = true; return super.screenshot() }
+        }
+    }
+    """
+    let headExtra = prefix + "\n    }\n}"
+    let tests = ["UI/Suite/testCapture()", "UI/Suite/testConsume()"]
+    let old = try boundaryGraph(["Tests.swift": before, "Extra.swift": oldExtra], tests: tests, root: root)
+    let oldGraph = try #require(old.dependencies)
+    let effects = oldGraph.functions.values.filter { $0.id.contains("screenshot") }
+    #expect(!effects.isEmpty)
+    let sharedState = Set(oldGraph.functions.values.filter { $0.uncertainties.contains("Global state access") || $0.uncertainties.contains("Shared state access") }.map(\.id))
+    let effectPath = try #require(DependencyIndex(oldGraph).paths(to: sharedState).path(from: Set(effects.map(\.id))))
+    #expect(!effectPath.isEmpty)
+    try JSONEncoder().encode(old.mappings).write(to: root.appendingPathComponent(".swift-test-selection.json"))
+    _ = try CommandRunner.run("git", ["init", "-q"], at: root)
+    _ = try CommandRunner.run("git", ["add", "Tests.swift", "Extra.swift", ".swift-test-selection.json"], at: root)
+    _ = try CommandRunner.run("git", ["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "base"], at: root)
+    let current = try boundaryGraph(["Tests.swift": after, "Extra.swift": headExtra], tests: tests, root: root)
+    let scopes = try XcodeHeadOnlySelector.scopedReports(current: current,
+        requests: .init(scopes: [.init(name: "helper", paths: ["Tests.swift"])]),
+        changes: [.init(path: "Tests.swift"), .init(path: "Extra.swift")],
+        baseRevision: "HEAD", headRevision: "head", root: root, mappingPath: ".swift-test-selection.json",
+        documentation: [], buildEvidenceFailure: nil)
+    let report = try #require(scopes.first?.report)
+    #expect(report.selectedTests == tests.sorted())
+    #expect(!report.diagnostics.isEmpty)
+}
+
+@Test(arguments: ["current", "legacy", "mutation", "nestedTap"])
+func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("dynamic-evidence-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCapture() { capture(XCUIApplication()) }
+        private func capture(_ app: XCUIApplication) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            add(attachment)
+        }
+        func testOther() { XCTAssertTrue(XCUIApplication().exists) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "add(attachment)", with:
+        "add(attachment); " + (kind == "mutation" ? "XCTAssertNotNil(app.terminate())" : kind == "nestedTap" ? "XCTAssertNotNil(app.tap())" : "XCTAssertTrue(app.exists)"))
+    let tests = ["UI/Suite/testCapture()", "UI/Suite/testOther()"]
+    var current = try boundaryGraph(["Tests.swift": after], tests: tests, root: root)
+    var base = current.sources
+    base["UI:Tests.swift"] = .parse(before, path: "Tests.swift", module: "UI")
+    if kind == "legacy" {
+        for id in current.dependencies!.functions.keys { current.dependencies!.functions[id]!.dynamicCallSignatures = nil }
+    }
+    current = try GraphArchive.decode(GraphArchive.encode(current))
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base, mappings: current.mappings),
+        changes: [.init(path: "Tests.swift")], baseRevision: "base")
+    #expect(report.selectedTests == (kind == "current" ? [tests[0]] : tests.sorted()))
+    #expect(kind == "current" ? report.diagnostics.isEmpty : report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
 }

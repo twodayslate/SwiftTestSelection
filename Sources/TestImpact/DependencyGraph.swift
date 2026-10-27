@@ -30,6 +30,9 @@ public struct FunctionNode: Codable, Sendable {
     /// callbacks), before broad dispatch candidates are added. Nil means legacy
     /// or unknown edge provenance.
     public var compilerReferences: Set<String>? = nil
+    /// Full SIL method reference and formal type for every dynamic call.
+    /// Nil means legacy or incomplete evidence; display names lose overloads.
+    public var dynamicCallSignatures: Set<String>? = nil
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>

@@ -202,6 +202,7 @@ public enum SILParser {
                     }
                     if line.split(separator: " ", maxSplits: 2)[1] == "shared" { sharedSymbols.insert(match[0]) }
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
+                    current!.dynamicCallSignatures = []
                     // Canonical capture can retain source parameter names (e.g.
                     // Element), while replay usually spells them τ_0_0. A local
                     // nominal type may have the same name; it is not that receiver.
@@ -257,6 +258,11 @@ public enum SILParser {
                 if match[0] == "witness_method", genericParameters == nil {
                     current!.uncertainties.insert("Unresolved project dispatch: " + declaration)
                 }
+                if let start = line.range(of: "#" + match[1]),
+                   let end = line.range(of: match[0] == "witness_method" ? " : $" : ", $", range: start.upperBound..<line.endIndex) {
+                    let signature = String(line[start.upperBound..<end.lowerBound])
+                    current!.dynamicCallSignatures?.insert(match[0] + " " + match[1] + signature)
+                } else { current!.dynamicCallSignatures = nil }
                 current!.dynamicDeclarations.insert(declaration)
                 current!.uncertainties.insert("Dynamic dispatch: \(match[0]) \(match[1])")
             }

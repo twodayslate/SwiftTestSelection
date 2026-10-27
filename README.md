@@ -1099,8 +1099,19 @@ SIL bodies are absent from the saved graph. Selection batches these symbols thro
 traversal. Only recognized SDK declaration owners (and known Clang-imported XCTest/Foundation
 types) receive the SDK contract. Unknown owners, unavailable demangling,
 and external extensions exposed through another file's import retain
-`head_only_helper_callee_effects`. The checks use existing graph evidence without
-an additional build or SIL extraction.
+`head_only_helper_callee_effects`. Dynamic calls also require complete SIL method
+signatures and matching source argument labels; a method name alone cannot
+establish its implementation. Unknown calls, overloads, method values that lose
+binding information, and incomplete evidence retain the diagnostic fallback.
+Supported navigation actions must remain standalone statements preserved from
+the base; hiding an action inside an added assertion does not establish isolation.
+SDK member bindings are audited at both revisions even when a helper creates no
+attachment. Nested aliases and inherited nested types cannot be resolved to an
+unrelated module-level namesake.
+
+Older graphs without dynamic-call evidence require regeneration from the existing
+build artifacts and sealed SIL capture. Source-proof refresh alone is insufficient;
+reparsing valid saved SIL requires no application rebuild or test execution.
 Helpers cannot capture `self` or free project variables, take
 inout/function-valued/default arguments, or contain closures or macros. Known
 global/shared-state and raw-pointer effects in project callees also
@@ -1187,10 +1198,11 @@ remain conservative. Concrete project types cannot be ancestors of the trusted S
 classes; their same-named members and free functions do not replace SDK member
 calls. The compiler effect walk also rejects project callees outside the checked
 helper and its callbacks. Private proof
-version 7 and SDK proof version 5 reject older saved evidence. Private version 7
-records attachment member bindings across the checked callee bodies, in addition
-to the import validation added in version 6; version-6 and older private proofs
-require regeneration. SDK version 5 requires
+version 8 and SDK proof version 5 reject older saved evidence. Private version 8
+records all SDK member bindings across the checked callee bodies and validates
+argument labels and method references, extending version 7’s attachment audit and
+version 6’s import validation. Version-7 and older private proofs require
+regeneration. SDK version 5 requires
 assertion names to be free of lexical shadowing, including parameter, generic,
 and closure bindings, and verifies caller imports before trusting assertion or
 negation wrappers. SDK version 3 and 4 captures fall back with a recapture diagnostic;

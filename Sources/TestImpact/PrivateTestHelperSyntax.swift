@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 7 records attachment-related member bindings across private callees.
-    static let currentProofVersion = 7
+    // Version 8 checks SDK call labels as well as compiler method signatures.
+    static let currentProofVersion = 8
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -24,6 +24,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     /// SDK member names used by a transitive body that constructs attachments.
     /// Empty means no attachment construction; nil is incomplete saved evidence.
     public var attachmentEffectMembers: Set<String>? = nil
+    /// All transitive SDK bindings, even when the helper creates no attachment.
+    public var sdkEffectMembers: Set<String>? = nil
 
     public struct Statement: Codable, Sendable {
         public var signature: String
@@ -150,12 +152,12 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         }
         guard !callers.isEmpty else { return nil }
         var effectCallees: [String: Int] = [:]
-        var attachmentMembers = Set<String>()
+        var attachmentMembers = Set<String>(), sdkMembers = Set<String>()
         let effects = importsSupported ? safeCalleeEffects(function, in: type, locations: locations,
-            proven: &effectCallees, attachmentMembers: &attachmentMembers) : nil
+            proven: &effectCallees, attachmentMembers: &attachmentMembers, sdkMembers: &sdkMembers) : nil
         return Self(name: name, callerLines: callers, proofVersion: currentProofVersion, statements: statements(in: function),
                     localAttachmentState: attachmentState || (effects ?? false), calleeEffectsSupported: effects != nil, effectCalleeLines: effects == nil ? nil : effectCallees,
-                    attachmentEffectMembers: effects == nil ? nil : attachmentMembers)
+                    attachmentEffectMembers: effects == nil ? nil : attachmentMembers, sdkEffectMembers: effects == nil ? nil : sdkMembers)
     }
 
     /// Added entries may be omitted only under an explicit separate-execution
@@ -179,7 +181,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     /// A nil result is unsupported; true propagates local attachment effects.
     private static func safeCalleeEffects(_ function: FunctionDeclSyntax, in type: ClassDeclSyntax,
                                           locations: SourceLocationConverter, proven: inout [String: Int],
-                                          attachmentMembers: inout Set<String>) -> Bool? {
+                                          attachmentMembers: inout Set<String>, sdkMembers: inout Set<String>) -> Bool? {
         let methods = Dictionary(grouping: type.memberBlock.members.compactMap { $0.decl.as(FunctionDeclSyntax.self) }
             .filter { $0.modifiers.map(\.name.text) == ["private"] }, by: { $0.name.text })
         var usesAttachments = false, memberNames = Set<String>()
@@ -199,15 +201,16 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
                       candidate.genericParameterClause == nil, candidate.genericWhereClause == nil,
                       candidate.signature.effectSpecifiers == nil,
                       !candidate.name.text.hasPrefix("test"), !SDKTestHelperSyntax.lifecycle.contains(candidate.name.text),
-                      let attachments = safeBody(candidate, in: type), let body = candidate.body else { return nil }
+                      let attachments = safeBody(candidate, in: type, validateDynamicCallShapes: true), let body = candidate.body else { return nil }
                 var callees: [FunctionDeclSyntax] = [], seen = Set<SyntaxIdentifier>()
                 for token in body.tokens(viewMode: .sourceAccurate) {
                     if let reference = token.parent?.as(DeclReferenceExprSyntax.self), reference.baseName.id == token.id {
                         let name = SDKTestHelperSyntax.canonicalName(reference.baseName.text)
                         if reference.parent?.as(MemberAccessExprSyntax.self)?.declName.id == reference.id {
                             memberNames.insert(name)
-                        } else if name == "XCTAttachment" {
-                            usesAttachments = true
+                        } else if ["XCTAttachment", "NSPredicate", "XCUIElement"].contains(name) {
+                            memberNames.insert("init")
+                            if name == "XCTAttachment" { usesAttachments = true }
                         } else if name == "add" {
                             memberNames.insert(name)
                         }
@@ -233,11 +236,12 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         }
         // Include construction inside assertions and downstream private helpers,
         // even when no attachment setter/add operation was used.
+        sdkMembers = memberNames
         attachmentMembers = usesAttachments ? memberNames.union(["init"]) : []
         return completed[function.id]
     }
 
-    private static func safeBody(_ function: FunctionDeclSyntax, in type: ClassDeclSyntax) -> Bool? {
+    private static func safeBody(_ function: FunctionDeclSyntax, in type: ClassDeclSyntax, validateDynamicCallShapes: Bool = false) -> Bool? {
         guard let body = function.body else { return nil }
         // Query/assertion helpers receive their context as ordinary values. No
         // self/global captures, inout, function-valued arguments, or defaults.
@@ -258,6 +262,25 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         let allowedGlobals = assertions.union(["NSPredicate", "XCUIElement", "XCTAttachment"])
         var attachments = Set<String>(), writesAttachment = false
         func references(_ node: Syntax) -> Bool {
+            if validateDynamicCallShapes, let member = node.as(MemberAccessExprSyntax.self),
+               ExternalHelperEffects.sdkCallLabels[SDKTestHelperSyntax.canonicalName(member.declName.baseName.text)] != nil {
+                // A method value loses its labels at the eventual call site.
+                guard member.declName.argumentNames == nil,
+                      let call = member.parent?.as(FunctionCallExprSyntax.self), call.calledExpression.id == member.id else { return false }
+            }
+            if validateDynamicCallShapes, let call = node.as(FunctionCallExprSyntax.self) {
+                if let member = call.calledExpression.as(MemberAccessExprSyntax.self),
+                   let shapes = ExternalHelperEffects.sdkCallLabels[SDKTestHelperSyntax.canonicalName(member.declName.baseName.text)] {
+                    if ExternalHelperEffects.sdkActions.contains(SDKTestHelperSyntax.canonicalName(member.declName.baseName.text)),
+                       call.parent?.is(CodeBlockItemSyntax.self) != true { return false }
+                    guard call.trailingClosure == nil, call.additionalTrailingClosures.isEmpty,
+                          shapes.contains(call.arguments.map { SDKTestHelperSyntax.canonicalName($0.label?.text ?? "_") }) else { return false }
+                }
+                if call.calledExpression.as(DeclReferenceExprSyntax.self).map({ SDKTestHelperSyntax.canonicalName($0.baseName.text) }) == "XCTAttachment" {
+                    guard call.arguments.map({ SDKTestHelperSyntax.canonicalName($0.label?.text ?? "_") }) == ["screenshot"],
+                          call.trailingClosure == nil, call.additionalTrailingClosures.isEmpty else { return false }
+                }
+            }
             if node.is(ClosureExprSyntax.self) || node.is(DeclSyntax.self) || node.is(SuperExprSyntax.self) ||
                 node.is(KeyPathExprSyntax.self) || node.is(AssignmentExprSyntax.self) ||
                 node.is(InOutExprSyntax.self) || node.is(MacroExpansionExprSyntax.self) || node.is(IfConfigDeclSyntax.self) ||

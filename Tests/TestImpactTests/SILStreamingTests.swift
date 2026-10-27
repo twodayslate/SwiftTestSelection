@@ -106,3 +106,17 @@ import Testing
     #expect(node.regions == [.init(path: "Café\\\"😀.swift", startLine: 1, endLine: 2)])
     #expect(node.uncertainties == ["Global state access", "Shared state access"])
 }
+
+@Test func dynamicSignaturesRetainOverloadsAndRejectIncompleteCalls() throws {
+    let prefix = """
+    sil hidden @helper : $@convention(thin) () -> () {
+      %0 = objc_method %app, #XCUIElement.screenshot!foreign : (XCUIElement) -> () -> XCUIScreenshot, $@convention(objc_method) (XCUIElement) -> @autoreleased XCUIScreenshot
+      %1 = objc_method %app, #XCUIElement.screenshot!foreign : (XCUIElement) -> (Bool) -> Bool, $@convention(objc_method) (ObjCBool, XCUIElement) -> ObjCBool
+    """
+    for malformed in [false, true] {
+        let body = prefix + (malformed ? "\n  %2 = objc_method %app, #XCUIElement.exists!getter.foreign" : "") + "\n} // end sil function 'helper'"
+        let node = try #require(SILParser.parse(body, module: "UI", sourceRoot: URL(fileURLWithPath: "/")).functions["helper"])
+        #expect(malformed ? node.dynamicCallSignatures == nil : node.dynamicCallSignatures?.count == 2)
+        #expect(!ExternalHelperEffects.allowsDynamicCalls(node))
+    }
+}

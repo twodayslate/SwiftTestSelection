@@ -307,3 +307,45 @@ and both reports pass `verify-build`. Refresh and encoding took 8.30 and
 8.34 seconds; selection took 11.92 and 12.21 seconds. The original completed
 bundles were unchanged. No application build, compiler extraction, or application
 test bodies were executed.
+
+
+The subsequent dynamic-dispatch and ancestry review closes cases that lack a
+`function_ref`: foreign `@objc dynamic` calls, SDK-name overloads, differently
+labeled overloads with identical formal types, escaped labels, and method values.
+Private helper proof version 8 checks source call shapes and records every SDK
+member used by checked private callees, including helpers without attachments.
+Unknown dynamic calls or missing signature evidence retain an explicit fallback.
+Supported navigation actions must be preserved standalone statements, rather than
+new effects hidden in assertions. SDK helper compiler walks also validate external
+and dynamic calls. The two compiler actor-check symbols and importer-synthesized
+`XCTWaiter.Result` conformances have narrow explicit support.
+
+Superclass lookup follows enclosing lexical scopes. Nested aliases, inherited
+nested types, ambiguous classes, and unresolved ancestry cannot establish that an
+override is unrelated to an SDK receiver. Compiled regressions include removal of
+a state-writing screenshot override outside the selected helper scope, both with
+and without an attachment and with an unrelated module-level namesake.
+
+Graphs now retain complete SIL method references and formal signatures. JSON and
+compact archives preserve missing versus empty evidence; merging fragments keeps
+missing evidence conservative. The module-fragment cache schema advances to 8.
+Older graphs remain readable, but source-proof refresh alone cannot restore this
+precision: regenerate from valid build artifacts and sealed SIL with the current
+analyzer. This does not require another application build.
+
+
+Final validation passes all **289 package tests** with Xcode 26.6 in debug and
+Xcode 27.0 in release; the release run also includes the retained replay test
+(**290 tests total**). The capture helper's six tests pass, and release-distribution
+checks pass five tests with one platform-specific skip.
+
+The final retained replays select exactly **12 tests for #55** and **125 for #58**,
+with zero diagnostics, and both reports pass `verify-build`. Each replay refreshes
+source proofs with unchanged declaration keys/fingerprints and reparses the sealed
+UI module SIL. Before adding signature evidence, it checks that compiler-reference
+edges and dynamic declarations match the original graph. Original graph edges,
+products, and completed bundles remain unchanged. No compiler invocation,
+application build, or application test execution is involved.
+
+UI SIL reparse took 4.18/4.13 seconds for #55/#58; total source/signature refresh and
+encoding took 12.30/12.30 seconds. Scoped selection took 11.57/12.32 seconds.

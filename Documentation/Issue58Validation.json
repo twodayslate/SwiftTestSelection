@@ -298,5 +298,46 @@
     "applicationBuild": false,
     "compilerExtraction": false,
     "applicationTestExecution": false
+  },
+  "dynamicCallsAndLexicalAncestryReview": {
+    "privateHelperProofVersion": 8,
+    "sdkHelperProofVersion": 5,
+    "moduleFragmentSchema": 8,
+    "packageTests": 289,
+    "toolchains": [
+      "Xcode 26.6 debug",
+      "Xcode 27.0 release"
+    ],
+    "releaseIncludesRetainedReplayTest": true,
+    "debugTestSeconds": 147.448,
+    "releaseTestSecondsIncludingReplays": 129.536,
+    "captureHelperTests": 6,
+    "releaseDistributionTestsPassed": 5,
+    "releaseDistributionTestsSkipped": 1,
+    "replays": [
+      {
+        "issue": 55,
+        "selectedTests": 12,
+        "diagnostics": [],
+        "sealedSILReparseSeconds": 4.184486031532288,
+        "proofAndSignatureRefreshAndEncodingSeconds": 12.296787977218628,
+        "selectionSeconds": 11.568602085113525,
+        "retainedVerification": true
+      },
+      {
+        "issue": 58,
+        "selectedTests": 125,
+        "diagnostics": [],
+        "sealedSILReparseSeconds": 4.12923002243042,
+        "proofAndSignatureRefreshAndEncodingSeconds": 12.304306983947754,
+        "selectionSeconds": 12.318745970726013,
+        "retainedVerification": true
+      }
+    ],
+    "sourceProofRefresh": "Retained exports; unchanged keys/fingerprints. Sealed UI SIL reparsed with matching compiler references and dynamic declarations before adding signature evidence to separate graphs.",
+    "sealedSILReparse": true,
+    "compilerInvocation": false,
+    "applicationBuild": false,
+    "applicationTestExecution": false
   }
 }

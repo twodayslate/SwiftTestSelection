@@ -188,17 +188,26 @@ enum SDKTestHelperIsolation {
             }
         })
         guard !ids.isEmpty else { return "Missing compiled SDK callee: \(unit.helperCallableName ?? unit.key)" }
-        var pending = Array(ids), visited = Set<String>()
+        var pending = Array(ids), visited = Set<String>(), external = Set<String>()
+        var effects = ExternalHelperEffects()
         while let id = pending.popLast() {
-            guard visited.insert(id).inserted, let node = graph.functions[id] else { continue }
+            guard visited.insert(id).inserted else { continue }
+            guard let node = graph.functions[id], node.hasProjectRuntimeContext else {
+                external.insert(id)
+                continue
+            }
             if node.hasProjectRuntimeContext {
                 guard ids.contains(id) else { return "Project implementation outside the trusted SDK boundary: \(node.name)" }
                 if !node.uncertainties.isDisjoint(with: ["Global state access", "Shared state access", "Raw pointer operation"]) {
                     return "Compiler-observed state or pointer effect: \(node.name)"
                 }
             }
-            pending += node.dependencies.filter { graph.functions[$0]?.hasProjectRuntimeContext == true }
+            guard ExternalHelperEffects.allowsDynamicCalls(node) else {
+                return "Unproven dynamic callee effect: \(node.name)"
+            }
+            pending += node.dependencies
         }
+        guard effects.allows(external) else { return "Unproven external SDK-helper callee effects" }
         return nil
     }
 
@@ -255,17 +264,38 @@ enum SDKTestHelperIsolation {
                 if let result = results[owner] { return result }
                 var pending = owner, seen = Set<String>()
                 while seen.insert(pending).inserted {
-                    let module = pending.split(separator: ".").first.map(String.init) ?? ""
                     if aliases.contains(pending) { return false }
                     guard let candidates = parents[pending], candidates.count == 1 else { return false }
                     let supers = candidates[0].1
                     if supers.isEmpty { return true }
                     guard supers.count == 1, let nominal = SwiftSourceSnapshot.nominalTypeName(supers[0]) else { return false }
                     let name = canonical(nominal)
-                    if aliases.contains(name) || aliases.contains(module + "." + name) { return false }
-                    let matches = parents.keys.filter { $0 == name || $0 == module + "." + name || $0.hasPrefix(module + ".") && $0.hasSuffix("." + name) }
-                    if matches.count == 1 { pending = matches[0]; continue }
-                    guard matches.isEmpty else { return false }
+                    // Swift looks through enclosing lexical scopes before the
+                    // module. A suffix search can pick an unrelated nested class
+                    // or skip a nested alias in favor of a module-level class.
+                    // Aliases (including inherited nested aliases) are opaque.
+                    let components = name.split(separator: ".").map(String.init)
+                    if aliases.contains(where: { alias in
+                        components.contains { alias == $0 || alias.hasSuffix("." + $0) }
+                    }) { return false }
+                    var scope = pending.split(separator: ".").dropLast().map(String.init)
+                    var resolved: String?
+                    while !scope.isEmpty {
+                        let owner = scope.joined(separator: ".")
+                        let candidate = owner + "." + name
+                        if parents[candidate] != nil { resolved = candidate; break }
+                        // An enclosing class can inherit a nested type. Do not
+                        // skip that lookup and bind a module-level namesake.
+                        if parents[owner]?.contains(where: { !$0.1.isEmpty }) == true { return false }
+                        scope.removeLast()
+                    }
+                    if let match = resolved ?? (parents[name] != nil ? name : nil) {
+                        pending = match
+                        continue
+                    }
+                    // An inherited nested nominal is not resolved by this
+                    // limited lookup. Never infer an SDK root from that gap.
+                    if parents.keys.contains(where: { $0.hasSuffix("." + name) }) { return false }
                     if sdkReceivers.contains(name.split(separator: ".").last.map(String.init) ?? name) { return false }
                     // A direct subclass of NSObject cannot also be a subclass
                     // of an unrelated precompiled XCTest receiver class.
