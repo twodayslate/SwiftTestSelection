@@ -51,7 +51,14 @@ enum SDKTestHelperIsolation {
             for root in graph.tests[test] ?? [] { testsByRoot[root, default: []].insert(test) }
         }
         var accepted = Set<String>(), active = Set<String>(), expectedEntries = Set<String>()
-        func visit(_ callee: SourceUnit) -> String? {
+        // Explicit enter/finish frames preserve DFS cycle detection without
+        // consuming a Swift worker stack frame for every helper in the chain.
+        enum Work {
+            case enter(SourceUnit)
+            case finish(String)
+        }
+        var pending: [Work] = [.enter(unit)]
+        func prepare(_ callee: SourceUnit) -> String? {
             if active.contains(callee.key) { return "Recursive helper callers: \(callee.helperCallableName ?? callee.scope)" }
             if accepted.contains(callee.key) { return nil }
             guard let name = callee.helperCallableName, callee.helperCallerSupported == true, callee.headOnlyBodySupported == true,
@@ -72,7 +79,6 @@ enum SDKTestHelperIsolation {
             guard !ids.isEmpty else { return "Missing compiled helper: \(name)" }
             let paths = index.paths(to: ids)
             active.insert(callee.key)
-            defer { active.remove(callee.key) }
             var callerKeys = Set<String>()
             for (snapshots, units) in [(headSources, headByFile), (baseSources, oldByFile)] {
                 var declarations = 0
@@ -97,18 +103,28 @@ enum SDKTestHelperIsolation {
                 guard declarations == 1 else { return "Ambiguous declaration/overload for \(name)" }
             }
             guard !callerKeys.isEmpty else { return "No source-bound test consumers for \(name)" }
+            var helpers: [SourceUnit] = []
             for key in callerKeys.sorted() {
                 let caller = byKey[key]![0]
                 if XcodeFineSelector.isTestEntry(caller, in: current) {
                     guard caller.headOnlyBodySupported == true else { return "Unsupported test entry attributes" }
                     for id in symbols(caller) { expectedEntries.formUnion(testsByRoot[id] ?? []) }
                     accepted.insert(caller.key)
-                } else if let failure = visit(caller) { return failure }
+                } else { helpers.append(caller) }
             }
-            accepted.insert(callee.key)
+            pending.append(.finish(callee.key))
+            for caller in helpers.reversed() { pending.append(.enter(caller)) }
             return nil
         }
-        if let failure = visit(unit) { return failure }
+        while let work = pending.popLast() {
+            switch work {
+            case let .enter(callee):
+                if let failure = prepare(callee) { return failure }
+            case let .finish(key):
+                active.remove(key)
+                accepted.insert(key)
+            }
+        }
         let ids = symbols(unit), paths = index.paths(to: symbols(unit))
         let consumers = Set(current.tests.filter { paths.path(from: graph.tests[$0] ?? []) != nil })
         guard !consumers.isEmpty, consumers.isSubset(of: expectedEntries) else { return "Compiler consumers outside the verified source caller graph" }
@@ -187,7 +203,7 @@ enum SDKTestHelperIsolation {
                                    unownedBase: [String: SwiftSourceSnapshot] = [:], queriedMembers: Set<String>) -> String? {
         guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedModules) else { return "Project module shadows a trusted SDK module" }
         let sources = Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)
-        guard sources.allSatisfy({ $0.diagnostics.isEmpty && $0.helperReferences != nil && $0.sdkHelperNamesUnshadowed == true && $0.dispatchMembers != nil && $0.dispatchOverrides != nil && $0.superclasses != nil }) else { return "Missing reference evidence or shadowed XCTest/query/operator names" }
+        guard sources.allSatisfy({ $0.diagnostics.isEmpty && $0.helperReferences != nil && $0.sdkHelperNamesUnshadowed == true && $0.dispatchMembers != nil && $0.dispatchOverrides != nil && $0.superclasses != nil && $0.typeAliases != nil }) else { return "Missing reference evidence or shadowed XCTest/query/operator names" }
         let sdkClasses: Set<String> = ["XCUIElement", "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter"]
         guard sources.allSatisfy({ snapshot in
             snapshot.superclasses!.values.flatMap { $0 }.allSatisfy { !sdkClasses.contains($0.split(separator: ".").last.map(String.init) ?? $0) }
@@ -200,6 +216,42 @@ enum SDKTestHelperIsolation {
         guard sources.allSatisfy({ snapshot in
             snapshot.units.allSatisfy { $0.helperCallableName.map { !waitNames.contains($0) } ?? true }
         }) else { return "Project declaration can replace a trusted SDK wait overload" }
+        // A concrete project class/struct/enum cannot be an ancestor of these
+        // precompiled SDK classes. Protocols, aliases and unresolved extension
+        // owners do not provide that guarantee. The source fingerprint retains
+        // the declaration syntax kind, including in existing saved graphs.
+        let sdkOwners = sdkClasses.union(["NSObject", "NSObjectProtocol"])
+        // The head graph cannot resolve a removed base overload. Audit every
+        // queried member and constructor, including inherited/aliased owners.
+        // Free functions cannot replace these member calls.
+        let members = queriedMembers.union(["init"])
+        for revision in [Array(current.sources.values), Array(base.values) + Array(unownedBase.values)] {
+            let types = Dictionary(grouping: revision.flatMap(\.units).filter { $0.kind == "type" }, by: {
+                String($0.key.prefix { $0 != ":" }) + "." + $0.scope
+            })
+            let concreteOwners = Set(types.compactMap { name, declarations -> String? in
+                // Conditional declarations may share a name. Every candidate
+                // must be concrete before excluding this owner from the audit.
+                guard declarations.allSatisfy({ unit in
+                    ["classDecl[", "structDecl[", "enumDecl["].contains(where: unit.fingerprint.hasPrefix)
+                }) else { return nil }
+                return name
+            })
+            let aliases = Set(revision.flatMap { $0.typeAliases! })
+            guard revision.allSatisfy({ snapshot in
+                let modules = Set(snapshot.units.map { String($0.key.prefix { $0 != ":" }) })
+                return snapshot.dispatchMembers!.allSatisfy { member in
+                    let parts = member.split(separator: ".")
+                    guard let name = parts.last, members.contains(String(name)) else { return true }
+                    let owner = parts.dropLast().joined(separator: ".")
+                    guard let ownerName = parts.dropLast().last, !sdkOwners.contains(String(ownerName)) else { return false }
+                    // Never infer an alias's target from a same-spelled nominal
+                    // in another module; source-only resolution is ambiguous.
+                    guard !aliases.contains(where: { $0 == owner || $0.hasSuffix("." + owner) }) else { return false }
+                    return concreteOwners.contains(owner) || modules.contains { concreteOwners.contains($0 + "." + owner) }
+                }
+            }) else { return "Project member can replace a trusted SDK query at base or head" }
+        }
         let protected: Set<String> = ["XCUIElement.exists", "XCUIElement.value", "XCUIElement.isEnabled", "XCUIElement.isHittable", "XCUIElement.isSelected",
             "NSPredicate.evaluate", "NSPredicate.init", "XCTNSPredicateExpectation.init", "XCTWaiter.wait", "XCUIElement.waitForExistence", "XCUIElement.waitForNonExistence"]
         guard sources.allSatisfy({ snapshot in

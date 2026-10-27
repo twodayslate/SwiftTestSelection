@@ -366,3 +366,117 @@ func privateHelperRejectsInheritedOverloadBinding(scenario: String) throws {
     #expect(report.selectedTests == tests.sorted())
     #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" })
 }
+
+@Test func sdkPredicateRejectsHistoricalInheritedOverload() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-predicate-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = newSDKQuery.replacingOccurrences(of: "self.exists && self.value", with: "self.value")
+    let support = """
+    import XCTest
+    @MainActor extension NSObject {
+        func evaluate(with element: XCUIElement) -> Bool {
+            UserDefaults.standard.set(true, forKey: "shared-mode")
+            return true
+        }
+    }
+    """
+    let callers = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCaller() { XCTAssertTrue(XCUIApplication().buttons["toggle"].checkValue("1")) }
+    }
+    @MainActor final class Other: XCTestCase {
+        func testObserve() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "shared-mode")) }
+    }
+    """
+    let tests = ["UI/Suite/testCaller()", "UI/Other/testObserve()"]
+    let old = try boundaryGraph(["Waiting.swift": before, "Tests.swift": callers, "Support.swift": support], tests: tests, root: root)
+    let current = try boundaryGraph(["Waiting.swift": newSDKQuery, "Tests.swift": callers, "Support.swift": "import XCTest"], tests: tests, root: root)
+    let oldGraph = old.dependencies!
+    let ids = Set(oldGraph.functions.values.filter { $0.name == "NSObject.evaluate(with:)" }.map(\.id))
+    #expect(!ids.isEmpty)
+    #expect(DependencyIndex(oldGraph).paths(to: ids).path(from: oldGraph.tests[tests[0]]!) != nil)
+    #expect(DependencyIndex(current.dependencies!).paths(to: ids).path(from: current.dependencies!.tests[tests[0]]!) == nil)
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    #expect(report.selectedTests == tests.sorted())
+    #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" })
+}
+
+@Test(arguments: [50, 100], [false, true])
+func sdkHelperCallerDepthUsesWorkQueue(depth: Int, cycle: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-sdk-depth-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let routes = (0..<depth).map { i in
+        let call = i == depth - 1 ? "XCTAssertTrue(app.buttons[\"toggle\"].checkValue(\"1\"))" : "step\(i+1)(app)"
+        return "@MainActor func step\(i)(_ app: XCUIApplication) { \(call)\(cycle && i == depth - 1 ? "; step0(app)" : "") }"
+    }.joined(separator: "\n")
+    // A shared upstream caller exercises completed-node reuse as well as
+    // deep traversal; the optional back edge must still reject cycles.
+    let callers = "import XCTest\n" + routes + """
+
+    @MainActor func left(_ app: XCUIApplication) { step0(app) }
+    @MainActor func right(_ app: XCUIApplication) { step0(app) }
+    @MainActor func shared(_ app: XCUIApplication) { left(app); right(app) }
+    @MainActor final class Suite: XCTestCase {
+        func testCaller() { shared(XCUIApplication()) }
+        func testUnrelated() { XCTAssertTrue(true) }
+    }
+    """
+    let tests = ["UI/Suite/testCaller()", "UI/Suite/testUnrelated()"]
+    let current = try boundaryGraph(["Waiting.swift": newSDKQuery, "Tests.swift": callers], tests: tests, root: root)
+    var base = current.sources
+    base["UI:Waiting.swift"] = .parse(oldSDKQuery, path: "Waiting.swift", module: "UI")
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    if cycle {
+        #expect(report.selectedTests == tests)
+        #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" })
+    } else {
+        #expect(report.selectedTests == [tests[0]])
+        #expect(report.diagnostics.isEmpty, "\(report.diagnostics)")
+    }
+}
+
+@Test(arguments: ["exists", "value", "isEnabled", "isHittable", "isSelected", "evaluate", "wait", "waitForExistence", "waitForNonExistence", "init"], ["head", "base", "unownedBase"])
+func sdkQueryMemberAuditIncludesHistoricalAndAliasedOwners(member: String, location: String) {
+    for owner in ["NSObject", "Alias"] {
+        let declaration = member == "init" ? "convenience init(custom: Int) { self.init() }" : "var \(member): Bool { true }"
+        let source = "import XCTest\ntypealias Alias = NSObject\nextension \(owner) { \(declaration) }"
+        let snapshot = SwiftSourceSnapshot.parse(source, path: "Support.swift", module: "UI")
+        var current = XcodeTestGraph(targets: [], tests: [])
+        current.modules = ["UI": "UI"]
+        if location == "head" { current.sources = ["UI:Support.swift": snapshot] }
+        let reason = SDKTestHelperIsolation.environmentBlocker(current: current,
+            base: location == "base" ? ["UI:Support.swift": snapshot] : [:],
+            unownedBase: location == "unownedBase" ? ["Support.swift": snapshot] : [:], queriedMembers: [member])
+        #expect(reason == "Project member can replace a trusted SDK query at base or head")
+    }
+}
+
+@Test(arguments: ["struct", "class", "enum", "protocol", "extension"])
+func sdkQueryMemberAuditDistinguishesConcreteOwners(kind: String) {
+    let member = kind == "protocol" ? "var value: Bool { get }" : "var value: Bool { true }"
+    let snapshot = SwiftSourceSnapshot.parse("\(kind) Other { \(member) }", path: "Other.swift", module: "UI")
+    var current = XcodeTestGraph(targets: [], tests: [])
+    current.sources = ["UI:Other.swift": snapshot]
+    let reason = SDKTestHelperIsolation.environmentBlocker(current: current, base: [:], queriedMembers: ["value"])
+    #expect((reason == nil) == ["struct", "class", "enum"].contains(kind))
+}
+
+@Test func sdkQueryMemberAuditKeepsNominalEvidenceRevisionLocal() {
+    let path = "Owner.swift"
+    var current = XcodeTestGraph(targets: [], tests: [])
+    current.sources = ["UI:" + path: .parse("struct Owner { var value: Bool { true } }", path: path, module: "UI")]
+    let base = ["UI:" + path: SwiftSourceSnapshot.parse("protocol Owner { var value: Bool { get } }", path: path, module: "UI")]
+    #expect(SDKTestHelperIsolation.environmentBlocker(current: current, base: base, queriedMembers: ["value"]) != nil)
+    let conditional = """
+    #if FLAG
+    struct Owner { var value: Bool { true } }
+    #else
+    protocol Owner { var value: Bool { get } }
+    #endif
+    """
+    current.sources = ["UI:" + path: .parse(conditional, path: path, module: "UI")]
+    #expect(SDKTestHelperIsolation.environmentBlocker(current: current, base: [:], queriedMembers: ["value"]) != nil)
+}

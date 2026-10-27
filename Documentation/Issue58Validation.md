@@ -110,3 +110,20 @@ in this audit. These are selection-time checks over the existing version-5 priva
 and version-3 SDK metadata, so their evidence schemas do not change. Both new
 compiled regressions pass, along with all 259 package tests in Xcode 26.6 debug
 and Xcode 27.0 release builds.
+
+The historical member-binding audit now covers queried SDK properties, methods,
+and constructors through ancestor and aliased owners, including base-only source
+files. Concrete project types are excluded only when every declaration candidate
+at that revision is concrete; protocol and unresolved owners retain conservative
+fallbacks. A compiled base/head regression verifies that removing a mutating
+`NSObject.evaluate(with:)` overload cannot silently narrow a scoped predicate-helper
+edit. SDK caller traversal now uses explicit enter/finish work items, preserving
+cycle detection and reuse of shared callers without recursive stack growth.
+Compiled regressions exercise 50- and 100-helper diamonds and cycles in debug and
+release configurations.
+
+All 264 package tests pass in Xcode 26.6 debug and Xcode 27.0 release builds.
+Final retained-graph replays preserve the #55 set of 12 tests and the #58 set of
+125 tests, with zero diagnostics. Their selection phases took 11.03 and 11.94
+seconds respectively; both reports pass `verify-build`. These remain analysis
+and retained-product checks, not application test execution.

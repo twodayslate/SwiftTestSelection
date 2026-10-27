@@ -1144,11 +1144,16 @@ revisions must have unambiguous private callee bindings, and every project calle
 reached in the head compiler graph must belong to a checked declaration. An inherited
 overload or an unchecked project extension retains `head_only_helper_callee_effects`
 fallback. SDK callee effects also require unambiguous overload candidates at both revisions,
-including declarations removed from the head inventory. Trusted SDK wait names do
-not exempt inherited project implementations: the compiler effect walk rejects
-project callees outside the checked helper and its callbacks. Private proof
+including declarations removed from the head inventory. Queried SDK member names
+are audited across both revisions regardless of their declared owner, including
+inherited and type-aliased project members. Unresolved owners and protocol members
+remain conservative. Concrete project types cannot be ancestors of the trusted SDK
+classes; their same-named members and free functions do not replace SDK member
+calls. The compiler effect walk also rejects project callees outside the checked
+helper and its callbacks. Private proof
 version 5 and SDK proof version 3 reject older saved evidence. Caller
-proofs use a memoized work queue rather than recursive stack frames.
+proofs for both private and SDK helpers use a memoized work queue rather than
+recursive stack frames.
 
 Dependency explanations identify the verified private-helper proof. No baseline
 build, additional SIL extraction, or user-maintained helper mapping is required.
