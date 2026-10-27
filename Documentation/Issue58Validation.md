@@ -13,7 +13,7 @@ that evidence is missing. All 125 known consumers remain selected. The retained
 #58 case falls back to its complete 2,000-test inventory; narrowing still needs
 stronger evidence. #55's immutable literal fixture state remains supported.
 The release replay selected **12 of 1,972 tests with zero diagnostics** for #55
-in **12.67 seconds**. For #58 it selected **all 2,000 tests** in **12.72 seconds**,
+in **14.03 seconds**. For #58 it selected **all 2,000 tests** in **14.54 seconds**,
 retaining all 125 known consumers and the fallback-only NoteLinks example. Both
 reports passed `verify-build` against the retained products.
 
@@ -30,15 +30,16 @@ itself is unsafe or that adding one contract proves the entire consumer closure.
 The current bounded contracts do not justify the earlier precision claim. #58
 remains open for stronger evidence and a sound narrowing implementation.
 
-All **314 package tests plus one temporary retained replay test** passed in the
-release run (**164.797 seconds**, Xcode 27.0). The 314 package tests also passed
-in Xcode 26.6 debug (**208.844 seconds**). Capture helper tests passed (6);
-release-distribution tests passed (5, with 1 platform-specific skip). The review
-reparsed all ten sealed SIL modules for each fixture, preserving compiler
-reference edges and dynamic declarations, and refreshed source evidence with
-unchanged declaration keys and fingerprints. The final replay reused that
-compiler evidence. No new consuming-app build or baseline build was performed.
-These are local replay measurements, not controlled end-to-end benchmarks.
+All **324 package tests** passed in release (**128.010 seconds**, Xcode 27.0)
+and debug (**217.347 seconds**, Xcode 26.6). A separate temporary retained replay
+test passed both fixtures. Capture helper tests passed (6); release-distribution
+tests passed (5, with 1 platform-specific skip). The review reparsed the sealed
+UI module for each fixture, preserving compiler reference edges and dynamic
+declarations, and refreshed source evidence with unchanged declaration keys and
+fingerprints. Other modules retained their saved evidence; missing current
+evidence remains conservative. The final replay reused that compiler evidence.
+No new consuming-app build or baseline build was performed. These are local
+replay measurements, not controlled end-to-end benchmarks.
 
 The machine-readable file separates `currentValidation` from
 `historicalValidation`. No application test bodies were executed; selection and
@@ -59,7 +60,7 @@ selection. Known SDK literals require trusted source imports and unshadowed
 nominal identities. Clang-imported class thunks use exact SDK symbol contracts;
 the shared `__C` class owner cannot authenticate an Objective-C category.
 
-The compiled factory regression has 58 cases spanning private and SDK-extension
+The compiled factory regression has 76 cases spanning private and SDK-extension
 helpers, with positive ordinary SDK construction controls. Compact archives retain
 the new optional evidence independently of older fields. Captured value-type
 declarations preserve ordinary struct/enum producers without accepting SDK
@@ -67,9 +68,32 @@ namesakes. Synthesized initializers and enum accessors audit all overlapping dec
 and static-method metatype inputs are omitted only when every matching input is
 unused outside debug instructions. Nested signatures and forwarded values retain
 their evidence. Missing evidence retains
-an explicit recapture diagnostic, and module-fragment cache version 10 invalidates
+an explicit recapture diagnostic, and module-fragment cache version 11 invalidates
 older fragments. Regenerating from valid sealed SIL does not execute test bodies
 or require a new baseline build.
+
+### Explicit SDK origin contracts
+
+Native SDK module ownership no longer establishes receiver safety. Every trusted
+primitive has an explicit symbol contract. Reflective factories, custom collection
+witnesses, erased Objective-C bridging, and bridge-capable casts to SDK receivers
+or metatypes retain fallback. Generic operations require captured substitutions
+for every use; aliases and shadowing, including backtick-escaped identifiers,
+cannot authenticate builtin types. Unknown legacy evidence and mixed fragments
+retain fallback.
+
+Standard collection traversal can forward stored project values without invoking
+their protocols; their producers and callback bodies remain in the graph. Range
+bounds and value-protocol operations require closed builtin types. Array storage
+allocation/finalization and continuation-handle wrapping have narrow contracts
+that do not manufacture elements or resume continuations.
+
+The only erased-bridge exemption is a compiler-proven unreachable `.some` block:
+a fresh `Optional<Any>` stack slot is immediately initialized to `.none` and
+switched, with exactly one predecessor. Mutation, aliases, multiple predecessors,
+and mixed reachable bridge calls retain fallback. This preserves #55 without
+trusting live erased bridges. JSON/compact archives retain the new evidence, and
+cache version 11 requires older module fragments to be regenerated.
 
 ## Historical validation (superseded)
 

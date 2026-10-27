@@ -1260,7 +1260,7 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
     }
 }
 
-@Test(arguments: ["sdk", "native", "dynamic", "dynamicConcrete", "callback", "dynamicCallback", "optionalCallback", "pointer", "assertedCallback", "multilineAssertedCallback", "localAssertedCallback", "reportedCallback", "box", "enum", "throws", "shadow", "opaqueVoid", "opaqueScalar", "reflection", "globalReceiver", "originOverload", "originSubscript", "originTypeOverload", "originMethodValue", "metatype", "forwardedMetatype", "aliasedMetatype", "sdkMetatype", "sdkStatic"], [false, true]) func helpersRejectOpaqueReceiverFactories(kind: String, sdkBoundary: Bool) throws {
+@Test(arguments: ["sdk", "native", "dynamic", "dynamicConcrete", "callback", "dynamicCallback", "optionalCallback", "pointer", "assertedCallback", "multilineAssertedCallback", "localAssertedCallback", "reportedCallback", "box", "enum", "throws", "shadow", "opaqueVoid", "opaqueScalar", "reflection", "swiftReflection", "conditionalReflection", "optionalReflection", "genericCollection", "genericIterator", "erasedBridge", "erasedBridgeAfterNil", "sdkCollection", "globalReceiver", "originOverload", "originSubscript", "originTypeOverload", "originMethodValue", "metatype", "forwardedMetatype", "aliasedMetatype", "sdkMetatype", "sdkStatic"], [false, true]) func helpersRejectOpaqueReceiverFactories(kind: String, sdkBoundary: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-receiver-" + UUID().uuidString)
     let externalRoot = root.appendingPathComponent("External")
     try FileManager.default.createDirectory(at: externalRoot, withIntermediateDirectories: true)
@@ -1385,11 +1385,53 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
     if kind == "aliasedMetatype" { support = "import XCTest\nimport AttachmentSupport\ntypealias App = StatefulApp\n@MainActor func makeApp() -> XCUIApplication { let type: XCUIApplication.Type = App.self; return type.init() }" }
     if kind == "sdkMetatype" { support = "import XCTest\n@MainActor func makeApp() -> XCUIApplication { let type: XCUIApplication.Type = XCUIApplication.self; return type.init() }" }
     if kind == "sdkStatic" { support = "import XCTest\n@MainActor extension XCUIApplication { static func reviewMake() -> XCUIApplication { XCUIApplication() } }\n@MainActor func makeApp() -> XCUIApplication { XCUIApplication.reviewMake() }" }
+    if ["genericCollection", "genericIterator"].contains(kind) {
+        support = """
+        import XCTest
+        @MainActor struct AppCollection: @preconcurrency Collection {
+            var startIndex: Int { 0 }
+            var endIndex: Int { 1 }
+            func index(after i: Int) -> Int { i + 1 }
+            subscript(i: Int) -> XCUIApplication {
+                let type = _typeByName("17AttachmentSupport11StatefulAppC") as! XCUIApplication.Type
+                return type.init()
+            }
+        }
+        @MainActor func makeApp() -> XCUIApplication {
+        """ + (kind == "genericIterator" ? "var iterator = AppCollection().makeIterator(); return iterator.next()! }" : "AppCollection().map { $0 }.first! }")
+    }
+    if ["erasedBridge", "erasedCast", "erasedBridgeAfterNil"].contains(kind) {
+        support = """
+        import XCTest
+        struct AppBridge: _ObjectiveCBridgeable {
+            func _bridgeToObjectiveC() -> XCUIApplication {
+                MainActor.assumeIsolated {
+                    let type = _typeByName("17AttachmentSupport11StatefulAppC") as! XCUIApplication.Type
+                    return type.init()
+                }
+            }
+            static func _forceBridgeFromObjectiveC(_ source: XCUIApplication, result: inout AppBridge?) { result = AppBridge() }
+            static func _conditionallyBridgeFromObjectiveC(_ source: XCUIApplication, result: inout AppBridge?) -> Bool { result = AppBridge(); return true }
+            static func _unconditionallyBridgeFromObjectiveC(_ source: XCUIApplication?) -> AppBridge { AppBridge() }
+        }
+        @MainActor func makeApp() -> XCUIApplication { let erased: Any = AppBridge(); return erased as AnyObject as! XCUIApplication }
+        """
+    }
+    if kind == "erasedBridgeAfterNil" { support = support.replacingOccurrences(of: "let erased: Any", with: "_ = NSPredicate(value: true).evaluate(with: nil); let erased: Any") }
+    if kind == "erasedCast" { support = support.replacingOccurrences(of: "erased as AnyObject as! XCUIApplication", with: "erased as! XCUIApplication") }
+    if kind == "sdkCollection" { support = "import XCTest\n@MainActor func makeApp() -> XCUIApplication { [XCUIApplication()].map { $0 }.first! }" }
+    if kind == "swiftReflection" { support = "import XCTest\n@MainActor func makeApp() -> XCUIApplication { let type = _typeByName(\"17AttachmentSupport11StatefulAppC\") as! XCUIApplication.Type; return type.init() }" }
+    if kind == "conditionalReflection" { support = "import XCTest\n@MainActor func makeApp() -> XCUIApplication { guard let type = _typeByName(\"17AttachmentSupport11StatefulAppC\") as? XCUIApplication.Type else { return XCUIApplication() }; return type.init() }" }
+    if kind == "optionalReflection" { support = "import XCTest\n@MainActor func makeApp() -> XCUIApplication { (_typeByName(\"17AttachmentSupport11StatefulAppC\") as? XCUIApplication.Type).map { $0.init() } ?? XCUIApplication() }" }
     let after = sdkBoundary ? before.replacingOccurrences(of: "return waitForExistence(timeout: 1)", with: "return waitForExistence(timeout: 1) && exists") : before.replacingOccurrences(of: "XCTAssertNotNil(app)", with: "XCTAssertNotNil(app); XCTAssertTrue(app.exists)")
     let tests = ["UI/Suite/testCapture()", "UI/Suite/testConsume()"]
     let old = try boundaryGraph(["Tests.swift": before, "Imports.swift": support, "ExternalImports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
     let current = try boundaryGraph(["Tests.swift": after, "Imports.swift": support, "ExternalImports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
     let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: current.mappings), changes: [.init(path: "Tests.swift")], baseRevision: "base")
-    #expect(report.selectedTests == (["sdk", "sdkMetatype", "sdkStatic"].contains(kind) ? [tests[0]] : tests.sorted()))
-    #expect(["sdk", "sdkMetatype", "sdkStatic"].contains(kind) ? report.diagnostics.isEmpty : report.diagnostics.contains { sdkBoundary ? $0.message.contains("receiver origin") : $0.code == "head_only_helper_callee_effects" })
+    #expect(report.selectedTests == (["sdk", "sdkMetatype", "sdkStatic", "sdkCollection"].contains(kind) ? [tests[0]] : tests.sorted()))
+    #expect(["sdk", "sdkMetatype", "sdkStatic", "sdkCollection"].contains(kind) ? report.diagnostics.isEmpty : report.diagnostics.contains { sdkBoundary ? $0.message.contains("receiver origin") : $0.code == "head_only_helper_callee_effects" })
+}
+
+@Test(arguments: [false, true]) func opaqueErasedBridgeCastRetainsFallback(sdkBoundary: Bool) throws {
+    try helpersRejectOpaqueReceiverFactories(kind: "erasedCast", sdkBoundary: sdkBoundary)
 }

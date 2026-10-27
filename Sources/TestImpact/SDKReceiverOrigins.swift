@@ -59,7 +59,7 @@ struct SDKReceiverOrigins {
                 PrivateTestHelperIsolation.safeHierarchy(owner, module: module, sources: snapshots)
         }
         func metatypeBlocker(_ node: FunctionNode, owners: [SourceUnit]) -> String? {
-            guard let origins = node.receiverTypeOrigins else { return "Missing or unrecognized receiver type evidence; recapture sealed SIL" }
+            guard let origins = node.receiverTypeOrigins, node.receiverGenericCalls != nil else { return "Missing or unrecognized receiver type evidence; recapture sealed SIL" }
             let sdkLiterals: Set<String> = ["MainActor", "DefaultStringInterpolation", "URL", "UUID", "UIDeviceOrientation", "XCUIApplication.State", "String", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Array", "Dictionary", "Set", "Optional", "Any",
                 "XCUIApplication", "XCUIElement", "XCUIElement.ElementType", "XCTestCase", "XCTAttachment", "XCTAttachment.Lifetime", "NSPredicate", "XCTNSPredicateExpectation",
                 "XCTWaiter", "XCTWaiter.Result", "XCTestExpectation", "UIDevice", "XCUIScreen", "XCUIDevice", "JSONSerialization"]
@@ -75,6 +75,17 @@ struct SDKReceiverOrigins {
                         !$0.1.typeAliases!.contains(where: { $0.split(separator: ".").last.map(String.init) == name }) }
             }
             for origin in origins.sorted() {
+                if origin.hasPrefix("cast:") {
+                    let target = String(origin.dropFirst(5))
+                    guard let names = SDKReceiverContracts.typeNames(target), names.isSubset(of: SDKReceiverContracts.valueTypes),
+                          !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }),
+                          (sources[node.module] ?? []).allSatisfy({ snapshot in
+                              let roots = Set(names.map { String($0.split(separator: ".")[0]) })
+                              return snapshot.1.typeAliases != nil && !snapshot.1.typeAliases!.contains(where: { roots.contains(SDKTestHelperSyntax.canonicalName(String($0.split(separator: ".").last ?? ""))) }) &&
+                                  !snapshot.1.units.contains(where: { $0.kind == "type" && roots.contains(SDKTestHelperSyntax.canonicalName(String($0.scope.split(separator: ".").last ?? ""))) })
+                          }) else { return "Unproven receiver cast: " + target }
+                    continue
+                }
                 // Swift enum cases can be formed without calling a constructor.
                 // A foreign @objc enum named Int must not acquire Swift.Int's
                 // argument identity merely because SIL prints the same name.
@@ -211,6 +222,23 @@ struct SDKReceiverOrigins {
                     shapes = [:]
                     for owner in owners {
                         for (name, calls) in owner.receiverCallShapes! { shapes![name, default: []].formUnion(calls) }
+                    }
+                }
+                let generic = direct.intersection(SDKReceiverContracts.generic)
+                if !generic.isEmpty {
+                    guard let calls = node.receiverGenericCalls else { return "Missing generic receiver-call evidence; recapture sealed SIL" }
+                    for symbol in generic.sorted() {
+                        let arguments = calls.filter { $0.hasPrefix(symbol + "\t") }.map { String($0.dropFirst(symbol.count + 1)) }
+                        guard !arguments.isEmpty, arguments.allSatisfy({ SDKReceiverContracts.allows($0, for: symbol) }),
+                              !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }),
+                              arguments.allSatisfy({ argument in
+                                  guard let names = SDKReceiverContracts.requiredTypeIdentities(argument, for: symbol) else { return false }
+                                  let roots = Set(names.map { String($0.split(separator: ".")[0]) })
+                                  return (sources[node.module] ?? []).allSatisfy {
+                                      $0.1.typeAliases != nil && !$0.1.typeAliases!.contains(where: { roots.contains(SDKTestHelperSyntax.canonicalName(String($0.split(separator: ".").last ?? ""))) }) &&
+                                      !$0.1.units.contains(where: { $0.kind == "type" && roots.contains(SDKTestHelperSyntax.canonicalName(String($0.scope.split(separator: ".").last ?? ""))) })
+                                  }
+                              }) else { return "Unproven generic receiver contract for " + symbol + " with substitutions " + arguments.sorted().joined(separator: "; ") }
                     }
                 }
                 switch ExternalHelperEffects.receiverProof(checked, sourceCallShapes: shapes) {

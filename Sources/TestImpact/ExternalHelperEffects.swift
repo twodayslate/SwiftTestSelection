@@ -313,7 +313,8 @@ struct ExternalHelperEffects {
             importedTypes.formUnion(["XCTestExpectation", "NSDateFormatter", "UIDeviceOrientation", "XCUIKeyboardKey", "UIContentSizeCategory",
                 "UIGraphicsImageRenderer", "UIGraphicsImageRendererFormat", "CGRect", "CGSize", "CGPoint", "CGVector", "XCUIApplicationState"])
         }
-        var accepted = Set(owners.filter { modules.contains($0.value) }.keys)
+        var accepted = Set(owners.filter { modules.contains($0.value) &&
+            (!receiverOrigins || SDKReceiverContracts.declarations.contains($0.key)) }.keys)
         for block in output.components(separatedBy: "Demangling for ").dropFirst() {
             let lines = block.components(separatedBy: .newlines)
             guard let symbol = lines.first, ["__C", "__C_Synthesized"].contains(owners[symbol] ?? ""),

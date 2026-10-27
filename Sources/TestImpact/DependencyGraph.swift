@@ -37,6 +37,9 @@ public struct FunctionNode: Codable, Sendable {
     public var stateAccesses: Set<String>? = nil
     /// Metatypes and enum constructors observed in SIL; nil means missing or unrecognized evidence.
     public var receiverTypeOrigins: Set<String>? = nil
+    /// Direct generic calls: symbol + tab + substitutions, or a compiler-proven
+    /// unreachable literal-nil bridge marker. Nil also predates cast capture.
+    public var receiverGenericCalls: Set<String>? = nil
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>

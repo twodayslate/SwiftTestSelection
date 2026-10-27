@@ -1232,12 +1232,22 @@ pointers and mutations of reachable state. Unknown producers retain fallback eve
 when a completion only asserts its input is nil. Diagnostics identify the missing
 producer or storage declaration; they are uncertainty, not proven impact.
 
+Receiver-origin trust uses explicit SDK declaration contracts, not blanket trust
+of a module. Reflective factories such as Swift's `_typeByName`, unknown decoding
+APIs, erased Objective-C bridging, and casts to receiver classes or metatypes
+retain fallback. Casts to proven builtin value types remain supported. Generic SDK operations
+also require captured call substitutions: a builtin collection can supply known
+witnesses, while an arbitrary collection or value-protocol implementation cannot.
+All uses and captured fragments must satisfy the contract. Missing generic-call
+evidence in older graphs requires regeneration from retained artifacts and sealed
+SIL; it is never interpreted as proof that no receiver can be produced.
+
 Consumer and lifecycle storage accesses are also checked. Mutable/unknown fields
 and globals retain fallback; a narrow source proof supports immutable stored
 string literals without type annotations, wrappers or interpolation. Exact SDK
 gesture-velocity and keyboard-key constants are supported. The graph records field/global
 identities; old graphs missing that evidence must be regenerated from saved
-artifacts and sealed SIL. Module-fragment cache version 10 invalidates older
+artifacts and sealed SIL. Module-fragment cache version 11 invalidates older
 fragments. This needs no baseline build and does not execute application tests.
 
 Signature evidence must cover the caller

@@ -4,9 +4,9 @@
     "historical125TestIsolationClaimSuperseded": true,
     "issue58RemainsOpen": true,
     "toolchain": "Xcode 27.0, Swift release build",
-    "packageTestsPassed": 314,
+    "packageTestsPassed": 324,
     "additionalRetainedReplayTestsPassed": 1,
-    "releaseSuiteSeconds": 164.797,
+    "releaseSuiteSeconds": 128.01,
     "captureHelperTestsPassed": 6,
     "releaseDistributionTestsPassed": 5,
     "releaseDistributionTestsSkipped": 1,
@@ -15,7 +15,7 @@
         "selectedTestCount": 12,
         "totalTests": 1972,
         "diagnosticCount": 0,
-        "scopeSeconds": 12.674824953079224,
+        "scopeSeconds": 14.031206965446472,
         "verifyBuildExitCode": 0,
         "baseRevision": "9b08b4be6acd35338c76e7b29ce0d0df7729aa50",
         "headRevision": "30d8454622ced09ff42f60d6f9196453ad2f6526",
@@ -39,7 +39,7 @@
         "selectedTestCount": 2000,
         "totalTests": 2000,
         "diagnosticCount": 1929,
-        "scopeSeconds": 12.717352986335754,
+        "scopeSeconds": 14.541797041893005,
         "verifyBuildExitCode": 0,
         "baseRevision": "40c62f971f0aef63c902a14805cf4d821e6784fb",
         "headRevision": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
@@ -48,7 +48,7 @@
         "selection": "complete enumerated inventory"
       }
     },
-    "sealedSILModulesReparsedPerFixture": 10,
+    "sealedSILModulesReparsedPerFixture": 1,
     "sourceDeclarationKeysAndFingerprintsUnchanged": true,
     "compilerReferenceEdgesAndDynamicDeclarationsUnchanged": true,
     "newApplicationBuilds": 0,
@@ -61,11 +61,11 @@
         "code": "head_only_sdk_helper_boundary"
       }
     ],
-    "note": "SDK contracts are deliberately bounded. The reported blocker is the first missing proof, not an exhaustive list; adding that one contract does not establish isolation for the whole consumer closure.",
-    "debugSuiteSeconds": 208.844,
-    "moduleFragmentCacheVersion": 10,
-    "compiledFactoryCases": 58,
-    "receiverTypeEvidence": "metatypes, enum constructors, captured value-type declarations, and source overload shapes"
+    "note": "SDK receiver contracts are explicit and bounded; module ownership alone grants no trust. Only the UI module was reparsed for each fixture; other compiler evidence was preserved, and missing current evidence remains conservative. The reported blocker is the first missing proof, not an exhaustive list; adding that one contract does not establish isolation for the whole consumer closure.",
+    "debugSuiteSeconds": 217.347,
+    "moduleFragmentCacheVersion": 11,
+    "compiledFactoryCases": 76,
+    "receiverTypeEvidence": "metatypes, enum constructors, captured value-type declarations, source overload shapes, generic call substitutions, and bridge-capable cast destinations"
   },
   "historicalValidation": {
     "originalBase": "55ee3b78dc0fae3478508e6e35b0decbadc397a7",
