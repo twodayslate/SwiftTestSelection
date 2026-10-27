@@ -1,0 +1,147 @@
+// SPDX-FileCopyrightText: 2026 Zachary Gorak
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+import Foundation
+
+/// A closed caller proof for an internal Swift SDK extension plus a small,
+/// trusted XCTest query/expectation effect contract at both source revisions.
+enum SDKTestHelperIsolation {
+    static func blocker(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
+                        base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex) -> String? {
+        guard let evidence = unit.sdkTestHelper, let old = previous?.sdkTestHelper,
+              evidence.version == SDKTestHelperSyntax.currentVersion, old.version == evidence.version else { return "Missing supported base/head SDK helper evidence" }
+        if let reason = evidence.blocker ?? old.blocker { return reason }
+        guard previous?.key == unit.key, previous?.region.path == unit.region.path,
+              unit.headOnlyBodySupported == true, previous?.headOnlyBodySupported == true else { return "Changed header, ownership or unsupported attributes/macros" }
+        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedModules) else { return "Project module shadows a trusted SDK module" }
+        let module = String(unit.key.prefix { $0 != ":" })
+        let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
+        guard !owners.isEmpty, owners.allSatisfy({ $0.isTest && !$0.hasProductionRole && current.modules[$0.name] == module }),
+              current.unsupportedSourceInputs?[module]?.isEmpty ?? true, current.unresolvedProductRoles?[module] == nil else { return "Unresolved test-only ownership or unsupported source inputs" }
+        guard current.tests.allSatisfy({ test in
+            guard let roots = graph.tests[test], !roots.isEmpty, graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
+            return roots.allSatisfy { graph.functions[$0] != nil }
+        }) else { return "Incomplete test or lifecycle bindings" }
+        let headSources = current.sources.filter { $0.key.hasPrefix(module + ":") }
+        let baseSources = base.filter { $0.key.hasPrefix(module + ":") }
+        let captured = Set(headSources.keys.map { String($0.dropFirst(module.count + 1)) })
+        guard current.targets.filter({ current.modules[$0.name] == module }).allSatisfy({ Set($0.sourceFiles).isSubset(of: captured) }),
+              Set(headSources.keys) == Set(baseSources.keys) else { return "Missing base/head module sources" }
+        let sources = Array(current.sources.values) + Array(base.values)
+        guard sources.allSatisfy({ $0.diagnostics.isEmpty && $0.helperReferences != nil && $0.sdkHelperNamesUnshadowed == true && $0.dispatchMembers != nil && $0.dispatchOverrides != nil && $0.superclasses != nil }) else { return "Missing reference evidence or shadowed XCTest/query/operator names" }
+        let sdkClasses: Set<String> = ["XCUIElement", "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter"]
+        guard sources.allSatisfy({ snapshot in
+            snapshot.superclasses!.values.flatMap { $0 }.allSatisfy { !sdkClasses.contains($0.split(separator: ".").last.map(String.init) ?? $0) }
+        }) else { return "Project subclass can override the trusted SDK query APIs" }
+        let queryOverrides = evidence.queriedMembers.union(old.queriedMembers)
+        guard sources.allSatisfy({ snapshot in
+            snapshot.dispatchOverrides!.allSatisfy { !queryOverrides.contains($0.split(separator: ".").last.map(String.init) ?? $0) }
+        }) else { return "Project override can replace a trusted SDK query (including through a type alias)" }
+        let protected: Set<String> = ["XCUIElement.exists", "XCUIElement.value", "XCUIElement.isEnabled", "XCUIElement.isHittable", "XCUIElement.isSelected",
+            "NSPredicate.evaluate", "NSPredicate.init", "XCTNSPredicateExpectation.init", "XCTWaiter.wait"]
+        guard sources.allSatisfy({ snapshot in
+            snapshot.dispatchMembers!.allSatisfy { member in !protected.contains(member) && !protected.contains(String(member.split(separator: ".").suffix(2).joined(separator: "."))) }
+        }) else { return "Project declarations shadow the trusted SDK query APIs" }
+        let headUnits = headSources.values.flatMap(\.units), oldUnits = baseSources.values.flatMap(\.units)
+        let byKey = Dictionary(grouping: headUnits, by: \.key), oldByKey = Dictionary(grouping: oldUnits, by: \.key)
+        let headByFile = Dictionary(grouping: headUnits.filter { $0.kind == "function" }, by: { $0.region.path })
+        let oldByFile = Dictionary(grouping: oldUnits.filter { $0.kind == "function" }, by: { $0.region.path })
+        var symbolCache: [String: Set<String>] = [:]
+        func symbols(_ unit: SourceUnit) -> Set<String> {
+            if let cached = symbolCache[unit.key] { return cached }
+            let result = Set((index.byFile[unit.region.path] ?? []).filter { id in
+                graph.functions[id]?.module == module && graph.functions[id]!.regions.contains {
+                    $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine
+                }
+            })
+            symbolCache[unit.key] = result
+            return result
+        }
+        var testsByRoot: [String: Set<String>] = [:]
+        for test in current.tests {
+            for root in graph.tests[test] ?? [] { testsByRoot[root, default: []].insert(test) }
+        }
+        var accepted = Set<String>(), active = Set<String>(), expectedEntries = Set<String>()
+        func visit(_ callee: SourceUnit) -> String? {
+            if active.contains(callee.key) { return "Recursive helper callers: \(callee.helperCallableName ?? callee.scope)" }
+            if accepted.contains(callee.key) { return nil }
+            guard let name = callee.helperCallableName, callee.helperCallerSupported == true, callee.headOnlyBodySupported == true,
+                  byKey[callee.key]?.count == 1, let prior = oldByKey[callee.key], prior.count == 1,
+                  prior[0].helperCallerSupported == true, prior[0].headOnlyBodySupported == true else { return "Unsupported/dynamic/lifecycle caller or removed base declaration: \(callee.region.path):\(callee.region.startLine)" }
+            if !callee.scope.isEmpty && !["XCUIElement", "XCTest.XCUIElement"].contains(callee.scope) {
+                guard PrivateTestHelperIsolation.safeHierarchy(callee.scope, module: module, sources: Array(headSources.values)),
+                      PrivateTestHelperIsolation.safeHierarchy(callee.scope, module: module, sources: Array(baseSources.values)) else { return "Unresolved or dynamically exposed XCTest helper hierarchy: \(callee.scope)" }
+            }
+            guard current.sources.filter({ !$0.key.hasPrefix(module + ":") }).values.allSatisfy({ $0.identifierNames?.contains(name) == false }),
+                  base.filter({ !$0.key.hasPrefix(module + ":") }).values.allSatisfy({ $0.identifierNames?.contains(name) == false }) else { return "Helper name is referenced outside the owning test module: \(name)" }
+            let ids = symbols(callee)
+            guard !ids.isEmpty else { return "Missing compiled helper: \(name)" }
+            let paths = index.paths(to: ids)
+            active.insert(callee.key)
+            defer { active.remove(callee.key) }
+            var callerKeys = Set<String>()
+            for (snapshots, units) in [(headSources, headByFile), (baseSources, oldByFile)] {
+                var declarations = 0
+                for (key, snapshot) in snapshots {
+                    let allUses = snapshot.helperReferences?[name]
+                    if allUses?.unsupported == true {
+                        return "Escaping, stored, nested or unresolved reference to \(name) in \(key) at lines \(allUses!.unsupportedLines.sorted())"
+                    }
+                    guard let uses = snapshot.helperReferences?[callee.helperReferenceSignature ?? name] else { continue }
+                    declarations += uses.declarations.count
+                    guard !uses.unsupported else { return "Escaping, stored, nested or unresolved reference to \(name) in \(key) at lines \(uses.unsupportedLines.sorted())" }
+                    let path = String(key.dropFirst(module.count + 1))
+                    for line in uses.callers {
+                        let matches = (units[path] ?? []).filter { $0.region.startLine == line }
+                        guard matches.count == 1, let caller = matches.first,
+                              let surviving = byKey[caller.key], surviving.count == 1,
+                              surviving[0].region.path == path else { return "Removed or ambiguous caller of \(name): \(path):\(line) (matches=\(matches.count))" }
+                        guard paths.path(from: symbols(surviving[0])) != nil else { return "Missing head edge for a base/head caller of \(name): \(path):\(line)" }
+                        callerKeys.insert(caller.key)
+                    }
+                }
+                guard declarations == 1 else { return "Ambiguous declaration/overload for \(name)" }
+            }
+            guard !callerKeys.isEmpty else { return "No source-bound test consumers for \(name)" }
+            for key in callerKeys.sorted() {
+                let caller = byKey[key]![0]
+                if XcodeFineSelector.isTestEntry(caller, in: current) {
+                    guard caller.headOnlyBodySupported == true else { return "Unsupported test entry attributes" }
+                    for id in symbols(caller) { expectedEntries.formUnion(testsByRoot[id] ?? []) }
+                    accepted.insert(caller.key)
+                } else if let failure = visit(caller) { return failure }
+            }
+            accepted.insert(callee.key)
+            return nil
+        }
+        if let failure = visit(unit) { return failure }
+        let ids = symbols(unit), paths = index.paths(to: symbols(unit))
+        let consumers = Set(current.tests.filter { paths.path(from: graph.tests[$0] ?? []) != nil })
+        guard !consumers.isEmpty, consumers.isSubset(of: expectedEntries) else { return "Compiler consumers outside the verified source caller graph" }
+        // Check all compiler callers, not just one selected explanation path.
+        for offset in index.symbols.indices where paths.distance[offset] >= 0 {
+            let id = index.symbols[offset]
+            guard let node = graph.functions[id], node.module == module else { return "Unknown or cross-module compiler caller" }
+            let units = headUnits.filter { unit in unit.kind == "function" && node.regions.contains { region in
+                region.path == unit.region.path && region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine
+            } }
+            guard !units.isEmpty, units.allSatisfy({ accepted.contains($0.key) }) else { return "Compiler caller has no verified source owner: \(node.name)" }
+        }
+        // The changed body and its callbacks may query only the trusted SDK APIs.
+        // Compiler-observed state/pointer effects always retain conservative coverage.
+        var pending = Array(ids), visited = Set<String>()
+        while let id = pending.popLast() {
+            guard visited.insert(id).inserted, let node = graph.functions[id] else { continue }
+            if node.module == module && node.hasProjectRuntimeContext &&
+                !node.uncertainties.isDisjoint(with: ["Global state access", "Shared state access", "Raw pointer operation"]) { return "Compiler-observed state or pointer effect: \(node.name)" }
+            for dependency in node.dependencies {
+                guard let target = graph.functions[dependency] else { continue }
+                if target.hasProjectRuntimeContext && target.module != module {
+                    return "Project implementation outside the trusted SDK boundary: \(target.name)"
+                }
+                if target.module == module { pending.append(dependency) }
+            }
+        }
+        return nil
+    }
+}

@@ -14,10 +14,18 @@ struct XcodeHeadOnlySources {
     static func read(current: XcodeTestGraph, changes: [FileChange], base: String, root: URL, mappingPath: String) throws -> Self {
         var result = Self(base: current.sources)
         let paths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+        // Internal SDK extensions are visible throughout their test module. A
+        // scoped diff cannot substitute head syntax for changed base callers in
+        // other files: removed calls/escapes must remain visible to the proof.
+        let callerModules = Set(current.sources.compactMap { key, snapshot -> String? in
+            guard let colon = key.firstIndex(of: ":"), paths.contains(String(key[key.index(after: colon)...])),
+                  snapshot.units.contains(where: { $0.sdkTestHelper != nil }) else { return nil }
+            return String(key[..<colon])
+        })
         for key in current.sources.keys.sorted() {
             guard let colon = key.firstIndex(of: ":") else { result.diagnostics.append("Invalid source snapshot key: \(key)"); continue }
             let module = String(key[..<colon]), path = String(key[key.index(after: colon)...])
-            guard paths.contains(path) else { continue }
+            guard paths.contains(path) || callerModules.contains(module) else { continue }
             let data = try CommandRunner.run("git", ["show", base + ":" + path], at: root, allowFailure: true)
             if data.status == 0, let text = String(data: data.stdout, encoding: .utf8) {
                 result.base[key] = SwiftSourceSnapshot.parse(text, path: path, module: module)
@@ -84,13 +92,25 @@ enum XcodeHeadOnlySelector {
         let new = Dictionary(grouping: current.sources.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
         let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries)
         let dependencyIndex = current.dependencies.map(DependencyIndex.init)
-        var isolatedHelpers = Set<String>()
+        var isolatedHelpers = Set<String>(), isolatedSDKHelpers = Set<String>()
         var changed: [SourceUnit] = []
         var semanticPaths = Set<String>()
         for key in Set(old.keys).union(new.keys).sorted() {
             let before = old[key] ?? [], after = new[key] ?? []
             guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() else { continue }
             semanticPaths.formUnion((before + after).map { $0.region.path })
+            if after.count == 1, let unit = after.first, (unit.sdkTestHelper != nil || ["XCUIElement", "XCTest.XCUIElement"].contains(unit.scope)),
+               let graph = current.dependencies, let index = dependencyIndex {
+                if let blocker = SDKTestHelperIsolation.blocker(unit, previous: before.count == 1 ? before.first : nil,
+                                                               current: current, base: source.base, graph: graph, index: index) {
+                    fallback("head_only_sdk_helper_boundary", "SDK test helper isolation is unproven: \(blocker) (\(unit.region.path):\(unit.region.startLine))")
+                } else {
+                    isolatedHelpers.insert(key)
+                    isolatedSDKHelpers.insert(key)
+                    changed.append(unit)
+                    continue
+                }
+            }
             if before.count <= 1, after.count == 1, let unit = after.first,
                let graph = current.dependencies, let index = dependencyIndex {
                 let proofs = [unit.privateTestHelper, before.first?.privateTestHelper].compactMap { $0 }
@@ -158,7 +178,7 @@ enum XcodeHeadOnlySelector {
         if let graph = current.dependencies {
             let index = dependencyIndex!
             if let mappings = current.mappings { mappingIndex = MappingIndex(mappings, snapshot: current, graph: graph, index: index) }
-            var affected = Set<String>(), isolatedSymbols = Set<String>(), production: [SourceUnit] = []
+            var affected = Set<String>(), isolatedSymbols = Set<String>(), sdkSymbols = Set<String>(), production: [SourceUnit] = []
             for unit in changed {
                 let module = String(unit.key.prefix { $0 != ":" })
                 let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
@@ -181,12 +201,13 @@ enum XcodeHeadOnlySelector {
                 if ids.isEmpty { fallback("head_only_unresolved_body", "No compiled function for surviving body \(unit.region.path):\(unit.region.startLine)") }
                 affected.formUnion(ids)
                 if isolatedHelpers.contains(unit.key) { isolatedSymbols.formUnion(ids) }
+                if isolatedSDKHelpers.contains(unit.key) { sdkSymbols.formUnion(ids) }
                 if owners.contains(where: { !$0.isTest }) { production.append(unit) }
             }
             let affectedPaths = index.paths(to: affected)
             for test in inventory.sorted() {
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
-                    include([test], kind: "dependency", reason: path.last.map(isolatedSymbols.contains) == true ? "Head compiler dependencies reach a changed body; private helper isolation is verified from base/head syntax and compiled consumers" : "Head compiler dependencies reach a surviving body with an unchanged declaration header", path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
+                    include([test], kind: "dependency", reason: path.last.map(sdkSymbols.contains) == true ? "Head compiler dependencies reach a changed SDK test helper; base/head read-only query effects and closed source/compiled callers are verified" : path.last.map(isolatedSymbols.contains) == true ? "Head compiler dependencies reach a changed body; private helper isolation is verified from base/head syntax and compiled consumers" : "Head compiler dependencies reach a surviving body with an unchanged declaration header", path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
                 if !changed.isEmpty {
                     let roots = graph.tests[test] ?? []

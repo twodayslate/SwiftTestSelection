@@ -1050,7 +1050,7 @@ are conservatively unsupported. This also applies to attributes
 on enclosing types: an attached macro can synthesize other declarations from a
 changed body. Test-entry selection retains the existing test-independence assumption.
 Declared UI feature mappings narrow runtime uncertainty only when all changed
-bodies belong to production code, proven test entries, or isolated private helpers.
+bodies belong to production code, proven test entries, or isolated private/SDK helpers.
 Other mixed helper or lifecycle edits retain their runtime fallbacks even when a
 mapped app feature also changes.
 
@@ -1095,6 +1095,36 @@ captures without the new syntax evidence retain the existing explained fallback.
 As with test-entry selection, tests must be independent: this is a proof of the
 helper's callers, not a general effect system for SDK implementations or a proof
 that separately executed tests cannot communicate through external state.
+
+Head-only selection also recognizes a bounded read-only waiting contract for
+internal Swift methods in `XCUIElement` extensions whose file imports only the
+trusted `XCTest`, `Foundation`, or `Swift` modules. Project SDK module shadows and
+untrusted re-exports retain fallback. Both revisions must use only
+supported element queries (`exists`, `value`, `isEnabled`, `isHittable`,
+`isSelected`), primitive parameters, local predicates/expectations, and
+`XCTWaiter.wait`. A local `NSPredicate` callback may capture `self` and primitive
+parameters for those queries; predicates and method references cannot escape or
+be stored in shared state. The method name and file path are unrestricted. This
+supports replacing a value predicate with an existence-and-value predicate.
+See the [real-project validation](Documentation/Issue58Validation.md) for the
+125-consumer selection and reproduction commands.
+
+The proof follows direct helper callers, including source-defined XCTest base
+classes and nonescaping local functions, to bound test entries. The head compiler
+graph must confirm those paths and contain no unaccounted-for callers. Both source
+revisions are checked across the owning test module, including callers outside a
+requested file scope, so removed calls cannot disappear from the proof. This reads
+base source from Git; it does not build the base revision. Overloads with different
+argument labels can be separated when the helper has no default/variadic arguments;
+ambiguous overloads remain conservative.
+
+Project SDK-name shadowing/subclasses, dynamic exposure, lifecycle use, escaping
+references, unsupported effects, missing bindings, and missing/version-mismatched
+proof evidence select the full inventory with `head_only_sdk_helper_boundary`.
+That diagnostic names the blocking evidence. Successful selections carry a
+`dependency` explanation identifying the verified SDK-helper boundary. As with
+other test-only precision, this relies on test independence and the documented
+SDK query contract, not measured coverage or a general SDK effect analysis.
 
 A mixed review still processes every other change normally; isolated helpers do
 not suppress production, configuration, graph, or build-evidence fallbacks. Scoped

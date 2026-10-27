@@ -49,7 +49,19 @@ private func cacheGraph() -> XcodeTestGraph {
 @Test func graphCacheRecoversAbandonedWorkAndBoundsDiskUsage() throws {
     let root = try cacheFixture()
     defer { try? FileManager.default.removeItem(at: root) }
-    let cache = try XcodeGraphCache(.init(directory: root, context: "external", maximumBytes: 2000), progress: { _ in })
+    // Derive the budget from an encoded entry so added graph evidence does not
+    // accidentally make the fixture larger than its entire cache budget.
+    let entryBytes: Int = try {
+        let seed = try XcodeGraphCache(.init(directory: root, context: "external"), progress: { _ in })
+        try seed.store(cacheGraph(), identity: ["revision": "seed"])
+        let seedPath = root.appendingPathComponent(try XcodeGraphCache.key(["revision": "seed"]))
+        let entryBytes = try FileManager.default.contentsOfDirectory(at: seedPath, includingPropertiesForKeys: [.fileSizeKey])
+            .reduce(0) { try $0 + $1.resourceValues(forKeys: [.fileSizeKey]).fileSize! }
+        try FileManager.default.removeItem(at: seedPath)
+        return entryBytes
+    }()
+    let budget = Int64(entryBytes * 2)
+    let cache = try XcodeGraphCache(.init(directory: root, context: "external", maximumBytes: budget), progress: { _ in })
     try cache.resetWork()
     try Data("partial".utf8).write(to: cache.work.appendingPathComponent("build"))
     let stage = root.appendingPathComponent("stage-abandoned")
@@ -65,7 +77,7 @@ private func cacheGraph() -> XcodeTestGraph {
     for case let file as URL in files {
         if file.pathExtension == "json" { total += try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0 }
     }
-    #expect(total <= 2000)
+    #expect(total <= budget)
 }
 
 @Test func graphCacheRejectsIncompleteEntriesAndInvalidConfiguration() throws {

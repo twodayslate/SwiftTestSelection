@@ -1,0 +1,240 @@
+// SPDX-FileCopyrightText: 2026 Zachary Gorak
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+import SwiftSyntax
+
+/// Source evidence for a deliberately small, read-only XCTest waiting language.
+/// No method names or source paths are prescribed by this contract.
+public struct SDKTestHelperSyntax: Codable, Sendable {
+    public var version: Int
+    public var name: String
+    public var blocker: String?
+    public var queriedMembers: Set<String> = []
+    static let currentVersion = 2
+    static let trustedModules: Set<String> = ["XCTest", "Foundation", "Swift"]
+
+    public struct References: Codable, Sendable {
+        public var declarations: Set<Int> = []
+        public var callers: Set<Int> = []
+        public var unsupported = false
+        public var unsupportedLines: Set<Int> = []
+    }
+
+    static let assertions: Set<String> = ["XCTAssert", "XCTAssertTrue", "XCTAssertFalse", "XCTAssertEqual", "XCTAssertNotEqual",
+        "XCTAssertNil", "XCTAssertNotNil", "XCTAssertGreaterThan", "XCTAssertGreaterThanOrEqual", "XCTAssertLessThan", "XCTAssertLessThanOrEqual", "XCTFail"]
+    static let names = assertions.union(["XCUIElement", "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter", "String", "Bool", "TimeInterval", "Double"])
+    static let lifecycle: Set<String> = ["setUp", "setUpWithError", "tearDown", "tearDownWithError", "setUpClass", "tearDownClass", "defaultTestSuite", "testInvocations"]
+
+    static func signature(_ function: FunctionDeclSyntax) -> String {
+        function.name.text + "(" + function.signature.parameterClause.parameters.map { $0.firstName.text + ":" }.joined() + ")"
+    }
+
+    static func referenceKey(_ token: TokenSyntax) -> String? {
+        if let function = token.parent?.as(FunctionDeclSyntax.self), function.name.id == token.id { return signature(function) }
+        guard let reference = token.parent?.as(DeclReferenceExprSyntax.self), reference.argumentNames == nil else { return nil }
+        var expression = Syntax(reference)
+        if let member = reference.parent?.as(MemberAccessExprSyntax.self), member.declName.id == reference.id { expression = Syntax(member) }
+        guard let call = expression.parent?.as(FunctionCallExprSyntax.self), call.calledExpression.id == expression.id else { return nil }
+        return token.text + "(" + call.arguments.map { ($0.label?.text ?? "_") + ":" }.joined() + ")"
+    }
+
+    static func references(_ tokens: [TokenSyntax], locations: SourceLocationConverter, activeLocals: Set<Int> = [], matching signature: String? = nil) -> References {
+        var result = References()
+        for token in tokens {
+            if let signature, let key = referenceKey(token), key != signature { continue }
+            func reject() {
+                result.unsupported = true
+                result.unsupportedLines.insert(locations.location(for: token.positionAfterSkippingLeadingTrivia).line)
+            }
+            if let function = token.parent?.as(FunctionDeclSyntax.self), function.name.id == token.id {
+                result.declarations.insert(locations.location(for: function.positionAfterSkippingLeadingTrivia).line)
+                continue
+            }
+            guard let reference = token.parent?.as(DeclReferenceExprSyntax.self), reference.argumentNames == nil else {
+                reject(); continue
+            }
+            var expression = Syntax(reference)
+            if let member = reference.parent?.as(MemberAccessExprSyntax.self), member.declName.id == reference.id { expression = Syntax(member) }
+            guard let call = expression.parent?.as(FunctionCallExprSyntax.self), call.calledExpression.id == expression.id else {
+                reject(); continue
+            }
+            var ancestor = call.parent
+            var caller: FunctionDeclSyntax?
+            var supported = true
+            while let node = ancestor {
+                if let function = node.as(FunctionDeclSyntax.self) { caller = function; break }
+                if let outer = node.as(FunctionCallExprSyntax.self) {
+                    // XCTest's assertion parameters are synchronous autoclosures.
+                    if !assertions.contains(outer.calledExpression.as(DeclReferenceExprSyntax.self)?.baseName.text ?? "") { supported = false; break }
+                } else if let prefix = node.as(PrefixOperatorExprSyntax.self) {
+                    if prefix.operator.text != "!" { supported = false; break }
+                } else if node.is(IfExprSyntax.self) || node.is(SwitchExprSyntax.self) || node.is(TryExprSyntax.self) {
+                    // Structured control flow does not retain or escape the call.
+                } else if node.is(ExprSyntax.self) || node.is(PatternSyntax.self) || node.is(AccessorDeclSyntax.self) ||
+                    node.is(DeferStmtSyntax.self) || node.is(FunctionParameterSyntax.self) {
+                    supported = false; break
+                }
+                if let variable = node.as(VariableDeclSyntax.self), !variable.attributes.isEmpty || !variable.modifiers.isEmpty { supported = false; break }
+                ancestor = node.parent
+            }
+            // A local named function is part of its enclosing source unit.
+            // Collapse it only after proving its own references do not escape.
+            while supported, let local = caller {
+                var parent = local.parent
+                var enclosing: FunctionDeclSyntax?
+                while let node = parent {
+                    if let function = node.as(FunctionDeclSyntax.self) { enclosing = function; break }
+                    parent = node.parent
+                }
+                guard let enclosing else { break }
+                let position = local.positionAfterSkippingLeadingTrivia.utf8Offset
+                guard !activeLocals.contains(position), local.attributes.isEmpty, local.modifiers.isEmpty else { supported = false; break }
+                let name = local.name.identifier?.name ?? local.name.text
+                let uses = references(enclosing.tokens(viewMode: .sourceAccurate).filter { $0.identifier?.name == name },
+                                      locations: locations, activeLocals: activeLocals.union([position]))
+                guard !uses.unsupported, uses.declarations.count == 1, !uses.callers.isEmpty else { supported = false; break }
+                caller = enclosing
+            }
+            if supported, let caller { result.callers.insert(locations.location(for: caller.positionAfterSkippingLeadingTrivia).line) }
+            else { reject() }
+        }
+        return result
+    }
+
+    static func callerSupported(_ function: FunctionDeclSyntax) -> Bool {
+        guard !lifecycle.contains(function.name.text),
+              function.modifiers.allSatisfy({ ["private", "fileprivate", "internal", "final", "static"].contains($0.name.text) }),
+              function.attributes.allSatisfy({ $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor" }) else { return false }
+        if function.parent?.is(CodeBlockItemSyntax.self) == true { return true }
+        if let type = function.parent?.parent?.parent?.parent?.as(ClassDeclSyntax.self) {
+            return PrivateTestHelperSyntax.safeSuperclass(type) != nil
+        }
+        if let ext = function.parent?.parent?.parent?.parent?.as(ExtensionDeclSyntax.self) {
+            return ["XCUIElement", "XCTest.XCUIElement"].contains(ext.extendedType.trimmedDescription) &&
+                ext.attributes.allSatisfy { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor" }
+        }
+        return false
+    }
+
+    static func prove(_ function: FunctionDeclSyntax) -> Self? {
+        guard let ext = function.parent?.parent?.parent?.parent?.as(ExtensionDeclSyntax.self),
+              ["XCUIElement", "XCTest.XCUIElement"].contains(ext.extendedType.trimmedDescription) else { return nil }
+        var evidence = Self(version: currentVersion, name: function.name.identifier?.name ?? function.name.text)
+        var root = Syntax(function)
+        while let parent = root.parent { root = parent }
+        let imports = root.tokens(viewMode: .sourceAccurate).compactMap { token -> ImportDeclSyntax? in
+            guard token.tokenKind == .keyword(.import) else { return nil }
+            return token.parent?.as(ImportDeclSyntax.self)
+        }
+        guard imports.allSatisfy({ $0.attributes.isEmpty && $0.importKindSpecifier == nil && trustedModules.contains($0.path.trimmedDescription) }) else {
+            evidence.blocker = "Helper file imports modules outside the trusted XCTest/Foundation/Swift boundary"; return evidence
+        }
+        evidence.queriedMembers = Set(function.tokens(viewMode: .sourceAccurate).map(\.text)).intersection(
+            ["exists", "value", "isEnabled", "isHittable", "isSelected", "evaluate", "wait"])
+        guard callerSupported(function), ext.inheritanceClause == nil, ext.genericWhereClause == nil,
+              function.genericParameterClause == nil, function.genericWhereClause == nil,
+              function.signature.effectSpecifiers == nil, function.signature.returnClause?.type.trimmedDescription == "Bool" else {
+            evidence.blocker = "Unsupported exposure, signature or extension constraints"; return evidence
+        }
+        guard Body(function).proves() else { evidence.blocker = "Body is outside the read-only query/predicate/expectation contract"; return evidence }
+        return evidence
+    }
+
+    private struct Body {
+        let function: FunctionDeclSyntax
+        init(_ function: FunctionDeclSyntax) { self.function = function }
+        enum Value { case string, number, boolean, predicate, expectation }
+        func proves() -> Bool {
+            var locals: [String: Value] = [:]
+            for parameter in function.signature.parameterClause.parameters {
+                let type: Value
+                switch parameter.type.trimmedDescription {
+                case "String": type = .string
+                case "TimeInterval", "Double": type = .number
+                case "Bool": type = .boolean
+                default: return false
+                }
+                let name = (parameter.secondName ?? parameter.firstName).text
+                guard parameter.attributes.isEmpty, parameter.modifiers.isEmpty, parameter.ellipsis == nil,
+                      !names.contains(name), !["self", "exists", "value", "isEnabled", "isHittable", "isSelected"].contains(name) else { return false }
+                if let value = parameter.defaultValue?.value {
+                    guard value.is(IntegerLiteralExprSyntax.self) || value.is(FloatLiteralExprSyntax.self) else { return false }
+                }
+                locals[name] = type
+            }
+            var waited = false
+            func isSelf(_ expression: ExprSyntax) -> Bool { expression.as(DeclReferenceExprSyntax.self)?.baseName.text == "self" }
+            func arguments(_ call: FunctionCallExprSyntax, _ labels: [String?]) -> Bool {
+                call.arguments.map { $0.label?.text } == labels && call.trailingClosure == nil && call.additionalTrailingClosures.isEmpty
+            }
+            func predicate(_ expression: ExprSyntax) -> Bool {
+                guard let call = expression.as(FunctionCallExprSyntax.self), call.calledExpression.trimmedDescription == "NSPredicate" else { return false }
+                if let closure = call.trailingClosure {
+                    guard call.arguments.isEmpty, call.additionalTrailingClosures.isEmpty,
+                          closure.signature?.capture == nil, closure.signature?.attributes.isEmpty ?? true,
+                          closure.signature?.parameterClause?.tokens(viewMode: .sourceAccurate).map(\.text) == ["_", ",", "_"],
+                          closure.statements.count == 1, let statement = closure.statements.first else { return false }
+                    let value = statement.item.as(ExprSyntax.self) ?? statement.item.as(ReturnStmtSyntax.self)?.expression
+                    return value.map(query) ?? false
+                }
+                guard arguments(call, ["format", nil]), let format = call.arguments.first?.expression.trimmedDescription,
+                      ["\"value == %@\"", "\"value != %@\""].contains(format), let value = call.arguments.last?.expression else { return false }
+                return query(value)
+            }
+            func query(_ expression: ExprSyntax) -> Bool {
+                if let name = expression.as(DeclReferenceExprSyntax.self)?.baseName.text {
+                    return ["self", "exists", "value", "isEnabled", "isHittable", "isSelected"].contains(name) ||
+                        locals[name].map { [.string, .number, .boolean].contains($0) } == true
+                }
+                if expression.is(BooleanLiteralExprSyntax.self) || expression.is(IntegerLiteralExprSyntax.self) || expression.is(FloatLiteralExprSyntax.self) { return true }
+                if let text = expression.as(StringLiteralExprSyntax.self) { return text.segments.allSatisfy { $0.is(StringSegmentSyntax.self) } }
+                if let member = expression.as(MemberAccessExprSyntax.self) {
+                    if member.base == nil { return member.declName.baseName.text == "completed" }
+                    return member.base.map(isSelf) == true && ["exists", "value", "isEnabled", "isHittable", "isSelected"].contains(member.declName.baseName.text)
+                }
+                if let prefix = expression.as(PrefixOperatorExprSyntax.self) { return prefix.operator.text == "!" && query(prefix.expression) }
+                if let sequence = expression.as(SequenceExprSyntax.self) { return sequence.elements.allSatisfy(query) }
+                if let op = expression.as(BinaryOperatorExprSyntax.self) { return ["==", "!=", "&&", "||"].contains(op.operator.text) }
+                if let cast = expression.as(UnresolvedAsExprSyntax.self) { return cast.questionOrExclamationMark?.text == "?" }
+                if let type = expression.as(TypeExprSyntax.self) { return type.type.trimmedDescription == "String" }
+                guard let call = expression.as(FunctionCallExprSyntax.self), let member = call.calledExpression.as(MemberAccessExprSyntax.self),
+                      let receiver = member.base?.as(DeclReferenceExprSyntax.self)?.baseName.text else { return false }
+                if locals[receiver] == .predicate && member.declName.baseName.text == "evaluate" {
+                    return arguments(call, ["with"]) && call.arguments.first.map { isSelf($0.expression) } == true
+                }
+                if receiver == "XCTWaiter", member.declName.baseName.text == "wait", arguments(call, ["for", "timeout"]),
+                   let array = call.arguments.first?.expression.as(ArrayExprSyntax.self), !array.elements.isEmpty,
+                   array.elements.allSatisfy({ locals[$0.expression.trimmedDescription] == .expectation }),
+                   let timeout = call.arguments.last?.expression, query(timeout) {
+                    waited = true; return true
+                }
+                return false
+            }
+            func statements(_ list: CodeBlockItemListSyntax) -> Bool {
+                for statement in list {
+                    if let variable = statement.item.as(VariableDeclSyntax.self) {
+                        guard variable.bindingSpecifier.text == "let", variable.attributes.isEmpty, variable.modifiers.isEmpty,
+                              variable.bindings.count == 1, let binding = variable.bindings.first,
+                              let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text,
+                              locals[name] == nil, !names.contains(name), binding.typeAnnotation == nil, binding.accessorBlock == nil,
+                              let expression = binding.initializer?.value else { return false }
+                        if predicate(expression) { locals[name] = .predicate }
+                        else if let call = expression.as(FunctionCallExprSyntax.self), call.calledExpression.trimmedDescription == "XCTNSPredicateExpectation",
+                                arguments(call, ["predicate", "object"]), let first = call.arguments.first?.expression,
+                                (locals[first.trimmedDescription] == .predicate || predicate(first)),
+                                call.arguments.last.map({ isSelf($0.expression) }) == true { locals[name] = .expectation }
+                        else { return false }
+                    } else if let result = statement.item.as(ReturnStmtSyntax.self), let expression = result.expression {
+                        guard query(expression) else { return false }
+                    } else if let condition = statement.item.as(IfExprSyntax.self) ?? statement.item.as(ExpressionStmtSyntax.self)?.expression.as(IfExprSyntax.self) {
+                        guard condition.conditions.count == 1, let expression = condition.conditions.first?.condition.as(ExprSyntax.self),
+                              query(expression), condition.elseBody == nil, statements(condition.body.statements) else { return false }
+                    } else { return false }
+                }
+                return true
+            }
+            guard let body = function.body else { return false }
+            return statements(body.statements) && waited
+        }
+    }
+}

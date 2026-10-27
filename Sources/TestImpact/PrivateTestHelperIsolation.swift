@@ -168,7 +168,7 @@ enum PrivateTestHelperIsolation {
         })
     }
 
-    private static func safeHierarchy(_ name: String, module: String, sources: [SwiftSourceSnapshot]) -> Bool {
+    static func safeHierarchy(_ name: String, module: String, sources: [SwiftSourceSnapshot]) -> Bool {
         let classes = sources.flatMap { ($0.helperSafeClasses ?? [:]).map { ($0.key, $0.value) } }
         let aliases = Set(sources.flatMap { $0.typeAliases ?? [] })
         var name = name, visited = Set<String>()

@@ -37,6 +37,10 @@ public struct SourceUnit: Codable, Sendable {
     public var privateTestHelper: PrivateTestHelperSyntax? = nil
     /// Closed name evidence for a separately executed added XCTest entry.
     public var independentAddedTestEntry: String? = nil
+    public var sdkTestHelper: SDKTestHelperSyntax? = nil
+    public var helperCallableName: String? = nil
+    public var helperReferenceSignature: String? = nil
+    public var helperCallerSupported: Bool? = nil
 
     static func withLocations(_ values: [String], syntax: String) -> String {
         values.isEmpty ? syntax : syntax + "@locations[" +
@@ -64,6 +68,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     public var helperSafeClasses: [String: String]? = nil
     public var helperNamesUnshadowed: Bool? = nil
     public var attachmentAddUnshadowed: Bool? = nil
+    public var helperReferences: [String: SDKTestHelperSyntax.References]? = nil
+    public var sdkHelperNamesUnshadowed: Bool? = nil
 
     /// Match specialized superclass references to their nominal declarations.
     /// Parse the type so nested arguments, function types and qualification do
@@ -96,6 +102,15 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
         }
         result.attachmentAddUnshadowed = !(identifiers["add"] ?? []).contains(where: PrivateTestHelperSyntax.shadowsAttachmentAdd)
+        result.helperReferences = identifiers.mapValues { SDKTestHelperSyntax.references($0, locations: locations) }
+        for tokens in identifiers.values {
+            for signature in Set(tokens.compactMap(SDKTestHelperSyntax.referenceKey)) {
+                result.helperReferences![signature] = SDKTestHelperSyntax.references(tokens, locations: locations, matching: signature)
+            }
+        }
+        result.sdkHelperNamesUnshadowed = SDKTestHelperSyntax.names.allSatisfy { name in
+            !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
+        }
         result.helperSafeClasses = [:]
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
         // Preserve syntax structure, token kinds and literal contents, but not
@@ -201,6 +216,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 node.children(viewMode: .sourceAccurate).contains(where: containsOpaqueResult)
         }
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String]) {
+            if let function = node.as(FunctionDeclSyntax.self), ["!", "==", "!=", "&&", "||"].contains(function.name.text) {
+                result.sdkHelperNamesUnshadowed = false
+            }
             if let alias = node.as(TypeAliasDeclSyntax.self) {
                 result.typeAliases!.insert(([module] + scope + [alias.name.text]).joined(separator: "."))
             }
@@ -283,7 +301,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     PrivateTestHelperSyntax.prove($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [], locations: locations)
                 }, independentAddedTestEntry: node.as(FunctionDeclSyntax.self).flatMap {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
-                }))
+                }, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },
+                helperReferenceSignature: node.as(FunctionDeclSyntax.self).flatMap { function in
+                    function.signature.parameterClause.parameters.allSatisfy { $0.defaultValue == nil && $0.ellipsis == nil } ? SDKTestHelperSyntax.signature(function) : nil
+                },
+                helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported)))
         }
         func walk(_ node: Syntax, scope: [String]) {
             if let item = node.as(CodeBlockItemSyntax.self), !item.item.is(DeclSyntax.self) {
@@ -326,7 +349,11 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 add(node, header: Syntax(value.with(\.body, nil)), kind: "function", scope: scope)
             } else if node.is(InitializerDeclSyntax.self) || node.is(DeinitializerDeclSyntax.self) || node.is(VariableDeclSyntax.self) || node.is(SubscriptDeclSyntax.self) {
                 add(node, header: node, kind: "state", scope: scope)
-            } else if node.is(ImportDeclSyntax.self) {
+            } else if let imported = node.as(ImportDeclSyntax.self) {
+                if imported.attributes.contains(where: { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "_exported" }),
+                   !SDKTestHelperSyntax.trustedModules.contains(imported.path.trimmedDescription) {
+                    result.sdkHelperNamesUnshadowed = false
+                }
                 add(node, header: node, kind: "import", scope: scope)
             } else if node.is(DeclSyntax.self) && !node.is(IfConfigDeclSyntax.self) {
                 add(node, header: node, kind: "declaration", scope: scope)
