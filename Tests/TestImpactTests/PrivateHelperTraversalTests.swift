@@ -118,3 +118,41 @@ func privateHelperDiamondTraversalIsBounded(depth: Int) throws {
     // Deterministic work bound instead of a flaky wall-clock threshold.
     #expect(traversal.evaluationCount == 2 * depth + 1)
 }
+
+@Test(arguments: ["chain", "cycle", "shared", "attachment", "unsupported"])
+func privateCalleeEffectTraversalUsesWorkQueue(scenario: String) throws {
+    // Source parsing itself walks outbound effects for every helper. This
+    // exceeded the debug worker stack before the caller graph was even built.
+    let depth = scenario == "chain" ? 200 : 40
+    var methods = ["func testEntry() { step0(XCUIApplication()) }"]
+    for i in 0..<depth {
+        let body: String
+        if i < depth - 1 {
+            let call = "step\(i + 1)(app)"
+            body = scenario == "shared" ? call + "; " + call : call
+        } else {
+            switch scenario {
+            case "cycle": body = "step0(app)"
+            case "attachment": body = "let image = XCTAttachment(screenshot: app.screenshot()); image.name = \"Menu\"; add(image)"
+            case "unsupported": body = "UserDefaults.standard.set(true, forKey: \"shared-mode\")"
+            default: body = "XCTAssertTrue(true)"
+            }
+        }
+        methods.append("private func step\(i)(_ app: XCUIApplication) { \(body) }")
+    }
+    let source = "import XCTest\n@MainActor final class Suite: XCTestCase {\n" + methods.joined(separator: "\n") + "\n}"
+    let snapshot = SwiftSourceSnapshot.parse(source, path: "UI.swift", module: "UI")
+    let root = try #require(snapshot.units.first { $0.privateTestHelper?.name == "step0" }?.privateTestHelper)
+    if ["cycle", "unsupported"].contains(scenario) {
+        #expect(root.calleeEffectsSupported == false)
+        #expect(root.effectCalleeLines == nil)
+    } else {
+        let helpers = snapshot.units.compactMap(\.privateTestHelper)
+        #expect(helpers.count == depth)
+        #expect(helpers.allSatisfy { $0.calleeEffectsSupported == true })
+        #expect(helpers.allSatisfy { $0.localAttachmentState == (scenario == "attachment") })
+        // Every transitive declaration is retained, including shared callees.
+        #expect(root.effectCalleeLines?.count == depth)
+        #expect(root.effectCalleeLines?["step\(depth - 1)"] != nil)
+    }
+}

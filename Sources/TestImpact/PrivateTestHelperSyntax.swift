@@ -155,43 +155,52 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     }
 
     /// Outbound effects are separate from the inbound caller proof: walking
-    /// both directions in one recursion would falsely reject ordinary chains.
+    /// both directions in one traversal would falsely reject ordinary chains.
+    /// Explicit work items bound stack usage while memoizing shared callees.
     /// A nil result is unsupported; true propagates local attachment effects.
     private static func safeCalleeEffects(_ function: FunctionDeclSyntax, in type: ClassDeclSyntax,
                                           locations: SourceLocationConverter, proven: inout [String: Int]) -> Bool? {
         let methods = Dictionary(grouping: type.memberBlock.members.compactMap { $0.decl.as(FunctionDeclSyntax.self) }
             .filter { $0.modifiers.map(\.name.text) == ["private"] }, by: { $0.name.text })
-        var active = Set<SyntaxIdentifier>(), failed = Set<SyntaxIdentifier>()
+        var active = Set<SyntaxIdentifier>()
         var completed: [SyntaxIdentifier: Bool] = [:]
-        func visit(_ function: FunctionDeclSyntax) -> Bool? {
-            if let cached = completed[function.id] { return cached }
-            guard !active.contains(function.id), !failed.contains(function.id) else { return nil }
-            active.insert(function.id)
-            defer { active.remove(function.id) }
-            func check() -> Bool? {
-                guard function.attributes.allSatisfy({ $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor" }),
-                      function.genericParameterClause == nil, function.genericWhereClause == nil,
-                      function.signature.effectSpecifiers == nil,
-                      !function.name.text.hasPrefix("test"), !SDKTestHelperSyntax.lifecycle.contains(function.name.text),
-                      var attachments = safeBody(function, in: type), let body = function.body else { return nil }
+        enum Work {
+            case enter(FunctionDeclSyntax)
+            case finish(FunctionDeclSyntax, Bool, [FunctionDeclSyntax])
+        }
+        var pending: [Work] = [.enter(function)]
+        while let work = pending.popLast() {
+            switch work {
+            case let .enter(candidate):
+                if completed[candidate.id] != nil { continue }
+                guard active.insert(candidate.id).inserted else { return nil }
+                guard candidate.attributes.allSatisfy({ $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor" }),
+                      candidate.genericParameterClause == nil, candidate.genericWhereClause == nil,
+                      candidate.signature.effectSpecifiers == nil,
+                      !candidate.name.text.hasPrefix("test"), !SDKTestHelperSyntax.lifecycle.contains(candidate.name.text),
+                      let attachments = safeBody(candidate, in: type), let body = candidate.body else { return nil }
+                var callees: [FunctionDeclSyntax] = [], seen = Set<SyntaxIdentifier>()
                 for token in body.tokens(viewMode: .sourceAccurate) {
                     guard let reference = token.parent?.as(DeclReferenceExprSyntax.self), reference.baseName.id == token.id,
                           reference.parent?.as(MemberAccessExprSyntax.self)?.declName.id != reference.id,
                           let candidates = methods[reference.baseName.text] else { continue }
-                    guard candidates.count == 1, let callee = candidates.first, let effects = visit(callee) else { return nil }
-                    attachments = attachments || effects
+                    guard candidates.count == 1, let callee = candidates.first else { return nil }
+                    if seen.insert(callee.id).inserted { callees.append(callee) }
                 }
-                return attachments
+                pending.append(.finish(candidate, attachments, callees))
+                for callee in callees.reversed() { pending.append(.enter(callee)) }
+            case let .finish(candidate, attachments, callees):
+                var result = attachments
+                for callee in callees {
+                    guard let effects = completed[callee.id] else { return nil }
+                    result = result || effects
+                }
+                active.remove(candidate.id)
+                completed[candidate.id] = result
+                proven[candidate.name.text] = locations.location(for: candidate.positionAfterSkippingLeadingTrivia).line
             }
-            if let result = check() {
-                completed[function.id] = result
-                proven[function.name.text] = locations.location(for: function.positionAfterSkippingLeadingTrivia).line
-                return result
-            }
-            failed.insert(function.id)
-            return nil
         }
-        return visit(function)
+        return completed[function.id]
     }
 
     private static func safeBody(_ function: FunctionDeclSyntax, in type: ClassDeclSyntax) -> Bool? {

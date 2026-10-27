@@ -127,3 +127,22 @@ Final retained-graph replays preserve the #55 set of 12 tests and the #58 set of
 125 tests, with zero diagnostics. Their selection phases took 11.03 and 11.94
 seconds respectively; both reports pass `verify-build`. These remain analysis
 and retained-product checks, not application test execution.
+
+The escaped-identifier follow-up normalizes SDK member, owner, alias, override,
+and superclass names during selection, including raw names in saved captures.
+The compiled historical-overload regression now covers both `evaluate` and its
+backticked spelling and round-trips the head graph through JSON. Escaped owners
+and members are also checked at head, base, and in base-only source inventories;
+unrelated concrete owners retain their precision.
+
+Private outbound callee-effect proofs now use iterative enter/finish work items.
+The 200-helper source-parse regression no longer requires a recursive worker
+stack. Cycles and unsupported effects still fail conservatively, shared callees
+are reused, and attachment effects propagate to every ancestor. These changes
+use existing capture metadata and do not require a schema version change.
+
+All 265 package tests pass in Xcode 26.6 debug and Xcode 27.0 release builds.
+The additional retained-graph replay passes in release, preserving the 12-test
+#55 set and the 125-test #58 set with zero diagnostics. Selection took 11.26 and
+12.06 seconds respectively, and both resulting reports pass `verify-build`.
+No application test bodies were executed by these replays.

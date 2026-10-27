@@ -202,19 +202,24 @@ enum SDKTestHelperIsolation {
     static func environmentBlocker(current: XcodeTestGraph, base: [String: SwiftSourceSnapshot],
                                    unownedBase: [String: SwiftSourceSnapshot] = [:], queriedMembers: Set<String>) -> String? {
         guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedModules) else { return "Project module shadows a trusted SDK module" }
+        // Source snapshots (including saved captures) preserve backticks in
+        // declaration spelling. Compare semantic names without altering source
+        // fingerprints or requiring a fresh capture.
+        func canonicalName(_ name: String) -> String { name.replacingOccurrences(of: "`", with: "") }
+        let queriedMembers = Set(queriedMembers.map(canonicalName))
         let sources = Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)
         guard sources.allSatisfy({ $0.diagnostics.isEmpty && $0.helperReferences != nil && $0.sdkHelperNamesUnshadowed == true && $0.dispatchMembers != nil && $0.dispatchOverrides != nil && $0.superclasses != nil && $0.typeAliases != nil }) else { return "Missing reference evidence or shadowed XCTest/query/operator names" }
         let sdkClasses: Set<String> = ["XCUIElement", "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter"]
         guard sources.allSatisfy({ snapshot in
-            snapshot.superclasses!.values.flatMap { $0 }.allSatisfy { !sdkClasses.contains($0.split(separator: ".").last.map(String.init) ?? $0) }
+            snapshot.superclasses!.values.flatMap { $0 }.allSatisfy { !sdkClasses.contains(canonicalName($0).split(separator: ".").last.map(String.init) ?? canonicalName($0)) }
         }) else { return "Project subclass can override the trusted SDK query APIs" }
         let queryOverrides = queriedMembers
         guard sources.allSatisfy({ snapshot in
-            snapshot.dispatchOverrides!.allSatisfy { !queryOverrides.contains($0.split(separator: ".").last.map(String.init) ?? $0) }
+            snapshot.dispatchOverrides!.allSatisfy { !queryOverrides.contains(canonicalName($0).split(separator: ".").last.map(String.init) ?? canonicalName($0)) }
         }) else { return "Project override can replace a trusted SDK query (including through a type alias)" }
         let waitNames = queriedMembers.intersection(["waitForExistence", "waitForNonExistence"])
         guard sources.allSatisfy({ snapshot in
-            snapshot.units.allSatisfy { $0.helperCallableName.map { !waitNames.contains($0) } ?? true }
+            snapshot.units.allSatisfy { $0.helperCallableName.map { !waitNames.contains(canonicalName($0)) } ?? true }
         }) else { return "Project declaration can replace a trusted SDK wait overload" }
         // A concrete project class/struct/enum cannot be an ancestor of these
         // precompiled SDK classes. Protocols, aliases and unresolved extension
@@ -227,7 +232,7 @@ enum SDKTestHelperIsolation {
         let members = queriedMembers.union(["init"])
         for revision in [Array(current.sources.values), Array(base.values) + Array(unownedBase.values)] {
             let types = Dictionary(grouping: revision.flatMap(\.units).filter { $0.kind == "type" }, by: {
-                String($0.key.prefix { $0 != ":" }) + "." + $0.scope
+                canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope)
             })
             let concreteOwners = Set(types.compactMap { name, declarations -> String? in
                 // Conditional declarations may share a name. Every candidate
@@ -237,11 +242,11 @@ enum SDKTestHelperIsolation {
                 }) else { return nil }
                 return name
             })
-            let aliases = Set(revision.flatMap { $0.typeAliases! })
+            let aliases = Set(revision.flatMap { $0.typeAliases! }.map(canonicalName))
             guard revision.allSatisfy({ snapshot in
-                let modules = Set(snapshot.units.map { String($0.key.prefix { $0 != ":" }) })
+                let modules = Set(snapshot.units.map { canonicalName(String($0.key.prefix { $0 != ":" })) })
                 return snapshot.dispatchMembers!.allSatisfy { member in
-                    let parts = member.split(separator: ".")
+                    let parts = canonicalName(member).split(separator: ".")
                     guard let name = parts.last, members.contains(String(name)) else { return true }
                     let owner = parts.dropLast().joined(separator: ".")
                     guard let ownerName = parts.dropLast().last, !sdkOwners.contains(String(ownerName)) else { return false }
@@ -255,7 +260,10 @@ enum SDKTestHelperIsolation {
         let protected: Set<String> = ["XCUIElement.exists", "XCUIElement.value", "XCUIElement.isEnabled", "XCUIElement.isHittable", "XCUIElement.isSelected",
             "NSPredicate.evaluate", "NSPredicate.init", "XCTNSPredicateExpectation.init", "XCTWaiter.wait", "XCUIElement.waitForExistence", "XCUIElement.waitForNonExistence"]
         guard sources.allSatisfy({ snapshot in
-            snapshot.dispatchMembers!.allSatisfy { member in !protected.contains(member) && !protected.contains(String(member.split(separator: ".").suffix(2).joined(separator: "."))) }
+            snapshot.dispatchMembers!.allSatisfy { member in
+                let name = canonicalName(member)
+                return !protected.contains(name) && !protected.contains(String(name.split(separator: ".").suffix(2).joined(separator: ".")))
+            }
         }) else { return "Project declarations shadow the trusted SDK query APIs" }
         return nil
     }

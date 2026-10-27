@@ -367,7 +367,8 @@ func privateHelperRejectsInheritedOverloadBinding(scenario: String) throws {
     #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" })
 }
 
-@Test func sdkPredicateRejectsHistoricalInheritedOverload() throws {
+@Test(arguments: [false, true])
+func sdkPredicateRejectsHistoricalInheritedOverload(escaped: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-predicate-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -375,7 +376,7 @@ func privateHelperRejectsInheritedOverloadBinding(scenario: String) throws {
     let support = """
     import XCTest
     @MainActor extension NSObject {
-        func evaluate(with element: XCUIElement) -> Bool {
+        func \(escaped ? "`evaluate`" : "evaluate")(with element: XCUIElement) -> Bool {
             UserDefaults.standard.set(true, forKey: "shared-mode")
             return true
         }
@@ -392,7 +393,8 @@ func privateHelperRejectsInheritedOverloadBinding(scenario: String) throws {
     """
     let tests = ["UI/Suite/testCaller()", "UI/Other/testObserve()"]
     let old = try boundaryGraph(["Waiting.swift": before, "Tests.swift": callers, "Support.swift": support], tests: tests, root: root)
-    let current = try boundaryGraph(["Waiting.swift": newSDKQuery, "Tests.swift": callers, "Support.swift": "import XCTest"], tests: tests, root: root)
+    let captured = try boundaryGraph(["Waiting.swift": newSDKQuery, "Tests.swift": callers, "Support.swift": "import XCTest"], tests: tests, root: root)
+    let current = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(captured))
     let oldGraph = old.dependencies!
     let ids = Set(oldGraph.functions.values.filter { $0.name == "NSObject.evaluate(with:)" }.map(\.id))
     #expect(!ids.isEmpty)
@@ -440,8 +442,9 @@ func sdkHelperCallerDepthUsesWorkQueue(depth: Int, cycle: Bool) throws {
 
 @Test(arguments: ["exists", "value", "isEnabled", "isHittable", "isSelected", "evaluate", "wait", "waitForExistence", "waitForNonExistence", "init"], ["head", "base", "unownedBase"])
 func sdkQueryMemberAuditIncludesHistoricalAndAliasedOwners(member: String, location: String) {
-    for owner in ["NSObject", "Alias"] {
-        let declaration = member == "init" ? "convenience init(custom: Int) { self.init() }" : "var \(member): Bool { true }"
+    for owner in ["NSObject", "`NSObject`", "Alias", "`Alias`"] {
+        let spelling = owner.hasPrefix("`") ? "`\(member)`" : member
+        let declaration = member == "init" ? "convenience init(custom: Int) { self.init() }" : "var \(spelling): Bool { true }"
         let source = "import XCTest\ntypealias Alias = NSObject\nextension \(owner) { \(declaration) }"
         let snapshot = SwiftSourceSnapshot.parse(source, path: "Support.swift", module: "UI")
         var current = XcodeTestGraph(targets: [], tests: [])
@@ -456,12 +459,14 @@ func sdkQueryMemberAuditIncludesHistoricalAndAliasedOwners(member: String, locat
 
 @Test(arguments: ["struct", "class", "enum", "protocol", "extension"])
 func sdkQueryMemberAuditDistinguishesConcreteOwners(kind: String) {
-    let member = kind == "protocol" ? "var value: Bool { get }" : "var value: Bool { true }"
-    let snapshot = SwiftSourceSnapshot.parse("\(kind) Other { \(member) }", path: "Other.swift", module: "UI")
-    var current = XcodeTestGraph(targets: [], tests: [])
-    current.sources = ["UI:Other.swift": snapshot]
-    let reason = SDKTestHelperIsolation.environmentBlocker(current: current, base: [:], queriedMembers: ["value"])
-    #expect((reason == nil) == ["struct", "class", "enum"].contains(kind))
+    for owner in ["Other", "`Other`"] {
+        let member = kind == "protocol" ? "var value: Bool { get }" : "var value: Bool { true }"
+        let snapshot = SwiftSourceSnapshot.parse("\(kind) \(owner) { \(member) }", path: "Other.swift", module: "UI")
+        var current = XcodeTestGraph(targets: [], tests: [])
+        current.sources = ["UI:Other.swift": snapshot]
+        let reason = SDKTestHelperIsolation.environmentBlocker(current: current, base: [:], queriedMembers: ["value"])
+        #expect((reason == nil) == ["struct", "class", "enum"].contains(kind))
+    }
 }
 
 @Test func sdkQueryMemberAuditKeepsNominalEvidenceRevisionLocal() {
