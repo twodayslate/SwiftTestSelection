@@ -1082,7 +1082,14 @@ state. Private helper files must use plain imports from `XCTest`, `Foundation`,
 or declaration-scoped imports retain `head_only_helper_callee_effects` fallback;
 an external type named `XCTAttachment` cannot acquire XCTest's effect contract.
 Untrusted re-exports and project modules shadowing these SDKs also prevent
-isolation. Helpers cannot capture `self` or free project variables, take
+isolation. Attachment constructors and member bindings are also audited at base
+and head, including deleted source files, inherited members, aliases, and
+construction inside assertions or downstream private helpers. A removed project
+overload cannot acquire the SDK effect contract merely because the head graph
+now calls the SDK. Protocol requirements without implementations and unrelated
+concrete initializers do not replace that call; protocol default implementations
+and unresolved bindings retain `head_only_helper_callee_effects`.
+Helpers cannot capture `self` or free project variables, take
 inout/function-valued/default arguments, or contain closures or macros. Known
 global/shared-state and raw-pointer effects in project callees also
 prevent isolation. Attachment handling never waives compiler-observed state
@@ -1168,9 +1175,10 @@ remain conservative. Concrete project types cannot be ancestors of the trusted S
 classes; their same-named members and free functions do not replace SDK member
 calls. The compiler effect walk also rejects project callees outside the checked
 helper and its callbacks. Private proof
-version 6 and SDK proof version 5 reject older saved evidence. Private version 6
-adds import validation for SDK-named effects; version-5 private proofs require
-regeneration. SDK version 5 requires
+version 7 and SDK proof version 5 reject older saved evidence. Private version 7
+records attachment member bindings across the checked callee bodies, in addition
+to the import validation added in version 6; version-6 and older private proofs
+require regeneration. SDK version 5 requires
 assertion names to be free of lexical shadowing, including parameter, generic,
 and closure bindings, and verifies caller imports before trusting assertion or
 negation wrappers. SDK version 3 and 4 captures fall back with a recapture diagnostic;

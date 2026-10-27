@@ -798,3 +798,138 @@ func sdkWrapperImportBoundaryIncludesNegation(imported: String) {
     let snapshot = SwiftSourceSnapshot.parse("@_exported import AttachmentSupport", path: "Exports.swift", module: "UI")
     #expect(snapshot.helperNamesUnshadowed == false)
 }
+
+@Test(arguments: ["initializer", "escaped", "alias", "deleted", "assertion", "transitive", "method", "member", "unrelated"])
+func privateAttachmentAuditsHistoricalBindings(scenario: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("attachment-history-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    var before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testCapture() { capture(XCUIApplication()) }
+        private func capture(_ app: XCUIApplication) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            add(attachment)
+        }
+        func testConsume() { XCTAssertTrue(XCUIApplication().exists && sharedFlag) }
+    }
+    """
+    if scenario == "assertion" {
+        before = before.replacingOccurrences(of: "let attachment = XCTAttachment(screenshot: app.screenshot())\n        add(attachment)",
+            with: "XCTAssertNotNil(XCTAttachment(screenshot: app.screenshot()))")
+    }
+    if scenario == "transitive" {
+        before = before.replacingOccurrences(of: "private func capture(_ app: XCUIApplication) {",
+            with: "private func capture(_ app: XCUIApplication) { record(app) }\n    private func record(_ app: XCUIApplication) {")
+    }
+    if scenario == "member" {
+        before = before.replacingOccurrences(of: "add(attachment)", with: "add(attachment); XCTAssertTrue(attachment.isEqual(attachment))")
+    }
+    let after = before.replacingOccurrences(of: "private func capture(_ app: XCUIApplication) {",
+        with: "private func capture(_ app: XCUIApplication) { XCTAssertTrue(app.exists);")
+    var extra = """
+    import XCTest
+    @MainActor var sharedFlag = false
+    extension XCTAttachment {
+        @MainActor convenience init(screenshot: XCUIScreenshot) {
+            self.init(data: Data(), uniformTypeIdentifier: "public.data")
+            sharedFlag = true
+        }
+    }
+    """
+    if scenario == "escaped" { extra = extra.replacingOccurrences(of: "extension XCTAttachment", with: "extension `XCTAttachment`") }
+    if scenario == "alias" { extra = extra.replacingOccurrences(of: "extension XCTAttachment", with: "typealias AttachmentAlias = XCTAttachment\nextension AttachmentAlias") }
+    if scenario == "member" {
+        extra = """
+        import XCTest
+        extension XCTAttachment {
+            @MainActor func isEqual(_ other: XCTAttachment) -> Bool { sharedFlag = true; return true }
+        }
+        """
+    }
+    if scenario == "method" {
+        extra = """
+        import XCTest
+        @MainActor var sharedFlag = false
+        extension XCUIElement {
+            @MainActor func screenshot() -> XCUIScreenshot {
+                sharedFlag = true
+                return XCUIScreen.main.screenshot()
+            }
+        }
+        """
+    }
+    if scenario == "unrelated" {
+        extra = """
+        import XCTest
+        @MainActor var sharedFlag = false
+        class Unrelated: NSObject {
+            required override init() { super.init() }
+            @MainActor init(screenshot: XCUIScreenshot) { super.init(); sharedFlag = true }
+        }
+        """
+    }
+    // Keep state in a surviving file so a deleted overload remains compilable.
+    extra = extra.replacingOccurrences(of: "@MainActor var sharedFlag = false", with: "")
+    let state = "import XCTest\n@MainActor var sharedFlag = false"
+    let tests = ["UI/Suite/testCapture()", "UI/Suite/testConsume()"]
+    let old = try boundaryGraph(["Tests.swift": before, "Extra.swift": extra, "State.swift": state], tests: tests, root: root)
+    let oldGraph = try #require(old.dependencies)
+    let historicalEffects = Set(oldGraph.functions.values.filter { node in
+        node.hasProjectRuntimeContext && node.uncertainties.contains("Global state access")
+    }.map(\.id))
+    let oldPath = DependencyIndex(oldGraph).paths(to: historicalEffects).path(from: oldGraph.tests[tests[0]] ?? [])
+    if scenario == "unrelated" { #expect(oldPath == nil) }
+    else {
+        let path = try #require(oldPath)
+        let callee = scenario == "method" ? "XCUIElement.screenshot()" : scenario == "member" ? "XCTAttachment.isEqual(_:)" : "XCTAttachment.init(screenshot:)"
+        #expect(path.contains { oldGraph.functions[$0]!.name.contains(callee) })
+    }
+    try JSONEncoder().encode(old.mappings).write(to: root.appendingPathComponent(".swift-test-selection.json"))
+    _ = try CommandRunner.run("git", ["init", "-q"], at: root)
+    _ = try CommandRunner.run("git", ["add", "Tests.swift", "Extra.swift", "State.swift", ".swift-test-selection.json"], at: root)
+    _ = try CommandRunner.run("git", ["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "base"], at: root)
+    var files = ["Tests.swift": after, "State.swift": state]
+    if scenario == "deleted" { try FileManager.default.removeItem(at: root.appendingPathComponent("Extra.swift")) }
+    else { files["Extra.swift"] = "import XCTest" }
+    var current = try boundaryGraph(files, tests: tests, root: root)
+    current = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(current))
+    let proof = try #require(current.sources["UI:Tests.swift"]?.units.first { $0.privateTestHelper?.name == "capture" }?.privateTestHelper)
+    #expect(proof.attachmentEffectMembers?.contains("init") == true)
+    #expect(proof.attachmentEffectMembers?.contains("screenshot") == true)
+    if scenario == "assertion" { #expect(proof.localAttachmentState == false) }
+    let scopes = try XcodeHeadOnlySelector.scopedReports(current: current,
+        requests: .init(scopes: [.init(name: "helper", paths: ["Tests.swift"])]),
+        changes: [.init(path: "Tests.swift"), .init(path: "Extra.swift")],
+        baseRevision: "HEAD", headRevision: "head", root: root, mappingPath: ".swift-test-selection.json",
+        documentation: [], buildEvidenceFailure: nil)
+    let report = try #require(scopes.first?.report)
+    if scenario == "unrelated" {
+        #expect(report.selectedTests == [tests[0]])
+        #expect(report.diagnostics.isEmpty)
+        var incomplete = current
+        for i in incomplete.sources["UI:Tests.swift"]!.units.indices {
+            incomplete.sources["UI:Tests.swift"]!.units[i].privateTestHelper?.attachmentEffectMembers = nil
+        }
+        incomplete = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(incomplete))
+        let missing = XcodeHeadOnlySelector.select(current: incomplete, source: .init(base: old.sources, mappings: current.mappings),
+            changes: [.init(path: "Tests.swift")], baseRevision: "base")
+        #expect(missing.selectedTests == tests.sorted())
+        #expect(missing.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
+    } else {
+        #expect(report.selectedTests == tests.sorted())
+        #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
+    }
+}
+
+@Test func attachmentAuditDistinguishesProtocolRequirementsFromImplementations() {
+    let requirement = SwiftSourceSnapshot.parse("protocol Recorder { func add(_ value: Int) }", path: "Protocol.swift", module: "Other")
+    let implementation = SwiftSourceSnapshot.parse("extension Recorder { func add(_ value: Int) { store(value) } }", path: "Default.swift", module: "Other")
+    let owners: Set<String> = ["XCTAttachment", "XCTestCase", "NSObject"]
+    #expect(SDKTestHelperIsolation.memberBindingsUnshadowed(revisions: [[requirement]], members: ["add"], sdkOwners: owners))
+    #expect(!SDKTestHelperIsolation.memberBindingsUnshadowed(revisions: [[requirement, implementation], [requirement]], members: ["add"], sdkOwners: owners))
+    #expect(!SDKTestHelperIsolation.memberBindingsUnshadowed(revisions: [[requirement], [requirement, implementation]], members: ["add"], sdkOwners: owners))
+    let externalOverride = SwiftSourceSnapshot.parse("import XCTest\nextension XCTAttachment { convenience init(screenshot: XCUIScreenshot) { fatalError() } }", path: "External.swift", module: "Other")
+    #expect(!SDKTestHelperIsolation.memberBindingsUnshadowed(revisions: [[externalOverride], []], members: ["init"], sdkOwners: owners))
+}

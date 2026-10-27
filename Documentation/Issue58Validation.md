@@ -247,3 +247,36 @@ sets with zero diagnostics. Refresh and encoding took 8.24 and 8.26 seconds;
 selection took 11.20 and 12.04 seconds. Both reports pass `verify-build` against
 retained products. No original completed bundles were modified, and no application
 build, compiler extraction, or application test bodies were executed.
+
+
+Private proof version 7 audits attachment constructor and member bindings at both
+revisions before granting the SDK effect contract. The proof records member names
+across checked private callees, including construction inside assertions without
+attachment writes. Removed project initializers, attachment methods, and screenshot
+overloads retain `head_only_helper_callee_effects`, including declarations in deleted
+files and aliases or backticked owners. Already-proven SDK query helpers keep their
+existing effect proof; unresolved overloads do not inherit that exemption. Compiler
+shared-state diagnostics are preserved even when a historical binding is unproven.
+Version-6 and older private evidence requires recapture, and missing member evidence
+fails conservatively.
+
+The compiled regression validates nine scenarios at both revisions: ordinary,
+escaped, aliased, and deleted initializers; construction inside assertions and
+transitive private helpers; screenshot and attachment member overloads; and an
+unrelated concrete initializer (including a required override) that preserves
+single-method selection. A separate regression distinguishes protocol requirements
+from historical default implementations and checks SDK extensions in other modules.
+The audit remains cross-module because Swift can expose extensions through imports
+in another file. For every unsafe scenario the base compiler graph confirms the route from the test through
+the project implementation to global state. The scoped head-only report must then
+select both the caller and state consumer with an explicit diagnostic. JSON round
+trips, missing attachment evidence, and stale version-6 captures are also checked.
+
+All 278 package tests pass in Xcode 26.6 debug and Xcode 27.0 release builds.
+The final retained-source refresh verifies unchanged keys and fingerprints before
+reusing the compiler graph and product evidence. It preserves exactly 12 tests for
+#55 and 125 for #58, with zero diagnostics. Refresh and encoding took
+8.38 and 8.26 seconds; scoped selection took 11.71 and 12.25 seconds.
+Both reports pass `verify-build`. The completed retained bundles were unchanged;
+no additional application build, compiler extraction, or application test execution
+was performed.

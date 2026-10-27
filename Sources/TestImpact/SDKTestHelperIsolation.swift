@@ -226,16 +226,30 @@ enum SDKTestHelperIsolation {
         guard sources.allSatisfy({ snapshot in
             snapshot.units.allSatisfy { $0.helperCallableName.map { !waitNames.contains(canonicalName($0)) } ?? true }
         }) else { return "Project declaration can replace a trusted SDK wait overload" }
-        // A concrete project class/struct/enum cannot be an ancestor of these
-        // precompiled SDK classes. Protocols, aliases and unresolved extension
-        // owners do not provide that guarantee. The source fingerprint retains
-        // the declaration syntax kind, including in existing saved graphs.
-        let sdkOwners = sdkClasses.union(["NSObject", "NSObjectProtocol"])
-        // The head graph cannot resolve a removed base overload. Audit every
-        // queried member and constructor, including inherited/aliased owners.
-        // Free functions cannot replace these member calls.
-        let members = queriedMembers.union(["init"])
-        for revision in [Array(current.sources.values), Array(base.values) + Array(unownedBase.values)] {
+        guard memberBindingsUnshadowed(revisions: [Array(current.sources.values), Array(base.values) + Array(unownedBase.values)],
+            members: queriedMembers.union(["init"]), sdkOwners: sdkClasses.union(["NSObject", "NSObjectProtocol"])) else {
+            return "Project member can replace a trusted SDK query at base or head"
+        }
+        let protected: Set<String> = ["XCUIElement.exists", "XCUIElement.value", "XCUIElement.isEnabled", "XCUIElement.isHittable", "XCUIElement.isSelected",
+            "NSPredicate.evaluate", "NSPredicate.init", "XCTNSPredicateExpectation.init", "XCTWaiter.wait", "XCUIElement.waitForExistence", "XCUIElement.waitForNonExistence"]
+        guard sources.allSatisfy({ snapshot in
+            snapshot.dispatchMembers!.allSatisfy { member in
+                let name = canonicalName(member)
+                return !protected.contains(name) && !protected.contains(String(name.split(separator: ".").suffix(2).joined(separator: ".")))
+            }
+        }) else { return "Project declarations shadow the trusted SDK query APIs" }
+        return nil
+    }
+
+    /// A concrete project nominal cannot be an ancestor of a precompiled SDK
+    /// class. Protocol, alias and unresolved owners cannot establish that fact.
+    /// Use separate revision inventories so a head declaration cannot resolve an
+    /// ambiguous historical owner. This also works with existing saved snapshots.
+    static func memberBindingsUnshadowed(revisions: [[SwiftSourceSnapshot]], members: Set<String>,
+                                         sdkOwners: Set<String>, provenHelpers: [SourceUnit] = []) -> Bool {
+        let canonicalName = SDKTestHelperSyntax.canonicalName
+        guard revisions.joined().allSatisfy({ $0.diagnostics.isEmpty && $0.dispatchMembers != nil && $0.typeAliases != nil }) else { return false }
+        for revision in revisions {
             let types = Dictionary(grouping: revision.flatMap(\.units).filter { $0.kind == "type" }, by: {
                 canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope)
             })
@@ -254,23 +268,37 @@ enum SDKTestHelperIsolation {
                     let parts = canonicalName(member).split(separator: ".")
                     guard let name = parts.last, members.contains(String(name)) else { return true }
                     let owner = parts.dropLast().joined(separator: ".")
+                    let declarations = snapshot.units.filter { canonicalName($0.scope) == owner }
+                    let methods = declarations.filter { $0.helperCallableName.map(canonicalName) == String(name) }
+                    let typesAtOwner = declarations.filter { $0.kind == "type" }
+                    // A protocol requirement has no implementation to replace
+                    // the SDK effect. Default implementations in extensions are
+                    // audited separately, including ones in other source files.
+                    if !typesAtOwner.isEmpty, typesAtOwner.allSatisfy({ $0.fingerprint.hasPrefix("protocolDecl[") }),
+                       !methods.isEmpty, declarations.allSatisfy({ ["type", "function"].contains($0.kind) }),
+                       methods.allSatisfy({ $0.headOnlyBodySupported == true && $0.key.hasSuffix(":" + ($0.syntaxFingerprint ?? $0.fingerprint)) }) {
+                        return true
+                    }
+                    if !provenHelpers.isEmpty {
+                        // Dispatch evidence stores a name rather than an overload
+                        // signature. Exempt it only if every matching method at this owner
+                        // is proven at both revisions and no unmodeled member
+                        // (such as a callable property) could share the binding.
+                        if !methods.isEmpty,
+                           declarations.allSatisfy({ ["type", "extension", "function"].contains($0.kind) }),
+                           methods.allSatisfy({ method in provenHelpers.contains {
+                               $0.key == method.key && $0.region.path == method.region.path && $0.fingerprint == method.fingerprint
+                           } }) { return true }
+                    }
                     guard let ownerName = parts.dropLast().last, !sdkOwners.contains(String(ownerName)) else { return false }
                     // Never infer an alias's target from a same-spelled nominal
                     // in another module; source-only resolution is ambiguous.
                     guard !aliases.contains(where: { $0 == owner || $0.hasSuffix("." + owner) }) else { return false }
                     return concreteOwners.contains(owner) || modules.contains { concreteOwners.contains($0 + "." + owner) }
                 }
-            }) else { return "Project member can replace a trusted SDK query at base or head" }
+            }) else { return false }
         }
-        let protected: Set<String> = ["XCUIElement.exists", "XCUIElement.value", "XCUIElement.isEnabled", "XCUIElement.isHittable", "XCUIElement.isSelected",
-            "NSPredicate.evaluate", "NSPredicate.init", "XCTNSPredicateExpectation.init", "XCTWaiter.wait", "XCUIElement.waitForExistence", "XCUIElement.waitForNonExistence"]
-        guard sources.allSatisfy({ snapshot in
-            snapshot.dispatchMembers!.allSatisfy { member in
-                let name = canonicalName(member)
-                return !protected.contains(name) && !protected.contains(String(name.split(separator: ".").suffix(2).joined(separator: ".")))
-            }
-        }) else { return "Project declarations shadow the trusted SDK query APIs" }
-        return nil
+        return true
     }
 
 }

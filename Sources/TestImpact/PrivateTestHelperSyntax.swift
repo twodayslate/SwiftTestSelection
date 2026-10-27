@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 6 rejects unknown imports before trusting SDK-named effects.
-    static let currentProofVersion = 6
+    // Version 7 records attachment-related member bindings across private callees.
+    static let currentProofVersion = 7
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -21,6 +21,9 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     /// Exact same-class declarations whose bodies were checked, including self.
     /// Compiler callees must belong to these regions, not merely share a name.
     public var effectCalleeLines: [String: Int]? = nil
+    /// SDK member names used by a transitive body that constructs attachments.
+    /// Empty means no attachment construction; nil is incomplete saved evidence.
+    public var attachmentEffectMembers: Set<String>? = nil
 
     public struct Statement: Codable, Sendable {
         public var signature: String
@@ -147,9 +150,12 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         }
         guard !callers.isEmpty else { return nil }
         var effectCallees: [String: Int] = [:]
-        let effects = importsSupported ? safeCalleeEffects(function, in: type, locations: locations, proven: &effectCallees) : nil
+        var attachmentMembers = Set<String>()
+        let effects = importsSupported ? safeCalleeEffects(function, in: type, locations: locations,
+            proven: &effectCallees, attachmentMembers: &attachmentMembers) : nil
         return Self(name: name, callerLines: callers, proofVersion: currentProofVersion, statements: statements(in: function),
-                    localAttachmentState: attachmentState || (effects ?? false), calleeEffectsSupported: effects != nil, effectCalleeLines: effects == nil ? nil : effectCallees)
+                    localAttachmentState: attachmentState || (effects ?? false), calleeEffectsSupported: effects != nil, effectCalleeLines: effects == nil ? nil : effectCallees,
+                    attachmentEffectMembers: effects == nil ? nil : attachmentMembers)
     }
 
     /// Added entries may be omitted only under an explicit separate-execution
@@ -172,9 +178,11 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     /// Explicit work items bound stack usage while memoizing shared callees.
     /// A nil result is unsupported; true propagates local attachment effects.
     private static func safeCalleeEffects(_ function: FunctionDeclSyntax, in type: ClassDeclSyntax,
-                                          locations: SourceLocationConverter, proven: inout [String: Int]) -> Bool? {
+                                          locations: SourceLocationConverter, proven: inout [String: Int],
+                                          attachmentMembers: inout Set<String>) -> Bool? {
         let methods = Dictionary(grouping: type.memberBlock.members.compactMap { $0.decl.as(FunctionDeclSyntax.self) }
             .filter { $0.modifiers.map(\.name.text) == ["private"] }, by: { $0.name.text })
+        var usesAttachments = false, memberNames = Set<String>()
         var active = Set<SyntaxIdentifier>()
         var completed: [SyntaxIdentifier: Bool] = [:]
         enum Work {
@@ -194,6 +202,16 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
                       let attachments = safeBody(candidate, in: type), let body = candidate.body else { return nil }
                 var callees: [FunctionDeclSyntax] = [], seen = Set<SyntaxIdentifier>()
                 for token in body.tokens(viewMode: .sourceAccurate) {
+                    if let reference = token.parent?.as(DeclReferenceExprSyntax.self), reference.baseName.id == token.id {
+                        let name = SDKTestHelperSyntax.canonicalName(reference.baseName.text)
+                        if reference.parent?.as(MemberAccessExprSyntax.self)?.declName.id == reference.id {
+                            memberNames.insert(name)
+                        } else if name == "XCTAttachment" {
+                            usesAttachments = true
+                        } else if name == "add" {
+                            memberNames.insert(name)
+                        }
+                    }
                     guard let reference = token.parent?.as(DeclReferenceExprSyntax.self), reference.baseName.id == token.id,
                           reference.parent?.as(MemberAccessExprSyntax.self)?.declName.id != reference.id,
                           let candidates = methods[reference.baseName.text] else { continue }
@@ -213,6 +231,9 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
                 proven[candidate.name.text] = locations.location(for: candidate.positionAfterSkippingLeadingTrivia).line
             }
         }
+        // Include construction inside assertions and downstream private helpers,
+        // even when no attachment setter/add operation was used.
+        attachmentMembers = usesAttachments ? memberNames.union(["init"]) : []
         return completed[function.id]
     }
 

@@ -12,6 +12,7 @@ enum PrivateTestHelperIsolation {
         fileprivate var active = Set<String>()
         fileprivate var completed: [String: Bool] = [:]
         fileprivate var sdkEffectIDs: [String: Set<String>] = [:]
+        fileprivate var sdkEffectDeclarations: [String: [SourceUnit]] = [:]
         private(set) var evaluationCount = 0
         fileprivate(set) var sharedStateSymbols = Set<String>()
         fileprivate(set) var hasUnprovenCalleeEffects = false
@@ -72,6 +73,7 @@ enum PrivateTestHelperIsolation {
         var syntax: PrivateTestHelperSyntax
         var ids: Set<String>
         var effectIDs: Set<String>
+        var attachmentBindingsSupported: Bool
         var callers: [SourceUnit]
         var helpers: [(SourceUnit, SourceUnit)]
     }
@@ -145,11 +147,42 @@ enum PrivateTestHelperIsolation {
             }
             let queries = Set(supported.flatMap { $0.sdkTestHelper!.queriedMembers }).union(
                 baseUnits.filter { old in supported.contains { $0.key == old.key && $0.region.path == old.region.path } }.compactMap(\.sdkTestHelper).flatMap(\.queriedMembers))
-            traversal.sdkEffectIDs[module] = SDKTestHelperIsolation.environmentBlocker(current: current, base: base, unownedBase: unownedBase, queriedMembers: queries) == nil
+            let environmentSupported = SDKTestHelperIsolation.environmentBlocker(current: current, base: base, unownedBase: unownedBase, queriedMembers: queries) == nil
+            traversal.sdkEffectIDs[module] = environmentSupported
                 ? supported.reduce(into: Set<String>()) { $0.formUnion(symbols($1, graph: graph, index: index)) } : []
+            traversal.sdkEffectDeclarations[module] = environmentSupported
+                ? supported + baseUnits.filter { old in supported.contains { $0.key == old.key && $0.region.path == old.region.path } } : []
+        }
+        guard let attachmentMembers = syntax.attachmentEffectMembers,
+              previous == nil || previous?.privateTestHelper?.attachmentEffectMembers != nil else {
+            traversal.hasUnprovenCalleeEffects = true
+            return nil
+        }
+        let historicalMembers = previous?.privateTestHelper?.attachmentEffectMembers ?? []
+        let attachmentBindings = attachmentMembers.union(historicalMembers)
+        var attachmentBindingsSupported = true
+        if !attachmentBindings.isEmpty {
+            // Preserving the old statements does not preserve their bindings:
+            // a removed project initializer/member may now resolve to the SDK.
+            let revisions = [Array(current.sources.values), Array(base.values) + Array(unownedBase.values)]
+            let owners: Set<String> = ["XCTAttachment", "XCUIScreenshot", "XCUIElement", "XCUIApplication",
+                                       "XCTestCase", "XCTest", "NSObject", "NSObjectProtocol"]
+            // Bare SDK construction cannot dynamically invoke a project
+            // subclass's initializer. Ordinary member overrides can, so audit
+            // those names even when an alias hides the superclass.
+            let dynamicMembers = attachmentBindings.subtracting(["init"])
+            attachmentBindingsSupported = revisions.joined().allSatisfy({ snapshot in
+                snapshot.dispatchOverrides?.allSatisfy {
+                    !dynamicMembers.contains(SDKTestHelperSyntax.canonicalName($0).split(separator: ".").last.map(String.init) ?? "")
+                } == true
+            }) && SDKTestHelperIsolation.memberBindingsUnshadowed(revisions: revisions,
+                members: attachmentBindings, sdkOwners: owners, provenHelpers: traversal.sdkEffectDeclarations[module] ?? [])
+            // Still walk the head's compiler effects so existing shared-state
+            // diagnostics survive even when the historical binding is unproven.
+            if !attachmentBindingsSupported { traversal.hasUnprovenCalleeEffects = true }
         }
         let effectIDs = effectUnits.reduce(into: traversal.sdkEffectIDs[module] ?? []) { $0.formUnion(symbols($1, graph: graph, index: index)) }
-        return Prepared(unit: unit, syntax: syntax, ids: ids, effectIDs: effectIDs, callers: callers, helpers: helpers)
+        return Prepared(unit: unit, syntax: syntax, ids: ids, effectIDs: effectIDs, attachmentBindingsSupported: attachmentBindingsSupported, callers: callers, helpers: helpers)
     }
 
     private static func finish(_ proof: Prepared, current: XcodeTestGraph, graph: DependencyGraph,
@@ -175,7 +208,7 @@ enum PrivateTestHelperIsolation {
         // including extension helpers reached from the changed body. SDK runtime
         // uncertainty alone is not a route into this private, nonescaping method.
         let projectModules = Set(current.modules.values)
-        var pending = Array(ids), visited = Set<String>(), effectsSupported = true
+        var pending = Array(ids), visited = Set<String>(), effectsSupported = proof.attachmentBindingsSupported
         while let id = pending.popLast() {
             guard visited.insert(id).inserted, let node = graph.functions[id] else { continue }
             // XCTest attachment setters do not require a blanket effect
