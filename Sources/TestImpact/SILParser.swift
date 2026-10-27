@@ -115,7 +115,7 @@ public enum SILParser {
     }
 
     private enum Expressions {
-        static let location = try! NSRegularExpression(pattern: #"\bloc (?:\* )?"((?:[^"\\]|\\.)+)":([0-9]+):[0-9]+"#)
+        static let location = try! NSRegularExpression(pattern: #"\bloc (?:\* )?"((?:[^"\\]|\\.)+)":([0-9]+):([0-9]+)"#)
         static let function = try! NSRegularExpression(pattern: #"@([^\s:]+)\s*:"#)
         static let dispatch = try! NSRegularExpression(pattern: #"#([^\s:]+).*:\s*@([^\s:]+)"#)
         static let reference = try! NSRegularExpression(pattern: #"^(%[\w]+) = (?:function_ref|dynamic_function_ref|previous_dynamic_function_ref) @([^\s:]+)"#)
@@ -224,6 +224,7 @@ public enum SILParser {
                     if line.split(separator: " ", maxSplits: 2)[1] == "shared" { sharedSymbols.insert(match[0]) }
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
                     current!.dynamicCallSignatures = []
+                    current!.dynamicCallSites = []
                     current!.stateAccesses = []
                     current!.receiverTypeOrigins = []
                     current!.receiverGenericCalls = []
@@ -385,7 +386,16 @@ public enum SILParser {
                 if let start = line.range(of: "#" + match[1]),
                    let end = line.range(of: match[0] == "witness_method" ? " : $" : ", $", range: start.upperBound..<line.endIndex) {
                     let signature = String(line[start.upperBound..<end.lowerBound])
-                    current!.dynamicCallSignatures?.insert(match[0] + " " + match[1] + signature)
+                    let call = match[0] + " " + match[1] + signature
+                    current!.dynamicCallSignatures?.insert(call)
+                    if ExternalHelperEffects.queryOverloadShapes[declaration] != nil {
+                        if let point = location(line), let fields = Pattern.groups(Expressions.location, in: line),
+                           let column = Int(fields[2]), column > 0 {
+                            current!.dynamicCallSites?.insert(call + "\t" + point.path + "\t" + String(point.startLine) + "\t" + String(column))
+                        } else {
+                            current!.dynamicCallSites?.insert(call + "\t<unknown>")
+                        }
+                    }
                 } else { current!.dynamicCallSignatures = nil }
                 current!.dynamicDeclarations.insert(declaration)
                 current!.uncertainties.insert("Dynamic dispatch: \(match[0]) \(match[1])")

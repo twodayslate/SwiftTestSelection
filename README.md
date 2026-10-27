@@ -1110,7 +1110,14 @@ attachment. Nested aliases and inherited nested types cannot be resolved to an
 unrelated module-level namesake.
 
 Receiver audits also pair method and subscript labels with the compiled signature,
-including every use of a method name in a source body. Method values, foreign
+including every use of a method name in a source body. For query overloads in
+receiver audits, captured SIL file/line/column locations can pair each `matching`
+or `containing` use with its exact source argument labels. Valid mixed overloads
+no longer conflict just because they occur in one test or assertion body. All uses
+of each signature must match, including calls on the same line. Missing locations,
+method values, and remapped `#sourceLocation` files retain the broader check.
+Unknown source imports are named in receiver-type diagnostics; an import alone
+does not establish a safe external implementation. Method values, foreign
 overloads, unproven enum arguments, and dynamic or forwarded class metatypes
 retain fallback. Captured structs and enums may participate through their checked
 implementations; local SDK namesakes cannot establish an SDK signature. A reference to an SDK constructor does not prove that it was
@@ -1257,7 +1264,7 @@ and globals retain fallback; a narrow source proof supports immutable stored
 string literals without type annotations, wrappers or interpolation. Exact SDK
 gesture-velocity and keyboard-key constants are supported. The graph records field/global
 identities; old graphs missing that evidence must be regenerated from saved
-artifacts and sealed SIL. Module-fragment cache version 11 invalidates older
+artifacts and sealed SIL. Module-fragment cache version 12 invalidates older
 fragments. This needs no baseline build and does not execute application tests.
 
 Signature evidence must cover the caller

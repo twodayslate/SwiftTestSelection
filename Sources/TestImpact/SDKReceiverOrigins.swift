@@ -60,6 +60,11 @@ struct SDKReceiverOrigins {
         }
         func metatypeBlocker(_ node: FunctionNode, owners: [SourceUnit]) -> String? {
             guard let origins = node.receiverTypeOrigins, node.receiverGenericCalls != nil else { return "Missing or unrecognized receiver type evidence; recapture sealed SIL" }
+            if !origins.isEmpty, owners.contains(where: { $0.receiverImportsSupported == false }) {
+                let imports = Set(owners.flatMap { $0.receiverUnsupportedImports ?? [] }).sorted()
+                return "Receiver type identities are unproven with unsupported source imports" +
+                    (imports.isEmpty ? " (missing import details; refresh source evidence)" : ": " + imports.joined(separator: ", "))
+            }
             let sdkLiterals: Set<String> = ["MainActor", "DefaultStringInterpolation", "URL", "UUID", "UIDeviceOrientation", "XCUIApplication.State", "String", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Array", "Dictionary", "Set", "Optional", "Any",
                 "XCUIApplication", "XCUIElement", "XCUIElement.ElementType", "XCTestCase", "XCTAttachment", "XCTAttachment.Lifetime", "NSPredicate", "XCTNSPredicateExpectation",
                 "XCTWaiter", "XCTWaiter.Result", "XCTestExpectation", "UIDevice", "XCUIScreen", "XCUIDevice", "JSONSerialization"]
@@ -241,7 +246,25 @@ struct SDKReceiverOrigins {
                               }) else { return "Unproven generic receiver contract for " + symbol + " with substitutions " + arguments.sorted().joined(separator: "; ") }
                     }
                 }
-                switch ExternalHelperEffects.receiverProof(checked, sourceCallShapes: shapes) {
+                var paired: [String: Set<[String]>] = [:]
+                if let sites = node.dynamicCallSites, !owners.isEmpty,
+                   owners.allSatisfy({ $0.receiverCallSites != nil && $0.receiverImportsSupported == true }) {
+                    for call in node.dynamicCallSignatures ?? [] {
+                        guard ExternalHelperEffects.queryOverloadShapes.keys.contains(where: { call.hasPrefix("objc_method " + $0 + "!") }) else { continue }
+                        let prefix = call + "\t"
+                        let points = sites.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+                        var labels = Set<[String]>()
+                        var complete = !points.isEmpty
+                        let name = call.split(separator: " ").dropFirst().first?.split(separator: "!").first?.split(separator: ".").last.map(String.init)
+                        for point in points {
+                            let matches = Set(owners.compactMap { $0.receiverCallSites?[point] })
+                            guard matches.count == 1, let match = matches.first, match.first == name else { complete = false; break }
+                            labels.insert(Array(match.dropFirst()))
+                        }
+                        if complete { paired[call] = labels }
+                    }
+                }
+                switch ExternalHelperEffects.receiverProof(checked, sourceCallShapes: shapes, pairedCallShapes: paired) {
                 case let .success(producers): pending.formUnion(direct.union(producers))
                 case let .failure(error): return "\(error) in \(node.module).\(node.name)"
                 }

@@ -1,12 +1,12 @@
 {
   "currentValidation": {
-    "status": "conservative-fallback-required",
+    "status": "query-overload-proof-fixed-conservative-fallback-required",
     "historical125TestIsolationClaimSuperseded": true,
     "issue58RemainsOpen": true,
     "toolchain": "Xcode 27.0, Swift release build",
-    "packageTestsPassed": 326,
+    "packageTestsPassed": 330,
     "additionalRetainedReplayTestsPassed": 1,
-    "releaseSuiteSeconds": 137.905,
+    "releaseSuiteSeconds": 196.659,
     "captureHelperTestsPassed": 6,
     "releaseDistributionTestsPassed": 5,
     "releaseDistributionTestsSkipped": 1,
@@ -15,7 +15,7 @@
         "selectedTestCount": 12,
         "totalTests": 1972,
         "diagnosticCount": 0,
-        "scopeSeconds": 15.278453946113586,
+        "scopeSeconds": 12.891433000564575,
         "verifyBuildExitCode": 0,
         "baseRevision": "9b08b4be6acd35338c76e7b29ce0d0df7729aa50",
         "headRevision": "30d8454622ced09ff42f60d6f9196453ad2f6526",
@@ -39,7 +39,7 @@
         "selectedTestCount": 2000,
         "totalTests": 2000,
         "diagnosticCount": 1929,
-        "scopeSeconds": 15.69939398765564,
+        "scopeSeconds": 13.336554050445557,
         "verifyBuildExitCode": 0,
         "baseRevision": "40c62f971f0aef63c902a14805cf4d821e6784fb",
         "headRevision": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
@@ -48,7 +48,7 @@
         "selection": "complete enumerated inventory"
       }
     },
-    "sealedSILModulesReparsedPerFixture": 0,
+    "sealedSILModulesReparsedPerFixture": 1,
     "sourceDeclarationKeysAndFingerprintsUnchanged": true,
     "compilerReferenceEdgesAndDynamicDeclarationsUnchanged": true,
     "newApplicationBuilds": 0,
@@ -57,13 +57,12 @@
     "fullRunEquivalenceValidated": false,
     "blockers": [
       {
-        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Missing or unproven SDK overload identity for objc_method XCUIElementQuery.matching!foreign : (XCUIElementQuery) -> (NSPredicate) -> XCUIElementQuery in ChainOfCustodyUITests.RecurringEventUITests.testCommonOneOffEventCanBeFilteredWithoutRepeat() (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
-        "code": "head_only_sdk_helper_boundary"
+        "code": "head_only_sdk_helper_boundary",
+        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Receiver type identities are unproven with unsupported source imports: import SnapshotTesting in ChainOfCustodyUITests.CalendarSnapshotUITests.testPortraitCalendarSplit() (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)"
       }
     ],
-    "note": "SDK receiver contracts are explicit and bounded. The final callback validation reused the previously verified compiler evidence and refreshed source proofs without changing declaration keys or fingerprints. Callback checks cover both revisions, including unowned base sources. Missing evidence remains conservative. The reported issue58 blocker is the first missing proof, not an exhaustive list.",
-    "debugSuiteSeconds": 234.341,
-    "moduleFragmentCacheVersion": 11,
+    "note": "Query overload identity is now verified per call site. The real case still falls back; unsupported imports are named explicitly. UI SIL was reparsed from the sealed capture, preserving compiler-reference edges and dynamic declarations. No application or baseline build or application test execution occurred.",
+    "moduleFragmentCacheVersion": 12,
     "compiledFactoryCases": 76,
     "receiverTypeEvidence": "metatypes, enum constructors, captured value-type declarations, source overload shapes, generic call substitutions, and bridge-capable cast destinations",
     "reusesPreviouslyVerifiedSIL": true,
@@ -74,7 +73,11 @@
       "oldNarrowSelectionExitCode": 0,
       "correctedSelectionExitCode": 1,
       "fullFixtureExitCode": 1
-    }
+    },
+    "releaseRunTestsPassed": 331,
+    "queryCallSiteEvidence": "SIL formal signature paired with physical source path, line and UTF-8 column; all uses required",
+    "debugFocusedTestsPassed": 7,
+    "debugFocusedSeconds": 20.309
   },
   "historicalValidation": {
     "originalBase": "55ee3b78dc0fae3478508e6e35b0decbadc397a7",
@@ -489,6 +492,83 @@
       "compilerInvocation": false,
       "applicationBuild": false,
       "applicationTestExecution": false
+    }
+  },
+  "previousCallbackValidation": {
+    "status": "conservative-fallback-required",
+    "historical125TestIsolationClaimSuperseded": true,
+    "issue58RemainsOpen": true,
+    "toolchain": "Xcode 27.0, Swift release build",
+    "packageTestsPassed": 326,
+    "additionalRetainedReplayTestsPassed": 1,
+    "releaseSuiteSeconds": 137.905,
+    "captureHelperTestsPassed": 6,
+    "releaseDistributionTestsPassed": 5,
+    "releaseDistributionTestsSkipped": 1,
+    "retainedValidation": {
+      "issue55": {
+        "selectedTestCount": 12,
+        "totalTests": 1972,
+        "diagnosticCount": 0,
+        "scopeSeconds": 15.278453946113586,
+        "verifyBuildExitCode": 0,
+        "baseRevision": "9b08b4be6acd35338c76e7b29ce0d0df7729aa50",
+        "headRevision": "30d8454622ced09ff42f60d6f9196453ad2f6526",
+        "selectedTests": [
+          "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testHolderLinkPreservesLockedContents()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerOffersLinkAndContentSharing()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMessageCardIsOfferedWhenCompositionIsAvailable()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteToolbarSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testOutlineCanShareContainerLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testUnavailableMessagesStillOffersLinkSharing()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testVeiledNoteLinkHasProtectedPreview()"
+        ],
+        "matchesPrevious12TestSelection": true
+      },
+      "issue58": {
+        "selectedTestCount": 2000,
+        "totalTests": 2000,
+        "diagnosticCount": 1929,
+        "scopeSeconds": 15.69939398765564,
+        "verifyBuildExitCode": 0,
+        "baseRevision": "40c62f971f0aef63c902a14805cf4d821e6784fb",
+        "headRevision": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
+        "all125KnownConsumersRetained": true,
+        "fallbackOnlyNoteLinksExampleRetained": true,
+        "selection": "complete enumerated inventory"
+      }
+    },
+    "sealedSILModulesReparsedPerFixture": 0,
+    "sourceDeclarationKeysAndFingerprintsUnchanged": true,
+    "compilerReferenceEdgesAndDynamicDeclarationsUnchanged": true,
+    "newApplicationBuilds": 0,
+    "baselineBuilds": 0,
+    "appTestBodiesExecuted": false,
+    "fullRunEquivalenceValidated": false,
+    "blockers": [
+      {
+        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Missing or unproven SDK overload identity for objc_method XCUIElementQuery.matching!foreign : (XCUIElementQuery) -> (NSPredicate) -> XCUIElementQuery in ChainOfCustodyUITests.RecurringEventUITests.testCommonOneOffEventCanBeFilteredWithoutRepeat() (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
+        "code": "head_only_sdk_helper_boundary"
+      }
+    ],
+    "note": "SDK receiver contracts are explicit and bounded. The final callback validation reused the previously verified compiler evidence and refreshed source proofs without changing declaration keys or fingerprints. Callback checks cover both revisions, including unowned base sources. Missing evidence remains conservative. The reported issue58 blocker is the first missing proof, not an exhaustive list.",
+    "debugSuiteSeconds": 234.341,
+    "moduleFragmentCacheVersion": 11,
+    "compiledFactoryCases": 76,
+    "receiverTypeEvidence": "metatypes, enum constructors, captured value-type declarations, source overload shapes, generic call substitutions, and bridge-capable cast destinations",
+    "reusesPreviouslyVerifiedSIL": true,
+    "compiledCallbackCases": 16,
+    "callbackSourceScenarios": 13,
+    "callbackSourcePlacements": 3,
+    "executedCallbackRegression": {
+      "oldNarrowSelectionExitCode": 0,
+      "correctedSelectionExitCode": 1,
+      "fullFixtureExitCode": 1
     }
   }
 }

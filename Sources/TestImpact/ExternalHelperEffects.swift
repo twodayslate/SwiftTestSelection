@@ -93,9 +93,9 @@ struct ExternalHelperEffects {
 
     /// Require each possible source shape to agree with the compiled overload.
     /// Unioning labels and types separately accepts foreign cross-product
-    /// overloads. Mixed shapes remain conservative until call-site identities
-    /// are available; one legitimate call must not mask an unproven call.
-    private static let queryOverloadShapes: [String: [[String]: Set<String>]] = {
+    /// overloads. Receiver proofs may use complete captured call-site identities;
+    /// otherwise every shape must match. One valid call cannot mask an unknown call.
+    static let queryOverloadShapes: [String: [[String]: Set<String>]] = {
         var result: [String: [[String]: Set<String>]] = [:]
         for name in ["matching", "containing"] {
             let prefix = "objc_method XCUIElementQuery.\(name)!foreign : (XCUIElementQuery) -> "
@@ -118,7 +118,7 @@ struct ExternalHelperEffects {
         try? receiverProof(node, sourceCallShapes: sourceCallShapes).get()
     }
 
-    static func receiverProof(_ node: FunctionNode, sourceCallShapes: [String: Set<[String]>]? = nil) -> Result<Set<String>, ImpactError> {
+    static func receiverProof(_ node: FunctionNode, sourceCallShapes: [String: Set<[String]>]? = nil, pairedCallShapes: [String: Set<[String]>] = [:]) -> Result<Set<String>, ImpactError> {
         if let imported = node.uncertainties.sorted().first(where: { $0.hasPrefix("Imported conformance:") }) {
             return .failure(ImpactError(imported))
         }
@@ -139,7 +139,7 @@ struct ExternalHelperEffects {
                 if declaration.hasSuffix(".subscript") || (!call.contains("!getter") && !call.contains("!setter") && !call.contains("!initializer") &&
                    !call.contains("!allocator") && !call.contains("!deallocator")) {
                     let name = declaration.components(separatedBy: ".").last!
-                    let shapes = sourceCallShapes?[name]
+                    let shapes = pairedCallShapes[call] ?? sourceCallShapes?[name]
                     let valid: Bool
                     if let signatures = queryOverloadShapes[declaration] {
                         valid = shapes?.isEmpty == false && shapes!.allSatisfy { signatures[$0]?.contains(call) == true }

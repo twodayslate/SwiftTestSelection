@@ -13,36 +13,51 @@ that evidence is missing. All 125 known consumers remain selected. The retained
 #58 case falls back to its complete 2,000-test inventory; narrowing still needs
 stronger evidence. #55's immutable literal fixture state remains supported.
 The release replay selected **12 of 1,972 tests with zero diagnostics** for #55
-in **15.28 seconds**. For #58 it selected **all 2,000 tests** in **15.70 seconds**,
-retaining all 125 known consumers and the fallback-only NoteLinks example. Both
-reports passed `verify-build` against the retained products.
+in **12.89 seconds**. For #58 it selected **all 2,000 tests** in
+**13.34 seconds**, retaining all 125 known consumers and the fallback-only
+NoteLinks example. Both reports passed `verify-build` against the retained products.
 
-The #58 report's `head_only_sdk_helper_boundary` diagnostic identifies:
+The query-overload blocker from PR #57 is now resolved using exact SIL
+file/line/UTF-8-column evidence paired with source argument labels. Mixed
+`matching(identifier:)` and `matching(_:)` calls, including multiple calls on one
+line and calls inside assertion closures, can be verified independently. Crossed
+label/type overloads, method values, missing locations, and source-location
+remapping still fall back. Fragment cache version 12 captures this evidence;
+older saved graphs keep their existing conservative behavior.
+
+The retained #58 replay now gets past the overload audit and reports:
 
 ```text
-Missing or unproven SDK overload identity for
-objc_method XCUIElementQuery.matching!foreign : (XCUIElementQuery) -> (NSPredicate) -> XCUIElementQuery
-in ChainOfCustodyUITests.RecurringEventUITests.testCommonOneOffEventCanBeFilteredWithoutRepeat()
+Receiver type identities are unproven with unsupported source imports: import SnapshotTesting
+in ChainOfCustodyUITests.CalendarSnapshotUITests.testPortraitCalendarSplit()
 ```
 
-This is the first missing proof in that traversal, not a finding that `matching`
-itself is unsafe or that adding one contract proves the entire consumer closure.
-The current bounded contracts do not justify the earlier precision claim. #58
-remains open for stronger evidence and a sound narrowing implementation.
+The retained source inventory contains the seven consuming-project Swift modules,
+not the SnapshotTesting source module. A separate exploratory audit of the 125
+known consumers also identifies Objective-C `CalendarHeldDrag` implementations
+outside the SIL model, mutable receiver storage, protocol dispatch, and missing
+explicit SDK origin contracts. This is not a finding that those APIs are unsafe;
+it identifies evidence the current analyzer cannot use to prove isolation.
 
-All **326 package tests** passed in release (**137.905 seconds**, Xcode 27.0)
-and debug (**234.341 seconds**, Xcode 26.6). A separate temporary retained replay
-test passed both fixtures. Capture helper tests passed (6); release-distribution
-tests passed (5, with 1 platform-specific skip). The final replay reused the previously
-verified compiler evidence, including the sealed UI-module reparse, and refreshed
-source proofs with unchanged declaration keys and fingerprints. Compiler reference
-edges and dynamic declarations remain unchanged. Missing current evidence remains
-conservative; this callback validation required no SIL reparse.
-No new consuming-app build or baseline build was performed. These are local
-replay measurements, not controlled end-to-end benchmarks.
+**#58 remains open.** The overload fix is covered by compiled positive and negative
+regressions, but does not establish the real fixture's 125-test precision target.
+Unconditionally trusting imports, opaque Objective-C bodies, or unmodeled SDK
+symbols would recreate the unsafe assumptions withdrawn in PR #57. The complete
+inventory remains selected, including all 125 known consumers.
 
-The machine-readable file separates `currentValidation` from
-`historicalValidation`. No application test bodies were executed; selection and
+All **330 package tests** and one additional retained replay test passed in
+Xcode 27.0 release (**331 total**, **196.659 seconds**, excluding compilation).
+Xcode 26.6 passed **7 focused tests** in **20.309 seconds**, including compiled
+mixed-query and foreign-overload cases. Capture-helper checks passed six tests;
+release-distribution checks passed five with one platform-specific skip.
+The final replay refreshed source proofs and reparsed the sealed UI-module SIL,
+checking unchanged declaration keys, fingerprints, compiler-reference edges and
+dynamic declarations. Original completed bundles and products were unchanged.
+No new application build, baseline build, or application test bodies were executed.
+These are local replay measurements, not controlled end-to-end benchmarks.
+
+The machine-readable file separates `currentValidation`, `previousCallbackValidation`,
+and `historicalValidation`. No application test bodies were executed; selection and
 `verify-build` do not establish full-run equivalence.
 
 ### Receiver identity and imported overload review
@@ -68,7 +83,7 @@ namesakes. Synthesized initializers and enum accessors audit all overlapping dec
 and static-method metatype inputs are omitted only when every matching input is
 unused outside debug instructions. Nested signatures and forwarded values retain
 their evidence. Missing evidence retains
-an explicit recapture diagnostic, and module-fragment cache version 11 invalidates
+an explicit recapture diagnostic, and module-fragment cache version 12 invalidates
 older fragments. Regenerating from valid sealed SIL does not execute test bodies
 or require a new baseline build.
 
@@ -93,7 +108,7 @@ a fresh `Optional<Any>` stack slot is immediately initialized to `.none` and
 switched, with exactly one predecessor. Mutation, aliases, multiple predecessors,
 and mixed reachable bridge calls retain fallback. This preserves #55 without
 trusting live erased bridges. JSON/compact archives retain the new evidence, and
-cache version 11 requires older module fragments to be regenerated.
+cache version 12 requires older module fragments to be regenerated.
 
 ### XCTest callback effect review
 

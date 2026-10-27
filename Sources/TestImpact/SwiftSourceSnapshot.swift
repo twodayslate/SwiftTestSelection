@@ -43,7 +43,9 @@ public struct SourceUnit: Codable, Sendable {
     public var helperCallerSupported: Bool? = nil
     /// Source overload shapes paired with SIL signatures during receiver audits.
     public var receiverCallShapes: [String: Set<[String]>]? = nil
+    public var receiverCallSites: [String: [String]]? = nil
     public var receiverImportsSupported: Bool? = nil
+    public var receiverUnsupportedImports: Set<String>? = nil
     /// Captured struct/enum identity; classes cannot use value-type metatype rules.
     public var receiverValueType: Bool? = nil
     /// Whether this subscript can compete with the SDK identifier getter.
@@ -113,7 +115,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
         }
         result.attachmentAddUnshadowed = !(identifiers["add"] ?? []).contains(where: PrivateTestHelperSyntax.shadowsAttachmentAdd)
-        let callerImportsSupported = SDKTestHelperSyntax.callerImportsSupported(tree)
+        let unsupportedCallerImports = SDKTestHelperSyntax.unsupportedCallerImports(tree)
+        let callerImportsSupported = unsupportedCallerImports.isEmpty
+        let physicalLocations = !tree.tokens(viewMode: .sourceAccurate).contains { $0.tokenKind == .poundSourceLocation }
         let referenceAnalysis = SDKHelperReferenceAnalysis(identifiers: identifiers, locations: locations, callerImportsSupported: callerImportsSupported)
         result.helperReferences = identifiers.mapValues { referenceAnalysis.references($0) }
         for tokens in identifiers.values {
@@ -313,6 +317,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     result.literalStoredProperties![member] = (result.literalStoredProperties![member] ?? true) && safe
                 }
             }
+            let receiverCalls = SDKReceiverCallSyntax.evidence(in: node, locations: physicalLocations ? locations : nil, path: path)
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
@@ -334,8 +339,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     function.signature.parameterClause.parameters.allSatisfy { $0.defaultValue == nil && $0.ellipsis == nil } ? SDKTestHelperSyntax.signature(function) : nil
                 },
                 helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported),
-                receiverCallShapes: SDKReceiverCallSyntax.shapes(in: node),
+                receiverCallShapes: receiverCalls.shapes,
+                receiverCallSites: physicalLocations ? receiverCalls.sites : nil,
                 receiverImportsSupported: callerImportsSupported,
+                receiverUnsupportedImports: unsupportedCallerImports,
                 receiverValueType: node.is(StructDeclSyntax.self) || node.is(EnumDeclSyntax.self),
                 subscriptAcceptsSingleUnlabeledArgument: node.as(SubscriptDeclSyntax.self).map { declaration in
                     let parameters = Array(declaration.parameterClause.parameters)

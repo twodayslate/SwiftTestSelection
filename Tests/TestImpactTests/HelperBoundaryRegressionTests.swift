@@ -706,7 +706,7 @@ func sdkImportedAssertionCannotHideEscapingCaller(scenario: String) throws {
         // Direct calls do not escape through the assertion, but this file still
         // imports an opaque module, so nominal receiver identity is unproven.
         #expect(report.selectedTests == tests.sorted())
-        #expect(report.diagnostics.contains { $0.message.contains("Unproven receiver metatype") })
+        #expect(report.diagnostics.contains { $0.message.contains("unsupported source imports") && $0.message.contains("import DeferredAssertions") })
     } else {
         #expect(report.selectedTests == tests.sorted())
         #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" && $0.message.contains("untrusted caller imports") })
@@ -1174,13 +1174,13 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
 }
 
 
-@Test(arguments: ["sdk", "predicate", "element", "external", "mixed", "reverse", "default"]) func privateHelperCouplesMatchingLabelsAndTypes(kind: String) throws {
+@Test(arguments: ["sdk", "predicate", "element", "external", "mixed", "reverse", "default", "callerMixed", "callerCross", "callerCrossPredicate", "callerMissing"]) func privateHelperCouplesMatchingLabelsAndTypes(kind: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-import-history-" + UUID().uuidString)
     let externalRoot = FileManager.default.temporaryDirectory.appendingPathComponent("review57-external-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: externalRoot, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: externalRoot) }
-    let externalCall = ["external", "mixed", "reverse", "default"].contains(kind)
+    let externalCall = ["external", "mixed", "reverse", "default", "callerCross", "callerCrossPredicate", "callerMissing"].contains(kind)
     let call: String
     switch kind {
     case "predicate": call = "buttons.matching(NSPredicate(value: true)).firstMatch.exists"
@@ -1211,7 +1211,7 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
     try Data(external.utf8).write(to: source)
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "AttachmentSupport", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", source.path, "-emit-module-path", externalRoot.appendingPathComponent("AttachmentSupport.swiftmodule").path], at: root)
-    let before = """
+    var before = """
     import XCTest
     @MainActor final class Suite: XCTestCase {
         func testCapture() { capture(XCUIApplication()) }
@@ -1222,6 +1222,10 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
         func testConsume() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "review57-sharedFlag")) }
     }
     """
+    if kind.hasPrefix("caller") {
+        let extra = kind == "callerCross" ? "XCTAssertTrue(app.buttons.matching(\"bad\").firstMatch.exists); " : kind == "callerCrossPredicate" ? "XCTAssertTrue(app.buttons.matching(identifier: NSPredicate(value: true)).firstMatch.exists); " : ""
+        before = before.replacingOccurrences(of: "capture(XCUIApplication())", with: "let app = XCUIApplication(); XCTAssertTrue(app.buttons.matching(identifier: \"α\").firstMatch.exists); XCTAssertTrue(app.buttons.matching(NSPredicate(value: true)).firstMatch.exists); \(extra)capture(app)")
+    }
     var after = before.replacingOccurrences(of: "add(attachment)", with: "add(attachment); XCTAssertTrue(app.\(call))")
     if kind == "mixed" {
         after = after.replacingOccurrences(of: "add(attachment);", with: "add(attachment); XCTAssertTrue(app.buttons.matching(identifier: \"safe\").firstMatch.exists);")
@@ -1232,7 +1236,10 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
     _ = try CommandRunner.run("git", ["init", "-q"], at: root)
     _ = try CommandRunner.run("git", ["add", "Tests.swift", "Imports.swift", ".swift-test-selection.json"], at: root)
     _ = try CommandRunner.run("git", ["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "base"], at: root)
-    let current = try boundaryGraph(["Tests.swift": after, "Imports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
+    var current = try boundaryGraph(["Tests.swift": after, "Imports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
+    if kind == "callerMissing" {
+        for id in current.dependencies!.functions.keys { current.dependencies!.functions[id]!.dynamicCallSites = nil }
+    }
     let scopes = try XcodeHeadOnlySelector.scopedReports(current: current,
         requests: .init(scopes: [.init(name: "helper", paths: ["Tests.swift"])]),
         changes: [.init(path: "Tests.swift"), .init(path: "Imports.swift")],
