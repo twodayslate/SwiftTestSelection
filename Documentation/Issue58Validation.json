@@ -4,9 +4,9 @@
     "historical125TestIsolationClaimSuperseded": true,
     "issue58RemainsOpen": true,
     "toolchain": "Xcode 27.0, Swift release build",
-    "packageTestsPassed": 308,
+    "packageTestsPassed": 314,
     "additionalRetainedReplayTestsPassed": 1,
-    "releaseSuiteSeconds": 147.509,
+    "releaseSuiteSeconds": 164.797,
     "captureHelperTestsPassed": 6,
     "releaseDistributionTestsPassed": 5,
     "releaseDistributionTestsSkipped": 1,
@@ -15,7 +15,7 @@
         "selectedTestCount": 12,
         "totalTests": 1972,
         "diagnosticCount": 0,
-        "scopeSeconds": 11.626709938049316,
+        "scopeSeconds": 12.674824953079224,
         "verifyBuildExitCode": 0,
         "baseRevision": "9b08b4be6acd35338c76e7b29ce0d0df7729aa50",
         "headRevision": "30d8454622ced09ff42f60d6f9196453ad2f6526",
@@ -39,7 +39,7 @@
         "selectedTestCount": 2000,
         "totalTests": 2000,
         "diagnosticCount": 1929,
-        "scopeSeconds": 12.188868999481201,
+        "scopeSeconds": 12.717352986335754,
         "verifyBuildExitCode": 0,
         "baseRevision": "40c62f971f0aef63c902a14805cf4d821e6784fb",
         "headRevision": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
@@ -57,11 +57,15 @@
     "fullRunEquivalenceValidated": false,
     "blockers": [
       {
-        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Missing implementation or SDK origin contract for objc_method XCUIElement.pinch!foreign : (XCUIElement) -> (CGFloat, CGFloat) -> () in ChainOfCustodyUITests.PairingNotesMediaUITests.testImagePreviewCanZoomPanAndReset() (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
+        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Missing or unproven SDK overload identity for objc_method XCUIElementQuery.matching!foreign : (XCUIElementQuery) -> (NSPredicate) -> XCUIElementQuery in ChainOfCustodyUITests.RecurringEventUITests.testCommonOneOffEventCanBeFilteredWithoutRepeat() (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
         "code": "head_only_sdk_helper_boundary"
       }
     ],
-    "note": "SDK contracts are deliberately bounded. The reported blocker is the first missing proof, not an exhaustive list; adding that one contract does not establish isolation for the whole consumer closure."
+    "note": "SDK contracts are deliberately bounded. The reported blocker is the first missing proof, not an exhaustive list; adding that one contract does not establish isolation for the whole consumer closure.",
+    "debugSuiteSeconds": 208.844,
+    "moduleFragmentCacheVersion": 10,
+    "compiledFactoryCases": 58,
+    "receiverTypeEvidence": "metatypes, enum constructors, captured value-type declarations, and source overload shapes"
   },
   "historicalValidation": {
     "originalBase": "55ee3b78dc0fae3478508e6e35b0decbadc397a7",

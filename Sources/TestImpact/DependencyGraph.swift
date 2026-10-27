@@ -35,6 +35,8 @@ public struct FunctionNode: Codable, Sendable {
     public var dynamicCallSignatures: Set<String>? = nil
     /// Exact shared-field/global references. Nil means missing capture evidence.
     public var stateAccesses: Set<String>? = nil
+    /// Metatypes and enum constructors observed in SIL; nil means missing or unrecognized evidence.
+    public var receiverTypeOrigins: Set<String>? = nil
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>

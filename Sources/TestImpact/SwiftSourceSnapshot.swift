@@ -41,6 +41,11 @@ public struct SourceUnit: Codable, Sendable {
     public var helperCallableName: String? = nil
     public var helperReferenceSignature: String? = nil
     public var helperCallerSupported: Bool? = nil
+    /// Source overload shapes paired with SIL signatures during receiver audits.
+    public var receiverCallShapes: [String: Set<[String]>]? = nil
+    public var receiverImportsSupported: Bool? = nil
+    /// Captured struct/enum identity; classes cannot use value-type metatype rules.
+    public var receiverValueType: Bool? = nil
     /// Whether this subscript can compete with the SDK identifier getter.
     public var subscriptAcceptsSingleUnlabeledArgument: Bool? = nil
 
@@ -329,6 +334,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     function.signature.parameterClause.parameters.allSatisfy { $0.defaultValue == nil && $0.ellipsis == nil } ? SDKTestHelperSyntax.signature(function) : nil
                 },
                 helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported),
+                receiverCallShapes: SDKReceiverCallSyntax.shapes(in: node),
+                receiverImportsSupported: callerImportsSupported,
+                receiverValueType: node.is(StructDeclSyntax.self) || node.is(EnumDeclSyntax.self),
                 subscriptAcceptsSingleUnlabeledArgument: node.as(SubscriptDeclSyntax.self).map { declaration in
                     let parameters = Array(declaration.parameterClause.parameters)
                     return parameters.indices.contains { i in

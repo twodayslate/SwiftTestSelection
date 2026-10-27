@@ -37,15 +37,11 @@ public enum GraphArchive {
                 for values in [n.dependencies, n.uncertainties, n.dynamicDeclarations, n.resolvedDynamicDeclarations] {
                     row.append(values.count); row += values.sorted().map(intern)
                 }
-                if n.compilerReferences != nil || n.dynamicCallSignatures != nil || n.stateAccesses != nil {
-                    if let references = n.compilerReferences {
-                        row.append(references.count); row += references.sorted().map(intern)
-                    } else { row.append(-1) }
-                    if let calls = n.dynamicCallSignatures {
-                        row.append(calls.count); row += calls.sorted().map(intern)
-                    } else if n.stateAccesses != nil { row.append(-1) }
-                    if let accesses = n.stateAccesses {
-                        row.append(accesses.count); row += accesses.sorted().map(intern)
+                let optionalEvidence = [n.compilerReferences, n.dynamicCallSignatures, n.stateAccesses, n.receiverTypeOrigins]
+                if let last = optionalEvidence.lastIndex(where: { $0 != nil }) {
+                    for values in optionalEvidence[...last] {
+                        if let values { row.append(values.count); row += values.sorted().map(intern) }
+                        else { row.append(-1) }
                     }
                 }
                 words.append(UInt64(row.count).littleEndian)
@@ -102,7 +98,11 @@ public enum GraphArchive {
                     if row[cursor] == -1 { cursor += 1 }
                     else { node.dynamicCallSignatures = try values() }
                 }
-                if cursor < row.count { node.stateAccesses = try values() }
+                if cursor < row.count {
+                    if row[cursor] == -1 { cursor += 1 }
+                    else { node.stateAccesses = try values() }
+                }
+                if cursor < row.count { node.receiverTypeOrigins = try values() }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
                 graph.functions[node.id] = node
             }

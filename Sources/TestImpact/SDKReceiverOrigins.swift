@@ -34,6 +34,92 @@ struct SDKReceiverOrigins {
 
     private mutating func inspect(tests: Set<String>, current: XcodeTestGraph, graph: DependencyGraph) -> String? {
         let sources = Dictionary(grouping: current.sources.map { (String($0.key.prefix { $0 != ":" }), $0.value) }, by: { $0.0 })
+        func units(_ node: FunctionNode) -> [SourceUnit] {
+            node.regions.flatMap { region -> [SourceUnit] in
+                let source = current.sources[node.module + ":" + region.path]?.units ?? []
+                let candidates = source.filter {
+                    $0.kind != "import" && $0.region.startLine <= region.startLine && $0.region.endLine >= region.endLine
+                }
+                guard let size = candidates.map({ $0.region.endLine - $0.region.startLine }).min() else {
+                    // Synthesized bodies can span a header and several member
+                    // declarations (field initializers or raw-value enum cases).
+                    // Audit the union of all overlapping syntax: every source
+                    // use still has to satisfy the compiled overload contract.
+                    return source.filter { $0.kind != "import" &&
+                        $0.region.startLine <= region.endLine && $0.region.endLine >= region.startLine }
+                }
+                return candidates.filter { $0.region.endLine - $0.region.startLine == size }
+            }
+        }
+        func finalTestClass(_ owner: String, module: String) -> Bool {
+            let snapshots = (sources[module] ?? []).map { $0.1 }
+            let declarations = snapshots.flatMap(\.units).filter { $0.kind == "type" && $0.scope == owner }
+            let finality = snapshots.compactMap { $0.classFinality?[owner] }
+            return declarations.count == 1 && !finality.isEmpty && finality.allSatisfy { $0 } &&
+                PrivateTestHelperIsolation.safeHierarchy(owner, module: module, sources: snapshots)
+        }
+        func metatypeBlocker(_ node: FunctionNode, owners: [SourceUnit]) -> String? {
+            guard let origins = node.receiverTypeOrigins else { return "Missing or unrecognized receiver type evidence; recapture sealed SIL" }
+            let sdkLiterals: Set<String> = ["MainActor", "DefaultStringInterpolation", "URL", "UUID", "UIDeviceOrientation", "XCUIApplication.State", "String", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Array", "Dictionary", "Set", "Optional", "Any",
+                "XCUIApplication", "XCUIElement", "XCUIElement.ElementType", "XCTestCase", "XCTAttachment", "XCTAttachment.Lifetime", "NSPredicate", "XCTNSPredicateExpectation",
+                "XCTWaiter", "XCTWaiter.Result", "XCTestExpectation", "UIDevice", "XCUIScreen", "XCUIDevice", "JSONSerialization"]
+            func localValueType(_ name: String) -> Bool {
+                // A captured value type cannot be an SDK receiver subclass. Do
+                // not let a local SDK namesake authenticate a printed signature.
+                guard !sdkLiterals.contains(name) else { return false }
+                let declarations = (sources[node.module] ?? []).flatMap { $0.1.units }.filter {
+                    $0.kind == "type" && $0.scope == name
+                }
+                return declarations.count == 1 && declarations[0].receiverValueType == true &&
+                    (sources[node.module] ?? []).allSatisfy { $0.1.typeAliases != nil &&
+                        !$0.1.typeAliases!.contains(where: { $0.split(separator: ".").last.map(String.init) == name }) }
+            }
+            for origin in origins.sorted() {
+                // Swift enum cases can be formed without calling a constructor.
+                // A foreign @objc enum named Int must not acquire Swift.Int's
+                // argument identity merely because SIL prints the same name.
+                if origin.hasPrefix("enum:") {
+                    let enumOwner: String
+                    if ["enum:Optional.some", "enum:Optional.none"].contains(origin) { enumOwner = "Optional" }
+                    else if ["enum:XCTWaiter.Result.completed", "enum:XCTWaiter.Result.timedOut", "enum:XCTWaiter.Result.incorrectOrder", "enum:XCTWaiter.Result.invertedFulfillment", "enum:XCTWaiter.Result.interrupted"].contains(origin) { enumOwner = "XCTWaiter" }
+                    else if ["enum:XCTAttachment.Lifetime.keepAlways", "enum:XCTAttachment.Lifetime.deleteOnSuccess"].contains(origin) { enumOwner = "XCTAttachment" }
+                    else if ["enum:UIDeviceOrientation.unknown", "enum:UIDeviceOrientation.portrait", "enum:UIDeviceOrientation.portraitUpsideDown", "enum:UIDeviceOrientation.landscapeLeft", "enum:UIDeviceOrientation.landscapeRight", "enum:UIDeviceOrientation.faceUp", "enum:UIDeviceOrientation.faceDown"].contains(origin) { enumOwner = "UIDeviceOrientation" }
+                    else if ["enum:XCUIApplication.State.unknown", "enum:XCUIApplication.State.notRunning", "enum:XCUIApplication.State.runningBackgroundSuspended", "enum:XCUIApplication.State.runningBackground", "enum:XCUIApplication.State.runningForeground"].contains(origin) { enumOwner = "XCUIApplication" }
+                    else if origin.hasPrefix("enum:XCUIElement.ElementType.") { enumOwner = "XCUIElement" }
+                    else {
+                        let type = origin.dropFirst("enum:".count).split(separator: ".").dropLast().joined(separator: ".")
+                        guard localValueType(type), !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }) else {
+                            return "Unproven enum argument identity: " + origin
+                        }
+                        continue
+                    }
+                    guard !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }),
+                          (sources[node.module] ?? []).allSatisfy({ $0.1.typeAliases != nil &&
+                            !$0.1.typeAliases!.contains(where: { $0.split(separator: ".").last.map(String.init) == enumOwner }) &&
+                            !$0.1.units.contains(where: { $0.kind == "type" && $0.scope.split(separator: ".").last.map(String.init) == enumOwner }) }) else {
+                        return "Unproven enum argument identity: " + origin
+                    }
+                    continue
+                }
+                let parts = origin.split(separator: ":", maxSplits: 1).map(String.init)
+                guard parts.count == 2 else { return "Unproven dynamic metatype: " + origin }
+                let type = parts[1]
+                if !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }),
+                   finalTestClass(type, module: node.module) { continue }
+                var names = Set(type.split { !$0.isLetter && !$0.isNumber && $0 != "_" && $0 != "." }.map(String.init))
+                names.formUnion(names.compactMap { $0.split(separator: ".").first.map(String.init) })
+                let sdkNames = names.intersection(sdkLiterals)
+                guard parts[0] == "literal" || (parts[0] == "input" && localValueType(type)),
+                      !names.isEmpty, names.subtracting(sdkLiterals).allSatisfy(localValueType), !owners.isEmpty,
+                      owners.allSatisfy({ $0.receiverImportsSupported == true }),
+                      (sources[node.module] ?? []).allSatisfy({ $0.1.helperNamesUnshadowed == true && $0.1.typeAliases != nil &&
+                          !$0.1.typeAliases!.contains(where: { $0.split(separator: ".").last.map(String.init).map(names.contains) == true }) &&
+                          !$0.1.units.contains(where: { $0.kind == "type" && $0.scope.split(separator: ".").last.map(String.init).map(sdkNames.contains) == true }) }) else {
+                    return "Unproven receiver metatype: " + origin
+                }
+            }
+            return nil
+        }
         func stateBlocker(_ node: FunctionNode) -> String? {
             if node.uncertainties.contains("Raw pointer operation") { return "Raw pointer operation" }
             guard !node.uncertainties.isDisjoint(with: ["Shared state access", "Global state access"]) || node.stateAccesses?.isEmpty == false else { return nil }
@@ -96,6 +182,8 @@ struct SDKReceiverOrigins {
                     current.sources[node.module + ":" + $0.path] != nil
                 }
                 guard owned else { external.insert(id); continue }
+                let owners = units(node)
+                if let reason = metatypeBlocker(node, owners: owners) { return "\(reason) in \(node.module).\(node.name)" }
                 if let reason = stateBlocker(node) { return "\(reason) in \(node.module).\(node.name)" }
                 // A saved project body with missing provenance is not an opaque
                 // external leaf, even if its declaration has a void result.
@@ -118,7 +206,14 @@ struct SDKReceiverOrigins {
                         checked.uncertainties.remove(uncertainty)
                     }
                 }
-                switch ExternalHelperEffects.receiverProof(checked) {
+                var shapes: [String: Set<[String]>]?
+                if !owners.isEmpty, owners.allSatisfy({ $0.receiverCallShapes != nil && $0.receiverImportsSupported == true }) {
+                    shapes = [:]
+                    for owner in owners {
+                        for (name, calls) in owner.receiverCallShapes! { shapes![name, default: []].formUnion(calls) }
+                    }
+                }
+                switch ExternalHelperEffects.receiverProof(checked, sourceCallShapes: shapes) {
                 case let .success(producers): pending.formUnion(direct.union(producers))
                 case let .failure(error): return "\(error) in \(node.module).\(node.name)"
                 }

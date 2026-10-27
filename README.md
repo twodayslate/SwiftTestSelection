@@ -1109,7 +1109,19 @@ SDK member bindings are audited at both revisions even when a helper creates no
 attachment. Nested aliases and inherited nested types cannot be resolved to an
 unrelated module-level namesake.
 
-Older graphs without dynamic-call evidence require regeneration from the existing
+Receiver audits also pair method and subscript labels with the compiled signature,
+including every use of a method name in a source body. Method values, foreign
+overloads, unproven enum arguments, and dynamic or forwarded class metatypes
+retain fallback. Captured structs and enums may participate through their checked
+implementations; local SDK namesakes cannot establish an SDK signature. A reference to an SDK constructor does not prove that it was
+called with the SDK class: the captured metatype must also be established.
+Implicit static-method metatype inputs are ignored only when SIL proves that
+they are unused outside debug instructions; forwarding or copying them retains
+the origin check.
+Clang-imported class thunks require an explicit SDK symbol contract because
+Objective-C categories share the same imported class owner.
+
+Older graphs without dynamic-call or receiver-type evidence require regeneration from the existing
 build artifacts and sealed SIL capture. Source-proof refresh alone is insufficient;
 reparsing valid saved SIL requires no application rebuild or test execution.
 Helpers cannot capture `self` or free project variables, take
@@ -1169,7 +1181,9 @@ revisions. UIKit is allowed for caller UI types; the helper body still uses the
 three-module query contract above. Unknown, attributed, or declaration-scoped
 imports can introduce escaping overloads with the same names, so these wrappers
 retain a conservative fallback with an unresolved-import diagnostic. Direct
-helper calls do not require this wrapper-specific import proof. Project modules
+helper calls do not require this wrapper-specific import proof; independent
+receiver-origin checks still require trusted imports wherever nominal SDK types
+or overloads are established. Project modules
 shadowing any trusted module also retain fallback.
 
 Project SDK-name shadowing/subclasses, dynamic exposure, lifecycle use, escaping
@@ -1223,7 +1237,7 @@ and globals retain fallback; a narrow source proof supports immutable stored
 string literals without type annotations, wrappers or interpolation. Exact SDK
 gesture-velocity and keyboard-key constants are supported. The graph records field/global
 identities; old graphs missing that evidence must be regenerated from saved
-artifacts and sealed SIL. Module-fragment cache version 9 invalidates older
+artifacts and sealed SIL. Module-fragment cache version 10 invalidates older
 fragments. This needs no baseline build and does not execute application tests.
 
 Signature evidence must cover the caller

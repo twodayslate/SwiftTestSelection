@@ -703,8 +703,10 @@ func sdkImportedAssertionCannotHideEscapingCaller(scenario: String) throws {
     base["UI:Tests.swift"] = .parse(oldCallers, path: "Tests.swift", module: "UI")
     let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
     if scenario == "direct" {
-        #expect(report.selectedTests == [tests[0]])
-        #expect(report.diagnostics.isEmpty)
+        // Direct calls do not escape through the assertion, but this file still
+        // imports an opaque module, so nominal receiver identity is unproven.
+        #expect(report.selectedTests == tests.sorted())
+        #expect(report.diagnostics.contains { $0.message.contains("Unproven receiver metatype") })
     } else {
         #expect(report.selectedTests == tests.sorted())
         #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" && $0.message.contains("untrusted caller imports") })
@@ -1258,7 +1260,7 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
     }
 }
 
-@Test(arguments: ["sdk", "native", "dynamic", "dynamicConcrete", "callback", "dynamicCallback", "optionalCallback", "pointer", "assertedCallback", "multilineAssertedCallback", "localAssertedCallback", "reportedCallback", "box", "enum", "throws", "shadow", "opaqueVoid", "opaqueScalar", "reflection", "globalReceiver"], [false, true]) func helpersRejectOpaqueReceiverFactories(kind: String, sdkBoundary: Bool) throws {
+@Test(arguments: ["sdk", "native", "dynamic", "dynamicConcrete", "callback", "dynamicCallback", "optionalCallback", "pointer", "assertedCallback", "multilineAssertedCallback", "localAssertedCallback", "reportedCallback", "box", "enum", "throws", "shadow", "opaqueVoid", "opaqueScalar", "reflection", "globalReceiver", "originOverload", "originSubscript", "originTypeOverload", "originMethodValue", "metatype", "forwardedMetatype", "aliasedMetatype", "sdkMetatype", "sdkStatic"], [false, true]) func helpersRejectOpaqueReceiverFactories(kind: String, sdkBoundary: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-receiver-" + UUID().uuidString)
     let externalRoot = root.appendingPathComponent("External")
     try FileManager.default.createDirectory(at: externalRoot, withIntermediateDirectories: true)
@@ -1284,6 +1286,12 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
     @MainActor public func provideApp(_ receive: (XCUIApplication) -> Void) { receive(StatefulApp()) }
     @MainActor public func provideOptionalApp(_ receive: ((XCUIApplication) -> Void)?) { receive?(StatefulApp()) }
     @MainActor public func fillApp(_ result: UnsafeMutablePointer<XCUIApplication>) { result.pointee = StatefulApp() }
+    @objc public enum Int: Swift.Int { case foreignCase }
+    extension XCUIElementQuery {
+        @MainActor @objc public func element(boundBy index: Int) -> XCUIElement { StatefulApp() }
+        @MainActor @objc public func element(reviewIndex: Swift.Int) -> XCUIElement { StatefulApp() }
+        @MainActor @objc public subscript(review key: String) -> XCUIElement { StatefulApp() }
+    }
     extension XCUIApplication {
         @MainActor @objc public class func makeShadow() -> Bool { Bool() }
         @MainActor @objc public class func reportReviewError(_ receive: (Error?) -> Void) { receive(nil) }
@@ -1368,11 +1376,20 @@ func privateHelperRequiresCurrentDynamicEvidence(kind: String) throws {
         support = "import XCTest\nimport AttachmentSupport\n@MainActor var sharedReceiver = XCUIApplication()\n@MainActor func makeApp() -> XCUIApplication { sharedReceiver }\n@MainActor func replaceReceiver() { sharedReceiver = StatefulApp() }"
         before = before.replacingOccurrences(of: "func testConsume() {", with: "func testConsume() { replaceReceiver();")
     }
+    if kind == "originOverload" { support = "import XCTest\n@MainActor func makeApp() -> XCUIApplication { XCUIApplication().buttons.element(reviewIndex: 0) as! XCUIApplication }" }
+    if kind == "originSubscript" { support = "import XCTest\n@MainActor func makeApp() -> XCUIApplication { XCUIApplication().buttons[review: \"id\"] as! XCUIApplication }" }
+    if kind == "originTypeOverload" { support = "import XCTest\n@MainActor func makeApp() -> XCUIApplication { XCUIApplication().buttons.element(boundBy: .foreignCase) as! XCUIApplication }" }
+    if kind == "originMethodValue" { support = "import XCTest\n@MainActor func makeApp() -> XCUIApplication { let factory = XCUIApplication().buttons.element(reviewIndex:); return factory(0) as! XCUIApplication }" }
+    if kind == "metatype" { support = "import XCTest\nimport AttachmentSupport\n@MainActor func makeApp() -> XCUIApplication { let type: XCUIApplication.Type = StatefulApp.self; return type.init() }" }
+    if kind == "forwardedMetatype" { support = "import XCTest\nimport AttachmentSupport\n@MainActor func build(_ type: XCUIApplication.Type) -> XCUIApplication { type.init() }\n@MainActor func makeApp() -> XCUIApplication { build(StatefulApp.self) }" }
+    if kind == "aliasedMetatype" { support = "import XCTest\nimport AttachmentSupport\ntypealias App = StatefulApp\n@MainActor func makeApp() -> XCUIApplication { let type: XCUIApplication.Type = App.self; return type.init() }" }
+    if kind == "sdkMetatype" { support = "import XCTest\n@MainActor func makeApp() -> XCUIApplication { let type: XCUIApplication.Type = XCUIApplication.self; return type.init() }" }
+    if kind == "sdkStatic" { support = "import XCTest\n@MainActor extension XCUIApplication { static func reviewMake() -> XCUIApplication { XCUIApplication() } }\n@MainActor func makeApp() -> XCUIApplication { XCUIApplication.reviewMake() }" }
     let after = sdkBoundary ? before.replacingOccurrences(of: "return waitForExistence(timeout: 1)", with: "return waitForExistence(timeout: 1) && exists") : before.replacingOccurrences(of: "XCTAssertNotNil(app)", with: "XCTAssertNotNil(app); XCTAssertTrue(app.exists)")
     let tests = ["UI/Suite/testCapture()", "UI/Suite/testConsume()"]
     let old = try boundaryGraph(["Tests.swift": before, "Imports.swift": support, "ExternalImports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
     let current = try boundaryGraph(["Tests.swift": after, "Imports.swift": support, "ExternalImports.swift": "import AttachmentSupport"], tests: tests, root: root, compilerArguments: ["-I", externalRoot.path])
     let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: current.mappings), changes: [.init(path: "Tests.swift")], baseRevision: "base")
-    #expect(report.selectedTests == ((kind == "sdk") ? [tests[0]] : tests.sorted()))
-    #expect((kind == "sdk") ? report.diagnostics.isEmpty : report.diagnostics.contains { sdkBoundary ? $0.message.contains("receiver origin") : $0.code == "head_only_helper_callee_effects" })
+    #expect(report.selectedTests == (["sdk", "sdkMetatype", "sdkStatic"].contains(kind) ? [tests[0]] : tests.sorted()))
+    #expect(["sdk", "sdkMetatype", "sdkStatic"].contains(kind) ? report.diagnostics.isEmpty : report.diagnostics.contains { sdkBoundary ? $0.message.contains("receiver origin") : $0.code == "head_only_helper_callee_effects" })
 }

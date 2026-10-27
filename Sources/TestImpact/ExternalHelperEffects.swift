@@ -114,11 +114,11 @@ struct ExternalHelperEffects {
     /// thrown errors, callbacks or mutations of reachable state. Neither its
     /// result spelling nor a consumer's callback syntax proves these channels
     /// closed. Only explicit SDK contracts or resolved implementation edges do.
-    static func receiverDependencies(_ node: FunctionNode) -> Set<String>? {
-        try? receiverProof(node).get()
+    static func receiverDependencies(_ node: FunctionNode, sourceCallShapes: [String: Set<[String]>]? = nil) -> Set<String>? {
+        try? receiverProof(node, sourceCallShapes: sourceCallShapes).get()
     }
 
-    static func receiverProof(_ node: FunctionNode) -> Result<Set<String>, ImpactError> {
+    static func receiverProof(_ node: FunctionNode, sourceCallShapes: [String: Set<[String]>]? = nil) -> Result<Set<String>, ImpactError> {
         if let imported = node.uncertainties.sorted().first(where: { $0.hasPrefix("Imported conformance:") }) {
             return .failure(ImpactError(imported))
         }
@@ -133,7 +133,24 @@ struct ExternalHelperEffects {
             }
             let declaration = String(name)
             covered.insert(declaration)
-            if sdkDynamicSignatures.contains(call) || receiverSDKSignatures.contains(call) { continue }
+            if sdkDynamicSignatures.contains(call) || receiverSDKSignatures.contains(call) {
+                // Initializers are checked through metatype provenance. Property
+                // access has no argument labels; methods must match source shapes.
+                if declaration.hasSuffix(".subscript") || (!call.contains("!getter") && !call.contains("!setter") && !call.contains("!initializer") &&
+                   !call.contains("!allocator") && !call.contains("!deallocator")) {
+                    let name = declaration.components(separatedBy: ".").last!
+                    let shapes = sourceCallShapes?[name]
+                    let valid: Bool
+                    if let signatures = queryOverloadShapes[declaration] {
+                        valid = shapes?.isEmpty == false && shapes!.allSatisfy { signatures[$0]?.contains(call) == true }
+                    } else {
+                        let expected = receiverCallLabels[name]
+                        valid = shapes?.isEmpty == false && expected != nil && shapes!.isSubset(of: expected!)
+                    }
+                    guard valid else { return .failure(ImpactError("Missing or unproven SDK overload identity for " + call)) }
+                }
+                continue
+            }
             if let reason = unresolved.first(where: { $0 == "Unresolved project dispatch: " + declaration || $0.hasPrefix("Unresolved project dispatch: " + declaration + " (") }) {
                 return .failure(ImpactError(reason))
             }
@@ -152,6 +169,17 @@ struct ExternalHelperEffects {
         }
         return .success(needsTargets ? node.dependencies.subtracting(node.compilerReferences ?? []) : [])
     }
+
+    // These labels describe the explicit origin contracts below. Unknown shapes
+    // and method values remain opaque, including in otherwise trusted callers.
+    static let receiverCallLabels: [String: Set<[String]>] = sdkCallLabels.merging([
+        "subscript": [["_"]], "image": [["actions"], ["<trailing>"]], "snapshot": [[]], "fulfill": [[]],
+        "launch": [[]], "terminate": [[]], "setUp": [[]], "tearDown": [[]],
+        "open": [["_"]], "coordinate": [["withNormalizedOffset"]], "withOffset": [["_"]],
+        "swipeUp": [[], ["velocity"]], "swipeDown": [[], ["velocity"]],
+        "press": [["forDuration"], ["forDuration", "thenDragTo"], ["forDuration", "thenDragTo", "withVelocity", "thenHoldForDuration"]],
+        "jsonObject": [["with"], ["with", "options"]]
+    ], uniquingKeysWith: { _, new in new })
 
     // Origin contracts only: these SDK operations do not inject a foreign
     // XCTest receiver. They do not grant outgoing effect purity to a helper.
@@ -255,6 +283,25 @@ struct ExternalHelperEffects {
             input: Data((symbols.joined(separator: "\n") + "\n").utf8)).text
     }
 
+    // Clang categories share __C and the extended class name with the SDK.
+    // The class owner alone therefore cannot authenticate an imported thunk.
+    // Keep exact native constructor identities; new SDK spellings fall back.
+    private static let importedClassContracts: Set<String> = [
+        "$sSo15XCUIApplicationCABycfC", "$sSo15XCUIApplicationCABycfcTO",
+        "$sSo15XCUIApplicationC16bundleIdentifierABSS_tcfC", "$sSo15XCUIApplicationC16bundleIdentifierABSS_tcfcTO",
+        "$sSo13XCTAttachmentC10screenshotABSo14XCUIScreenshotC_tcfCTO",
+        "$sSo13XCTAttachmentC14contentsOfFileAB10Foundation3URLV_tcfCTO",
+        "$sSo13XCTAttachmentC4data21uniformTypeIdentifierAB10Foundation4DataV_SStcfCTO",
+        "$sSo13XCTAttachmentC4dataAB10Foundation4DataV_tcfCTO", "$sSo13XCTAttachmentC6stringABSS_tcfCTO",
+        "$sSo13XCTAttachmentC21uniformTypeIdentifier4name7payload8userInfoABSSSg_AG10Foundation4DataVSgSDys11AnyHashableVypGSgtcfC",
+        "$sSo13XCTAttachmentC21uniformTypeIdentifier4name7payload8userInfoABSSSg_AG10Foundation4DataVSgSDys11AnyHashableVypGSgtcfcTO",
+        "$sSo11NSPredicateC6format13argumentArrayABSS_SayypGSgtcfCTO",
+        "$sSo11NSPredicateC5blockABSbypSg_SDySSypGSgtc_tcfCTO", "$sSo11NSPredicateC5valueABSb_tcfCTO",
+        "$sSo17XCTestExpectationC11descriptionABSS_tcfC", "$sSo17XCTestExpectationC11descriptionABSS_tcfcTO",
+        "$sSo25XCTNSPredicateExpectationC9predicate6objectABSo11NSPredicateC_ypSgtcfC",
+        "$sSo25XCTNSPredicateExpectationC9predicate6objectABSo11NSPredicateC_ypSgtcfcTO"
+    ]
+
     static func trustedDeclarations(_ output: String, receiverOrigins: Bool = false) -> Set<String> {
         let owners = SILOwnership.declarationOwners(output)
         let modules = SDKTestHelperSyntax.trustedCallerModules.union(receiverOrigins ? ["CoreGraphics"] : [])
@@ -280,6 +327,8 @@ struct ExternalHelperEffects {
             // The importer synthesizes the standard enum conformances. Never
             // extend this exception to user/retroactive conformance modules.
             if owners[symbol] == "__C_Synthesized" && !(receiverOrigins ? ["XCTWaiterResult", "XCUIApplicationState", "XCUIElementType"] : ["XCTWaiterResult"]).contains(type) { continue }
+            if module > 0, lines[module - 1].trimmingCharacters(in: .whitespaces) == "kind=Class",
+               !importedClassContracts.contains(symbol) { continue }
             accepted.insert(symbol)
         }
         return accepted

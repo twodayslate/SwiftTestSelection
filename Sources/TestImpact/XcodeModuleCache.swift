@@ -59,7 +59,7 @@ final class XcodeModuleCache {
         self.cache = cache
         var context = identity
         context.removeValue(forKey: "revision")
-        context["schema"] = "xcode-module-fragment-9"
+        context["schema"] = "xcode-module-fragment-10"
         self.context = context
         self.source = source
         self.derived = derived

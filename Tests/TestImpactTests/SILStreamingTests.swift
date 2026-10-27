@@ -133,3 +133,35 @@ import Testing
     let graph = SILParser.parse(sil, module: "UI", sourceRoot: URL(fileURLWithPath: "/tmp"))
     #expect(graph.functions["entry"]?.stateAccesses == ["global:shared", "field:Suite.app"])
 }
+
+@Test func receiverTypeCaptureRetainsMetatypesAndEnumConstructors() {
+    let input = """
+    sil hidden @factory : $@convention(thin) (@thick XCUIApplication.Type) -> () {
+      %0 = metatype $@thick StatefulApp.Type, loc "/tmp/Tests.swift":1:1
+      %1 = metatype $@thin Dictionary<String, Int>.Type
+      %2 = value_metatype $@thick XCUIApplication.Type, %object : $XCUIApplication
+      %3 = enum $Int, #Int.foreignCase
+      %4 = metatype $@objc_metatype XCTWaiter.Type
+    } // end sil function 'factory'
+    """
+    let parsed = SILParser.parse(input, module: "UI", sourceRoot: URL(fileURLWithPath: "/tmp"))
+    #expect(parsed.functions["factory"]?.receiverTypeOrigins == ["input:XCUIApplication", "literal:StatefulApp", "literal:Dictionary<String, Int>", "dynamic", "enum:Int.foreignCase", "literal:XCTWaiter"])
+    let malformed = input.replacingOccurrences(of: "metatype $@thin Dictionary<String, Int>.Type", with: "metatype $unrecognized")
+    #expect(SILParser.parse(malformed, module: "UI", sourceRoot: URL(fileURLWithPath: "/tmp")).functions["factory"]?.receiverTypeOrigins == nil)
+}
+
+@Test(arguments: ["unused", "forwarded", "aliased", "unknownBinding", "samePrefix", "nestedSignature"])
+func receiverMetatypeInputsExcludeOnlyProvenUnusedValues(kind: String) {
+    let extra = kind == "nestedSignature" ? ", @callee_guaranteed (@thick XCUIApplication.Type) -> ()" : ""
+    let binding = kind == "unknownBinding" ? "" : "bb0(%0 : $@thick XCUIApplication.Type):"
+    let operation = kind == "forwarded" ? "%1 = apply %factory(%0)" : kind == "aliased" ? "%1 = copy_value %0" : kind == "samePrefix" ? "%1 = apply %factory(%01)" : "%1 = tuple ()"
+    let sil = """
+    sil hidden @factory : $@convention(thin) (@thick XCUIApplication.Type\(extra)) -> () {
+    \(binding)
+      debug_value %0 : $@thick XCUIApplication.Type, let, name "self"
+      \(operation)
+    } // end sil function 'factory'
+    """
+    let node = SILParser.parse(sil, module: "UI", sourceRoot: URL(fileURLWithPath: "/tmp")).functions["factory"]!
+    #expect(node.receiverTypeOrigins?.contains("input:XCUIApplication") == !["unused", "samePrefix"].contains(kind))
+}

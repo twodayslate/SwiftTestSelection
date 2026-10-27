@@ -233,6 +233,9 @@ struct CapturedSIL: Sendable {
                     if let before = old.dynamicCallSignatures, let after = node.dynamicCallSignatures {
                         old.dynamicCallSignatures = before.union(after)
                     } else { old.dynamicCallSignatures = nil }
+                    if let before = old.receiverTypeOrigins, let after = node.receiverTypeOrigins {
+                        old.receiverTypeOrigins = before.union(after)
+                    } else { old.receiverTypeOrigins = nil }
                     old.dynamicDeclarations.formUnion(node.dynamicDeclarations)
                     old.uncertainties.formUnion(node.uncertainties)
                     old.regions = Set(old.regions + node.regions).sorted { ($0.path, $0.startLine, $0.endLine) < ($1.path, $1.startLine, $1.endLine) }

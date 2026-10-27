@@ -125,6 +125,9 @@ public enum SILParser {
         static let externalWitness = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+| \[[^\]]+\])* ([\w.]+): ([\w.]+) module ([\w]+)$"#)
         static let value = try! NSRegularExpression(pattern: #"^(%[\w]+) ="#)
         static let conversion = try! NSRegularExpression(pattern: #"(%[\w]+) = (?:thin_to_thick_function|convert_function|convert_escape_to_noescape|copy_value|move_value|begin_borrow|partial_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
+        static let metatype = try! NSRegularExpression(pattern: #"@(?:thick|thin|objc_metatype) ([^\r\n]+?)\.(?:Type|Protocol)(?=[, )]|$)"#)
+        static let metatypeParameter = try! NSRegularExpression(pattern: #"(%[\w]+) : \$@(?:thick|thin|objc_metatype) ([^\r\n]+?)\.(?:Type|Protocol)(?=[, )]|$)"#)
+        static let valueReference = try! NSRegularExpression(pattern: #"%[\w]+"#)
         static let apply = try! NSRegularExpression(pattern: #"\b(?:apply|try_apply|begin_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
     }
 
@@ -151,6 +154,9 @@ public enum SILParser {
         var knownValues = Set<String>()
         var witnessType: String?
         var genericParameters: Set<String>?
+        var metatypeInputs: [String: Set<String>] = [:]
+        var headerMetatypeCounts: [String: Int] = [:]
+        var usedMetatypeInputs = Set<String>()
 
         func location(_ line: String) -> SourceRegion? {
             guard line.containsASCII("loc "), let fields = Pattern.groups(Expressions.location, in: line),
@@ -181,6 +187,11 @@ public enum SILParser {
             }
         }
 
+        static func metatypes(_ line: String) -> [String] {
+            let text = line as NSString
+            return Expressions.metatype.matches(in: line, range: NSRange(location: 0, length: text.length)).map { text.substring(with: $0.range(at: 1)) }
+        }
+
         func consume(_ raw: String) {
             let line = raw.trimmingSILWhitespace()
             if current == nil {
@@ -204,6 +215,12 @@ public enum SILParser {
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
                     current!.dynamicCallSignatures = []
                     current!.stateAccesses = []
+                    current!.receiverTypeOrigins = []
+                    metatypeInputs = [:]; usedMetatypeInputs = []; headerMetatypeCounts = [:]
+                    for type in Self.metatypes(line) {
+                        current!.receiverTypeOrigins?.insert("input:" + type)
+                        headerMetatypeCounts[type, default: 0] += 1
+                    }
                     // Canonical capture can retain source parameter names (e.g.
                     // Element), while replay usually spells them τ_0_0. A local
                     // nominal type may have the same name; it is not that receiver.
@@ -225,6 +242,13 @@ public enum SILParser {
                 current!.regions = locations.map {
                     SourceRegion(path: $0.key, startLine: $0.value.lowerBound, endLine: $0.value.upperBound)
                 }.sorted { ($0.path, $0.startLine) < ($1.path, $1.startLine) }
+                // Static methods receive an implicit class metatype even when
+                // they construct a literal SDK class and never use that input.
+                // Only remove an origin when every matching SSA input is unused
+                // outside debug instructions. Forwarded/aliased inputs remain.
+                for (type, values) in metatypeInputs where values.count == headerMetatypeCounts[type] && values.isDisjoint(with: usedMetatypeInputs) {
+                    current!.receiverTypeOrigins?.remove("input:" + type)
+                }
                 current!.compilerReferences = current!.dependencies
                 functions[current!.id] = current!
                 current = nil
@@ -233,6 +257,31 @@ public enum SILParser {
             if let found = location(line) { addLocation(found) }
             if line.hasPrefix("//") { return }
 
+            if line.hasPrefix("bb0(") {
+                let text = line as NSString
+                for match in Expressions.metatypeParameter.matches(in: line, range: NSRange(location: 0, length: text.length)) {
+                    metatypeInputs[text.substring(with: match.range(at: 2)), default: []].insert(text.substring(with: match.range(at: 1)))
+                }
+            } else if !metatypeInputs.isEmpty && !line.hasPrefix("debug_value ") && !line.hasPrefix("debug_value_addr ") {
+                let instruction = String(line.components(separatedBy: " // ")[0])
+                let text = instruction as NSString
+                for match in Expressions.valueReference.matches(in: instruction, range: NSRange(location: 0, length: text.length)) {
+                    usedMetatypeInputs.insert(text.substring(with: match.range))
+                }
+            }
+            if line.containsASCII(" = enum ") {
+                if let start = line.firstIndex(of: "#") {
+                    let end = line[start...].firstIndex(where: { $0 == "!" || $0 == "," || $0 == " " }) ?? line.endIndex
+                    current!.receiverTypeOrigins?.insert("enum:" + line[line.index(after: start)..<end])
+                } else { current!.receiverTypeOrigins = nil }
+            }
+            if line.containsASCII(" = metatype ") {
+                let types = Self.metatypes(line)
+                if types.isEmpty { current!.receiverTypeOrigins = nil }
+                else { current!.receiverTypeOrigins?.formUnion(types.map { "literal:" + $0 }) }
+            } else if line.containsASCII("value_metatype ") || line.containsASCII("existential_metatype ") {
+                current!.receiverTypeOrigins?.insert("dynamic")
+            }
             if line.containsASCII("function_ref "), let match = Pattern.groups(Expressions.reference, in: line) {
                 knownValues.insert(match[0])
                 current!.dependencies.insert(match[1])

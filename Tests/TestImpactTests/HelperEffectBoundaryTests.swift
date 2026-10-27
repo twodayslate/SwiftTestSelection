@@ -12,9 +12,11 @@ import Testing
     let waiterWitness = "$sSo15XCTWaiterResultVSQSCSQ2eeoiySbx_xtFZTW"
     let foreign = "$sSo15XCUIApplicationC17AttachmentSupportE14markReviewFlagSbyF"
     let unknownClang = "$sSo7UnknownCABycfC"
-    let symbols = [sdk, constructor, elementType, waiterWitness, foreign, unknownClang, "unresolved-symbol"]
+    let unknownCategoryConstructor = "$sSo15XCUIApplicationC11reviewTokenABSS_tcfC"
+    let symbols = [sdk, constructor, elementType, waiterWitness, foreign, unknownCategoryConstructor, unknownClang, "unresolved-symbol"]
     let output = try CommandRunner.run("xcrun", ["swift-demangle", "--expand", "--tree-only"],
         at: FileManager.default.temporaryDirectory, input: Data((symbols.joined(separator: "\n") + "\n").utf8)).text
+    #expect(SILOwnership.declarationOwners(output)[unknownCategoryConstructor] == "__C")
     #expect(ExternalHelperEffects.trustedDeclarations(output) == [sdk, constructor, elementType, waiterWitness])
     #expect(ExternalHelperEffects.trustedDeclarations("unrecognized output") == [])
 }
@@ -93,7 +95,7 @@ func attachmentOverrideAuditUsesAncestryAtBothRevisions(scenario: String) {
 @Test(arguments: [false, true]) func dynamicCallEvidenceSurvivesArchives(references: Bool) throws {
     var node = FunctionNode(id: "helper", module: "UI", name: "helper", dynamicDeclarations: ["XCUIElement.exists"])
     node.dynamicCallSignatures = ["objc_method XCUIElement.exists!getter.foreign : (XCUIElement) -> () -> Bool"]
-    node.compilerReferences = references ? ["external"] : nil
+    node.receiverTypeOrigins = []; node.compilerReferences = references ? ["external"] : nil
     var graph = XcodeTestGraph(targets: [], tests: [])
     graph.dependencies = .init(functions: [node.id: node])
     for data in [try GraphArchive.encode(graph), try JSONEncoder().encode(graph)] {
@@ -194,7 +196,7 @@ func subscriptBindingEvidenceAccountsForImplicitLabelsAndDefaults(declaration: S
 
 @Test func receiverOriginsRequireCompleteSavedBodies() {
     var node = FunctionNode(id: "$s2UI5entryyyF", module: "UI", name: "entry", regions: [.init(path: "Tests.swift", startLine: 1, endLine: 1)], dynamicDeclarations: ["XCUIApplication.factory"])
-    node.compilerReferences = []
+    node.receiverTypeOrigins = []; node.compilerReferences = []
     node.dynamicCallSignatures = []
     #expect(!ExternalHelperEffects.allowsDynamicReceiverOrigins(node))
     node.dynamicCallSignatures = ["objc_method XCUIApplication.factory!foreign : (XCUIApplication.Type) -> () -> XCUIApplication"]
@@ -226,7 +228,7 @@ func subscriptBindingEvidenceAccountsForImplicitLabelsAndDefaults(declaration: S
 @Test(arguments: ["(XCUIApplication) -> ()", "((XCUIApplication) -> ())?", "inout XCUIApplication", "UnsafeMutablePointer<XCUIApplication>"])
 func receiverDynamicOutputChannelsRequireProducerEdges(argument: String) {
     var node = FunctionNode(id: "caller", module: "UI", name: "caller", dependencies: ["direct"], dynamicDeclarations: ["Factory.provide"])
-    node.compilerReferences = ["direct"]
+    node.receiverTypeOrigins = []; node.compilerReferences = ["direct"]
     node.dynamicCallSignatures = ["objc_method Factory.provide!foreign : (Factory.Type) -> (\(argument)) -> ()"]
     #expect(ExternalHelperEffects.receiverDependencies(node) == nil)
     node.resolvedDynamicDeclarations = ["Factory.provide"]
@@ -238,14 +240,15 @@ func receiverDynamicOutputChannelsRequireProducerEdges(argument: String) {
 @Test func rendererCallbackDoesNotGrantOutgoingEffectTrust() {
     var node = FunctionNode(id: "render", module: "UI", name: "render", dynamicDeclarations: ["UIGraphicsImageRenderer.image"])
     node.dynamicCallSignatures = ["objc_method UIGraphicsImageRenderer.image!foreign : (UIGraphicsImageRenderer) -> ((UIGraphicsImageRendererContext) -> ()) -> UIImage"]
-    #expect(ExternalHelperEffects.receiverDependencies(node) == [])
+    #expect(ExternalHelperEffects.receiverDependencies(node) == nil)
+    #expect(ExternalHelperEffects.receiverDependencies(node, sourceCallShapes: ["image": [["<trailing>"]]]) == [])
     #expect(!ExternalHelperEffects.allowsDynamicCalls(node))
 }
 
 @Test(arguments: ["Bool", "Swift.Bool", "Void", "()", "Int", "String", "UIImage", "[String]", "(Bool, Int)", "Any?", "AppBox", "AppChoice"])
 func opaqueDynamicResultsRequireImplementations(result: String) {
     var node = FunctionNode(id: "caller", module: "UI", name: "caller", dependencies: ["direct"], dynamicDeclarations: ["Factory.make"])
-    node.compilerReferences = ["direct"]
+    node.receiverTypeOrigins = []; node.compilerReferences = ["direct"]
     node.dynamicCallSignatures = ["objc_method Factory.make!foreign : (Factory.Type) -> () -> \(result)"]
     #expect(ExternalHelperEffects.receiverDependencies(node) == nil)
     node.resolvedDynamicDeclarations = ["Factory.make"]
@@ -268,7 +271,7 @@ func receiverStoredStateRequiresImmutableLiteralEvidence(kind: String) throws {
     let snapshot = SwiftSourceSnapshot.parse(source, path: "State.swift", module: "UI")
     #expect(snapshot.literalStoredProperties?["Suite.text"] == (kind == "literal"))
     var node = FunctionNode(id: "entry", module: "UI", name: "entry", regions: [.init(path: "State.swift", startLine: 2, endLine: 2)], uncertainties: ["Shared state access"])
-    node.compilerReferences = []; node.dynamicCallSignatures = []; node.stateAccesses = ["field:Suite.text"]
+    node.receiverTypeOrigins = []; node.compilerReferences = []; node.dynamicCallSignatures = []; node.stateAccesses = ["field:Suite.text"]
     var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
     current.sources = ["UI:State.swift": snapshot]
     current.dependencies = .init(functions: [node.id: node], tests: [current.tests[0]: [node.id]])
@@ -280,24 +283,27 @@ func receiverStoredStateRequiresImmutableLiteralEvidence(kind: String) throws {
     #expect(legacy.blocker(tests: Set(current.tests), current: current, graph: current.dependencies!)?.contains("recapture") == true)
 }
 
-@Test(arguments: [false, true], [false, true])
-func stateAccessEvidenceRoundTripsWithOptionalCallEvidence(references: Bool, calls: Bool) throws {
+@Test(arguments: 0..<8)
+func stateAccessEvidenceRoundTripsWithOptionalCallEvidence(bits: Int) throws {
+    let references = bits & 1 != 0, calls = bits & 2 != 0, state = bits & 4 != 0
     var node = FunctionNode(id: "entry", module: "UI", name: "entry")
-    node.compilerReferences = references ? [] : nil
+    node.receiverTypeOrigins = []; node.compilerReferences = references ? [] : nil
     node.dynamicCallSignatures = calls ? [] : nil
-    node.stateAccesses = ["global:shared", "field:Suite.app"]
+    node.stateAccesses = state ? ["global:shared", "field:Suite.app"] : nil
+    node.receiverTypeOrigins = ["literal:XCUIApplication", "input:ForeignApp", "enum:Int.foreignCase"]
     var graph = XcodeTestGraph(targets: [], tests: [])
     graph.dependencies = .init(functions: [node.id: node])
     let restored = try GraphArchive.decode(GraphArchive.encode(graph)).dependencies!.functions[node.id]!
     #expect(restored.compilerReferences == node.compilerReferences)
     #expect(restored.dynamicCallSignatures == node.dynamicCallSignatures)
     #expect(restored.stateAccesses == node.stateAccesses)
+    #expect(restored.receiverTypeOrigins == node.receiverTypeOrigins)
 }
 
 @Test(arguments: ["Imported conformance: Foreign", "Unresolved project dispatch: Factory.make"])
 func resolvedOriginEdgesDoNotHideUnresolvedDispatch(uncertainty: String) {
     var node = FunctionNode(id: "caller", module: "UI", name: "caller", dependencies: ["producer"], uncertainties: [uncertainty], dynamicDeclarations: ["Factory.make"])
-    node.compilerReferences = []; node.dynamicCallSignatures = ["class_method Factory.make : (Factory) -> () -> XCUIApplication"]
+    node.receiverTypeOrigins = []; node.compilerReferences = []; node.dynamicCallSignatures = ["class_method Factory.make : (Factory) -> () -> XCUIApplication"]
     node.resolvedDynamicDeclarations = ["Factory.make"]
     #expect(ExternalHelperEffects.receiverDependencies(node) == nil)
 }
@@ -305,7 +311,7 @@ func resolvedOriginEdgesDoNotHideUnresolvedDispatch(uncertainty: String) {
 @Test(arguments: ["XCUIGestureVelocityFast", "XCUIKeyboardKeyDelete", "XCUIKeyboardKeyForged", "sharedReceiver"])
 func receiverGlobalsRequireExactSDKContracts(name: String) {
     var node = FunctionNode(id: "entry", module: "UI", name: "entry", regions: [.init(path: "Tests.swift", startLine: 1, endLine: 1)], uncertainties: ["Global state access", "Shared state access"])
-    node.compilerReferences = []; node.dynamicCallSignatures = []; node.stateAccesses = ["global:" + name]
+    node.receiverTypeOrigins = []; node.compilerReferences = []; node.dynamicCallSignatures = []; node.stateAccesses = ["global:" + name]
     var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
     current.sources["UI:Tests.swift"] = .parse("func test() {}", path: "Tests.swift", module: "UI")
     let graph = DependencyGraph(functions: [node.id: node], tests: [current.tests[0]: [node.id]])
@@ -319,10 +325,10 @@ func finalXCTestConstructorClosesOnlyDescendantWarnings(kind: String) {
     if kind == "missing" { snapshot.classFinality = nil }
     let region = SourceRegion(path: "Tests.swift", startLine: 2, endLine: 2)
     var node = FunctionNode(id: "allocator", module: "UI", name: kind == "wrongBody" ? "Suite.make()" : "Suite.__allocating_init()", regions: [region], dependencies: ["initializer"], uncertainties: ["Unresolved project dispatch: Suite.init (incomplete override ancestry)"], dynamicDeclarations: ["Suite.init"])
-    node.compilerReferences = []; node.dynamicCallSignatures = ["objc_method Suite.init!initializer.foreign : (Suite.Type) -> () -> Suite"]
+    node.receiverTypeOrigins = []; node.compilerReferences = []; node.dynamicCallSignatures = ["objc_method Suite.init!initializer.foreign : (Suite.Type) -> () -> Suite"]
     node.resolvedDynamicDeclarations = ["Suite.init"]
     var initializer = FunctionNode(id: "initializer", module: "UI", name: "Suite.init()", regions: [region])
-    initializer.compilerReferences = []; initializer.dynamicCallSignatures = []
+    initializer.receiverTypeOrigins = []; initializer.compilerReferences = []; initializer.dynamicCallSignatures = []
     var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
     current.sources = ["UI:Tests.swift": snapshot]
     let graph = DependencyGraph(functions: [node.id: node, initializer.id: initializer], tests: [current.tests[0]: [node.id]])
@@ -336,16 +342,78 @@ func ancestorAllocationRootsRequireFinalConcreteTest(kind: String) {
     let snapshot = SwiftSourceSnapshot.parse(source, path: "Tests.swift", module: "UI")
     let region = SourceRegion(path: "Tests.swift", startLine: 2, endLine: 2)
     var allocator = FunctionNode(id: "allocator", module: "UI", name: "Parent.__allocating_init()", regions: [region], dependencies: ["initializer"], uncertainties: ["Unresolved project dispatch: Parent.init (incomplete override ancestry)"], dynamicDeclarations: ["Parent.init"])
-    allocator.compilerReferences = []; allocator.dynamicCallSignatures = ["objc_method Parent.init!initializer.foreign : (Parent.Type) -> () -> Parent"]
+    allocator.receiverTypeOrigins = []; allocator.compilerReferences = []; allocator.dynamicCallSignatures = ["objc_method Parent.init!initializer.foreign : (Parent.Type) -> () -> Parent"]
     allocator.resolvedDynamicDeclarations = ["Parent.init"]
     var initializer = FunctionNode(id: "initializer", module: "UI", name: "Parent.init()", regions: [region])
-    initializer.compilerReferences = []; initializer.dynamicCallSignatures = []
+    initializer.receiverTypeOrigins = []; initializer.compilerReferences = []; initializer.dynamicCallSignatures = []
     var entry = FunctionNode(id: "entry", module: "UI", name: "Suite.test()", regions: [.init(path: "Tests.swift", startLine: 3, endLine: 3)])
-    entry.compilerReferences = kind == "called" ? ["allocator"] : []; entry.dynamicCallSignatures = []; entry.dependencies = entry.compilerReferences!
+    entry.receiverTypeOrigins = []; entry.compilerReferences = kind == "called" ? ["allocator"] : []; entry.dynamicCallSignatures = []; entry.dependencies = entry.compilerReferences!
     var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
     current.modules = ["UI": "UI"]; current.sources = ["UI:Tests.swift": snapshot]
     let roots: Set<String> = kind == "missingBody" ? ["entry", "allocator"] : ["entry", "allocator", "initializer"]
     let graph = DependencyGraph(functions: [entry.id: entry, allocator.id: allocator, initializer.id: initializer], tests: [current.tests[0]: roots])
     var origins = SDKReceiverOrigins()
     #expect(origins.proves(tests: Set(current.tests), current: current, graph: graph) == (kind == "synthetic"))
+}
+
+@Test(arguments: ["literal:XCUIApplication", "literal:Array<String>", "literal:ForeignApp", "input:XCUIApplication", "dynamic", "enum:Int.foreignCase", "enum:Optional.none", "missing"])
+func receiverNominalEvidenceRejectsErasedTypeIdentity(origin: String) {
+    var node = FunctionNode(id: "entry", module: "UI", name: "entry", regions: [.init(path: "Tests.swift", startLine: 2, endLine: 2)])
+    node.compilerReferences = []; node.dynamicCallSignatures = []
+    node.receiverTypeOrigins = origin == "missing" ? nil : [origin]
+    var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
+    current.sources["UI:Tests.swift"] = .parse("import XCTest\nfunc entry() {}", path: "Tests.swift", module: "UI")
+    let graph = DependencyGraph(functions: [node.id: node], tests: [current.tests[0]: [node.id]])
+    var origins = SDKReceiverOrigins()
+    #expect(origins.proves(tests: Set(current.tests), current: current, graph: graph) == ["literal:XCUIApplication", "literal:Array<String>", "enum:Optional.none"].contains(origin))
+}
+
+@Test(arguments: ["boundBy", "other", "value", "mixed"])
+func receiverOverloadIdentityRequiresEverySourceUse(kind: String) throws {
+    let body = kind == "value" ? "let f = query.element(boundBy:)" : kind == "mixed" ? "query.element(boundBy: 0); query.element(other: 0)" : "query.element(\(kind): 0)"
+    let source = SwiftSourceSnapshot.parse("func entry() { \(body) }", path: "Tests.swift", module: "UI")
+    let shapes = try #require(source.units.first { $0.kind == "function" }?.receiverCallShapes)
+    var node = FunctionNode(id: "entry", module: "UI", name: "entry", dynamicDeclarations: ["XCUIElementQuery.element"])
+    node.dynamicCallSignatures = ["objc_method XCUIElementQuery.element!foreign : (XCUIElementQuery) -> (Int) -> XCUIElement"]
+    #expect(ExternalHelperEffects.receiverDependencies(node) == nil)
+    #expect((ExternalHelperEffects.receiverDependencies(node, sourceCallShapes: shapes) != nil) == (kind == "boundBy"))
+}
+
+@Test(arguments: [false, true])
+func receiverSynthesizedOriginsCoverMemberDeclarations(enumGetter: Bool) {
+    let source = enumGetter ? "import XCTest\nenum Value: String {\n    case first = \"a\"\n    case second = \"b\"\n}" : "import XCTest\nfinal class Suite: XCTestCase {\n    let first = \"a\"\n    let second = \"b\"\n}"
+    var node = FunctionNode(id: "init", module: "UI", name: enumGetter ? "Value.rawValue.getter" : "Suite.init(invocation:)", regions: [.init(path: "Tests.swift", startLine: 2, endLine: 4)])
+    node.compilerReferences = []; node.dynamicCallSignatures = []; node.receiverTypeOrigins = ["literal:String"]
+    var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
+    current.sources["UI:Tests.swift"] = .parse(source, path: "Tests.swift", module: "UI")
+    let graph = DependencyGraph(functions: [node.id: node], tests: [current.tests[0]: [node.id]])
+    var origins = SDKReceiverOrigins()
+    let proven = origins.proves(tests: Set(current.tests), current: current, graph: graph)
+    #expect(proven)
+    current.sources["UI:Tests.swift"] = .parse("import Foreign\n" + source, path: "Tests.swift", module: "UI")
+    var opaque = SDKReceiverOrigins()
+    let opaqueProven = opaque.proves(tests: Set(current.tests), current: current, graph: graph)
+    #expect(!opaqueProven)
+}
+
+@Test(arguments: ["struct", "enum", "class", "shadow", "alias", "missing"], [false, true])
+func receiverValueMetatypesRequireCapturedNonSDKIdentity(kind: String, input: Bool) {
+    let declaration: String
+    switch kind {
+    case "struct": declaration = "struct Value {}"
+    case "enum": declaration = "enum Value { case sample }"
+    case "class": declaration = "class Value: XCUIApplication {}"
+    case "shadow": declaration = "struct Int {}"
+    case "alias": declaration = "typealias Value = XCUIApplication"
+    default: declaration = ""
+    }
+    let name = kind == "shadow" ? "Int" : "Value"
+    var node = FunctionNode(id: "entry", module: "UI", name: "entry", regions: [.init(path: "Tests.swift", startLine: 3, endLine: 3)])
+    node.compilerReferences = []; node.dynamicCallSignatures = []; node.receiverTypeOrigins = [(input ? "input:" : "literal:") + name]
+    var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
+    current.sources["UI:Tests.swift"] = .parse("import XCTest\n" + declaration + "\nfunc entry() {}", path: "Tests.swift", module: "UI")
+    let graph = DependencyGraph(functions: [node.id: node], tests: [current.tests[0]: [node.id]])
+    var origins = SDKReceiverOrigins()
+    let proven = origins.proves(tests: Set(current.tests), current: current, graph: graph)
+    #expect(proven == ["struct", "enum"].contains(kind))
 }
