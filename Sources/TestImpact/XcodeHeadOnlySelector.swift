@@ -92,11 +92,26 @@ enum XcodeHeadOnlySelector {
             guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() else { continue }
             semanticPaths.formUnion((before + after).map { $0.region.path })
             if before.count <= 1, after.count == 1, let unit = after.first,
-               let graph = current.dependencies, let index = dependencyIndex,
-               PrivateTestHelperIsolation.proves(unit, previous: before.first, current: current, base: source.base, graph: graph, index: index) {
-                isolatedHelpers.insert(key)
-                changed.append(unit)
-                continue
+               let graph = current.dependencies, let index = dependencyIndex {
+                let proofs = [unit.privateTestHelper, before.first?.privateTestHelper].compactMap { $0 }
+                if proofs.contains(where: { $0.proofVersion != PrivateTestHelperSyntax.currentProofVersion }) {
+                    fallback("head_only_helper_proof_version", "Private helper proof is missing or uses an unsupported version; recapture the head graph: \(unit.region.path)")
+                    continue
+                }
+                var traversal = PrivateTestHelperIsolation.Traversal()
+                if PrivateTestHelperIsolation.proves(unit, previous: before.first, current: current, base: source.base,
+                                                     graph: graph, index: index, traversal: &traversal) {
+                    isolatedHelpers.insert(key)
+                    changed.append(unit)
+                    continue
+                }
+                // Shared-object reads are not globally classified as opaque:
+                // ordinary production fields have useful compiler dependencies.
+                // A failed helper effect proof needs its own explicit fallback,
+                // since SDK operations on a shared object can affect other tests.
+                if !traversal.sharedStateSymbols.isEmpty {
+                    fallback("head_only_helper_shared_state", "Shared state in private helper callers or callees cannot be isolated: \(unit.region.path):\(unit.region.startLine)")
+                }
             }
             // New independent entries are covered only by an explicit separate
             // execution policy, after proving no existing source name is rebound.

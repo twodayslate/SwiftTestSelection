@@ -1075,11 +1075,16 @@ attachments and rejects shadowed attachment APIs; it does not exempt other share
 state. Helpers cannot capture `self` or free project variables, take
 inout/function-valued/default arguments, or contain closures or macros. Known
 global/shared-state and raw-pointer effects in project callees also
-prevent isolation. Calls wrapped in other expressions (including operators,
+prevent isolation. Attachment handling never waives compiler-observed state
+checks, including in assertion autoclosures. A failed helper proof that encounters
+shared state selects the full inventory with `head_only_helper_shared_state`,
+because shared objects can affect tests beyond the compiled caller paths.
+Calls wrapped in other expressions (including operators,
 subscripts and string interpolation) or used as matching patterns are not treated
 as direct calls: they may create escaping autoclosures, including through custom
 `~=` operators in guard/while/for/catch patterns. Stored proof versions must match
-the current escape analysis; older or unknown versions retain fallback. For an existing helper, all old statements must
+the current proof analysis; older or unknown versions select the full inventory
+with `head_only_helper_proof_version` and require a fresh head capture. For an existing helper, all old statements must
 remain unchanged and in order; only standalone XCTest assertions may be added.
 Removing/replacing/reordering statements or changing local bindings/control flow
 retains runtime fallback because head edges cannot prove the effects of old calls.

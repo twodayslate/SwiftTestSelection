@@ -6,9 +6,42 @@ import Foundation
 /// Combines syntax accessibility/escape evidence with actual head consumers.
 /// This proof is independent of app feature mappings and opaque SDK dispatch.
 enum PrivateTestHelperIsolation {
+    /// Scoped to one immutable base/head proof. Active nodes detect cycles;
+    /// completed results avoid re-expanding shared ancestors in a helper DAG.
+    struct Traversal {
+        fileprivate var active = Set<String>()
+        fileprivate var completed: [String: Bool] = [:]
+        private(set) var evaluationCount = 0
+        fileprivate(set) var sharedStateSymbols = Set<String>()
+
+        fileprivate mutating func begin(_ key: String) {
+            active.insert(key)
+            evaluationCount += 1
+        }
+    }
+
     static func proves(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
-                       base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex, visiting: Set<String> = []) -> Bool {
-        guard !visiting.contains(unit.key), let syntax = unit.privateTestHelper, syntax.proofVersion == PrivateTestHelperSyntax.currentProofVersion,
+                       base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex) -> Bool {
+        var traversal = Traversal()
+        return proves(unit, previous: previous, current: current, base: base, graph: graph, index: index, traversal: &traversal)
+    }
+
+    static func proves(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
+                       base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex,
+                       traversal: inout Traversal) -> Bool {
+        guard !traversal.active.contains(unit.key) else { return false }
+        if let completed = traversal.completed[unit.key] { return completed }
+        traversal.begin(unit.key)
+        let result = provesUncached(unit, previous: previous, current: current, base: base, graph: graph, index: index, traversal: &traversal)
+        traversal.active.remove(unit.key)
+        traversal.completed[unit.key] = result
+        return result
+    }
+
+    private static func provesUncached(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
+                                      base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex,
+                                      traversal: inout Traversal) -> Bool {
+        guard let syntax = unit.privateTestHelper, syntax.proofVersion == PrivateTestHelperSyntax.currentProofVersion,
               syntax.statements != nil, unit.headOnlyBodySupported == true,
               previous == nil || (previous?.headOnlyBodySupported == true &&
                   previous?.privateTestHelper.map { $0.proofVersion == PrivateTestHelperSyntax.currentProofVersion && syntax.preservesEffects(of: $0) } == true),
@@ -38,7 +71,6 @@ enum PrivateTestHelperIsolation {
             }
         }
         callers = Dictionary(grouping: callers, by: \.key).values.compactMap(\.first)
-        let visiting = visiting.union([unit.key])
         for caller in callers {
             guard caller.headOnlyBodySupported == true else { return false }
             if XcodeFineSelector.isTestEntry(caller, in: current) { continue }
@@ -47,7 +79,7 @@ enum PrivateTestHelperIsolation {
             // In particular, a head graph says nothing about removed old effects.
             guard old.count == 1, let prior = old.first,
                   caller.privateTestHelper?.statements?.map(\.signature) == prior.privateTestHelper?.statements?.map(\.signature),
-                  proves(caller, previous: prior, current: current, base: base, graph: graph, index: index, visiting: visiting) else { return false }
+                  proves(caller, previous: prior, current: current, base: base, graph: graph, index: index, traversal: &traversal) else { return false }
         }
         let entries = callers.filter { XcodeFineSelector.isTestEntry($0, in: current) }
         let entrySymbols = entries.reduce(into: Set<String>()) { $0.formUnion(symbols($1, graph: graph, index: index)) }
@@ -71,10 +103,15 @@ enum PrivateTestHelperIsolation {
         var pending = Array(ids), visited = Set<String>()
         while let id = pending.popLast() {
             guard visited.insert(id).inserted, let node = graph.functions[id] else { continue }
-            var unsafeEffects: Set<String> = ["Global state access", "Shared state access", "Raw pointer operation"]
-            if syntax.localAttachmentState == true && ids.contains(id) { unsafeEffects.remove("Shared state access") }
+            // XCTest attachment setters do not require a blanket effect
+            // exemption. Reads of other objects, including assertion
+            // autoclosures in this region, must retain their state checks.
+            let unsafeEffects: Set<String> = ["Global state access", "Shared state access", "Raw pointer operation"]
             if projectModules.contains(node.module) && node.hasProjectRuntimeContext &&
-                !node.uncertainties.isDisjoint(with: unsafeEffects) { return false }
+                !node.uncertainties.isDisjoint(with: unsafeEffects) {
+                if node.uncertainties.contains("Shared state access") { traversal.sharedStateSymbols.insert(id) }
+                return false
+            }
             pending += node.dependencies.filter { graph.functions[$0].map { projectModules.contains($0.module) } ?? false }
         }
         return true
