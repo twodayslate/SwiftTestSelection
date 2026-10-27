@@ -741,3 +741,60 @@ func sdkWrapperImportBoundaryIncludesNegation(imported: String) {
     #expect(snapshot.helperReferences?["query"]?.unsupported == (imported != "import UIKit"))
     #expect((snapshot.helperReferences?["query"]?.untrustedWrapperImports == true) == (imported != "import UIKit"))
 }
+
+@Test func privateAttachmentRejectsImportedSDKName() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("imported-attachment-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let external = """
+    import XCTest
+    @MainActor public var savedFlag = false
+    public struct XCTAttachment {
+        @MainActor public init(screenshot: XCUIScreenshot) { savedFlag = true }
+    }
+    """
+    let path = root.appendingPathComponent("AttachmentSupport.swift")
+    try Data(external.utf8).write(to: path)
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "AttachmentSupport", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", path.path, "-emit-module-path", root.appendingPathComponent("AttachmentSupport.swiftmodule").path], at: root)
+    let before = """
+    import XCTest
+    import AttachmentSupport
+    import struct AttachmentSupport.XCTAttachment
+    @MainActor final class Suite: XCTestCase {
+        func testArm() { capture(XCUIApplication()) }
+        private func capture(_ app: XCUIApplication) { XCTAssertTrue(true) }
+        func testConsume() { XCTAssertTrue(XCUIApplication().exists && savedFlag) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "{ XCTAssertTrue(true) }", with: "{ XCTAssertTrue(true); XCTAssertNotNil(XCTAttachment(screenshot: app.screenshot())) }")
+    let tests = ["UI/Suite/testArm()", "UI/Suite/testConsume()"]
+    var current = try boundaryGraph(["Tests.swift": after], tests: tests, root: root, compilerArguments: ["-I", root.path])
+    current = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(current))
+    let base = ["UI:Tests.swift": SwiftSourceSnapshot.parse(before, path: "Tests.swift", module: "UI")]
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base, mappings: current.mappings), changes: [.init(path: "Tests.swift")], baseRevision: "base")
+    #expect(report.selectedTests == tests.sorted())
+    #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
+    var stale = current
+    var staleBase = base
+    for key in stale.sources.keys {
+        for i in stale.sources[key]!.units.indices {
+            stale.sources[key]!.units[i].privateTestHelper?.proofVersion = 5
+            stale.sources[key]!.units[i].privateTestHelper?.calleeEffectsSupported = true
+        }
+        for i in staleBase[key]!.units.indices {
+            staleBase[key]!.units[i].privateTestHelper?.proofVersion = 5
+            staleBase[key]!.units[i].privateTestHelper?.calleeEffectsSupported = true
+        }
+    }
+    stale = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(stale))
+    let legacy = XcodeHeadOnlySelector.select(current: stale, source: .init(base: staleBase, mappings: current.mappings),
+        changes: [.init(path: "Tests.swift")], baseRevision: "base")
+    #expect(legacy.selectedTests == tests.sorted())
+    #expect(legacy.diagnostics.contains { $0.code == "head_only_helper_proof_version" && $0.message.contains("recapture") })
+}
+
+@Test func untrustedReexportsInvalidatePrivateSDKNames() {
+    let snapshot = SwiftSourceSnapshot.parse("@_exported import AttachmentSupport", path: "Exports.swift", module: "UI")
+    #expect(snapshot.helperNamesUnshadowed == false)
+}

@@ -10,7 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    static let currentProofVersion = 5
+    // Version 6 rejects unknown imports before trusting SDK-named effects.
+    static let currentProofVersion = 6
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -97,7 +98,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         return parent
     }
 
-    static func prove(_ function: FunctionDeclSyntax, references: [TokenSyntax],
+    static func prove(_ function: FunctionDeclSyntax, importsSupported: Bool, references: [TokenSyntax],
                       locations: SourceLocationConverter) -> Self? {
         guard function.modifiers.map(\.name.text) == ["private"],
               function.attributes.allSatisfy({ $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor" }),
@@ -146,7 +147,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         }
         guard !callers.isEmpty else { return nil }
         var effectCallees: [String: Int] = [:]
-        let effects = safeCalleeEffects(function, in: type, locations: locations, proven: &effectCallees)
+        let effects = importsSupported ? safeCalleeEffects(function, in: type, locations: locations, proven: &effectCallees) : nil
         return Self(name: name, callerLines: callers, proofVersion: currentProofVersion, statements: statements(in: function),
                     localAttachmentState: attachmentState || (effects ?? false), calleeEffectsSupported: effects != nil, effectCalleeLines: effects == nil ? nil : effectCallees)
     }

@@ -90,6 +90,11 @@ enum PrivateTestHelperIsolation {
                   guard let roots = graph.tests[test], !roots.isEmpty, graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
                   return roots.allSatisfy { graph.functions[$0] != nil }
               }) else { return nil }
+        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules),
+              (Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)).allSatisfy({ $0.helperNamesUnshadowed == true }) else {
+            traversal.hasUnprovenCalleeEffects = true
+            return nil
+        }
         guard contextAllows(unit, name: syntax.name, existed: previous != nil, current: current, base: base) else { return nil }
         let module = String(unit.key.prefix { $0 != ":" })
         let headUnits = current.sources.values.flatMap(\.units), baseUnits = base.values.flatMap(\.units)

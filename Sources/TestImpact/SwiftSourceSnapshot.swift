@@ -103,10 +103,11 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         }
         result.attachmentAddUnshadowed = !(identifiers["add"] ?? []).contains(where: PrivateTestHelperSyntax.shadowsAttachmentAdd)
         let callerImportsSupported = SDKTestHelperSyntax.callerImportsSupported(tree)
-        result.helperReferences = identifiers.mapValues { SDKTestHelperSyntax.references($0, locations: locations, callerImportsSupported: callerImportsSupported) }
+        let referenceAnalysis = SDKHelperReferenceAnalysis(identifiers: identifiers, locations: locations, callerImportsSupported: callerImportsSupported)
+        result.helperReferences = identifiers.mapValues { referenceAnalysis.references($0) }
         for tokens in identifiers.values {
             for signature in Set(tokens.compactMap(SDKTestHelperSyntax.referenceKey)) {
-                result.helperReferences![signature] = SDKTestHelperSyntax.references(tokens, locations: locations, callerImportsSupported: callerImportsSupported, matching: signature)
+                result.helperReferences![signature] = referenceAnalysis.references(tokens, matching: signature)
             }
         }
         result.sdkHelperNamesUnshadowed = SDKTestHelperSyntax.names.allSatisfy { name in
@@ -299,7 +300,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 locationDefaultNames: defaultNames, invocationNames: calls.names,
                 callerLocations: calls.locations,
                 privateTestHelper: node.as(FunctionDeclSyntax.self).flatMap {
-                    PrivateTestHelperSyntax.prove($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [], locations: locations)
+                    PrivateTestHelperSyntax.prove($0, importsSupported: callerImportsSupported, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [], locations: locations)
                 }, independentAddedTestEntry: node.as(FunctionDeclSyntax.self).flatMap {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
                 }, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
@@ -354,6 +355,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 if imported.attributes.contains(where: { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "_exported" }),
                    !SDKTestHelperSyntax.trustedModules.contains(imported.path.trimmedDescription) {
                     result.sdkHelperNamesUnshadowed = false
+                    result.helperNamesUnshadowed = false
                 }
                 add(node, header: node, kind: "import", scope: scope)
             } else if node.is(DeclSyntax.self) && !node.is(IfConfigDeclSyntax.self) {

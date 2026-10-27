@@ -1077,7 +1077,12 @@ NSPredicate construction, and direct calls to private helpers. Local screenshot
 attachments may be created with `XCTAttachment(screenshot:)`, assigned a `name`
 and `lifetime`, and submitted with XCTest's `add`. The proof tracks fresh local
 attachments and rejects shadowed attachment APIs; it does not exempt other shared
-state. Helpers cannot capture `self` or free project variables, take
+state. Private helper files must use plain imports from `XCTest`, `Foundation`,
+`Swift`, or `UIKit` before SDK-named effects are trusted. Unknown, attributed,
+or declaration-scoped imports retain `head_only_helper_callee_effects` fallback;
+an external type named `XCTAttachment` cannot acquire XCTest's effect contract.
+Untrusted re-exports and project modules shadowing these SDKs also prevent
+isolation. Helpers cannot capture `self` or free project variables, take
 inout/function-valued/default arguments, or contain closures or macros. Known
 global/shared-state and raw-pointer effects in project callees also
 prevent isolation. Attachment handling never waives compiler-observed state
@@ -1163,7 +1168,9 @@ remain conservative. Concrete project types cannot be ancestors of the trusted S
 classes; their same-named members and free functions do not replace SDK member
 calls. The compiler effect walk also rejects project callees outside the checked
 helper and its callbacks. Private proof
-version 5 and SDK proof version 5 reject older saved evidence. SDK version 5 requires
+version 6 and SDK proof version 5 reject older saved evidence. Private version 6
+adds import validation for SDK-named effects; version-5 private proofs require
+regeneration. SDK version 5 requires
 assertion names to be free of lexical shadowing, including parameter, generic,
 and closure bindings, and verifies caller imports before trusting assertion or
 negation wrappers. SDK version 3 and 4 captures fall back with a recapture diagnostic;
@@ -1172,6 +1179,10 @@ to restore precision without another baseline build. Caller
 proofs for both private and SDK helpers use a memoized work queue rather than
 recursive stack frames. The private callee-effect analysis also uses an iterative
 work queue with cycle detection and shared-callee reuse.
+Local-function source analysis uses the file's identifier index, caches reference
+classifications and caller resolutions, and traverses local relationships
+iteratively. Name and signature lookups share that work; cycles, escapes, and
+ambiguous local declarations still retain fallback.
 
 Dependency explanations identify the verified private-helper proof. No baseline
 build, additional SIL extraction, or user-maintained helper mapping is required.

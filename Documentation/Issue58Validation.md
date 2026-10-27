@@ -213,3 +213,37 @@ encoding took 8.29 and 8.22 seconds; scoped analysis took 11.34 and 12.17 second
 Both resulting reports pass `verify-build` against retained products. The original
 completed bundles were unchanged, with no additional application build, compiler
 extraction, or application test execution.
+
+
+Private proof version 6 also validates imports before trusting SDK-named effects.
+A scoped import of an external `XCTAttachment` can no longer hide an initializer
+that writes shared state: the compiled regression selects both the helper caller
+and the state consumer with an explicit callee-effect diagnostic. Unknown imports,
+untrusted re-exports, and project SDK module shadows prevent isolation. Version-5
+private captures with restored permissive flags fail with a recapture diagnostic.
+
+Local-function reference proofs now share one file-local analysis. Identifier
+lookups replace enclosing-token rescans, classifications and caller resolutions
+are cached, and an iterative traversal rejects cycles and escapes. Declaration
+identity distinguishes shadowed locals even when declarations share a line.
+Regressions cover deep chains, shared callees, nested scopes, cycles, stored
+references, attributed locals, untrusted imports, and bounded evaluation counts.
+
+The same synthetic local-call-chain fixture improved as follows in Xcode 27
+release builds (source parsing only, excluding compilation):
+
+| Local functions | Source bytes | Before | After |
+| --- | ---: | ---: | ---: |
+| 40 | 1,513 | 0.1261 s | 0.0017 s |
+| 100 | 3,733 | 1.8909 s | 0.0041 s |
+| 200 | 7,633 | 16.1291 s | 0.0080 s |
+
+The 200-function case takes 0.1394 seconds in Xcode 26.6 debug. These are local
+microbenchmarks, not predictions of whole-project graph-generation speed.
+All 276 package tests pass in Xcode 26.6 debug and Xcode 27.0 release builds.
+After refreshing source proofs from retained exports and checking unchanged
+keys/fingerprints, the release replays preserve the 12-test #55 and 125-test #58
+sets with zero diagnostics. Refresh and encoding took 8.24 and 8.26 seconds;
+selection took 11.20 and 12.04 seconds. Both reports pass `verify-build` against
+retained products. No original completed bundles were modified, and no application
+build, compiler extraction, or application test bodies were executed.

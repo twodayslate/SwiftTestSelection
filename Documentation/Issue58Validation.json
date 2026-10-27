@@ -180,5 +180,59 @@
         "retainedVerification": true
       }
     ]
+  },
+  "privateImportsAndLocalReferencesReview": {
+    "privateHelperProofVersion": 6,
+    "sdkHelperProofVersion": 5,
+    "packageTests": 276,
+    "toolchains": [
+      "Xcode 26.6 debug",
+      "Xcode 27.0 release"
+    ],
+    "localReferenceBenchmark": [
+      {
+        "functions": 40,
+        "sourceBytes": 1513,
+        "beforeReleaseSeconds": 0.1260850429534912,
+        "afterReleaseSeconds": 0.0017410516738891602,
+        "afterDebugSeconds": 0.02868497371673584
+      },
+      {
+        "functions": 100,
+        "sourceBytes": 3733,
+        "beforeReleaseSeconds": 1.8908610343933105,
+        "afterReleaseSeconds": 0.004104971885681152,
+        "afterDebugSeconds": 0.0698469877243042
+      },
+      {
+        "functions": 200,
+        "sourceBytes": 7633,
+        "beforeReleaseSeconds": 16.129142999649048,
+        "afterReleaseSeconds": 0.008023977279663086,
+        "afterDebugSeconds": 0.13935506343841553
+      }
+    ],
+    "replays": [
+      {
+        "issue": 55,
+        "selectedTests": 12,
+        "diagnostics": [],
+        "proofRefreshAndEncodingSeconds": 8.243751049041748,
+        "selectionSeconds": 11.198146939277649,
+        "retainedVerification": true
+      },
+      {
+        "issue": 58,
+        "selectedTests": 125,
+        "diagnostics": [],
+        "proofRefreshAndEncodingSeconds": 8.256766080856323,
+        "selectionSeconds": 12.035117030143738,
+        "retainedVerification": true
+      }
+    ],
+    "sourceProofRefresh": "Retained source exports; unchanged keys/fingerprints; original compiler and product evidence reused in separate graph files.",
+    "applicationBuild": false,
+    "compilerExtraction": false,
+    "applicationTestExecution": false
   }
 }
