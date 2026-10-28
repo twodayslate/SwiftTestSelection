@@ -83,8 +83,11 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     public var identifierNames: Set<String>? = nil
     public var helperSafeClasses: [String: String]? = nil
     public var helperNamesUnshadowed: Bool? = nil
+    /// Source inventories cannot rule out declarations synthesized by macros.
+    /// Nil is legacy evidence; false also covers unsupported attributes.
+    public var helperDeclarationsComplete: Bool? = nil
     /// Complete operator declaration inventory, including conditional/nested
-    /// implementations and precedence declarations. Nil is legacy evidence.
+    /// implementations and precedence declarations. Nil is incomplete evidence.
     public var helperOperatorDeclarations: Set<String>? = nil
     public var attachmentAddUnshadowed: Bool? = nil
     public var helperReferences: [String: SDKTestHelperSyntax.References]? = nil
@@ -131,15 +134,38 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         result.helperNamesUnshadowed = PrivateTestHelperSyntax.reservedNames.allSatisfy { name in
             !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
         }
-        result.helperOperatorDeclarations = Set(tree.tokens(viewMode: .sourceAccurate).compactMap { token in
+        // Inspect the entire syntax tree, including inactive branches and
+        // attributes on declarations other than the changed helper. Without
+        // expansion evidence, unknown attributes may be member/peer/extension
+        // macros and unknown #expressions may be declaration expansions.
+        let unsupportedCallerImports = SDKTestHelperSyntax.unsupportedCallerImports(tree)
+        let callerImportsSupported = unsupportedCallerImports.isEmpty
+        let knownAttributes: Set<String> = ["available", "objc", "objcMembers", "nonobjc",
+            "preconcurrency", "inlinable", "usableFromInline", "discardableResult", "testable", "_exported",
+            "Sendable", "escaping", "autoclosure", "convention"]
+        let compilerLiterals: Set<String> = ["file", "fileID", "filePath", "line", "column", "function", "dsohandle"]
+        result.helperDeclarationsComplete = !tree.hasError && !tree.tokens(viewMode: .sourceAccurate).contains { token in
+            if token.parent?.is(MacroDeclSyntax.self) == true || token.parent?.is(MacroExpansionDeclSyntax.self) == true { return true }
+            if let macro = token.parent?.as(MacroExpansionExprSyntax.self) {
+                return !compilerLiterals.contains(macro.macroName.text) || macro.leftParen != nil || macro.genericArgumentClause != nil ||
+                    macro.trailingClosure != nil || !macro.additionalTrailingClosures.isEmpty
+            }
+            if let attribute = token.parent?.as(AttributeSyntax.self), token.id == attribute.atSign.id {
+                let name = attribute.attributeName.trimmedDescription
+                // MainActor is a library declaration, unlike compiler
+                // attributes. An untrusted import may supply a namesake macro.
+                if name == "MainActor" || name == "Swift.MainActor" { return !callerImportsSupported }
+                return !knownAttributes.contains(name)
+            }
+            return false
+        }
+        result.helperOperatorDeclarations = result.helperDeclarationsComplete == true ? Set(tree.tokens(viewMode: .sourceAccurate).compactMap { token in
             if let function = token.parent?.as(FunctionDeclSyntax.self), function.name.id == token.id,
                token.identifier == nil { return token.text }
             if let declaration = token.parent?.as(OperatorDeclSyntax.self), declaration.name.id == token.id { return token.text }
             return nil
-        })
+        }) : nil
         result.attachmentAddUnshadowed = !(identifiers["add"] ?? []).contains(where: PrivateTestHelperSyntax.shadowsAttachmentAdd)
-        let unsupportedCallerImports = SDKTestHelperSyntax.unsupportedCallerImports(tree)
-        let callerImportsSupported = unsupportedCallerImports.isEmpty
         let physicalLocations = !tree.tokens(viewMode: .sourceAccurate).contains { $0.tokenKind == .poundSourceLocation }
         result.receiverPhysicalLocations = physicalLocations
         let referenceAnalysis = SDKHelperReferenceAnalysis(identifiers: identifiers, locations: locations, callerImportsSupported: callerImportsSupported)

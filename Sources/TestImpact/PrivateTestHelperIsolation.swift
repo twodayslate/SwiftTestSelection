@@ -115,14 +115,20 @@ enum PrivateTestHelperIsolation {
             return nil
         }
         let usedOperators = operators.union(previous?.privateTestHelper?.effectOperators ?? [])
+        var operatorBindingsSupported = true
         if !usedOperators.isEmpty {
             let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
                 base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(unownedBase.values)
             for source in sources {
                 guard source.diagnostics.isEmpty, let declarations = source.helperOperatorDeclarations else {
                     traversal.hasUnprovenCalleeEffects = true
-                    traversal.receiverOriginBlocker = "Missing source operator declaration evidence; refresh source proofs"
-                    return nil
+                    traversal.receiverOriginBlocker = source.helperDeclarationsComplete == false
+                        ? "Incomplete source operator declarations from macros or unsupported attributes"
+                        : "Missing source operator declaration evidence; refresh source proofs"
+                    // Keep inspecting compiled effects for a more specific
+                    // blocker, but never grant isolation with this inventory.
+                    operatorBindingsSupported = false
+                    continue
                 }
                 let rebound = declarations.intersection(usedOperators)
                 if !rebound.isEmpty {
@@ -205,7 +211,17 @@ enum PrivateTestHelperIsolation {
         }
         let historicalMembers = previous?.privateTestHelper?.sdkEffectMembers ?? []
         let sdkBindings = sdkMembers.union(historicalMembers)
-        var sdkBindingsSupported = true
+        // A macro in another source can synthesize globals, SDK members or
+        // XCTest callbacks without spelling their names in the source. Audit
+        // every source used by those binding checks, including base-only files.
+        // Continue the compiler effect walk to retain more specific diagnostics.
+        let declarationsComplete = (Array(current.sources.values) + Array(base.values) + Array(unownedBase.values))
+            .allSatisfy { $0.helperDeclarationsComplete == true }
+        if !declarationsComplete {
+            traversal.hasUnprovenCalleeEffects = true
+            traversal.receiverOriginBlocker = "Incomplete helper declaration inventories (macros, unsupported attributes or legacy evidence); refresh source proofs"
+        }
+        var sdkBindingsSupported = declarationsComplete && operatorBindingsSupported
         if !sdkBindings.isEmpty {
             // Preserving the old statements does not preserve their bindings:
             // a removed project initializer/member may now resolve to the SDK.
@@ -220,7 +236,7 @@ enum PrivateTestHelperIsolation {
             let bindingBlocker = SDKTestHelperIsolation.memberBindingBlocker(revisions: revisions,
                 members: sdkBindings, sdkOwners: owners, provenHelpers: traversal.sdkEffectDeclarations[module] ?? [])
             if let bindingBlocker { traversal.receiverOriginBlocker = bindingBlocker }
-            sdkBindingsSupported = SDKTestHelperIsolation.overridesUnshadowed(revisions: revisions,
+            sdkBindingsSupported = sdkBindingsSupported && SDKTestHelperIsolation.overridesUnshadowed(revisions: revisions,
                 members: dynamicMembers, sdkReceivers: owners.subtracting(["NSObject", "NSObjectProtocol"])) &&
                 bindingBlocker == nil
             // Still walk the head's compiler effects so existing shared-state
