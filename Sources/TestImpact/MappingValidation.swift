@@ -64,7 +64,8 @@ extension XcodeTestGraph {
                         : "Symbol pattern did not resolve in this build. Check the mapping and selected build configuration."))
             }
         }
-        if !inline.features.isEmpty, let dependencies {
+        if !inline.features.isEmpty {
+            let dependencies = dependencies ?? DependencyGraph()
             let index = MappingIndex(UIFeatureMappings(features: inline.features), snapshot: self, graph: dependencies, index: DependencyIndex(dependencies))
             for feature in inline.features {
                 for entry in index.unresolvedEntries[feature.name] ?? [] where entry.hasPrefix("sources: ") {

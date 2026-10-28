@@ -190,6 +190,12 @@ struct InlineUIMappings {
         let extensionsByOwner = Dictionary(grouping: declarations.filter { $0.kind == "extension" }, by: { $0.module + "." + $0.scope })
         let aliases = Set(snapshot.sources.values.flatMap { $0.typeAliases ?? [] })
         let classes = Dictionary(grouping: declarations.filter { $0.kind == "class" }, by: { $0.module + "." + $0.scope })
+        let nominalTypes = Set(snapshot.sources.values.flatMap { source in
+            source.units.filter { $0.kind == "type" }.map { String($0.key.prefix { $0 != ":" }) + "." + $0.scope }
+        })
+        func containsAlias(_ name: String) -> Bool {
+            aliases.contains(name) || name.indices.contains { name[$0] == "." && aliases.contains(String(name[..<$0])) }
+        }
         func active(_ declaration: InlineMappingSyntax.Declaration, methodOnly: Bool = false, roots: Set<String>? = nil) -> Bool {
             // #sourceLocation can make a physical-region match misleading.
             guard physical.contains(declaration.module + ":" + declaration.region.path) else { return false }
@@ -220,16 +226,23 @@ struct InlineUIMappings {
                 hierarchy.append(declaration)
                 guard let spelling = declaration.superclass else { break }
                 guard let parent = SwiftSourceSnapshot.nominalTypeName(spelling) else { failed = true; break }
-                if ["XCTestCase", "XCTest.XCTestCase", "NSObject", "Foundation.NSObject"].contains(parent) { break }
                 var scope = (declaration.module + "." + declaration.scope).split(separator: ".").dropLast()
+                let qualifier = parent.firstIndex(of: ".").map { String(parent[..<$0]) }
                 while !scope.isEmpty {
-                    let candidate = scope.joined(separator: ".") + "." + parent
-                    if aliases.contains(candidate) { failed = true; break }
+                    let enclosing = scope.joined(separator: ".")
+                    let candidate = enclosing + "." + parent
+                    if containsAlias(candidate) { failed = true; break }
                     if classes[candidate] != nil { pending = candidate; break }
+                    // A nearer qualifier or inherited enclosing scope can hide
+                    // an outer class. Syntax alone cannot prove that its nested
+                    // members are absent; never borrow an unrelated annotation.
+                    if let qualifier, nominalTypes.contains(enclosing + "." + qualifier) { failed = true; break }
+                    if classes[enclosing]?.contains(where: { $0.superclass != nil }) == true { failed = true; break }
                     scope = scope.dropLast()
                 }
-                if failed || aliases.contains(parent) { failed = true; break }
+                if failed || containsAlias(parent) { failed = true; break }
                 if pending == nil, classes[parent] != nil { pending = parent }
+                if pending == nil, ["XCTestCase", "XCTest.XCTestCase", "NSObject", "Foundation.NSObject"].contains(parent) { break }
                 if pending == nil {
                     let candidates = classes.keys.filter { $0.hasSuffix("." + parent) }
                     if candidates.count == 1 { pending = candidates[0] }

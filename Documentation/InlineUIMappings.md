@@ -54,6 +54,8 @@ test targets; it does not infer Swift Testing or parameterized executable identi
 - Nested classes retain their qualified names. Local declarations inside function
   bodies cannot supply test annotations. Ambiguous ancestry, aliases, missing
   compiler locations, and redirected `#sourceLocation` evidence fail conservatively.
+  This includes inherited nested types that could shadow an outer superclass name:
+  the resolver diagnoses the uncertain ancestry instead of borrowing outer defaults.
 - Inline and file rules form a union. Selecting a test through either rule keeps it
   selected. There are no override, replace, exclusion or implicit policy switches.
 
@@ -89,6 +91,9 @@ selection and conservative fallbacks can independently select the same test.
 Reports include the annotation location and the condition's operand results; ordinary
 boundary explanations include the compiler path. Head-only mode retains the existing
 conservative fallback for conditions because it has no base compiler graph.
+`sourceChanged` resolves against captured source snapshots, including empty and
+imports-only files with no compiled functions. This differs from a `sources`
+dependency boundary, which must have compiled roots to trace impact through callers.
 
 ## Change tracking and saved graphs
 

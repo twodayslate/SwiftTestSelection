@@ -112,7 +112,7 @@ enum XcodeHeadOnlySelector {
         }
         if !inline.features.isEmpty, let graph = current.dependencies {
             let mi = MappingIndex(UIFeatureMappings(features: inline.features), snapshot: current, graph: graph, index: DependencyIndex(graph))
-            for feature in inline.features {
+            for feature in inline.features where feature.when == nil {
                 for entry in mi.unresolvedEntries[feature.name] ?? [] {
                     fallback("unresolved_mapping_boundary", "\(feature.name): no compiled boundary matches \(entry)", tests: Set(feature.tests ?? []))
                 }

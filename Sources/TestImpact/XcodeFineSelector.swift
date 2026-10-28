@@ -49,7 +49,10 @@ public enum XcodeFineSelector {
         for (snapshot, resolution) in [(Optional(current), Optional(headInline)), (previous, baseInline)] {
             guard let snapshot, let resolution, !resolution.features.isEmpty, let graph = snapshot.dependencies else { continue }
             let mappingIndex = MappingIndex(UIFeatureMappings(features: resolution.features), snapshot: snapshot, graph: graph, index: DependencyIndex(graph))
-            for feature in resolution.features {
+            // Conditions resolve across both revisions below, including removed
+            // and moved operands. Per-side boundary validation would override a
+            // valid false condition with a spurious conservative selection.
+            for feature in resolution.features where feature.when == nil {
                 for entry in mappingIndex.unresolvedEntries[feature.name] ?? [] {
                     fallback("unresolved_mapping_boundary", "\(feature.name): no compiled boundary matches \(entry)", tests: Set(feature.tests ?? []))
                 }
