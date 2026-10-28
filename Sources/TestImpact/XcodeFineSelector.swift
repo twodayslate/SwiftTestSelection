@@ -152,15 +152,18 @@ public enum XcodeFineSelector {
                 }.map(\.key))
                 let result = comparisonContext.evaluate(condition)
                 conditionDecisions.append(.init(feature: feature.name, revision: revision, result: result))
-                let tests = Set(inventory.filter { test in mappings.selectors(for: feature).contains { UIFeatureMappings.selects(test, selector: $0) } })
-                for selector in mappings.selectors(for: feature) where !inventory.contains(where: { UIFeatureMappings.selects($0, selector: selector) }) {
+                // Resolve against the policy's own revision before excluding
+                // deleted tests. A removed suite is not an unresolved selector.
+                let revisionTests = Set(snapshot.tests.filter { test in mappings.selectors(for: feature).contains { UIFeatureMappings.selects(test, selector: $0) } })
+                let tests = revisionTests.intersection(inventory)
+                for selector in mappings.selectors(for: feature) where !snapshot.tests.contains(where: { UIFeatureMappings.selects($0, selector: selector) }) {
                     fallback("unresolved_mapping_selector", "\(revision): feature \(feature.name) has no discovered tests for \(selector)", tests: uiTests)
                 }
                 if result.status == .unresolved {
-                    fallback("unresolved_mapping_condition", "\(revision): \(feature.name): \(result.explanation)", tests: tests.isEmpty ? uiTests : tests)
+                    fallback("unresolved_mapping_condition", "\(revision): \(feature.name): \(result.explanation)", tests: revisionTests.isEmpty ? uiTests : tests)
                 } else if result.status == .matched {
                     include(tests, kind: "explicitCondition", reason: "\(feature.name): \(result.explanation)", revision: revision)
-                    if tests.isEmpty { fallback("unresolved_feature_tests", "\(revision): affected feature \(feature.name) has no test mappings.", tests: uiTests) }
+                    if revisionTests.isEmpty { fallback("unresolved_feature_tests", "\(revision): affected feature \(feature.name) has no test mappings.", tests: uiTests) }
                 }
             }
         }
@@ -277,6 +280,9 @@ public enum XcodeFineSelector {
         if hasSemanticChanges || !changes.isEmpty {
             for message in additionalFallbacks { fallback("base_unavailable", message) }
             if previous?.dependencies == nil { fallback("base_unavailable", "Base compiler graph is unavailable.") }
+            // Conditions can enter this selector without a head compiler graph.
+            // Their UI-only fallback cannot account for missing unit-test edges.
+            if current.dependencies == nil { fallback("head_unavailable", "Head compiler graph is unavailable.") }
             for graph in [current, previous].compactMap({ $0 }) {
                 for message in graph.diagnostics + (graph.dependencies?.diagnostics ?? []) + graph.sources.values.flatMap(\.diagnostics) {
                     fallback("incomplete_graph", message)

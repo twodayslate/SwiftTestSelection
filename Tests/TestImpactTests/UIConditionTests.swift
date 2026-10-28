@@ -333,3 +333,106 @@ private func compareConditions(_ head: XcodeTestGraph, _ base: XcodeTestGraph = 
     try cache.store(downgraded, identity: ["revision": "invalid"])
     #expect(try cache.load(["revision": "invalid"]) == nil)
 }
+
+@Test(arguments: [false, true])
+func uiConditionMissingHeadGraphPreservesFullFallback(conditionOnlyAtBase: Bool) {
+    var base = conditionGraph()
+    let test = "Unit/Suite/testUnit()"
+    base.tests.append(test)
+    base.targets.append(.init(name: "Unit", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: ["Tests/Unit.swift"]))
+    base.modules["Unit"] = "Unit"
+    let source = SwiftSourceSnapshot.parse("import XCTest\nclass Suite: XCTestCase {\nfunc testUnit() {}\n}", path: "Tests/Unit.swift", module: "Unit")
+    base.sources["Unit:Tests/Unit.swift"] = source
+    base.dependencies!.functions[test] = .init(id: test, module: "Unit", name: "Suite.testUnit()", regions: [source.units.first { $0.kind == "function" }!.region])
+    base.dependencies!.tests[test] = [test]
+    var head = base
+    head.sources["App:App/State.swift"] = SwiftSourceSnapshot.parse("let state = 42", path: "App/State.swift", module: "App")
+    head.targets[0].sourceFiles.insert("App/State.swift")
+    head.dependencies = nil
+    if conditionOnlyAtBase { head.mappings!.features = [] }
+    let report = XcodeSelector.select(current: head, previous: base, changes: [.init(path: "App/State.swift")], baseRevision: "base")
+    #expect(Set(report.selectedTests) == Set(head.tests))
+    #expect(report.diagnostics.contains { $0.code == "head_unavailable" && Set($0.tests) == Set(head.tests) })
+    #expect(report.fullRunReasons.contains("Head compiler graph is unavailable."))
+    #expect(report.uiConditionDecisions?.allSatisfy { $0.result.status == .unresolved } == true)
+}
+
+@Test(arguments: [UIConditionResult.Status.notMatched, .matched, .unresolved])
+func uiConditionRemovedSuiteDoesNotBroadenSurvivingTests(status: UIConditionResult.Status) {
+    let condition: UIFeatureMappings.Condition
+    switch status {
+    case .notMatched: condition = aAndB
+    case .matched: condition = .symbolChanged("UI.Suite.testFlow()")
+    case .unresolved: condition = .symbolChanged("App.missing()")
+    }
+    var base = conditionGraph(condition: condition)
+    let other = "UI/Other/testOther()"
+    base.tests.append(other)
+    base.dependencies!.tests[other] = [other]
+    base.dependencies!.functions[other] = .init(id: other, module: "UI", name: "Other.testOther()")
+    var head = base
+    head.tests = [other]
+    head.mappings!.features = []
+    head.sources["Tests/UI.swift"] = SwiftSourceSnapshot.parse("import XCTest\nclass Suite: XCTestCase {\n}\n", path: "Tests/UI.swift", module: "UI")
+    head.dependencies!.tests.removeValue(forKey: conditionTest)
+    head.dependencies!.functions.removeValue(forKey: "UI.Suite.testFlow()")
+    let report = XcodeSelector.select(current: head, previous: base, changes: [.init(path: "Tests/UI.swift")], baseRevision: "base")
+    #expect(report.selectedTests.isEmpty)
+    #expect(report.uiConditionDecisions?.first?.result.status == status)
+    #expect(!report.diagnostics.contains { $0.code == "unresolved_mapping_selector" || $0.code == "unresolved_feature_tests" })
+
+    // A genuinely stale head selector must still broaden selection.
+    head.mappings = base.mappings
+    let stale = XcodeSelector.select(current: head, previous: base, changes: [.init(path: "Tests/UI.swift")], baseRevision: "base")
+    #expect(stale.selectedTests == [other])
+    #expect(stale.diagnostics.contains { $0.code == "unresolved_mapping_selector" && $0.message.hasPrefix("head:") })
+}
+
+private func capturedConditionGraph(_ graph: XcodeTestGraph) -> XcodeTestGraph {
+    var result = graph
+    result.sources = Dictionary(uniqueKeysWithValues: graph.sources.map { path, source in
+        let owner = graph.targets.first { $0.sourceFiles.contains(path) }!
+        return (graph.modules[owner.name]! + ":" + path, source)
+    })
+    return result
+}
+
+@Test(arguments: ["App/A.swift", "App/*.swift", "App/**"])
+func uiConditionSourcePathsResolveCapturedAndSavedSnapshotKeys(pattern: String) throws {
+    let condition = UIFeatureMappings.Condition.sourceChanged(pattern)
+    let base = capturedConditionGraph(conditionGraph(condition: condition))
+    for value in [1, 2] {
+        let fresh = capturedConditionGraph(conditionGraph(a: value, condition: condition))
+        for head in [fresh, try GraphArchive.decode(GraphArchive.encode(fresh))] {
+            let report = compareConditions(head, base)
+            #expect(report.uiConditionDecisions?.allSatisfy { $0.result.status == (value == 1 ? .notMatched : .matched) } == true)
+            #expect(report.selectedTests == (value == 1 ? [] : [conditionTest]))
+            #expect(report.diagnostics.isEmpty)
+        }
+    }
+}
+
+@Test func uiConditionSourcePathsResolveEmptyCapturedFiles() {
+    let path = "App/Empty.swift"
+    var graph = capturedConditionGraph(conditionGraph(condition: .sourceChanged(path)))
+    graph.targets[0].sourceFiles.insert(path)
+    graph.sources["App:" + path] = SwiftSourceSnapshot.parse("// Only documentation", path: path, module: "App")
+    let report = XcodeSelector.select(current: graph, previous: graph, changes: [], baseRevision: "base")
+    #expect(report.uiConditionDecisions?.allSatisfy { $0.result.status == .notMatched } == true)
+    #expect(report.selectedTests.isEmpty)
+    #expect(report.diagnostics.isEmpty)
+}
+
+@Test func uiConditionSharedSourceNeedsEvidenceFromEveryOwningModule() {
+    let path = "App/A.swift"
+    var graph = capturedConditionGraph(conditionGraph(condition: .sourceChanged(path)))
+    graph.targets.append(.init(name: "Other", productType: "com.apple.product-type.framework", sourceFiles: [path]))
+    graph.modules["Other"] = "Other"
+    graph.sources["Other:" + path] = SwiftSourceSnapshot.parse("func a() -> Int { 1 }", path: path, module: "Other")
+    let complete = XcodeSelector.select(current: graph, previous: graph, changes: [], baseRevision: "base")
+    #expect(complete.uiConditionDecisions?.allSatisfy { $0.result.status == .notMatched } == true)
+    graph.sources.removeValue(forKey: "Other:" + path)
+    let incomplete = XcodeSelector.select(current: graph, previous: graph, changes: [], baseRevision: "base")
+    #expect(incomplete.uiConditionDecisions?.allSatisfy { $0.result.status == .unresolved } == true)
+    #expect(incomplete.selectedTests == [conditionTest])
+}

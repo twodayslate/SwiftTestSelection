@@ -116,11 +116,28 @@ struct UIConditionContext {
         var changed: [SourceUnit]
         var unitsByFile: [String: [SourceUnit]]
         var changedKeys: Set<String>
+        var sourcePaths: Set<String>
 
         init(revision: String, snapshot: XcodeTestGraph, changed: [SourceUnit]) {
             self.revision = revision; self.snapshot = snapshot; self.changed = changed
             unitsByFile = Dictionary(grouping: snapshot.sources.values.flatMap(\.units), by: { $0.region.path })
             changedKeys = Set(changed.map { $0.key + "@" + $0.region.path })
+            // Captures key snapshots by module:path; legacy callers may use
+            // bare paths. Include empty files, which have no source units.
+            let modules = Set(snapshot.modules.values)
+            sourcePaths = Set(snapshot.sources.keys.map { key in
+                guard let separator = key.firstIndex(of: ":"), modules.contains(String(key[..<separator])) else { return key }
+                return String(key[key.index(after: separator)...])
+            }).union(unitsByFile.keys)
+        }
+
+        func hasSourceSnapshot(path: String, module: String?) -> Bool {
+            if let module, snapshot.sources[module + ":" + path] != nil { return true }
+            guard let legacy = snapshot.sources[path] else { return false }
+            // A shared file captured for one module cannot prove that another
+            // owning module's source evidence is present.
+            guard let module, !legacy.units.isEmpty else { return true }
+            return legacy.units.contains { $0.key.hasPrefix(module + ":") && $0.region.path == path }
         }
     }
     var sides: [Side]
@@ -149,9 +166,13 @@ struct UIConditionContext {
                 }
                 switch condition {
                 case .sourceChanged:
-                    resolved = resolved || side.snapshot.sources.keys.contains { UIFeatureMappings.matches($0, pattern: pattern) }
-                    let ownedPaths = Set(side.snapshot.targets.flatMap(\.sourceFiles))
-                    if ownedPaths.contains(where: { UIFeatureMappings.matches($0, pattern: pattern) && side.snapshot.sources[$0] == nil }) {
+                    resolved = resolved || side.sourcePaths.contains { UIFeatureMappings.matches($0, pattern: pattern) }
+                    if side.snapshot.targets.contains(where: { target in
+                        target.sourceFiles.contains { path in
+                            UIFeatureMappings.matches(path, pattern: pattern) &&
+                                !side.hasSourceSnapshot(path: path, module: side.snapshot.modules[target.name])
+                        }
+                    }) {
                         reason = "Missing source snapshot for a matching path in \(side.revision)"
                     }
                     if side.snapshot.unsupportedSourceInputs?.values.flatMap({ $0 }).contains(where: { UIFeatureMappings.matches($0, pattern: pattern) }) == true {
