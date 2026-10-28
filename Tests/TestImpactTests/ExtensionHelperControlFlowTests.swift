@@ -127,3 +127,69 @@ func compiledExtensionScrollingHelperRequiresCompleteEffects(kind: String) throw
     #expect(ExternalHelperEffects.trustedDeclarations(foreign).isEmpty)
     #expect(ExternalHelperEffects.trustedDeclarations(foreign, receiverOrigins: true).isEmpty)
 }
+
+@Test(arguments: ["max", "CGRect", "CGVector"])
+func compiledScrollingGlobalsRequireBothRevisionBindings(name: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("extension-global-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let expression: String
+    let declaration: String
+    switch name {
+    case "CGRect":
+        expression = "CGRect(x: 0, y: 0, width: 1, height: 1)"
+        declaration = "func CGRect(x: Double, y: Double, width: Double, height: Double) -> CoreGraphics.CGRect"
+    case "CGVector":
+        expression = "CGVector(dx: 1, dy: 1)"
+        declaration = "func CGVector(dx: Double, dy: Double) -> CoreGraphics.CGVector"
+    default:
+        expression = "max(1, 2)"
+        declaration = "func max(_ lhs: Int, _ rhs: Int) -> Int"
+    }
+    let before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testConsumer() { candidate() }
+        private func candidate() {
+            let value = \(expression)
+            XCTAssertTrue(true)
+        }
+    }
+    @MainActor final class Other: XCTestCase {
+        func testReader() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "shared")) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "XCTAssertTrue(true)", with: "XCTAssertTrue(true); XCTAssertFalse(false)")
+    let extra = """
+    import XCTest
+    import CoreGraphics
+    \(declaration) {
+        UserDefaults.standard.set(true, forKey: "shared")
+        return \(name == "max" ? "Swift.max(lhs, rhs)" : "CoreGraphics." + expression)
+    }
+    """
+    let tests = ["UI/Suite/testConsumer()", "UI/Other/testReader()"]
+    let old = try boundaryGraph(["UI.swift": before, "Extra.swift": extra], tests: tests, root: root)
+    let current = try boundaryGraph(["UI.swift": after], tests: tests, root: root)
+    // Confirm the old compiled helper really reaches the project overload;
+    // preserving source statements cannot preserve this removed binding.
+    let oldGraph = try #require(old.dependencies)
+    let projectOverloads = Set(oldGraph.functions.filter { $0.value.regions.contains { $0.path == "Extra.swift" } }.keys)
+    #expect(DependencyIndex(oldGraph).paths(to: projectOverloads).path(from: oldGraph.tests[tests[0]] ?? []) != nil)
+    for unowned in [false, true] {
+        var source = XcodeHeadOnlySources(base: old.sources, mappings: current.mappings)
+        if unowned {
+            source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift")
+        }
+        let report = XcodeHeadOnlySelector.select(current: current, source: source,
+            changes: [.init(path: "UI.swift")], baseRevision: "base")
+        #expect(report.selectedTests == tests.sorted(), "\(name), unowned=\(unowned): \(report.diagnostics)")
+        #expect(!report.diagnostics.isEmpty)
+    }
+    let changed = try boundaryGraph(["UI.swift": after, "Extra.swift": extra], tests: tests, root: root)
+    let report = XcodeHeadOnlySelector.select(current: changed,
+        source: .init(base: ["UI:UI.swift": .parse(before, path: "UI.swift", module: "UI")], mappings: current.mappings),
+        changes: [.init(path: "UI.swift")], baseRevision: "base")
+    #expect(report.selectedTests == tests.sorted())
+    #expect(!report.diagnostics.isEmpty)
+}

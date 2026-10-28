@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 11 checks nested immutable locals in lexical control-flow scopes.
-    static let currentProofVersion = 11
+    // Version 12 audits every allowed global binding at both revisions.
+    static let currentProofVersion = 12
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -65,9 +65,11 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         }
     }
 
-    static let reservedNames: Set<String> = ["XCTestCase", "String", "Bool", "Int", "Double", "XCUIApplication", "XCUIElement", "NSPredicate", "XCTAttachment",
-        "XCTAssert", "XCTAssertTrue", "XCTAssertFalse", "XCTAssertEqual", "XCTAssertNotEqual", "XCTAssertNil", "XCTAssertNotNil",
-        "XCTAssertGreaterThan", "XCTAssertGreaterThanOrEqual", "XCTAssertLessThan", "XCTAssertLessThanOrEqual", "XCTFail"]
+    private static let allowedGlobals = assertions.union(["NSPredicate", "XCUIElement", "XCTAttachment", "CGRect", "CGVector", "max"])
+    // Every accepted bare global must participate in the whole-source binding
+    // audit, including deleted/unowned base files. A head SDK binding cannot
+    // prove the effects of a project declaration that disappeared at head.
+    static let reservedNames = allowedGlobals.union(["XCTestCase", "String", "Bool", "Int", "Double", "XCUIApplication"])
 
     static func shadowsReservedName(_ token: TokenSyntax) -> Bool {
         guard let parent = token.parent else { return false }
@@ -347,7 +349,6 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             locals.insert(name)
         }
         let helpers = Set(methods.filter { $0.modifiers.map(\.name.text) == ["private"] }.map { $0.name.text })
-        let allowedGlobals = assertions.union(["NSPredicate", "XCUIElement", "XCTAttachment", "CGRect", "CGVector", "max"])
         var attachments = Set<String>(), writesAttachment = false
         func references(_ node: Syntax) -> Bool {
             if let block = node.as(CodeBlockSyntax.self) {
