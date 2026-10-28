@@ -134,7 +134,7 @@ private func propose(_ graph: XcodeTestGraph, _ sessions: [UICoverageArtifact.Se
         .init(name: "manual-condition", tests: ["UI/Sharing"], when: condition)
     ], runtimeDependencyPolicy: .declared)
     let captured = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(graph))
-    #expect(captured.schemaVersion == 3)
+    #expect(captured.schemaVersion == 4)
     let plan = try UICoverageMappings.plan(graph: captured, suites: ["UI/Sharing"], appTargets: ["App"])
     #expect(plan.executions.count == 1)
     let result = try propose(captured, [session(captured)])
@@ -150,6 +150,21 @@ private func propose(_ graph: XcodeTestGraph, _ sessions: [UICoverageArtifact.Se
 
     var downgraded = captured; downgraded.schemaVersion = 2
     #expect(throws: ImpactError.self) { try UICoverageMappings.identity(for: downgraded) }
+}
+
+@Test func coverageProposalCanProduceInlineMappings() throws {
+    let graph = try GraphArchive.decode(GraphArchive.encode(coverageGraph()))
+    let coverage = try propose(graph, [session(graph), session(graph, test: notes, path: "Notes")])
+    let source = "class Sharing: XCTestCase { func testScreen() {} }"
+    let proposal = try InlineMappingAuthoring.proposeCoverage(source: source, path: "UITests.swift", module: "UI",
+        target: "UI", suite: "Sharing", proposalData: JSONEncoder().encode(coverage))
+    #expect(proposal.directive.contains("App/Common.swift"))
+    #expect(proposal.directive.contains("App/Sharing.swift"))
+    #expect(!proposal.directive.contains("App/Notes.swift"))
+    #expect(proposal.proposedSource.hasSuffix(source))
+    let retained = try JSONDecoder().decode(UICoverageProposal.self, from: Data(try #require(proposal.coverageProposal).utf8))
+    #expect(retained.additions.count == coverage.additions.count)
+    #expect(retained.provenance.count == 2)
 }
 
 @Test func coverageValidatesEveryPreservedConditionSymbol() throws {

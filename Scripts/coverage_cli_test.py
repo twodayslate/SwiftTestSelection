@@ -140,6 +140,16 @@ with tempfile.TemporaryDirectory(prefix="coverage-cli-") as directory:
     applied = run("apply", *common)
     assert json.loads(mappings_path.read_text()) == applied["mappings"] == report["mappings"]
     assert not run("import", *common)["additions"]
+    # Current inline-aware captures use schema 4 and the sourceSnapshots key.
+    graph["schemaVersion"] = 4
+    graph["sourceSnapshots"] = graph.pop("sources")
+    graph_path.write_text(json.dumps(graph))
+    plan = run("plan", "--graph", graph_path, "--suite", "UI/Screen", "--app-target", "App")
+    artifact["sessions"][0]["identity"] = plan["identity"]
+    artifact_path.write_text(json.dumps(artifact))
+    mappings_path.write_text(json.dumps(conditional))
+    report = run("import", *common)
+    assert report["validationPassed"] and len(report["additions"]) == 1, report
     conditional["features"][1]["when"]["all"][1]["any"].append({"symbolChanged": "App.missing()"})
     mappings_path.write_text(json.dumps(conditional))
     saved = mappings_path.read_bytes()
