@@ -1,54 +1,57 @@
 {
   "currentValidation": {
-    "status": "conservative-fallback-required",
+    "status": "error-flow-and-conformance-proof-conservative-fallback-required",
     "historical125TestIsolationClaimSuperseded": true,
     "issue58RemainsOpen": true,
     "toolchain": "Xcode 27.0, Swift release build",
-    "packageTestsPassed": 326,
+    "packageTestsPassed": 343,
     "additionalRetainedReplayTestsPassed": 1,
-    "releaseSuiteSeconds": 137.905,
+    "releaseSuiteSeconds": 97.05,
     "captureHelperTestsPassed": 6,
     "releaseDistributionTestsPassed": 5,
     "releaseDistributionTestsSkipped": 1,
     "retainedValidation": {
       "issue55": {
-        "selectedTestCount": 12,
+        "selectedTestCount": 1972,
         "totalTests": 1972,
-        "diagnosticCount": 0,
-        "scopeSeconds": 15.278453946113586,
+        "diagnosticCount": 1901,
+        "scopeSeconds": 18.297080039978027,
         "verifyBuildExitCode": 0,
         "baseRevision": "9b08b4be6acd35338c76e7b29ce0d0df7729aa50",
         "headRevision": "30d8454622ced09ff42f60d6f9196453ad2f6526",
-        "selectedTests": [
-          "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesContent()",
-          "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesLink()",
-          "ChainOfCustodyUITests/NoteLinksUITests/testHolderLinkPreservesLockedContents()",
-          "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerOffersLinkAndContentSharing()",
-          "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerSharesContent()",
-          "ChainOfCustodyUITests/NoteLinksUITests/testMessageCardIsOfferedWhenCompositionIsAvailable()",
-          "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesContent()",
-          "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesLink()",
-          "ChainOfCustodyUITests/NoteLinksUITests/testNoteToolbarSharesLink()",
-          "ChainOfCustodyUITests/NoteLinksUITests/testOutlineCanShareContainerLink()",
-          "ChainOfCustodyUITests/NoteLinksUITests/testUnavailableMessagesStillOffersLinkSharing()",
-          "ChainOfCustodyUITests/NoteLinksUITests/testVeiledNoteLinkHasProtectedPreview()"
+        "matchesPrevious12TestSelection": false,
+        "selection": "complete enumerated inventory",
+        "blockers": [
+          {
+            "code": "head_only_helper_callee_effects",
+            "message": "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NoteLinksUITests.swift:387; Unproven XCTest error formatting from input producer ChainOfCustodyUITests.closure #1 in closure #1 in waitForAllConditions(_:timeout:)",
+            "affectedTestCount": 1972
+          }
         ],
-        "matchesPrevious12TestSelection": true
+        "all12KnownConsumersRetained": true,
+        "previousNarrowResultSuperseded": true
       },
       "issue58": {
         "selectedTestCount": 2000,
         "totalTests": 2000,
         "diagnosticCount": 1929,
-        "scopeSeconds": 15.69939398765564,
+        "scopeSeconds": 19.129534006118774,
         "verifyBuildExitCode": 0,
         "baseRevision": "40c62f971f0aef63c902a14805cf4d821e6784fb",
         "headRevision": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
         "all125KnownConsumersRetained": true,
         "fallbackOnlyNoteLinksExampleRetained": true,
-        "selection": "complete enumerated inventory"
+        "selection": "complete enumerated inventory",
+        "blockers": [
+          {
+            "code": "head_only_sdk_helper_boundary",
+            "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven XCTest error formatting from input producer ChainOfCustodyUITests.closure #1 in closure #1 in waitForAllConditions(_:timeout:) (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
+            "affectedTestCount": 2000
+          }
+        ]
       }
     },
-    "sealedSILModulesReparsedPerFixture": 0,
+    "sealedSILModulesReparsedPerFixture": 1,
     "sourceDeclarationKeysAndFingerprintsUnchanged": true,
     "compilerReferenceEdgesAndDynamicDeclarationsUnchanged": true,
     "newApplicationBuilds": 0,
@@ -57,13 +60,13 @@
     "fullRunEquivalenceValidated": false,
     "blockers": [
       {
-        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Missing or unproven SDK overload identity for objc_method XCUIElementQuery.matching!foreign : (XCUIElementQuery) -> (NSPredicate) -> XCUIElementQuery in ChainOfCustodyUITests.RecurringEventUITests.testCommonOneOffEventCanBeFilteredWithoutRepeat() (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
-        "code": "head_only_sdk_helper_boundary"
+        "code": "head_only_sdk_helper_boundary",
+        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven XCTest error formatting from input producer ChainOfCustodyUITests.closure #1 in closure #1 in waitForAllConditions(_:timeout:) (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
+        "affectedTestCount": 2000
       }
     ],
-    "note": "SDK receiver contracts are explicit and bounded. The final callback validation reused the previously verified compiler evidence and refreshed source proofs without changing declaration keys or fingerprints. Callback checks cover both revisions, including unowned base sources. Missing evidence remains conservative. The reported issue58 blocker is the first missing proof, not an exhaustive list.",
-    "debugSuiteSeconds": 234.341,
-    "moduleFragmentCacheVersion": 11,
+    "note": "XCTest input producers now require captured error-flow evidence, including throw_addr and opaque throwing callback inputs. Operation-specific conformance checks and assertion value-formatting checks remain. Both retained fixtures still conservatively select their full inventories; #58 remains open.",
+    "moduleFragmentCacheVersion": 14,
     "compiledFactoryCases": 76,
     "receiverTypeEvidence": "metatypes, enum constructors, captured value-type declarations, source overload shapes, generic call substitutions, and bridge-capable cast destinations",
     "reusesPreviouslyVerifiedSIL": true,
@@ -74,6 +77,372 @@
       "oldNarrowSelectionExitCode": 0,
       "correctedSelectionExitCode": 1,
       "fullFixtureExitCode": 1
+    },
+    "releaseRunTestsPassed": 344,
+    "queryCallSiteEvidence": "SIL formal signature paired with physical source path, line and UTF-8 column; all uses required; any module source remapping or missing physical-location evidence declines receiver proof",
+    "analysisScope": "Swift source and compiler evidence, including Swift lowered through Objective-C dispatch; handwritten Objective-C implementations are out of scope",
+    "debugFocusedRuns": [
+      {
+        "testsPassed": 6,
+        "seconds": 5.858
+      },
+      {
+        "testsPassed": 2,
+        "seconds": 2.583,
+        "note": "Includes the expanded Swift contract test also exercised in the first focused run."
+      },
+      {
+        "testsPassed": 1,
+        "seconds": 2.281,
+        "compiledCases": 12,
+        "note": "Final expanded Swift SDK contracts on Xcode 26.6."
+      },
+      {
+        "testsPassed": 4,
+        "seconds": 3.057,
+        "compiledCases": 19,
+        "note": "Xcode 26.6 operation-specific witness checks, seven retroactive/builtin cases and twelve SDK contract controls."
+      },
+      {
+        "testsPassed": 5,
+        "seconds": 7.558,
+        "compiledCases": 24,
+        "note": "Initial error-flow regression, archives, fragment merging, and existing SDK contract controls."
+      },
+      {
+        "testsPassed": 3,
+        "seconds": 2.891,
+        "compiledCases": 13,
+        "note": "Final typed-throws/error-formatting cases, throw_addr parser control, and six saved-graph evidence cases."
+      }
+    ],
+    "swiftContractCompiledCases": 12,
+    "booleanStorageSourceCases": 11,
+    "crossFileRemappingCompiledCases": 2,
+    "releaseBuildAndTestProcessMeasurement": {
+      "wallSeconds": 253.36,
+      "maxResidentSetBytes": 2096529408,
+      "note": "time -l around swift test -c release, including compilation and child compiler/tests; not an isolated graph memory benchmark."
+    },
+    "consumerOriginAudit": {
+      "knownConsumerCount": 125,
+      "passedOriginAuditCount": 0,
+      "note": "Exploratory per-consumer origin audit only. It is not the selection result or a full isolation proof. Each blocked consumer reports only its first blocker, which can mask further missing evidence.",
+      "firstBlockers": [
+        {
+          "reason": "Missing error-flow evidence for XCTest input producer $s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF; regenerate the graph from sealed SIL",
+          "testCount": 8,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitExpansionPreservesVisibleRow()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitTimelinePreviewPreservesVisibleRow()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineExpansionPreservesVisibleTime()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineListPreviewPreservesVisibleTime()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesCollapsedUntimedPanel()",
+            "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesAtClampedLateNightDestination()",
+            "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesOnlyWhenAlreadyAtTodayInTimelineAndSplit()",
+            "ChainOfCustodyUITests/CalendarSearchRegressionUITests/testSplitSearchThenDraggingThroughTimelineToListKeepsContentVisible()"
+          ]
+        },
+        {
+          "reason": "Missing error-flow evidence for XCTest input producer $sSS16debugDescriptionSSvg; regenerate the graph from sealed SIL",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testDoneFromNameFieldKeepsBothTextAndName()"
+          ]
+        },
+        {
+          "reason": "Missing error-flow evidence for XCTest input producer $sSo6CGRectV12CoreGraphicsE12intersectionyA2BF; regenerate the graph from sealed SIL",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testFiltersRemainReachableWithAccessibilityTextAndLandscape()"
+          ]
+        },
+        {
+          "reason": "Missing error-flow evidence for XCTest input producer $sSy10FoundationE10components11separatedBySaySSGqd___tSyRd__lF; regenerate the graph from sealed SIL",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testHoldingVideoTemporarilyDoublesPlaybackSpeed()"
+          ]
+        },
+        {
+          "reason": "Missing error-flow evidence for XCTest input producer $sSy10FoundationE20replacingOccurrences2of4with7options5rangeSSqd___qd_0_So22NSStringCompareOptionsVSnySS5IndexVGSgtSyRd__SyRd_0_r0_lF; regenerate the graph from sealed SIL",
+          "testCount": 3,
+          "tests": [
+            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testEmptyTextAndDiscardingChanges()",
+            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelStaysOpenAndSavesFormatting()",
+            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelWithSelectAllStaysOpenAndSavesFormatting()"
+          ]
+        },
+        {
+          "reason": "Receiver type identities are unproven with unsupported source imports: import SnapshotTesting in ChainOfCustodyUITests.CalendarSnapshotUITests.__allocating_init(invocation:)",
+          "testCount": 6,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarSnapshotUITests/testDenseActivityTimeline()",
+            "ChainOfCustodyUITests/CalendarSnapshotUITests/testLandscapeList()",
+            "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitDayTimeline()",
+            "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitDayTimelineAtTopHour()",
+            "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitList()",
+            "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitSearchResults()"
+          ]
+        },
+        {
+          "reason": "Receiver type identities are unproven with unsupported source imports: import SnapshotTesting in ChainOfCustodyUITests.CalendarSnapshotUITests.testLandscapeCalendarSplit()",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarSnapshotUITests/testLandscapeCalendarSplit()"
+          ]
+        },
+        {
+          "reason": "Receiver type identities are unproven with unsupported source imports: import SnapshotTesting in ChainOfCustodyUITests.CalendarSnapshotUITests.testPortraitCalendarSplit()",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitCalendarSplit()"
+          ]
+        },
+        {
+          "reason": "Unproven XCTest error formatting from input producer ChainOfCustodyUITests.CalendarDetentTransitionUITests.assertCollapsedUntimedPanelSurvivesCancellation(in:)",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesUntimedCategoryAndScrollPosition()"
+          ]
+        },
+        {
+          "reason": "Unproven XCTest error formatting from input producer ChainOfCustodyUITests.closure #1 in closure #1 in waitForAllConditions(_:timeout:)",
+          "testCount": 42,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarContentUITests/testEventOnlyCalendarUsesEventPresentationAndCreation()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testAllDayEventSurvivesDraggingThroughBothLayouts()",
+            "ChainOfCustodyUITests/CalendarUntimedHeaderUITests/testDenseUntimedHeaderCapsHeightAndScrollsIndependently()",
+            "ChainOfCustodyUITests/NoteConversionUITests/testCancelStopsWorkAndKeepsSourceBlock()",
+            "ChainOfCustodyUITests/NoteConversionUITests/testExistingLinkConversionValidatesURLAndSavesPlayableVideo()",
+            "ChainOfCustodyUITests/NoteConversionUITests/testFailureKeepsConversionAvailableForRetry()",
+            "ChainOfCustodyUITests/NoteConversionUITests/testSavingContinuesWhenNavigatingAwayAndBack()",
+            "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConversionCountsAsOneBlockAfterReopeningAndReverting()",
+            "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConverterDetailsReversionKeepsRestoredLinkSelected()",
+            "ChainOfCustodyUITests/NoteEromeConversionUITests/testAutomaticallyConvertsEromeAlbumAfterSignIn()",
+            "ChainOfCustodyUITests/NoteEromeConversionUITests/testCancellingEromeSignInKeepsSourceForRetry()",
+            "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumOffersEveryVideoInsteadOfQualityVariants()",
+            "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumWithoutVideoKeepsBrowserAvailableForRetry()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testAutomaticallyUsesAvailableRedditMediaWithoutSignIn()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditExternalFinderPreservesShareURLForRetry()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditSignInKeepsSourceForRetry()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditBrowserOffersMultipleAnimatedVideos()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditEmbeddedPostStaysOnRedditUntilUserChoosesTheVideoSite()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditExternalPostHandsOffToGenericFinderAndSavesChosenVideo()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditPostWithoutMediaKeepsBrowserAvailableForRetry()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testCancellingGenericPickerPreservesSourceAndAllowsRetry()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testDirectVideoLinkConvertsWithoutChoosingFromAWebpage()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversNewShadowPlayersAndSavesTheSelection()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversVideosAfterSignIn()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderPreviewsAndDownloadsSelectedVideo()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderWithoutVideoKeepsPageAndRetryAvailable()",
+            "ChainOfCustodyUITests/NoteXConversionUITests/testAutomaticallyConvertsXPostAfterSignIn()",
+            "ChainOfCustodyUITests/NoteXConversionUITests/testCancellingXSignInKeepsSourceForRetry()",
+            "ChainOfCustodyUITests/NoteXConversionUITests/testXPostOffersAllVideosWhileSkippingPhotoAttachments()",
+            "ChainOfCustodyUITests/NoteXConversionUITests/testXPostWithoutMediaKeepsBrowserAvailableForRetry()",
+            "ChainOfCustodyUITests/PairingNotesEditingUITests/testCreatesTaggedFolderAndShowsItInNotes()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testBlockDetailsActionOpensTheInspector()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testDetailSwipesPreserveCarouselSelection()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testEnteringVideoRestoresChromeAfterHidingImageControls()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testFullScreenPagerAndSafariTabBarStaySynchronized()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testPagingWithVisibleVideoControlsKeepsPagerAndCarouselsAligned()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoControlsToggleTogetherAboveCarousel()",
+            "ChainOfCustodyUITests/ScheduleDraftUITests/testEntryTypeSwitchKeepsDraftUntilDiscardIsConfirmed()",
+            "ChainOfCustodyUITests/ScheduleEditorUITests/testEndOfDayConvertsToOneAllDayAssignmentAtCustomBoundary()",
+            "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testAllDayEditorsKeepTheirDatesAfterPairingTimeZoneChanges()",
+            "ChainOfCustodyUITests/TabBarBadgeUITests/testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently()",
+            "ChainOfCustodyUITests/TabBarBadgeUITests/testNotesBadgeCanBeDisabledAndPreferencesSurviveRelaunch()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual__8accuracy_4file4lineyxyKXK_xyKXKxSSyXKs12StaticStringVSutSFRzlF with substitutions CGFloat",
+          "testCount": 3,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAssignmentTitle()",
+            "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAssignmentTitleFromSearch()",
+            "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllSearchesBothCategoriesAndRestoresTimeline()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Int",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/HolderRequestUITests/testHolderCanEditPauseScheduleAndSeeEvidenceRequirements()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Int; Optional<String>",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/HolderRequestUITests/testNewPauseReusesApprovedSettingsWithoutChangingExistingRequests()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<Int>; XCTWaiter.Result",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/DepotAndDurationUITests/testDepotRecognitionEditorSupportsDirectAmountEntry()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>",
+          "testCount": 16,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarContentUITests/testTodayButtonPutsCurrentDateAtTopOfList()",
+            "ChainOfCustodyUITests/CalendarFilterUITests/testCalendarCanSwitchCalendarAndActivityViews()",
+            "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testCalendarAndNotificationSettingsShareSubgroupPreferences()",
+            "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testCombinedCategoriesAffectCalendarAndSearchAndCanBeCleared()",
+            "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testHiddenCategoriesPersistAndShowAllRestoresCalendar()",
+            "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testSubgroupColorAndNotificationSettingsSaveAndCancel()",
+            "ChainOfCustodyUITests/CalendarPermissionUITests/testHolderCanCreateEventWhenEventsAreFilteredOut()",
+            "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAllDayEventFromSearch()",
+            "ChainOfCustodyUITests/NotificationSettingsUITests/testPermissionAndPreferencesSurviveRelaunch()",
+            "ChainOfCustodyUITests/NotificationSettingsUITests/testQuietHoursControlsAndPairingPreference()",
+            "ChainOfCustodyUITests/RecurringEventUITests/testAssignmentStatusIconsSaveAndCancelIndependently()",
+            "ChainOfCustodyUITests/RecurringEventUITests/testCommonAssignmentReusesAnUndatedOneOffAndSharesItsFilter()",
+            "ChainOfCustodyUITests/RecurringEventUITests/testCommonEventPrefillsRecurringSeries()",
+            "ChainOfCustodyUITests/RecurringEventUITests/testOccurrenceNotesRemainSeparateFromSeriesAndFilterControls()",
+            "ChainOfCustodyUITests/RecurringEventUITests/testPointPresetClearsPreviousAllDaySchedule()",
+            "ChainOfCustodyUITests/SharingPeopleUITests/testRolesLeadSharingDetailsAndOwnerCanChangeRole()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; String",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/HolderRequestUITests/testReleaseOptionsPersistAndEvidenceStartsApprovedRelease()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; XCTWaiter.Result",
+          "testCount": 3,
+          "tests": [
+            "ChainOfCustodyUITests/PairingNoteActivityUITests/testActivityShowsAuthorsSettingChangesAndJumpsToChangedBlock()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testImagePreviewCanZoomPanAndReset()",
+            "ChainOfCustodyUITests/PairingNotesTagManagementUITests/testRenamesTagWhileThumbnailAssetIsUnavailable()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions String; XCTWaiter.Result",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCalendarDetentsRemainInteractive()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions XCTWaiter.Result",
+          "testCount": 23,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarCustomIconUITests/testAssignmentIconPickerCancelAndSave()",
+            "ChainOfCustodyUITests/CalendarCustomIconUITests/testEventCustomSymbolValidationPersistenceAndReset()",
+            "ChainOfCustodyUITests/CalendarCustomIconUITests/testNotificationEventUsesSavedCategoryColor()",
+            "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testActivityReasonSearchRespectsCategorySelection()",
+            "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testCalendarTabReselectionReturnsListToToday()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testAutomaticallyConvertsRedditShareAfterSignIn()",
+            "ChainOfCustodyUITests/PairingNotesNavigationUITests/testNotesSearchFindsTagAssignedOnlyToABlock()",
+            "ChainOfCustodyUITests/RecurringEventUITests/testCommonGroupCanBeRestoredFromItsRecurringSeriesFilter()",
+            "ChainOfCustodyUITests/RecurringEventUITests/testCommonIconEditsFollowExistingOccurrencesUnlessCustomized()",
+            "ChainOfCustodyUITests/ScheduleDraftUITests/testAssignmentCancelKeepsOrDiscardsScheduleChanges()",
+            "ChainOfCustodyUITests/ScheduleDraftUITests/testEventEndOfDayPersistsAndCancelDiscardsChanges()",
+            "ChainOfCustodyUITests/ScheduleDraftUITests/testNewDraftCancellationConfirmsOnlyAfterEditing()",
+            "ChainOfCustodyUITests/ScheduleDraftUITests/testRevertedScheduleChangesCancelWithoutConfirmation()",
+            "ChainOfCustodyUITests/ScheduleDraftUITests/testUnscheduledAssignmentAndInstantEventRemainAvailable()",
+            "ChainOfCustodyUITests/ScheduleEditorUITests/testAllDayCustomBoundaryDoesNotSpillIntoTheFollowingDay()",
+            "ChainOfCustodyUITests/ScheduleEditorUITests/testAllDayEventCanBecomeAnInstantThenATimedEventOnAnotherDate()",
+            "ChainOfCustodyUITests/ScheduleEditorUITests/testAssignmentAllDayPersistsAndHidesTimeControls()",
+            "ChainOfCustodyUITests/ScheduleEditorUITests/testDisablingAllDayRetainsEditedAndSavedMultiDayRanges()",
+            "ChainOfCustodyUITests/ScheduleEditorUITests/testSchedulingAnExistingUndatedAssignmentPreservesItsDisplayedStart()",
+            "ChainOfCustodyUITests/ScheduleEditorUITests/testStartEditsPreserveExtendedEndOfDayRanges()",
+            "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testAllDayDatePersistsWhenPairingAndDeviceUseDifferentTimeZones()",
+            "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testCustomEndsAndDurationsPreserveTheSavedEditingTimeZone()",
+            "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testEndOfDayEditorsKeepTheirBoundaryAfterPairingTimeZoneChanges()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest17XCTAssertLessThan___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF with substitutions CGFloat",
+          "testCount": 2,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testPopulatedListDragOpensAnchoredTimelineAndReturnsToList()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoAutoHideDoesNotInterruptTitleDragging()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest20XCTAssertGreaterThan___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF with substitutions CGFloat",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/RecurringEventUITests/testCommonOneOffEventCanBeFilteredWithoutRepeat()"
+          ]
+        },
+        {
+          "reason": "Unproven receiver metatype: literal:Array<NSValue> in ChainOfCustodyUITests.PairingNotesMediaUITests.testVideoScrubbingLocksOrientationUntilTouchEnds()",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoScrubbingLocksOrientationUntilTouchEnds()"
+          ]
+        },
+        {
+          "reason": "Unproven receiver metatype: literal:CalendarHeldDrag in ChainOfCustodyUITests.CalendarDetentTransitionUITests.testContinuousLayoutReversalsRetainAllDayEvent()",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testContinuousLayoutReversalsRetainAllDayEvent()"
+          ]
+        },
+        {
+          "reason": "Unproven receiver metatype: literal:CalendarHeldDrag in ChainOfCustodyUITests.CalendarDetentTransitionUITests.testDenseActivityHeldDragReversesThroughLayouts()",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testDenseActivityHeldDragReversesThroughLayouts()"
+          ]
+        },
+        {
+          "reason": "Unproven receiver metatype: literal:CalendarHeldDrag in ChainOfCustodyUITests.CalendarDetentTransitionUITests.testSlowListToTimelineHoldsBeforeRelease()",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testSlowListToTimelineHoldsBeforeRelease()"
+          ]
+        },
+        {
+          "reason": "Unproven receiver metatype: literal:CalendarHeldDrag in ChainOfCustodyUITests.CalendarDetentTransitionUITests.testSparseDateHeldReversalRetainsSectionSpacing()",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testSparseDateHeldReversalRetainsSectionSpacing()"
+          ]
+        },
+        {
+          "reason": "Unproven receiver metatype: literal:CalendarHeldDrag in ChainOfCustodyUITests.PairingNotesMediaUITests.testThumbnailFadeTracksScrollAndReversal()",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testThumbnailFadeTracksScrollAndReversal()"
+          ]
+        },
+        {
+          "reason": "Unproven receiver metatype: literal:DateFormatter in ChainOfCustodyUITests.CalendarModeTransitionUITests.testCalendarModesKeepTheirNavigationInteractive()",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarModeTransitionUITests/testCalendarModesKeepTheirNavigationInteractive()"
+          ]
+        }
+      ]
+    },
+    "retroactiveConformanceCompiledCases": 7,
+    "runtimeAssertionFormattingProbe": {
+      "toolchain": "Xcode 26.6",
+      "swiftType": "Int",
+      "retroactiveProtocol": "TextOutputStreamable",
+      "assertion": "XCTAssertEqual(1, 2)",
+      "witnessInvocationCount": 2,
+      "exitCode": 0,
+      "note": "Standalone XCTest probe; no application test bodies executed."
+    },
+    "errorFormattingCompiledCases": 13,
+    "errorFlowEvidence": "Per-body Swift throw/throw_addr instructions and throwing callback block arguments. Unknown, indirect, or error-propagating input producers decline receiver proof. Legacy graphs require regeneration from sealed SIL.",
+    "runtimeErrorFormattingProbe": {
+      "toolchain": "Xcode 26.6",
+      "expression": "try? XCTUnwrap(failValue())",
+      "errorConformance": "CustomStringConvertible",
+      "descriptionInvocationCount": 1,
+      "exitCode": 0,
+      "note": "Standalone XCTest probe confirmed implicit Swift error formatting; no application test bodies executed."
     }
   },
   "historicalValidation": {
@@ -490,5 +859,163 @@
       "applicationBuild": false,
       "applicationTestExecution": false
     }
+  },
+  "previousCallbackValidation": {
+    "status": "conservative-fallback-required",
+    "historical125TestIsolationClaimSuperseded": true,
+    "issue58RemainsOpen": true,
+    "toolchain": "Xcode 27.0, Swift release build",
+    "packageTestsPassed": 326,
+    "additionalRetainedReplayTestsPassed": 1,
+    "releaseSuiteSeconds": 137.905,
+    "captureHelperTestsPassed": 6,
+    "releaseDistributionTestsPassed": 5,
+    "releaseDistributionTestsSkipped": 1,
+    "retainedValidation": {
+      "issue55": {
+        "selectedTestCount": 12,
+        "totalTests": 1972,
+        "diagnosticCount": 0,
+        "scopeSeconds": 15.278453946113586,
+        "verifyBuildExitCode": 0,
+        "baseRevision": "9b08b4be6acd35338c76e7b29ce0d0df7729aa50",
+        "headRevision": "30d8454622ced09ff42f60d6f9196453ad2f6526",
+        "selectedTests": [
+          "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testHolderLinkPreservesLockedContents()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerOffersLinkAndContentSharing()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMessageCardIsOfferedWhenCompositionIsAvailable()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteToolbarSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testOutlineCanShareContainerLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testUnavailableMessagesStillOffersLinkSharing()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testVeiledNoteLinkHasProtectedPreview()"
+        ],
+        "matchesPrevious12TestSelection": true
+      },
+      "issue58": {
+        "selectedTestCount": 2000,
+        "totalTests": 2000,
+        "diagnosticCount": 1929,
+        "scopeSeconds": 15.69939398765564,
+        "verifyBuildExitCode": 0,
+        "baseRevision": "40c62f971f0aef63c902a14805cf4d821e6784fb",
+        "headRevision": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
+        "all125KnownConsumersRetained": true,
+        "fallbackOnlyNoteLinksExampleRetained": true,
+        "selection": "complete enumerated inventory"
+      }
+    },
+    "sealedSILModulesReparsedPerFixture": 0,
+    "sourceDeclarationKeysAndFingerprintsUnchanged": true,
+    "compilerReferenceEdgesAndDynamicDeclarationsUnchanged": true,
+    "newApplicationBuilds": 0,
+    "baselineBuilds": 0,
+    "appTestBodiesExecuted": false,
+    "fullRunEquivalenceValidated": false,
+    "blockers": [
+      {
+        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Missing or unproven SDK overload identity for objc_method XCUIElementQuery.matching!foreign : (XCUIElementQuery) -> (NSPredicate) -> XCUIElementQuery in ChainOfCustodyUITests.RecurringEventUITests.testCommonOneOffEventCanBeFilteredWithoutRepeat() (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
+        "code": "head_only_sdk_helper_boundary"
+      }
+    ],
+    "note": "SDK receiver contracts are explicit and bounded. The final callback validation reused the previously verified compiler evidence and refreshed source proofs without changing declaration keys or fingerprints. Callback checks cover both revisions, including unowned base sources. Missing evidence remains conservative. The reported issue58 blocker is the first missing proof, not an exhaustive list.",
+    "debugSuiteSeconds": 234.341,
+    "moduleFragmentCacheVersion": 11,
+    "compiledFactoryCases": 76,
+    "receiverTypeEvidence": "metatypes, enum constructors, captured value-type declarations, source overload shapes, generic call substitutions, and bridge-capable cast destinations",
+    "reusesPreviouslyVerifiedSIL": true,
+    "compiledCallbackCases": 16,
+    "callbackSourceScenarios": 13,
+    "callbackSourcePlacements": 3,
+    "executedCallbackRegression": {
+      "oldNarrowSelectionExitCode": 0,
+      "correctedSelectionExitCode": 1,
+      "fullFixtureExitCode": 1
+    }
+  },
+  "previousQueryValidation": {
+    "status": "query-overload-proof-fixed-conservative-fallback-required",
+    "historical125TestIsolationClaimSuperseded": true,
+    "issue58RemainsOpen": true,
+    "toolchain": "Xcode 27.0, Swift release build",
+    "packageTestsPassed": 330,
+    "additionalRetainedReplayTestsPassed": 1,
+    "releaseSuiteSeconds": 196.659,
+    "captureHelperTestsPassed": 6,
+    "releaseDistributionTestsPassed": 5,
+    "releaseDistributionTestsSkipped": 1,
+    "retainedValidation": {
+      "issue55": {
+        "selectedTestCount": 12,
+        "totalTests": 1972,
+        "diagnosticCount": 0,
+        "scopeSeconds": 12.891433000564575,
+        "verifyBuildExitCode": 0,
+        "baseRevision": "9b08b4be6acd35338c76e7b29ce0d0df7729aa50",
+        "headRevision": "30d8454622ced09ff42f60d6f9196453ad2f6526",
+        "selectedTests": [
+          "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testHolderLinkPreservesLockedContents()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerOffersLinkAndContentSharing()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testMessageCardIsOfferedWhenCompositionIsAvailable()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesContent()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testNoteToolbarSharesLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testOutlineCanShareContainerLink()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testUnavailableMessagesStillOffersLinkSharing()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testVeiledNoteLinkHasProtectedPreview()"
+        ],
+        "matchesPrevious12TestSelection": true
+      },
+      "issue58": {
+        "selectedTestCount": 2000,
+        "totalTests": 2000,
+        "diagnosticCount": 1929,
+        "scopeSeconds": 13.336554050445557,
+        "verifyBuildExitCode": 0,
+        "baseRevision": "40c62f971f0aef63c902a14805cf4d821e6784fb",
+        "headRevision": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
+        "all125KnownConsumersRetained": true,
+        "fallbackOnlyNoteLinksExampleRetained": true,
+        "selection": "complete enumerated inventory"
+      }
+    },
+    "sealedSILModulesReparsedPerFixture": 1,
+    "sourceDeclarationKeysAndFingerprintsUnchanged": true,
+    "compilerReferenceEdgesAndDynamicDeclarationsUnchanged": true,
+    "newApplicationBuilds": 0,
+    "baselineBuilds": 0,
+    "appTestBodiesExecuted": false,
+    "fullRunEquivalenceValidated": false,
+    "blockers": [
+      {
+        "code": "head_only_sdk_helper_boundary",
+        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Receiver type identities are unproven with unsupported source imports: import SnapshotTesting in ChainOfCustodyUITests.CalendarSnapshotUITests.testPortraitCalendarSplit() (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)"
+      }
+    ],
+    "note": "Query overload identity is now verified per call site. The real case still falls back; unsupported imports are named explicitly. UI SIL was reparsed from the sealed capture, preserving compiler-reference edges and dynamic declarations. No application or baseline build or application test execution occurred.",
+    "moduleFragmentCacheVersion": 12,
+    "compiledFactoryCases": 76,
+    "receiverTypeEvidence": "metatypes, enum constructors, captured value-type declarations, source overload shapes, generic call substitutions, and bridge-capable cast destinations",
+    "reusesPreviouslyVerifiedSIL": true,
+    "compiledCallbackCases": 16,
+    "callbackSourceScenarios": 13,
+    "callbackSourcePlacements": 3,
+    "executedCallbackRegression": {
+      "oldNarrowSelectionExitCode": 0,
+      "correctedSelectionExitCode": 1,
+      "fullFixtureExitCode": 1
+    },
+    "releaseRunTestsPassed": 331,
+    "queryCallSiteEvidence": "SIL formal signature paired with physical source path, line and UTF-8 column; all uses required",
+    "debugFocusedTestsPassed": 7,
+    "debugFocusedSeconds": 20.309,
+    "supersededByModuleWideSourceLocationProof": true
   }
 }

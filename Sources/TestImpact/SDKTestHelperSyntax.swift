@@ -70,11 +70,16 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
     /// Check imports once per source file. Declaration-scoped, attributed and
     /// unknown imports may introduce or re-export a same-spelled callable.
     static func callerImportsSupported(_ tree: SourceFileSyntax) -> Bool {
-        tree.tokens(viewMode: .sourceAccurate).allSatisfy { token in
-            guard token.tokenKind == .keyword(.import), let declaration = token.parent?.as(ImportDeclSyntax.self) else { return true }
-            return declaration.attributes.isEmpty && declaration.importKindSpecifier == nil &&
+        unsupportedCallerImports(tree).isEmpty
+    }
+
+    static func unsupportedCallerImports(_ tree: SourceFileSyntax) -> Set<String> {
+        Set(tree.tokens(viewMode: .sourceAccurate).compactMap { token in
+            guard token.tokenKind == .keyword(.import), let declaration = token.parent?.as(ImportDeclSyntax.self) else { return nil }
+            let supported = declaration.attributes.isEmpty && declaration.importKindSpecifier == nil &&
                 trustedCallerModules.contains(declaration.path.trimmedDescription)
-        }
+            return supported ? nil : declaration.trimmedDescription
+        })
     }
 
     static func callerSupported(_ function: FunctionDeclSyntax) -> Bool {

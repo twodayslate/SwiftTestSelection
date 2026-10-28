@@ -11,39 +11,109 @@ The current analyzer requires captured producer implementations or explicit SDK
 contracts, audits shared receiver storage, and reports a concrete blocker when
 that evidence is missing. All 125 known consumers remain selected. The retained
 #58 case falls back to its complete 2,000-test inventory; narrowing still needs
-stronger evidence. #55's immutable literal fixture state remains supported.
-The release replay selected **12 of 1,972 tests with zero diagnostics** for #55
-in **15.28 seconds**. For #58 it selected **all 2,000 tests** in **15.70 seconds**,
-retaining all 125 known consumers and the fallback-only NoteLinks example. Both
-reports passed `verify-build` against the retained products.
+stronger evidence. #55's immutable literal fixture state is still supported, but
+the conformance fix exposes a separate assertion-formatting boundary in its
+caller chain: `XCTAssertEqual<XCTWaiter.Result>`. Error-flow auditing now finds
+an earlier opaque callback boundary as well. That fixture retains
+its complete 1,972-test inventory, including the 12 previously selected tests.
+The previous 12-test precision result is superseded, not preserved by this fix.
+An executed Xcode 26.6 XCTest probe confirmed that a failed generic integer
+assertion invokes a retroactive `TextOutputStreamable` witness. Restoring narrow
+selection requires proving formatting behavior as well as equality; nominal type
+names alone cannot waive that obligation.
 
-The #58 report's `head_only_sdk_helper_boundary` diagnostic identifies:
+The query-overload blocker from PR #57 is now resolved using exact SIL
+file/line/UTF-8-column evidence paired with source argument labels. Mixed
+`matching(identifier:)` and `matching(_:)` calls, including multiple calls on one
+line and calls inside assertion closures, can be verified independently. The
+same position evidence now disambiguates other supported SDK method calls from
+unrelated source names (for example, a `screenshot` Boolean parameter). Crossed
+label/type overloads, method values and missing locations retain conservative
+checks. A source-location directive anywhere in a module prevents its receiver
+proof, including when it points into a different clean file. Older snapshots
+without physical-location evidence must refresh that source evidence. Fragment
+cache version 14 captures the expanded method-site evidence; older saved graphs
+decline proofs that need missing evidence.
 
-```text
-Missing or unproven SDK overload identity for
-objc_method XCUIElementQuery.matching!foreign : (XCUIElementQuery) -> (NSPredicate) -> XCUIElementQuery
-in ChainOfCustodyUITests.RecurringEventUITests.testCommonOneOffEventCanBeFilteredWithoutRepeat()
-```
+The retained #55 and #58 replays now first report unproven XCTest error
+formatting in a closure within `waitForAllConditions(_:timeout:)`. That
+producer has an indirect callback, so its error behavior is not established by
+the captured evidence. The earlier generic assertion-formatting and unsupported
+`SnapshotTesting` import boundaries remain separate missing proofs; clearing the
+first diagnostic does not establish the complete caller chain.
 
-This is the first missing proof in that traversal, not a finding that `matching`
-itself is unsafe or that adding one contract proves the entire consumer closure.
-The current bounded contracts do not justify the earlier precision claim. #58
-remains open for stronger evidence and a sound narrowing implementation.
+The retained source inventory contains the seven consuming-project Swift modules,
+not the SnapshotTesting source module. The implementation now supports more
+concrete Swift string/character operations, builtin numeric assertions and
+formatting, standard collection searches, `XCTUnwrap`, typed keyboard/content-size
+constants, and inferred Boolean instance storage. Generic substitutions and
+explicit callbacks are still checked: custom conformances, erased descriptions,
+mutating callbacks, wrappers, observers, macros and unknown storage retain fallback.
 
-All **326 package tests** passed in release (**137.905 seconds**, Xcode 27.0)
-and debug (**234.341 seconds**, Xcode 26.6). A separate temporary retained replay
-test passed both fixtures. Capture helper tests passed (6); release-distribution
-tests passed (5, with 1 platform-specific skip). The final replay reused the previously
-verified compiler evidence, including the sealed UI-module reparse, and refreshed
-source proofs with unchanged declaration keys and fingerprints. Compiler reference
-edges and dynamic declarations remain unchanged. Missing current evidence remains
-conservative; this callback validation required no SIL reparse.
-No new consuming-app build or baseline build was performed. These are local
-replay measurements, not controlled end-to-end benchmarks.
+The conformance review found that builtin nominal names did not prove the
+protocol witnesses actually invoked by an SDK operation. The analyzer now checks
+operation-specific scalar conformances, nested conditional equality/hashability,
+and bridging requirements. Runtime printing and assertion failure formatting
+also need known witnesses. `Optional: CustomStringConvertible`,
+`Optional: Comparable`, and `Int: TextOutputStreamable` can be retroactive Swift
+conformances, so these paths cannot inherit trust from `Optional` or `Int` alone.
+Seven compiled cases cover these conformances, optional bridging, assertion
+formatting, and an ordinary builtin description control. Unsupported combinations
+retain both the helper caller and the potentially affected reader with an
+explicit diagnostic. This can increase conservative selections for ordinary
+generic integer or optional assertions until their formatting is proven.
 
-The machine-readable file separates `currentValidation` from
-`historicalValidation`. No application test bodies were executed; selection and
-`verify-build` do not establish full-run equivalence.
+The error-formatting review also demonstrated that `XCTUnwrap` invokes a thrown
+Swift error's `description`, even when the caller uses `try?`. An executed
+Xcode 26.6 probe confirmed that call. Capture now records Swift error propagation
+and opaque throwing callback inputs, and receiver proofs audit explicit input
+producers before trusting XCTest's catch-and-format behavior. This applies to
+unwrap, equality/accuracy/comparison, Boolean, and nil assertions. Ordinary
+nonthrowing controls remain eligible. Old graphs without this evidence decline
+the proof until regenerated from sealed SIL; fragment cache version 14 forces
+refresh of old fragments. The audit can conservatively include other explicit
+producers in the same body because callback argument roles are not captured.
+
+An exploratory audit now passes the receiver-origin check for **0 of the 125**
+known consumers. This is not a partial test selection or a full isolation proof.
+The JSON records the first remaining blocker for each other consumer; later
+blockers may be hidden by that first failure. The actual selector still retains
+the complete inventory.
+
+Handwritten Objective-C implementations are outside the tool's analysis scope.
+The consumer plans to rewrite those helpers in Swift; validating the replacement
+requires a fresh build-time SIL capture. Swift-to-Objective-C lowering remains
+within scope and is handled automatically where the captured implementation or
+built-in SDK behavior can establish the proof. No user-audited isolation waiver
+has been introduced. The rewrite alone does not resolve missing third-party
+Swift evidence, erased-value provenance or protocol-dispatch proofs.
+
+**#58 remains open.** The overload fix is covered by compiled positive and negative
+regressions, but does not establish the real fixture's 125-test precision target.
+Unconditionally trusting imports, opaque Objective-C bodies, or unmodeled SDK
+symbols would recreate the unsafe assumptions withdrawn in PR #57. The complete
+inventory remains selected, including all 125 known consumers.
+
+All **343 package tests** and one additional retained replay test passed in
+Xcode 27.0 release (**344 total**, **97.050 seconds**, excluding compilation).
+Xcode 26.6 focused runs passed the compiled overload/source-remapping regressions,
+Swift value and collection controls, and Boolean-storage controls. Capture-helper
+checks passed six tests; release-distribution checks passed five with one
+platform-specific skip.
+The earlier replay assertion requiring #55's 12-test precision failed, exposing
+the now-documented formatting boundary. Final replay assertions verify the full
+inventories and retention of all previously identified consumers. #55 scope
+analysis took **18.30 seconds**; #58 took
+**19.13 seconds**. Both reports passed `verify-build`.
+The final replay refreshed source proofs and reparsed the sealed UI-module SIL,
+checking unchanged declaration keys, fingerprints, compiler-reference edges and
+dynamic declarations. Original completed bundles and products were unchanged.
+No new application build, baseline build, or application test bodies were executed.
+These are local replay measurements, not controlled end-to-end benchmarks.
+
+The machine-readable file separates `currentValidation`, `previousCallbackValidation`,
+`previousQueryValidation`, and `historicalValidation`. Selection and `verify-build`
+do not establish full-run equivalence.
 
 ### Receiver identity and imported overload review
 
@@ -68,7 +138,7 @@ namesakes. Synthesized initializers and enum accessors audit all overlapping dec
 and static-method metatype inputs are omitted only when every matching input is
 unused outside debug instructions. Nested signatures and forwarded values retain
 their evidence. Missing evidence retains
-an explicit recapture diagnostic, and module-fragment cache version 11 invalidates
+an explicit recapture diagnostic, and module-fragment cache version 14 invalidates
 older fragments. Regenerating from valid sealed SIL does not execute test bodies
 or require a new baseline build.
 
@@ -93,7 +163,7 @@ a fresh `Optional<Any>` stack slot is immediately initialized to `.none` and
 switched, with exactly one predecessor. Mutation, aliases, multiple predecessors,
 and mixed reachable bridge calls retain fallback. This preserves #55 without
 trusting live erased bridges. JSON/compact archives retain the new evidence, and
-cache version 11 requires older module fragments to be regenerated.
+cache version 14 requires older module fragments to be regenerated.
 
 ### XCTest callback effect review
 

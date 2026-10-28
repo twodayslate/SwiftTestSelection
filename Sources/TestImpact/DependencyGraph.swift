@@ -40,6 +40,11 @@ public struct FunctionNode: Codable, Sendable {
     /// Direct generic calls: symbol + tab + substitutions, or a compiler-proven
     /// unreachable literal-nil bridge marker. Nil also predates cast capture.
     public var receiverGenericCalls: Set<String>? = nil
+    /// Supported SDK method signatures followed by tab-separated path, line and UTF-8 column.
+    /// Unknown locations are retained explicitly; nil denotes an older capture.
+    public var dynamicCallSites: Set<String>? = nil
+    /// Swift error propagation and opaque throwing callback inputs. Nil means missing evidence.
+    public var receiverErrorEffects: Set<String>? = nil
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>

@@ -43,7 +43,9 @@ public struct SourceUnit: Codable, Sendable {
     public var helperCallerSupported: Bool? = nil
     /// Source overload shapes paired with SIL signatures during receiver audits.
     public var receiverCallShapes: [String: Set<[String]>]? = nil
+    public var receiverCallSites: [String: [String]]? = nil
     public var receiverImportsSupported: Bool? = nil
+    public var receiverUnsupportedImports: Set<String>? = nil
     /// Captured struct/enum identity; classes cannot use value-type metatype rules.
     public var receiverValueType: Bool? = nil
     /// Whether this subscript can compete with the SDK identifier getter.
@@ -80,7 +82,13 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Stored properties proven to be immutable, inferred string literals.
     /// All other declarations explicitly carry false, including duplicates.
     public var literalStoredProperties: [String: Bool]? = nil
+    /// Inferred Bool instance storage cannot carry a receiver or callback.
+    /// Annotations, wrappers, observers, custom literal defaults and duplicates decline the proof.
+    public var booleanStoredProperties: [String: Bool]? = nil
+    public var booleanLiteralNamesUnshadowed: Bool? = nil
     public var classFinality: [String: Bool]? = nil
+    /// Module-wide pairing must reject presumed locations redirected into another file.
+    public var receiverPhysicalLocations: Bool? = nil
 
     /// Match specialized superclass references to their nominal declarations.
     /// Parse the type so nested arguments, function types and qualification do
@@ -113,7 +121,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
         }
         result.attachmentAddUnshadowed = !(identifiers["add"] ?? []).contains(where: PrivateTestHelperSyntax.shadowsAttachmentAdd)
-        let callerImportsSupported = SDKTestHelperSyntax.callerImportsSupported(tree)
+        let unsupportedCallerImports = SDKTestHelperSyntax.unsupportedCallerImports(tree)
+        let callerImportsSupported = unsupportedCallerImports.isEmpty
+        let physicalLocations = !tree.tokens(viewMode: .sourceAccurate).contains { $0.tokenKind == .poundSourceLocation }
+        result.receiverPhysicalLocations = physicalLocations
         let referenceAnalysis = SDKHelperReferenceAnalysis(identifiers: identifiers, locations: locations, callerImportsSupported: callerImportsSupported)
         result.helperReferences = identifiers.mapValues { referenceAnalysis.references($0) }
         for tokens in identifiers.values {
@@ -126,6 +137,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         }
         result.helperSafeClasses = [:]
         result.literalStoredProperties = [:]
+        result.booleanStoredProperties = [:]
+        result.booleanLiteralNamesUnshadowed = ["Bool", "BooleanLiteralType"].allSatisfy { name in
+            !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
+        }
         result.classFinality = [:]
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
         // Preserve syntax structure, token kinds and literal contents, but not
@@ -302,6 +317,20 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     !hasOpaqueResult && !hasMacro
             }
             if let variable = node.as(VariableDeclSyntax.self) {
+                var container = node.parent
+                var knownContainer = true
+                while let ancestor = container {
+                    let attributes = ancestor.as(ClassDeclSyntax.self)?.attributes
+                        ?? ancestor.as(StructDeclSyntax.self)?.attributes
+                        ?? ancestor.as(EnumDeclSyntax.self)?.attributes
+                        ?? ancestor.as(ExtensionDeclSyntax.self)?.attributes
+                    if let attributes {
+                        knownContainer = knownContainer && attributes.allSatisfy {
+                            $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor"
+                        }
+                    }
+                    container = ancestor.parent
+                }
                 for binding in variable.bindings {
                     guard let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text else { continue }
                     let member = (scope + [SDKTestHelperSyntax.canonicalName(name)]).joined(separator: ".")
@@ -311,8 +340,14 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                         binding.typeAnnotation == nil && binding.accessorBlock == nil &&
                         literal?.segments.allSatisfy { $0.is(StringSegmentSyntax.self) } == true
                     result.literalStoredProperties![member] = (result.literalStoredProperties![member] ?? true) && safe
+                    let boolean = callerImportsSupported && knownContainer && !scope.isEmpty &&
+                        variable.attributes.isEmpty && variable.modifiers.allSatisfy { ["private", "fileprivate", "internal"].contains($0.name.text) } &&
+                        binding.typeAnnotation == nil && binding.accessorBlock == nil &&
+                        binding.initializer?.value.is(BooleanLiteralExprSyntax.self) == true
+                    result.booleanStoredProperties![member] = (result.booleanStoredProperties![member] ?? true) && boolean
                 }
             }
+            let receiverCalls = SDKReceiverCallSyntax.evidence(in: node, locations: physicalLocations ? locations : nil, path: path)
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
@@ -334,8 +369,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     function.signature.parameterClause.parameters.allSatisfy { $0.defaultValue == nil && $0.ellipsis == nil } ? SDKTestHelperSyntax.signature(function) : nil
                 },
                 helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported),
-                receiverCallShapes: SDKReceiverCallSyntax.shapes(in: node),
+                receiverCallShapes: receiverCalls.shapes,
+                receiverCallSites: physicalLocations ? receiverCalls.sites : nil,
                 receiverImportsSupported: callerImportsSupported,
+                receiverUnsupportedImports: unsupportedCallerImports,
                 receiverValueType: node.is(StructDeclSyntax.self) || node.is(EnumDeclSyntax.self),
                 subscriptAcceptsSingleUnlabeledArgument: node.as(SubscriptDeclSyntax.self).map { declaration in
                     let parameters = Array(declaration.parameterClause.parameters)

@@ -115,7 +115,7 @@ public enum SILParser {
     }
 
     private enum Expressions {
-        static let location = try! NSRegularExpression(pattern: #"\bloc (?:\* )?"((?:[^"\\]|\\.)+)":([0-9]+):[0-9]+"#)
+        static let location = try! NSRegularExpression(pattern: #"\bloc (?:\* )?"((?:[^"\\]|\\.)+)":([0-9]+):([0-9]+)"#)
         static let function = try! NSRegularExpression(pattern: #"@([^\s:]+)\s*:"#)
         static let dispatch = try! NSRegularExpression(pattern: #"#([^\s:]+).*:\s*@([^\s:]+)"#)
         static let reference = try! NSRegularExpression(pattern: #"^(%[\w]+) = (?:function_ref|dynamic_function_ref|previous_dynamic_function_ref) @([^\s:]+)"#)
@@ -224,6 +224,8 @@ public enum SILParser {
                     if line.split(separator: " ", maxSplits: 2)[1] == "shared" { sharedSymbols.insert(match[0]) }
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
                     current!.dynamicCallSignatures = []
+                    current!.dynamicCallSites = []
+                    current!.receiverErrorEffects = []
                     current!.stateAccesses = []
                     current!.receiverTypeOrigins = []
                     current!.receiverGenericCalls = []
@@ -360,6 +362,12 @@ public enum SILParser {
                 // Generic witness/dynamic calls have no function_ref identity;
                 // receiverProof checks their dispatch evidence independently.
             }
+            // A thrown error may be formatted implicitly inside XCTest. Keep
+            // propagation even when its producer is an otherwise known value.
+            if line.hasPrefix("throw ") || line.hasPrefix("throw_addr") { current!.receiverErrorEffects?.insert("throw") }
+            if line.hasPrefix("bb"), line.containsASCII("@error") {
+                current!.receiverErrorEffects?.insert("throwing callback parameter")
+            }
             if line.containsASCII(" = keypath ") {
                 // Key paths carry getter/setter and captured-index equality/hash
                 // functions without function_ref instructions. Keep those escaped
@@ -385,7 +393,16 @@ public enum SILParser {
                 if let start = line.range(of: "#" + match[1]),
                    let end = line.range(of: match[0] == "witness_method" ? " : $" : ", $", range: start.upperBound..<line.endIndex) {
                     let signature = String(line[start.upperBound..<end.lowerBound])
-                    current!.dynamicCallSignatures?.insert(match[0] + " " + match[1] + signature)
+                    let call = match[0] + " " + match[1] + signature
+                    current!.dynamicCallSignatures?.insert(call)
+                    if ExternalHelperEffects.tracksReceiverCallSite(declaration) {
+                        if let point = location(line), let fields = Pattern.groups(Expressions.location, in: line),
+                           let column = Int(fields[2]), column > 0 {
+                            current!.dynamicCallSites?.insert(call + "\t" + point.path + "\t" + String(point.startLine) + "\t" + String(column))
+                        } else {
+                            current!.dynamicCallSites?.insert(call + "\t<unknown>")
+                        }
+                    }
                 } else { current!.dynamicCallSignatures = nil }
                 current!.dynamicDeclarations.insert(declaration)
                 current!.uncertainties.insert("Dynamic dispatch: \(match[0]) \(match[1])")

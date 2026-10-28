@@ -23,7 +23,9 @@ struct ExternalHelperEffects {
         return symbols.allSatisfy { Self.runtimeChecks.contains($0) || trusted[$0] == true }
     }
 
-    private static let receiverRuntime = runtimeChecks.union(["swift_getAtKeyPath", "$sSo7NSErrorCSgIeyBhy_ytTZ_", "$sSo7NSErrorCSgIeyBhy_ytTz_"])
+    private static let receiverRuntime = runtimeChecks.union(["swift_getAtKeyPath", "$sSo7NSErrorCSgIeyBhy_ytTZ_", "$sSo7NSErrorCSgIeyBhy_ytTz_",
+        // Exact compiler thunk for the concrete Swift.Character.isNumber getter.
+        "$sSJ8isNumberSbvpSJTK"])
 
     mutating func sdkReceiverDeclarations(_ symbols: Set<String>, resolve: ([String]) -> String? = Self.resolve) -> Set<String> {
         resolveReceiverDeclarations(symbols, resolve: resolve)
@@ -63,6 +65,13 @@ struct ExternalHelperEffects {
         "evaluate": [["with"]], "wait": [["for", "timeout"]], "add": [["_"]]
     ]
 
+    /// Only method families whose source labels participate in receiver proofs.
+    /// Property accessors have no call labels and need no position payload.
+    static func tracksReceiverCallSite(_ declaration: String) -> Bool {
+        guard let name = declaration.split(separator: ".").last else { return false }
+        return name != "subscript" && receiverCallLabels[String(name)] != nil
+    }
+
     static func allowsDynamicCalls(_ node: FunctionNode, sourceCallShapes: [String: Set<[String]>]? = nil) -> Bool {
         if node.dynamicDeclarations.isEmpty { return node.dynamicCallSignatures?.isEmpty ?? true }
         guard let calls = node.dynamicCallSignatures,
@@ -93,9 +102,9 @@ struct ExternalHelperEffects {
 
     /// Require each possible source shape to agree with the compiled overload.
     /// Unioning labels and types separately accepts foreign cross-product
-    /// overloads. Mixed shapes remain conservative until call-site identities
-    /// are available; one legitimate call must not mask an unproven call.
-    private static let queryOverloadShapes: [String: [[String]: Set<String>]] = {
+    /// overloads. Receiver proofs may use complete captured call-site identities;
+    /// otherwise every shape must match. One valid call cannot mask an unknown call.
+    static let queryOverloadShapes: [String: [[String]: Set<String>]] = {
         var result: [String: [[String]: Set<String>]] = [:]
         for name in ["matching", "containing"] {
             let prefix = "objc_method XCUIElementQuery.\(name)!foreign : (XCUIElementQuery) -> "
@@ -118,7 +127,7 @@ struct ExternalHelperEffects {
         try? receiverProof(node, sourceCallShapes: sourceCallShapes).get()
     }
 
-    static func receiverProof(_ node: FunctionNode, sourceCallShapes: [String: Set<[String]>]? = nil) -> Result<Set<String>, ImpactError> {
+    static func receiverProof(_ node: FunctionNode, sourceCallShapes: [String: Set<[String]>]? = nil, pairedCallShapes: [String: Set<[String]>] = [:]) -> Result<Set<String>, ImpactError> {
         if let imported = node.uncertainties.sorted().first(where: { $0.hasPrefix("Imported conformance:") }) {
             return .failure(ImpactError(imported))
         }
@@ -139,7 +148,7 @@ struct ExternalHelperEffects {
                 if declaration.hasSuffix(".subscript") || (!call.contains("!getter") && !call.contains("!setter") && !call.contains("!initializer") &&
                    !call.contains("!allocator") && !call.contains("!deallocator")) {
                     let name = declaration.components(separatedBy: ".").last!
-                    let shapes = sourceCallShapes?[name]
+                    let shapes = pairedCallShapes[call] ?? sourceCallShapes?[name]
                     let valid: Bool
                     if let signatures = queryOverloadShapes[declaration] {
                         valid = shapes?.isEmpty == false && shapes!.allSatisfy { signatures[$0]?.contains(call) == true }
@@ -178,7 +187,7 @@ struct ExternalHelperEffects {
         "open": [["_"]], "coordinate": [["withNormalizedOffset"]], "withOffset": [["_"]],
         "swipeUp": [[], ["velocity"]], "swipeDown": [[], ["velocity"]],
         "press": [["forDuration"], ["forDuration", "thenDragTo"], ["forDuration", "thenDragTo", "withVelocity", "thenHoldForDuration"]],
-        "jsonObject": [["with"], ["with", "options"]]
+        "jsonObject": [["with"], ["with", "options"]], "pinch": [["withScale", "velocity"]]
     ], uniquingKeysWith: { _, new in new })
 
     // Origin contracts only: these SDK operations do not inject a foreign
@@ -222,6 +231,9 @@ struct ExternalHelperEffects {
                 "objc_method XCUIScreen.main!getter.foreign : (XCUIScreen.Type) -> () -> XCUIScreen",
                 "objc_method XCUIElement.coordinate!foreign : (XCUIElement) -> (CGVector) -> XCUICoordinate",
                 "objc_method XCUIElement.frame!getter.foreign : (XCUIElement) -> () -> CGRect",
+                "objc_method UIImage.size!getter.foreign : (UIImage) -> () -> CGSize",
+                "objc_method XCUIScreenshot.image!getter.foreign : (XCUIScreenshot) -> () -> UIImage",
+                "objc_method XCUIElement.pinch!foreign : (XCUIElement) -> (CGFloat, CGFloat) -> ()",
                 "objc_method XCUIElement.swipeDown!foreign : (XCUIElement) -> (XCUIGestureVelocity) -> ()",
                 "objc_method XCUIElement.swipeUp!foreign : (XCUIElement) -> (XCUIGestureVelocity) -> ()",
                 "objc_method XCUICoordinate.tap!foreign : (XCUICoordinate) -> () -> ()",
@@ -325,6 +337,10 @@ struct ExternalHelperEffects {
             guard identifier.hasPrefix(prefix + "kind=Identifier, text="),
                   let data = String(identifier.dropFirst((prefix + "kind=Identifier, text=").count)).data(using: .utf8),
                   let type = try? JSONDecoder().decode(String.self, from: data), importedTypes.contains(type) else { continue }
+            // Imported typed-string wrappers have a TypeAlias context. Only
+            // their exact SDK accessors are contracted; arbitrary extensions are not.
+            if module > 0, lines[module - 1].trimmingCharacters(in: .whitespaces) == "kind=TypeAlias",
+               (!receiverOrigins || !SDKReceiverContracts.primitives.contains(symbol)) { continue }
             // The importer synthesizes the standard enum conformances. Never
             // extend this exception to user/retroactive conformance modules.
             if owners[symbol] == "__C_Synthesized" && !(receiverOrigins ? ["XCTWaiterResult", "XCUIApplicationState", "XCUIElementType"] : ["XCTWaiterResult"]).contains(type) { continue }

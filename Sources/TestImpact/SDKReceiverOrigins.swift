@@ -13,13 +13,20 @@ struct SDKReceiverOrigins {
     private struct Proof { var blocker: String? }
     private var results: [Set<String>: Proof] = [:]
     private var effects = ExternalHelperEffects()
-    // Public immutable constants from XCUIElement.h and XCUIKeyboardKeys.h.
+    // Public immutable constants from the SDK's gesture, keyboard and content-size headers.
     // Exact names only: a similarly named project global is not an SDK contract.
-    private static let sdkConstants: Set<String> = Set(["Default", "Fast", "Slow"].map { "global:XCUIGestureVelocity" + $0 })
-        .union(["Delete", "Return", "Enter", "Tab", "Space", "Escape", "UpArrow", "DownArrow", "LeftArrow", "RightArrow",
-                "ForwardDelete", "Home", "End", "PageUp", "PageDown", "Clear", "Help", "CapsLock", "Shift", "Control", "Option", "Command",
-                "RightShift", "RightControl", "RightOption", "RightCommand"].map { "global:XCUIKeyboardKey" + $0 })
-        .union((1...19).map { "global:XCUIKeyboardKeyF" + String($0) })
+    private static let sdkConstants: Set<String> = {
+        var result = Set(["Default", "Fast", "Slow"].map { "global:XCUIGestureVelocity" + $0 })
+        let keys = ["Delete", "Return", "Enter", "Tab", "Space", "Escape", "UpArrow", "DownArrow", "LeftArrow", "RightArrow",
+            "ForwardDelete", "Home", "End", "PageUp", "PageDown", "Clear", "Help", "CapsLock", "Shift", "Control", "Option", "Command",
+            "RightShift", "RightControl", "RightOption", "RightCommand"]
+        result.formUnion(keys.map { "global:XCUIKeyboardKey" + $0 })
+        result.formUnion((1...19).map { "global:XCUIKeyboardKeyF" + String($0) })
+        let sizes = ["Unspecified", "ExtraSmall", "Small", "Medium", "Large", "ExtraLarge", "ExtraExtraLarge", "ExtraExtraExtraLarge",
+            "AccessibilityMedium", "AccessibilityLarge", "AccessibilityExtraLarge", "AccessibilityExtraExtraLarge", "AccessibilityExtraExtraExtraLarge"]
+        result.formUnion(sizes.map { "global:UIContentSizeCategory" + $0 })
+        return result
+    }()
 
     mutating func proves(tests: Set<String>, current: XcodeTestGraph, graph: DependencyGraph) -> Bool {
         blocker(tests: tests, current: current, graph: graph) == nil
@@ -34,6 +41,7 @@ struct SDKReceiverOrigins {
 
     private mutating func inspect(tests: Set<String>, current: XcodeTestGraph, graph: DependencyGraph) -> String? {
         let sources = Dictionary(grouping: current.sources.map { (String($0.key.prefix { $0 != ":" }), $0.value) }, by: { $0.0 })
+        let physicalModules = Set(sources.filter { !$0.value.isEmpty && $0.value.allSatisfy { $0.1.receiverPhysicalLocations == true } }.keys)
         func units(_ node: FunctionNode) -> [SourceUnit] {
             node.regions.flatMap { region -> [SourceUnit] in
                 let source = current.sources[node.module + ":" + region.path]?.units ?? []
@@ -60,7 +68,12 @@ struct SDKReceiverOrigins {
         }
         func metatypeBlocker(_ node: FunctionNode, owners: [SourceUnit]) -> String? {
             guard let origins = node.receiverTypeOrigins, node.receiverGenericCalls != nil else { return "Missing or unrecognized receiver type evidence; recapture sealed SIL" }
-            let sdkLiterals: Set<String> = ["MainActor", "DefaultStringInterpolation", "URL", "UUID", "UIDeviceOrientation", "XCUIApplication.State", "String", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Array", "Dictionary", "Set", "Optional", "Any",
+            if !origins.isEmpty, owners.contains(where: { $0.receiverImportsSupported == false }) {
+                let imports = Set(owners.flatMap { $0.receiverUnsupportedImports ?? [] }).sorted()
+                return "Receiver type identities are unproven with unsupported source imports" +
+                    (imports.isEmpty ? " (missing import details; refresh source evidence)" : ": " + imports.joined(separator: ", "))
+            }
+            let sdkLiterals: Set<String> = ["MainActor", "DefaultStringInterpolation", "URL", "UUID", "UIDeviceOrientation", "XCUIApplication.State", "String", "Character", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Array", "Dictionary", "Set", "Optional", "Any",
                 "XCUIApplication", "XCUIElement", "XCUIElement.ElementType", "XCTestCase", "XCTAttachment", "XCTAttachment.Lifetime", "NSPredicate", "XCTNSPredicateExpectation",
                 "XCTWaiter", "XCTWaiter.Result", "XCTestExpectation", "UIDevice", "XCUIScreen", "XCUIDevice", "JSONSerialization"]
             func localValueType(_ name: String) -> Bool {
@@ -144,7 +157,10 @@ struct SDKReceiverOrigins {
                           !$0.typeAliases!.contains(where: { $0.split(separator: ".").last == "StringLiteralType" }) }) else { return "Unproven shared receiver storage: " + access }
                 let field = SDKTestHelperSyntax.canonicalName(String(access.dropFirst(6)))
                 let proofs = snapshots.compactMap { $0.literalStoredProperties![field] }
-                guard !proofs.isEmpty, proofs.allSatisfy({ $0 }) else { return "Unproven shared receiver storage: " + access }
+                if !proofs.isEmpty, proofs.allSatisfy({ $0 }) { continue }
+                let booleans = snapshots.compactMap { $0.booleanStoredProperties?[field] }
+                guard snapshots.allSatisfy({ $0.booleanStoredProperties != nil && $0.booleanLiteralNamesUnshadowed == true }),
+                      !booleans.isEmpty, booleans.allSatisfy({ $0 }) else { return "Unproven shared receiver storage: " + access }
             }
             return nil
         }
@@ -177,6 +193,34 @@ struct SDKReceiverOrigins {
                 return !roots.contains { graph.functions[$0]?.module == module && graph.functions[$0]?.name == initializer }
             }
         }
+        // Check all explicit input producers conservatively: the graph retains
+        // escaped callbacks but does not assign them individual SDK argument roles.
+        // Cache successful checks within this immutable receiver proof.
+        var nonthrowingProducers = Set<String>()
+        func errorFormattingBlocker(_ inputs: Set<String>) -> String? {
+            var pending = inputs, visited = Set<String>()
+            while !pending.isEmpty {
+                let batch = pending.subtracting(visited).subtracting(nonthrowingProducers)
+                pending = []
+                visited.formUnion(batch)
+                let sdk = effects.sdkReceiverDeclarations(batch)
+                for id in batch.subtracting(sdk).sorted() {
+                    guard let node = graph.functions[id], let errors = node.receiverErrorEffects,
+                          let direct = node.compilerReferences else {
+                        return "Missing error-flow evidence for XCTest input producer " + id + "; regenerate the graph from sealed SIL"
+                    }
+                    guard errors.isEmpty, !node.uncertainties.contains("Indirect function invocation") else {
+                        return "Unproven XCTest error formatting from input producer " + node.module + "." + node.name
+                    }
+                    // A Swift throw from any dynamic/indirect call must propagate
+                    // through this body to reach the SDK's catch. Explicit callees
+                    // also cover callback bodies handed to known SDK operations.
+                    pending.formUnion(direct)
+                }
+            }
+            nonthrowingProducers.formUnion(visited)
+            return nil
+        }
         var pending = Set(tests.flatMap { roots($0) }), visited = Set<String>()
         var external = Set<String>()
         while !pending.isEmpty {
@@ -193,12 +237,28 @@ struct SDKReceiverOrigins {
                     current.sources[node.module + ":" + $0.path] != nil
                 }
                 guard owned else { external.insert(id); continue }
+                // SIL locations may point at another physical source file. Never
+                // authenticate a body through that file's imports, labels or types
+                // unless the entire module's source inventory has physical locations.
+                guard physicalModules.contains(node.module) else {
+                    return "Source locations are remapped or lack physical-location evidence in module " + node.module + "; refresh source evidence"
+                }
                 let owners = units(node)
                 if let reason = metatypeBlocker(node, owners: owners) { return "\(reason) in \(node.module).\(node.name)" }
                 if let reason = stateBlocker(node) { return "\(reason) in \(node.module).\(node.name)" }
                 // A saved project body with missing provenance is not an opaque
                 // external leaf, even if its declaration has a void result.
                 guard let direct = node.compilerReferences else { return "Missing compiler references for \(node.module).\(node.name)" }
+                if !direct.isDisjoint(with: SDKReceiverContracts.errorFormatting) {
+                    guard let errors = node.receiverErrorEffects else {
+                        return "Missing XCTest error-flow evidence; regenerate the graph from sealed SIL"
+                    }
+                    guard !errors.contains("throwing callback parameter"),
+                          !node.uncertainties.contains("Indirect function invocation") else {
+                        return "Unproven XCTest error formatting from an opaque callback in " + node.module + "." + node.name
+                    }
+                    if let reason = errorFormattingBlocker(direct) { return reason }
+                }
                 var checked = node
                 // A final source-bound XCTest class has no descendant override.
                 // The generic dispatch graph may carry a broad warning caused by
@@ -241,7 +301,26 @@ struct SDKReceiverOrigins {
                               }) else { return "Unproven generic receiver contract for " + symbol + " with substitutions " + arguments.sorted().joined(separator: "; ") }
                     }
                 }
-                switch ExternalHelperEffects.receiverProof(checked, sourceCallShapes: shapes) {
+                var paired: [String: Set<[String]>] = [:]
+                if let sites = node.dynamicCallSites, !owners.isEmpty,
+                   owners.allSatisfy({ $0.receiverCallSites != nil && $0.receiverImportsSupported == true }) {
+                    for call in node.dynamicCallSignatures ?? [] {
+                        guard let declaration = call.split(separator: " ").dropFirst().first?.split(separator: "!").first,
+                              ExternalHelperEffects.tracksReceiverCallSite(String(declaration)) else { continue }
+                        let prefix = call + "\t"
+                        let points = sites.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+                        var labels = Set<[String]>()
+                        var complete = !points.isEmpty
+                        let name = call.split(separator: " ").dropFirst().first?.split(separator: "!").first?.split(separator: ".").last.map(String.init)
+                        for point in points {
+                            let matches = Set(owners.compactMap { $0.receiverCallSites?[point] })
+                            guard matches.count == 1, let match = matches.first, match.first == name else { complete = false; break }
+                            labels.insert(Array(match.dropFirst()))
+                        }
+                        if complete { paired[call] = labels }
+                    }
+                }
+                switch ExternalHelperEffects.receiverProof(checked, sourceCallShapes: shapes, pairedCallShapes: paired) {
                 case let .success(producers): pending.formUnion(direct.union(producers))
                 case let .failure(error): return "\(error) in \(node.module).\(node.name)"
                 }

@@ -7,25 +7,35 @@ import SwiftSyntax
 /// method values, so a valid call cannot hide an unproven overload in one body.
 enum SDKReceiverCallSyntax {
     static func shapes(in node: Syntax) -> [String: Set<[String]>] {
-        var result: [String: Set<[String]>] = [:]
+        evidence(in: node).shapes
+    }
+
+    /// Collect both proofs in one token walk. Physical token positions pair
+    /// labels with exact compiler uses, including same-line calls and closures.
+    static func evidence(in node: Syntax, locations: SourceLocationConverter? = nil, path: String = "")
+        -> (shapes: [String: Set<[String]>], sites: [String: [String]]) {
+        var shapes: [String: Set<[String]>] = [:], sites: [String: [String]] = [:]
         for token in node.tokens(viewMode: .sourceAccurate) {
             if let subscriptCall = token.parent?.as(SubscriptCallExprSyntax.self), subscriptCall.leftSquare.id == token.id {
-                result["subscript", default: []].insert(subscriptCall.arguments.map { SDKTestHelperSyntax.canonicalName($0.label?.text ?? "_") })
+                shapes["subscript", default: []].insert(subscriptCall.arguments.map { SDKTestHelperSyntax.canonicalName($0.label?.text ?? "_") })
             }
             guard let reference = token.parent?.as(DeclReferenceExprSyntax.self), reference.baseName.id == token.id else { continue }
             let name = SDKTestHelperSyntax.canonicalName(reference.baseName.text)
             guard ExternalHelperEffects.receiverCallLabels[name] != nil else { continue }
             let expression = reference.parent?.as(MemberAccessExprSyntax.self).map(Syntax.init) ?? Syntax(reference)
-            guard let call = expression.parent?.as(FunctionCallExprSyntax.self), call.calledExpression.id == expression.id,
-                  reference.argumentNames == nil else {
-                result[name, default: []].insert(["<value>"])
-                continue
+            var labels = ["<value>"]
+            if let call = expression.parent?.as(FunctionCallExprSyntax.self), call.calledExpression.id == expression.id,
+               reference.argumentNames == nil {
+                labels = call.arguments.map { SDKTestHelperSyntax.canonicalName($0.label?.text ?? "_") }
+                if call.trailingClosure != nil { labels.append("<trailing>") }
+                labels += call.additionalTrailingClosures.map { SDKTestHelperSyntax.canonicalName($0.label.text) }
             }
-            var labels = call.arguments.map { SDKTestHelperSyntax.canonicalName($0.label?.text ?? "_") }
-            if call.trailingClosure != nil { labels.append("<trailing>") }
-            labels += call.additionalTrailingClosures.map { SDKTestHelperSyntax.canonicalName($0.label.text) }
-            result[name, default: []].insert(labels)
+            shapes[name, default: []].insert(labels)
+            if let locations {
+                let point = locations.location(for: token.positionAfterSkippingLeadingTrivia)
+                sites[path + "\t" + String(point.line) + "\t" + String(point.column)] = [name] + labels
+            }
         }
-        return result
+        return (shapes, sites)
     }
 }
