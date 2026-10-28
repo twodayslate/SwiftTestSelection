@@ -193,3 +193,68 @@ func compiledScrollingGlobalsRequireBothRevisionBindings(name: String) throws {
     #expect(report.selectedTests == tests.sorted())
     #expect(!report.diagnostics.isEmpty)
 }
+
+@Test(arguments: ["annotation", "cast", "defaultLiteral", "primitive", "qualified", "primitiveCast"])
+func compiledScopedLocalTypesRequireHistoricalBindings(kind: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("extension-local-type-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let local: String
+    switch kind {
+    case "annotation": local = "let value: Scalar = 1"
+    case "cast": local = "let value = 1 as Scalar"
+    case "primitive": local = "let value: Int = 1"
+    case "qualified": local = "let value: Swift.Int = 1"
+    case "primitiveCast": local = "let value = 1 as Int"
+    default: local = "let value = 1"
+    }
+    let unsupported = ["annotation", "cast", "defaultLiteral"].contains(kind)
+    // The default-literal alias also changes range-bound inference; use a
+    // branch for that case so the fixture isolates the local initializer.
+    let scope = kind == "defaultLiteral" ? "if true" : "for _ in 0..<2"
+    let before = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testConsumer() { candidate() }
+        private func candidate() {
+            \(scope) {
+                \(local)
+                XCTAssertTrue(true)
+            }
+        }
+    }
+    @MainActor final class Other: XCTestCase {
+        func testReader() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "shared")) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "private func candidate() {", with: "private func candidate() { XCTAssertTrue(true)")
+    let extra = """
+    import XCTest
+    struct Stateful: ExpressibleByIntegerLiteral {
+        init(integerLiteral value: Int) { UserDefaults.standard.set(true, forKey: "shared") }
+    }
+    typealias \(kind == "defaultLiteral" ? "IntegerLiteralType" : "Scalar") = Stateful
+    """
+    let tests = ["UI/Suite/testConsumer()", "UI/Other/testReader()"]
+    let old = try boundaryGraph(["UI.swift": before, "Extra.swift": unsupported ? extra : ""], tests: tests, root: root)
+    let current = try boundaryGraph(["UI.swift": after, "Extra.swift": "typealias Scalar = Int"], tests: tests, root: root)
+    if unsupported {
+        let graph = try #require(old.dependencies)
+        let initializers = Set(graph.functions.filter { $0.value.name.hasPrefix("Stateful.init(integerLiteral:") }.keys)
+        #expect(!initializers.isEmpty)
+        #expect(DependencyIndex(graph).paths(to: initializers).path(from: graph.tests[tests[0]] ?? []) != nil)
+    }
+    for unowned in [false, true] {
+        var source = XcodeHeadOnlySources(base: old.sources, mappings: current.mappings)
+        if unowned { source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift") }
+        let report = XcodeHeadOnlySelector.select(current: current, source: source,
+            changes: [.init(path: "UI.swift")], baseRevision: "base")
+        if unsupported {
+            #expect(report.selectedTests == tests.sorted(), "\(kind): \(report.diagnostics)")
+            #expect(!report.diagnostics.isEmpty)
+        } else {
+            #expect(report.selectedTests == [tests[0]], "\(kind): \(report.diagnostics)")
+            #expect(report.diagnostics.isEmpty)
+        }
+    }
+}
