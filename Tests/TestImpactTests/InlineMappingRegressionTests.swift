@@ -150,3 +150,51 @@ func inlineMappingSourceConditionsAcceptCapturedFilesWithoutFunctions(contents: 
         try graph.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
     }
 }
+
+@Test(arguments: [false, true])
+func inlineMappingUnrelatedSuffixCannotEstablishAncestry(qualified: Bool) throws {
+    // Parent is imported from External, whose source is not captured. The
+    // unrelated Namespace.Parent must not lend its annotation to Suite.
+    // Explicitly naming Namespace.Parent remains a supported lexical binding.
+    let text = """
+    import XCTest
+    import External
+    enum Namespace {
+        // swift-test-selection: {"symbols":["App.checkout()"]}
+        class Parent: XCTestCase {}
+    }
+    class Suite: \(qualified ? "Namespace.Parent" : "Parent") { func testOne() {} }
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Other: XCTestCase { func testOther() {} }
+    """
+    let tests = ["UI/Suite/testOne()", "UI/Other/testOther()"]
+    let base = inlineRegressionGraph(text, tests: tests)
+    for archived in [false, true] {
+        let raw = inlineRegressionGraph(text, value: 2, tests: tests)
+        let head = try archived ? GraphArchive.decode(GraphArchive.encode(raw)) : raw
+        let resolution = InlineUIMappings.resolve(head)
+        let suiteRules = resolution.features.filter { $0.tests?.contains(tests[0]) == true }
+        let report = XcodeFineSelector.select(current: head, previous: base,
+            changes: [.init(path: "App.swift")], baseRevision: "base")
+        if qualified {
+            #expect(suiteRules.flatMap { $0.symbols ?? [] } == ["App.checkout()"])
+            #expect(resolution.diagnostics.isEmpty)
+            #expect(report.selectedTests == [tests[1]])
+            #expect(report.diagnostics.isEmpty)
+            try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        } else {
+            #expect(suiteRules.isEmpty)
+            #expect(resolution.diagnostics.contains { $0.tests == [tests[0]] && $0.message.contains("ancestry is unresolved") })
+            #expect(report.selectedTests == tests.sorted())
+            #expect(report.diagnostics.contains { $0.code == "invalid_inline_mapping" && $0.tests == [tests[0]] })
+            #expect(throws: MappingValidationError.self) {
+                try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+            }
+            let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: head.sources, mappings: head.mappings),
+                changes: [], baseRevision: "base")
+            #expect(headOnly.selectedTests == [tests[0]])
+            #expect(headOnly.diagnostics.contains { $0.code == "invalid_inline_mapping" })
+            #expect(InlineMappingAudit.inspect(head).diagnostics.contains { $0.tests == [tests[0]] })
+        }
+    }
+}

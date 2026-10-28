@@ -244,13 +244,14 @@ struct InlineUIMappings {
                 if pending == nil, classes[parent] != nil { pending = parent }
                 if pending == nil, ["XCTestCase", "XCTest.XCTestCase", "NSObject", "Foundation.NSObject"].contains(parent) { break }
                 if pending == nil {
-                    let candidates = classes.keys.filter { $0.hasSuffix("." + parent) }
-                    if candidates.count == 1 { pending = candidates[0] }
-                    else { failed = true; break }
+                    // A unique suffix is not proof of Swift name lookup: an
+                    // unrelated nested type or unimported module may match while
+                    // the actual imported superclass has no captured source.
+                    failed = true; break
                 }
             }
             if failed {
-                diagnose("Inline ancestry is unresolved for \(test) [" + hierarchy.map { "\($0.region.path):\($0.region.startLine)" }.joined(separator: ", ") + "]; regenerate complete source/compiler evidence", tests: [test])
+                diagnose("Inline ancestry is unresolved for \(test) [" + hierarchy.map { "\($0.region.path):\($0.region.startLine)" }.joined(separator: ", ") + "]; regenerate complete source/compiler evidence and use module-qualified names for imported superclasses", tests: [test])
                 continue
             }
             var applicable = hierarchy

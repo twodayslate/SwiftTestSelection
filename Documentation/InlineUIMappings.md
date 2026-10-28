@@ -56,6 +56,9 @@ test targets; it does not infer Swift Testing or parameterized executable identi
   compiler locations, and redirected `#sourceLocation` evidence fail conservatively.
   This includes inherited nested types that could shadow an outer superclass name:
   the resolver diagnoses the uncertain ancestry instead of borrowing outer defaults.
+  Superclasses must resolve lexically or by an explicit module-qualified name;
+  a unique name suffix elsewhere in the captured sources is not sufficient. Use
+  `Helpers.Parent` for imported bases, with that declaration's source captured.
 - Inline and file rules form a union. Selecting a test through either rule keeps it
   selected. There are no override, replace, exclusion or implicit policy switches.
 
