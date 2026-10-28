@@ -245,7 +245,7 @@ private func compareConditions(_ head: XcodeTestGraph, _ base: XcodeTestGraph = 
             try source.write(to: folder.appendingPathComponent(path), atomically: true, encoding: .utf8)
         }
         let output = folder.appendingPathComponent("App.sil")
-        _ = try CommandRunner.run("swiftc", ["-module-name", "App", "-g", "-Onone", "-emit-sil", "-whole-module-optimization"] + files.keys.sorted() + ["-o", output.path], at: folder)
+        _ = try CommandRunner.run("swiftc", ["-module-name", "App", "-g", "-Onone", "-emit-sil", "-whole-module-optimization"] + files.keys.sorted().map { folder.appendingPathComponent($0).path } + ["-o", output.path], at: folder)
         let parsed = try SILParser.parse(file: output, module: "App", sourceRoot: folder)
         graph.dependencies!.functions = parsed.functions
         graph.dependencies!.functions["UI.Suite.testFlow()"] = .init(id: "UI.Suite.testFlow()", module: "UI", name: "Suite.testFlow()",
@@ -305,4 +305,31 @@ private func compareConditions(_ head: XcodeTestGraph, _ base: XcodeTestGraph = 
     #expect(report.diagnostics.isEmpty)
     #expect(report.uiConditionDecisions?.allSatisfy { $0.result.status == .notMatched } == true)
     #expect(report.uiConditionDecisions?.first?.result.children[0].status == .matched)
+}
+
+@Test func uiConditionArchivesRequireANewGraphSchemaForOlderClients() throws {
+    let graph = conditionGraph()
+    #expect(graph.schemaVersion == 3)
+    #expect(try GraphArchive.decode(GraphArchive.encode(graph)).schemaVersion == 3)
+    #expect(try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(graph)).schemaVersion == 3)
+    var legacy = XcodeTestGraph(targets: [], tests: [])
+    legacy.mappings = .init(features: [.init(name: "legacy", symbols: ["App.a()"], tests: ["UI/Suite"])])
+    #expect(legacy.schemaVersion == 2)
+}
+
+@Test func uiConditionCacheSupportsSchemaThreeAndPreservesComparison() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("condition-cache-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = try XcodeGraphCache(.init(directory: root, context: "conditions"), progress: { _ in })
+    let head = conditionGraph(a: 2, b: 2)
+    try cache.store(head, identity: ["revision": "head"])
+    let loaded = try #require(try cache.load(["revision": "head"]))
+    #expect(loaded.schemaVersion == 3)
+    #expect(compareConditions(loaded).selectedTests == [conditionTest])
+    #expect(compareConditions(loaded).uiConditionDecisions?.first?.result.status == .matched)
+    // A downgraded archive must not be accepted as compatible with old clients.
+    var downgraded = head
+    downgraded.schemaVersion = 2
+    try cache.store(downgraded, identity: ["revision": "invalid"])
+    #expect(try cache.load(["revision": "invalid"]) == nil)
 }

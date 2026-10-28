@@ -307,8 +307,10 @@ base/head comparison**. Operands may match different files or commits:
 empty arrays, empty patterns, null conditions, unknown operators (including NOT),
 and malformed children are rejected. Version 1 retains its existing union and
 transitive dependency behavior and rejects `when`. Older clients reject version
-2 instead of silently ignoring the selection policy. Version 2 can also contain
-ordinary legacy features.
+2 instead of silently ignoring the selection policy. Saved graphs containing
+version-2 mappings use graph schema 3, which older saved-graph clients also
+reject. Current clients continue accepting legacy schema-2 graphs. Version 2 can
+also contain ordinary legacy features.
 
 - `symbolChanged` matches the compiled `module + "." + name`, using the same
   literal and wildcard conventions as `symbols`. It is true when at least one

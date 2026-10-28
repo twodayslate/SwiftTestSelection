@@ -113,6 +113,7 @@ else: sys.exit('Unexpected build/test command')
     print('PASS siblings, sources, wildcard matching and head repairs over a stale base')
 
     # Version-2 conditions validate every symbol leaf, independently of truth.
+    graph['schemaVersion'] = 3
     graph['mappings']['version'] = 2
     feature['symbols'], feature['sources'] = [], []
     for condition in [
@@ -127,6 +128,7 @@ else: sys.exit('Unexpected build/test command')
     head_file.write_text(json.dumps(graph))
     assert invoke('select', [*args, '--strict-mappings']).returncode == 0
     feature.pop('when')
+    graph['schemaVersion'] = 2
     graph['mappings']['version'] = 1
     print('PASS all nested condition leaves validate and a repaired head passes')
 

@@ -43,7 +43,15 @@ public struct XcodeTestGraph: Codable, Sendable {
     public var generatedSourceBoundaries: [String: [GeneratedSourceBoundary]]? = nil
     public var unresolvedProductRoles: [String: String]? = nil
     public var modules: [String: String] = [:]
-    public var mappings: UIFeatureMappings?
+    public var mappings: UIFeatureMappings? {
+        didSet {
+            // Older saved-graph clients do not validate mapping versions before
+            // selecting. Make them reject archives containing conditions too.
+            if mappings?.version == 2 || mappings?.features.contains(where: { $0.when != nil }) == true {
+                schemaVersion = max(schemaVersion, 3)
+            }
+        }
+    }
     /// Retain read/decode/schema failures even when invalid mappings are discarded.
     public var mappingLoadError: String? = nil
     public var runtimeInventory: XcodeRuntimeInventory? = nil
