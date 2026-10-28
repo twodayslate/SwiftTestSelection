@@ -1538,3 +1538,151 @@ func helperFailureCallbacksRetainFallback(kind: String, sdkBoundary: Bool) throw
         #expect(selected.status == full.status)
     }
 }
+
+@Test(arguments: [false, true]) func sdkHelperRejectsCrossFilePresumedCallLocations(mixed: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("cross-file-locations-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let external = root.appendingPathComponent("External")
+    try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+    let support = """
+    import XCTest
+    import ObjectiveC
+    @MainActor final class ImpSource: XCUIApplication {
+        override var exists: Bool { UserDefaults.standard.set(true, forKey: "review59-flag"); return true }
+    }
+    extension XCUIElementQuery {
+        @MainActor @objc(reviewMatching:) public dynamic func matching(_ value: String) -> XCUIElementQuery {
+            let selector = #selector(getter: XCUIElement.exists)
+            let method = class_getInstanceMethod(ImpSource.self, selector)!
+            class_replaceMethod(XCUIElement.self, selector, method_getImplementation(method), method_getTypeEncoding(method))
+            return self.matching(identifier: value)
+        }
+    }
+    """
+    let supportURL = external.appendingPathComponent("Support.swift")
+    try Data(support.utf8).write(to: supportURL)
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "Support", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", supportURL.path, "-emit-module-path", external.appendingPathComponent("Support.swiftmodule").path], at: root)
+    let cover = """
+    import XCTest
+    @MainActor func visibleCover() {
+        let app = XCUIApplication()
+        _ = app.buttons.matching(identifier: "safe")
+        \(mixed ? "_ = app.buttons.matching(NSPredicate(value: true))" : "")
+    }
+    """
+    let producer = """
+    import XCTest
+    #sourceLocation(file: "\(root.appendingPathComponent("Cover.swift").path)", line: 2)
+    @MainActor func makeApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        _ = app.buttons.matching("bad")
+        return app
+    }
+    #sourceLocation()
+    """
+    let callers = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testWriter() { XCTAssertTrue(makeApp().checkValue("1")) }
+        func testReader() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "review59-flag")) }
+    }
+    """
+    let tests = ["UI/Suite/testWriter()", "UI/Suite/testReader()"]
+    var files = ["Waiting.swift": oldSDKQuery, "Tests.swift": callers, "Cover.swift": cover, "Producer.swift": producer, "Imports.swift": "import Support"]
+    let old = try boundaryGraph(files, tests: tests, root: root, compilerArguments: ["-I", external.path])
+    files["Waiting.swift"] = newSDKQuery
+    let current = try boundaryGraph(files, tests: tests, root: root, compilerArguments: ["-I", external.path])
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: old.sources, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    var legacy = current
+    for id in legacy.dependencies!.functions.keys { legacy.dependencies!.functions[id]!.dynamicCallSites = nil }
+    let fallback = XcodeHeadOnlySelector.select(current: legacy, source: .init(base: old.sources, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    #expect(fallback.selectedTests == tests.sorted())
+    #expect(report.selectedTests == tests.sorted())
+}
+
+@Test func sdkReceiverPairsMethodCallsWithoutBorrowingUnrelatedNames() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let callers = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testWriter() { capture(XCUIApplication(), screenshot: true) }
+        private func capture(_ element: XCUIElement, screenshot: Bool) {
+            if screenshot { _ = element.screenshot() }
+            XCTAssertTrue(element.checkValue("1"))
+        }
+        func testReader() { XCTAssertTrue(true) }
+    }
+    """
+    let tests = ["UI/Suite/testWriter()", "UI/Suite/testReader()"]
+    let before = try boundaryGraph(["Waiting.swift": oldSDKQuery, "Tests.swift": callers], tests: tests, root: root)
+    let current = try boundaryGraph(["Waiting.swift": newSDKQuery, "Tests.swift": callers], tests: tests, root: root)
+    for kind in ["valid", "legacy", "unknown", "remapped"] {
+        var checked = current
+        if kind == "remapped" { checked.sources["UI:Tests.swift"]!.receiverPhysicalLocations = false }
+        for id in checked.dependencies!.functions.keys {
+            if kind == "legacy" { checked.dependencies!.functions[id]!.dynamicCallSites = nil }
+            if kind == "unknown", let calls = checked.dependencies!.functions[id]!.dynamicCallSignatures {
+                for call in calls where call.hasPrefix("objc_method XCUIElement.screenshot!") {
+                    checked.dependencies!.functions[id]!.dynamicCallSites?.insert(call + "\t<unknown>")
+                }
+            }
+        }
+        checked = try GraphArchive.decode(GraphArchive.encode(checked))
+        let report = XcodeHeadOnlySelector.select(current: checked, source: .init(base: before.sources, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+        #expect(report.selectedTests == (kind == "valid" ? [tests[0]] : tests.sorted()), "\(kind): \(report.diagnostics)")
+    }
+}
+
+@Test(arguments: ["strings", "values", "collections", "unwrap", "customDescription", "erasedDescription", "customComparison", "customCollection", "booleanStorage", "collectionCallback", "unwrapCallback", "stringParsing"])
+func sdkReceiverContractsPreserveSwiftWitnessBoundaries(kind: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bodies = [
+        "stringParsing": "let values = \"12.3,a\".split(separator: \",\").compactMap { Double($0) }; XCTAssertEqual(values.count, 1); XCTAssertEqual(values[0], 12.3); XCTAssertTrue(\"Yes\".localizedCaseInsensitiveContains(\"yes\")); XCTAssertEqual(\"a1\".filter(\\.isNumber), \"1\")",
+        "booleanStorage": "flag = true; XCTAssertTrue(flag)",
+        "collectionCallback": "_ = [1, 2].first(where: { _ in UserDefaults.standard.set(true, forKey: \"witness\"); return true })",
+        "unwrapCallback": "_ = try XCTUnwrap({ UserDefaults.standard.set(true, forKey: \"witness\"); return Optional.some(2) }())",
+        "strings": "var text = String(repeating: \"a\", count: 2); for c in text { text.append(c); break }; XCTAssertEqual(text.lowercased().count, 3)",
+        "values": "XCTAssertEqual(String(describing: 42), \"42\"); XCTAssertEqual(Double(2), Double(2), accuracy: 0.01); XCTAssertGreaterThan(abs(-2), min(1, 0)); XCTAssertLessThanOrEqual(1, max(2, 3))",
+        "collections": "let values = [1, 2, 3]; XCTAssertEqual(values.first(where: { $0 == 2 }), 2); XCTAssertEqual(values.max(by: { $0 < $1 }), 3)",
+        "unwrap": "let value = try XCTUnwrap(Optional.some(2)); XCTAssertEqual(value, 2)",
+        "customDescription": "_ = String(describing: Dangerous())",
+        "erasedDescription": "let value: Any = Dangerous(); _ = String(describing: value)",
+        "customComparison": "_ = max(Dangerous(), Dangerous())",
+        "customCollection": "_ = DangerousSequence().first(where: { _ in true })"
+    ]
+    let support = kind.hasPrefix("custom") || kind == "erasedDescription" ? """
+    struct Dangerous: CustomStringConvertible, Comparable {
+        var description: String { UserDefaults.standard.set(true, forKey: "witness"); return "" }
+        static func < (lhs: Self, rhs: Self) -> Bool { UserDefaults.standard.set(true, forKey: "witness"); return false }
+        static func == (lhs: Self, rhs: Self) -> Bool { true }
+    }
+    struct DangerousSequence: Sequence, IteratorProtocol {
+        mutating func next() -> Int? { UserDefaults.standard.set(true, forKey: "witness"); return nil }
+        func makeIterator() -> Self { self }
+    }
+    """ : ""
+    let callers = """
+    import XCTest
+    \(support)
+    @MainActor final class Suite: XCTestCase {
+        \(kind == "booleanStorage" ? "private var flag = false" : "")
+        func testWriter() throws {
+            \(bodies[kind]!)
+            XCTAssertTrue(XCUIApplication().checkValue("1"))
+        }
+        func testReader() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "witness")) }
+    }
+    """
+    let tests = ["UI/Suite/testWriter()", "UI/Suite/testReader()"]
+    let before = try boundaryGraph(["Waiting.swift": oldSDKQuery, "Tests.swift": callers], tests: tests, root: root)
+    let current = try boundaryGraph(["Waiting.swift": newSDKQuery, "Tests.swift": callers], tests: tests, root: root)
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: before.sources, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    let safe = ["strings", "values", "collections", "unwrap", "booleanStorage", "stringParsing"].contains(kind)
+    #expect(report.selectedTests == (safe ? [tests[0]] : tests.sorted()), "\(kind): \(report.diagnostics)")
+    #expect(safe ? report.diagnostics.isEmpty : report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" })
+}

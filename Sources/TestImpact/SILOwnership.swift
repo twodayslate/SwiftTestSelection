@@ -81,7 +81,7 @@ enum SILOwnership {
     private static func ownerships(_ output: String) -> [String: Ownership] {
         let contexts: Set<String> = ["Global", "Static", "Function", "Variable", "Subscript",
             "Getter", "Setter", "ReadAccessor", "ModifyAccessor", "Allocator", "Constructor",
-            "Destructor", "Deallocator", "DefaultArgumentInitializer", "ExplicitClosure", "ImplicitClosure", "Structure", "Class", "Enum", "Protocol", "Extension"]
+            "Destructor", "Deallocator", "DefaultArgumentInitializer", "ExplicitClosure", "ImplicitClosure", "Structure", "Class", "Enum", "Protocol", "Extension", "TypeAlias"]
         struct Node {
             var depth: Int
             var value: String

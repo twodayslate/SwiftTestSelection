@@ -12,6 +12,30 @@ enum SDKReceiverContracts {
     static let unreachableNil = "@unreachable-literal-nil"
     // Concrete SDK values and XCTest assertions. Explicit callback references stay in the caller graph.
     static let primitives: Set<String> = [
+        // Concrete String/Character storage operations cannot dispatch a project conformance.
+        "$sSS12makeIteratorSS0B0VyF", "$sSS8IteratorV4nextSJSgyF", "$sSS6appendyySJF", "$sSSySSSJcfC",
+        "$sSS1poiyS2S_SStFZ", "$sSS9repeating5countS2S_SitcfC", "$sSS5countSivg", "$sSS7isEmptySbvg", "$sSS10lowercasedSSyF",
+        "$sSJ38_builtinExtendedGraphemeClusterLiteral17utf8CodeUnitCount7isASCIISJBp_BwBi1_tcfC",
+        "$sSJ8isNumberSbvg", "$sSdySdSgSscfC",
+        // These split defaults construct only the standard Int/Bool argument values.
+        "$sSlsSQ7ElementRpzrlE5split9separator9maxSplits25omittingEmptySubsequencesSay11SubSequenceQzGAB_SiSbtFfA0_",
+        "$sSlsSQ7ElementRpzrlE5split9separator9maxSplits25omittingEmptySubsequencesSay11SubSequenceQzGAB_SiSbtFfA1_",
+        // XCTest's default messages are constant closures; payload type parameters are unused.
+        "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlFfA1_",
+        "$s6XCTest14XCTAssertEqual__8accuracy_4file4lineyxyKXK_xyKXKxSSyXKs12StaticStringVSutSFRzlFfA2_",
+        "$s6XCTest9XCTUnwrap__4file4linexxSgyKXK_SSyXKs12StaticStringVSutKlFfA0_",
+        "$s6XCTest7XCTFail_4file4lineySS_s12StaticStringVSutF",
+        "$s6XCTest20XCTAssertGreaterThan___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlFfA1_",
+        "$s6XCTest17XCTAssertLessThan___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlFfA1_",
+        "$s6XCTest24XCTAssertLessThanOrEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlFfA1_",
+        "$s6XCTest27XCTAssertGreaterThanOrEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlFfA1_",
+        // Unwrap forwards the supplied value, invoking only explicit input/message closures.
+        "$s6XCTest9XCTUnwrap__4file4linexxSgyKXK_SSyXKs12StaticStringVSutKlF",
+        // Concrete CoreGraphics value operations and the SDK keyboard-key value wrapper.
+        "$sSo6CGRectV12CoreGraphicsE4minXAC7CGFloatVvg", "$sSo6CGRectV12CoreGraphicsE4minYAC7CGFloatVvg",
+        "$sSo6CGRectV12CoreGraphicsE4maxXAC7CGFloatVvg", "$sSo6CGRectV12CoreGraphicsE4maxYAC7CGFloatVvg",
+        "$sSo6CGRectV12CoreGraphicsE8containsySbABF", "$sSo6CGRectV12CoreGraphicsE10intersectsySbABF", "$sSo15XCUIKeyboardKeya8rawValueSSvg",
+        "$sSo21UIContentSizeCategorya8rawValueSSvg",
         // Wrap an existing continuation handle without resuming it or producing
         // its payload. Resumption and runtime producers remain separate edges.
         "$ss34_createCheckedThrowingContinuationyScCyxs5Error_pGSccyxsAB_pGnlF",
@@ -83,6 +107,9 @@ enum SDKReceiverContracts {
 
     // Bridge or transform supplied values with explicit substituted-type restrictions.
     static let transport: Set<String> = [
+        // Bridge/append only the verified substituted value or receiver types below.
+        "$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayCSgFZ",
+        "$sSa2peoiyySayxGz_ABtFZ", "$sSa5countSivg", "$sSayxSicig",
         // (extension in Foundation):Swift.Dictionary._bridgeToObjectiveC() -> __C.NSDictionary
         "$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF",
         // static (extension in Foundation):Swift.Dictionary._unconditionallyBridgeFromObjectiveC(__C.NSDictionary?) -> [A : B]
@@ -97,6 +124,10 @@ enum SDKReceiverContracts {
 
     // Standard collection traversal: only builtin concrete collections may supply the witnesses.
     static let collections: Set<String> = [
+        "$sSTsE5first5where7ElementQzSgSbADKXE_tKF",
+        "$sSTsE3max2by7ElementQzSgSbAD_ADtKXE_tKF",
+        "$sSTsE10compactMapySayqd__Gqd__Sg7ElementQzKXEKlF",
+        "$sSmsE6filteryxSb7ElementQzqd__YKXEqd__YKs5ErrorRd__lF", "$sSmsE6filteryxSb7ElementQzKXEKF",
         // Collection.first forwards a stored element; its collection must be builtin.
         "$sSlsE5first7ElementQzSgvg",
         // (extension in Swift):Swift.BidirectionalCollection< where A.Element == Swift.String>.joined(separator: Swift.String) -> Swift.String
@@ -115,6 +146,19 @@ enum SDKReceiverContracts {
 
     // Value protocols and bridging: all substituted types must have closed builtin value semantics.
     static let values: Set<String> = [
+        // These operations invoke protocols; custom substituted conformances remain unproven.
+        "$sSSySSxcs25LosslessStringConvertibleRzlufC", "$sSS10describingSSx_tclufC",
+        "$sSS10describingSSx_tcs23CustomStringConvertibleRzlufC",
+        "$sSy10FoundationE8containsySbqd__SyRd__lF",
+        "$sSy10FoundationE32localizedCaseInsensitiveContainsySbqd__SyRd__lF",
+        "$sSlsSQ7ElementRpzrlE5split9separator9maxSplits25omittingEmptySubsequencesSay11SubSequenceQzGAB_SiSbtF",
+        "$ss26DefaultStringInterpolationV06appendC0yyxs06CustomB11ConvertibleRzlF", "$ss26DefaultStringInterpolationV06appendC0yyxlF",
+        "$ss17FixedWidthIntegerPsEyxSgSScfC", "$ss3maxyxx_xtSLRzlF", "$ss3minyxx_xtSLRzlF", "$ss3absyxxSLRzs13SignedNumericRzlF",
+        "$s6XCTest14XCTAssertEqual__8accuracy_4file4lineyxyKXK_xyKXKxSSyXKs12StaticStringVSutSFRzlF",
+        "$s6XCTest20XCTAssertGreaterThan___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF",
+        "$s6XCTest17XCTAssertLessThan___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF",
+        "$s6XCTest24XCTAssertLessThanOrEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF",
+        "$s6XCTest27XCTAssertGreaterThanOrEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF",
         // XCTest.XCTAssertEqual<A where A: Swift.Equatable>(_: @autoclosure () throws -> A, _: @autoclosure () throws -> A, _: @autoclosure () -> Swift.String, file: Swift.StaticString, line: Swift.UInt) -> ()
         "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
         // Swift.Dictionary.subscript.setter : (A) -> B?
@@ -128,7 +172,7 @@ enum SDKReceiverContracts {
 
     // Printed type names are accepted only alongside the caller's source import,
     // alias and declaration checks. These sets must not grow to arbitrary SDK types.
-    static let valueTypes: Set<String> = ["String", "Substring", "Bool", "Int", "UInt", "Int64", "UInt64", "Int32", "UInt32", "Int16", "UInt16", "Int8", "UInt8", "Float", "Double", "CGFloat", "Never", "StaticString", "Array", "Dictionary", "Set", "Optional", "IndexingIterator", "ReversedCollection", "Range", "ClosedRange", "DefaultStringInterpolation", "XCTWaiter.Result", "XCUIElement.ElementType"]
+    static let valueTypes: Set<String> = ["String", "Substring", "Character", "Bool", "Int", "UInt", "Int64", "UInt64", "Int32", "UInt32", "Int16", "UInt16", "Int8", "UInt8", "Float", "Double", "CGFloat", "Never", "StaticString", "Array", "Dictionary", "Set", "Optional", "IndexingIterator", "ReversedCollection", "Range", "ClosedRange", "DefaultStringInterpolation", "XCTWaiter.Result", "XCUIElement.ElementType"]
     static let receiverTypes: Set<String> = ["XCUIApplication", "XCUIElement", "XCTestExpectation", "XCTAttachment", "XCUIScreenshot", "NSPredicate", "XCTNSPredicateExpectation", "Any", "AnyObject"]
     private static let collectionRoots: Set<String> = ["Array", "Dictionary", "String", "Substring", "Set", "Range", "ClosedRange"]
 

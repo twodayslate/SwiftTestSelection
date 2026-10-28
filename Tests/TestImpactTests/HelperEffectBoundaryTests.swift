@@ -308,7 +308,7 @@ func resolvedOriginEdgesDoNotHideUnresolvedDispatch(uncertainty: String) {
     #expect(ExternalHelperEffects.receiverDependencies(node) == nil)
 }
 
-@Test(arguments: ["XCUIGestureVelocityFast", "XCUIKeyboardKeyDelete", "XCUIKeyboardKeyForged", "sharedReceiver"])
+@Test(arguments: ["XCUIGestureVelocityFast", "XCUIKeyboardKeyDelete", "UIContentSizeCategoryExtraExtraLarge", "UIContentSizeCategoryForged", "XCUIKeyboardKeyForged", "sharedReceiver"])
 func receiverGlobalsRequireExactSDKContracts(name: String) {
     var node = FunctionNode(id: "entry", module: "UI", name: "entry", regions: [.init(path: "Tests.swift", startLine: 1, endLine: 1)], uncertainties: ["Global state access", "Shared state access"])
     node.receiverTypeOrigins = []; node.receiverGenericCalls = []; node.compilerReferences = []; node.dynamicCallSignatures = []; node.stateAccesses = ["global:" + name]
@@ -316,7 +316,7 @@ func receiverGlobalsRequireExactSDKContracts(name: String) {
     current.sources["UI:Tests.swift"] = .parse("func test() {}", path: "Tests.swift", module: "UI")
     let graph = DependencyGraph(functions: [node.id: node], tests: [current.tests[0]: [node.id]])
     var origins = SDKReceiverOrigins()
-    #expect(origins.proves(tests: Set(current.tests), current: current, graph: graph) == ["XCUIGestureVelocityFast", "XCUIKeyboardKeyDelete"].contains(name))
+    #expect(origins.proves(tests: Set(current.tests), current: current, graph: graph) == ["XCUIGestureVelocityFast", "XCUIKeyboardKeyDelete", "UIContentSizeCategoryExtraExtraLarge"].contains(name))
 }
 
 @Test(arguments: ["final", "open", "missing", "wrongBody"])
@@ -416,4 +416,33 @@ func receiverValueMetatypesRequireCapturedNonSDKIdentity(kind: String, input: Bo
     var origins = SDKReceiverOrigins()
     let proven = origins.proves(tests: Set(current.tests), current: current, graph: graph)
     #expect(proven == ["struct", "enum"].contains(kind))
+}
+
+@Test(arguments: ["valid", "typed", "observed", "wrapped", "static", "duplicate", "customLiteral", "otherFileShadow", "legacy", "untrusted", "macro"])
+func booleanReceiverStorageRequiresInferredBuiltinIdentity(kind: String) throws {
+    let declarations: String
+    switch kind {
+    case "typed": declarations = "var flag: Bool = false"
+    case "observed": declarations = "var flag = false { didSet { effect() } }"
+    case "wrapped": declarations = "@Wrapped var flag = false"
+    case "static": declarations = "static var flag = false"
+    case "duplicate": declarations = "var flag = false; var flag = makeReceiver()"
+    default: declarations = "private var flag = false"
+    }
+    let imports = kind == "untrusted" ? "import Foreign" : "import XCTest"
+    let alias = kind == "customLiteral" ? "typealias BooleanLiteralType = ForeignBoolean" : ""
+    var source = SwiftSourceSnapshot.parse("\(imports)\n\(kind == "macro" ? "@Synthesize" : "") class Suite { \(declarations) }\n\(alias)", path: "Tests.swift", module: "UI")
+    if kind == "legacy" { source.booleanStoredProperties = nil }
+    var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
+    current.sources["UI:Tests.swift"] = source
+    if kind == "otherFileShadow" {
+        current.sources["UI:Other.swift"] = .parse("struct Container<BooleanLiteralType> {}", path: "Other.swift", module: "UI")
+    }
+    var node = FunctionNode(id: "entry", module: "UI", name: "entry", regions: [.init(path: "Tests.swift", startLine: 2, endLine: 2)])
+    node.compilerReferences = []; node.receiverTypeOrigins = []; node.receiverGenericCalls = []; node.dynamicCallSignatures = []
+    node.stateAccesses = ["field:Suite.flag"]
+    current.dependencies = .init(functions: [node.id: node], tests: [current.tests[0]: [node.id]])
+    current = try GraphArchive.decode(GraphArchive.encode(current))
+    var proof = SDKReceiverOrigins()
+    #expect(proof.proves(tests: Set(current.tests), current: current, graph: current.dependencies!) == (kind == "valid"))
 }

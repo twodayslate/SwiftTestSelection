@@ -178,3 +178,25 @@ func erasedBridgeExemptionRequiresAnUnreachableLiteralNilBlock(kind: String) {
     #expect(calls.contains(symbol + "\tAny") == (kind != "nil"))
     #expect(calls.allSatisfy { SDKReceiverContracts.allows(String($0.dropFirst(symbol.count + 1)), for: symbol) } == (kind == "nil"))
 }
+
+@Test func importedTypedStringContractsRequireExactAccessors() throws {
+    let keyboard = "$sSo15XCUIKeyboardKeya8rawValueSSvg"
+    let contentSize = "$sSo21UIContentSizeCategorya8rawValueSSvg"
+    let foreign = "$sSo15XCUIKeyboardKeya7SupportE8rawValueSSvg"
+    let unknown = "$sSo15XCUIKeyboardKeya7unknownSSvg"
+    let symbols: Set<String> = [keyboard, contentSize, foreign, unknown]
+    let output = try CommandRunner.run("xcrun", ["swift-demangle", "--expand", "--tree-only"], at: FileManager.default.temporaryDirectory,
+        input: Data((symbols.sorted().joined(separator: "\n") + "\n").utf8)).text
+    #expect(SILOwnership.declarationOwners(output)[keyboard] == "__C")
+    #expect(ExternalHelperEffects.trustedDeclarations(output, receiverOrigins: true) == [keyboard, contentSize])
+    #expect(ExternalHelperEffects.trustedDeclarations(output).isDisjoint(with: symbols))
+}
+
+@Test func newValueContractsDoNotAcceptErasedOrCustomConformances() {
+    for symbol in ["$sSS10describingSSx_tclufC", "$ss26DefaultStringInterpolationV06appendC0yyxlF", "$ss3maxyxx_xtSLRzlF"] {
+        #expect(SDKReceiverContracts.allows("Int", for: symbol))
+        for arguments in ["Any", "Optional<Any>", "CustomValue", "[CustomValue]", "Foreign.Int"] {
+            #expect(!SDKReceiverContracts.allows(arguments, for: symbol))
+        }
+    }
+}

@@ -13,13 +13,20 @@ struct SDKReceiverOrigins {
     private struct Proof { var blocker: String? }
     private var results: [Set<String>: Proof] = [:]
     private var effects = ExternalHelperEffects()
-    // Public immutable constants from XCUIElement.h and XCUIKeyboardKeys.h.
+    // Public immutable constants from the SDK's gesture, keyboard and content-size headers.
     // Exact names only: a similarly named project global is not an SDK contract.
-    private static let sdkConstants: Set<String> = Set(["Default", "Fast", "Slow"].map { "global:XCUIGestureVelocity" + $0 })
-        .union(["Delete", "Return", "Enter", "Tab", "Space", "Escape", "UpArrow", "DownArrow", "LeftArrow", "RightArrow",
-                "ForwardDelete", "Home", "End", "PageUp", "PageDown", "Clear", "Help", "CapsLock", "Shift", "Control", "Option", "Command",
-                "RightShift", "RightControl", "RightOption", "RightCommand"].map { "global:XCUIKeyboardKey" + $0 })
-        .union((1...19).map { "global:XCUIKeyboardKeyF" + String($0) })
+    private static let sdkConstants: Set<String> = {
+        var result = Set(["Default", "Fast", "Slow"].map { "global:XCUIGestureVelocity" + $0 })
+        let keys = ["Delete", "Return", "Enter", "Tab", "Space", "Escape", "UpArrow", "DownArrow", "LeftArrow", "RightArrow",
+            "ForwardDelete", "Home", "End", "PageUp", "PageDown", "Clear", "Help", "CapsLock", "Shift", "Control", "Option", "Command",
+            "RightShift", "RightControl", "RightOption", "RightCommand"]
+        result.formUnion(keys.map { "global:XCUIKeyboardKey" + $0 })
+        result.formUnion((1...19).map { "global:XCUIKeyboardKeyF" + String($0) })
+        let sizes = ["Unspecified", "ExtraSmall", "Small", "Medium", "Large", "ExtraLarge", "ExtraExtraLarge", "ExtraExtraExtraLarge",
+            "AccessibilityMedium", "AccessibilityLarge", "AccessibilityExtraLarge", "AccessibilityExtraExtraLarge", "AccessibilityExtraExtraExtraLarge"]
+        result.formUnion(sizes.map { "global:UIContentSizeCategory" + $0 })
+        return result
+    }()
 
     mutating func proves(tests: Set<String>, current: XcodeTestGraph, graph: DependencyGraph) -> Bool {
         blocker(tests: tests, current: current, graph: graph) == nil
@@ -34,6 +41,7 @@ struct SDKReceiverOrigins {
 
     private mutating func inspect(tests: Set<String>, current: XcodeTestGraph, graph: DependencyGraph) -> String? {
         let sources = Dictionary(grouping: current.sources.map { (String($0.key.prefix { $0 != ":" }), $0.value) }, by: { $0.0 })
+        let physicalModules = Set(sources.filter { !$0.value.isEmpty && $0.value.allSatisfy { $0.1.receiverPhysicalLocations == true } }.keys)
         func units(_ node: FunctionNode) -> [SourceUnit] {
             node.regions.flatMap { region -> [SourceUnit] in
                 let source = current.sources[node.module + ":" + region.path]?.units ?? []
@@ -65,7 +73,7 @@ struct SDKReceiverOrigins {
                 return "Receiver type identities are unproven with unsupported source imports" +
                     (imports.isEmpty ? " (missing import details; refresh source evidence)" : ": " + imports.joined(separator: ", "))
             }
-            let sdkLiterals: Set<String> = ["MainActor", "DefaultStringInterpolation", "URL", "UUID", "UIDeviceOrientation", "XCUIApplication.State", "String", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Array", "Dictionary", "Set", "Optional", "Any",
+            let sdkLiterals: Set<String> = ["MainActor", "DefaultStringInterpolation", "URL", "UUID", "UIDeviceOrientation", "XCUIApplication.State", "String", "Character", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Array", "Dictionary", "Set", "Optional", "Any",
                 "XCUIApplication", "XCUIElement", "XCUIElement.ElementType", "XCTestCase", "XCTAttachment", "XCTAttachment.Lifetime", "NSPredicate", "XCTNSPredicateExpectation",
                 "XCTWaiter", "XCTWaiter.Result", "XCTestExpectation", "UIDevice", "XCUIScreen", "XCUIDevice", "JSONSerialization"]
             func localValueType(_ name: String) -> Bool {
@@ -149,7 +157,10 @@ struct SDKReceiverOrigins {
                           !$0.typeAliases!.contains(where: { $0.split(separator: ".").last == "StringLiteralType" }) }) else { return "Unproven shared receiver storage: " + access }
                 let field = SDKTestHelperSyntax.canonicalName(String(access.dropFirst(6)))
                 let proofs = snapshots.compactMap { $0.literalStoredProperties![field] }
-                guard !proofs.isEmpty, proofs.allSatisfy({ $0 }) else { return "Unproven shared receiver storage: " + access }
+                if !proofs.isEmpty, proofs.allSatisfy({ $0 }) { continue }
+                let booleans = snapshots.compactMap { $0.booleanStoredProperties?[field] }
+                guard snapshots.allSatisfy({ $0.booleanStoredProperties != nil && $0.booleanLiteralNamesUnshadowed == true }),
+                      !booleans.isEmpty, booleans.allSatisfy({ $0 }) else { return "Unproven shared receiver storage: " + access }
             }
             return nil
         }
@@ -198,6 +209,12 @@ struct SDKReceiverOrigins {
                     current.sources[node.module + ":" + $0.path] != nil
                 }
                 guard owned else { external.insert(id); continue }
+                // SIL locations may point at another physical source file. Never
+                // authenticate a body through that file's imports, labels or types
+                // unless the entire module's source inventory has physical locations.
+                guard physicalModules.contains(node.module) else {
+                    return "Source locations are remapped or lack physical-location evidence in module " + node.module + "; refresh source evidence"
+                }
                 let owners = units(node)
                 if let reason = metatypeBlocker(node, owners: owners) { return "\(reason) in \(node.module).\(node.name)" }
                 if let reason = stateBlocker(node) { return "\(reason) in \(node.module).\(node.name)" }
@@ -250,7 +267,8 @@ struct SDKReceiverOrigins {
                 if let sites = node.dynamicCallSites, !owners.isEmpty,
                    owners.allSatisfy({ $0.receiverCallSites != nil && $0.receiverImportsSupported == true }) {
                     for call in node.dynamicCallSignatures ?? [] {
-                        guard ExternalHelperEffects.queryOverloadShapes.keys.contains(where: { call.hasPrefix("objc_method " + $0 + "!") }) else { continue }
+                        guard let declaration = call.split(separator: " ").dropFirst().first?.split(separator: "!").first,
+                              ExternalHelperEffects.tracksReceiverCallSite(String(declaration)) else { continue }
                         let prefix = call + "\t"
                         let points = sites.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
                         var labels = Set<[String]>()

@@ -23,7 +23,9 @@ struct ExternalHelperEffects {
         return symbols.allSatisfy { Self.runtimeChecks.contains($0) || trusted[$0] == true }
     }
 
-    private static let receiverRuntime = runtimeChecks.union(["swift_getAtKeyPath", "$sSo7NSErrorCSgIeyBhy_ytTZ_", "$sSo7NSErrorCSgIeyBhy_ytTz_"])
+    private static let receiverRuntime = runtimeChecks.union(["swift_getAtKeyPath", "$sSo7NSErrorCSgIeyBhy_ytTZ_", "$sSo7NSErrorCSgIeyBhy_ytTz_",
+        // Exact compiler thunk for the concrete Swift.Character.isNumber getter.
+        "$sSJ8isNumberSbvpSJTK"])
 
     mutating func sdkReceiverDeclarations(_ symbols: Set<String>, resolve: ([String]) -> String? = Self.resolve) -> Set<String> {
         resolveReceiverDeclarations(symbols, resolve: resolve)
@@ -62,6 +64,13 @@ struct ExternalHelperEffects {
         "containing": [["_"], ["_", "identifier"]], "element": [["boundBy"]],
         "evaluate": [["with"]], "wait": [["for", "timeout"]], "add": [["_"]]
     ]
+
+    /// Only method families whose source labels participate in receiver proofs.
+    /// Property accessors have no call labels and need no position payload.
+    static func tracksReceiverCallSite(_ declaration: String) -> Bool {
+        guard let name = declaration.split(separator: ".").last else { return false }
+        return name != "subscript" && receiverCallLabels[String(name)] != nil
+    }
 
     static func allowsDynamicCalls(_ node: FunctionNode, sourceCallShapes: [String: Set<[String]>]? = nil) -> Bool {
         if node.dynamicDeclarations.isEmpty { return node.dynamicCallSignatures?.isEmpty ?? true }
@@ -178,7 +187,7 @@ struct ExternalHelperEffects {
         "open": [["_"]], "coordinate": [["withNormalizedOffset"]], "withOffset": [["_"]],
         "swipeUp": [[], ["velocity"]], "swipeDown": [[], ["velocity"]],
         "press": [["forDuration"], ["forDuration", "thenDragTo"], ["forDuration", "thenDragTo", "withVelocity", "thenHoldForDuration"]],
-        "jsonObject": [["with"], ["with", "options"]]
+        "jsonObject": [["with"], ["with", "options"]], "pinch": [["withScale", "velocity"]]
     ], uniquingKeysWith: { _, new in new })
 
     // Origin contracts only: these SDK operations do not inject a foreign
@@ -222,6 +231,9 @@ struct ExternalHelperEffects {
                 "objc_method XCUIScreen.main!getter.foreign : (XCUIScreen.Type) -> () -> XCUIScreen",
                 "objc_method XCUIElement.coordinate!foreign : (XCUIElement) -> (CGVector) -> XCUICoordinate",
                 "objc_method XCUIElement.frame!getter.foreign : (XCUIElement) -> () -> CGRect",
+                "objc_method UIImage.size!getter.foreign : (UIImage) -> () -> CGSize",
+                "objc_method XCUIScreenshot.image!getter.foreign : (XCUIScreenshot) -> () -> UIImage",
+                "objc_method XCUIElement.pinch!foreign : (XCUIElement) -> (CGFloat, CGFloat) -> ()",
                 "objc_method XCUIElement.swipeDown!foreign : (XCUIElement) -> (XCUIGestureVelocity) -> ()",
                 "objc_method XCUIElement.swipeUp!foreign : (XCUIElement) -> (XCUIGestureVelocity) -> ()",
                 "objc_method XCUICoordinate.tap!foreign : (XCUICoordinate) -> () -> ()",
@@ -325,6 +337,10 @@ struct ExternalHelperEffects {
             guard identifier.hasPrefix(prefix + "kind=Identifier, text="),
                   let data = String(identifier.dropFirst((prefix + "kind=Identifier, text=").count)).data(using: .utf8),
                   let type = try? JSONDecoder().decode(String.self, from: data), importedTypes.contains(type) else { continue }
+            // Imported typed-string wrappers have a TypeAlias context. Only
+            // their exact SDK accessors are contracted; arbitrary extensions are not.
+            if module > 0, lines[module - 1].trimmingCharacters(in: .whitespaces) == "kind=TypeAlias",
+               (!receiverOrigins || !SDKReceiverContracts.primitives.contains(symbol)) { continue }
             // The importer synthesizes the standard enum conformances. Never
             // extend this exception to user/retroactive conformance modules.
             if owners[symbol] == "__C_Synthesized" && !(receiverOrigins ? ["XCTWaiterResult", "XCUIApplicationState", "XCUIElementType"] : ["XCTWaiterResult"]).contains(type) { continue }

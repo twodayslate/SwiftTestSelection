@@ -1110,12 +1110,15 @@ attachment. Nested aliases and inherited nested types cannot be resolved to an
 unrelated module-level namesake.
 
 Receiver audits also pair method and subscript labels with the compiled signature,
-including every use of a method name in a source body. For query overloads in
-receiver audits, captured SIL file/line/column locations can pair each `matching`
-or `containing` use with its exact source argument labels. Valid mixed overloads
-no longer conflict just because they occur in one test or assertion body. All uses
-of each signature must match, including calls on the same line. Missing locations,
-method values, and remapped `#sourceLocation` files retain the broader check.
+including every use of a method name in a source body. Captured SIL
+file/line/UTF-8-column locations pair supported SDK method uses with their exact
+source argument labels. Valid mixed query overloads and unrelated variables with
+names such as `screenshot` no longer conflict just because they occur in one body.
+All uses of each signature must match, including calls on the same line. Missing
+call locations retain the broader whole-body check; method values remain unknown.
+A `#sourceLocation` directive anywhere in the module disables the receiver proof:
+presumed locations can point into a different, apparently clean source file.
+Snapshots without physical-location evidence require source-proof regeneration.
 Unknown source imports are named in receiver-type diagnostics; an import alone
 does not establish a safe external implementation. Method values, foreign
 overloads, unproven enum arguments, and dynamic or forwarded class metatypes
@@ -1249,6 +1252,15 @@ explicit diagnostic. Ordinary lifecycle overrides remain supported when their
 captured implementations pass the caller audit. Missing source evidence declines
 the proof; existing evidence can be refreshed without rebuilding the application.
 
+The analysis scope is Swift source and compiler evidence for Swift, including
+Swift methods exposed through Objective-C dispatch (`@objc`, imported SDK calls,
+and compiler-generated thunks). These are handled automatically when their
+implementations or built-in SDK behavior can be established. Handwritten
+Objective-C/C/C++ implementations are not analyzed. A call into an unavailable
+implementation remains an explicit uncertainty; rewriting that implementation
+in Swift requires a fresh build-time SIL capture before it can be analyzed.
+No user-authored isolation declarations are required or used to waive this boundary.
+
 Receiver-origin trust uses explicit SDK declaration contracts, not blanket trust
 of a module. Reflective factories such as Swift's `_typeByName`, unknown decoding
 APIs, erased Objective-C bridging, and casts to receiver classes or metatypes
@@ -1259,12 +1271,16 @@ All uses and captured fragments must satisfy the contract. Missing generic-call
 evidence in older graphs requires regeneration from retained artifacts and sealed
 SIL; it is never interpreted as proof that no receiver can be produced.
 
-Consumer and lifecycle storage accesses are also checked. Mutable/unknown fields
-and globals retain fallback; a narrow source proof supports immutable stored
-string literals without type annotations, wrappers or interpolation. Exact SDK
-gesture-velocity and keyboard-key constants are supported. The graph records field/global
+Consumer and lifecycle storage accesses are also checked. Unknown fields and
+globals retain fallback. Narrow source proofs support immutable stored string
+literals and instance Boolean storage inferred from `true` or `false`, without
+type annotations, wrappers or observers. The Boolean proof also rejects custom
+literal defaults, shadowed type names and enclosing macros; it establishes only
+that the storage cannot carry receivers or callbacks, not that its users are pure.
+Those users and their explicit calls still undergo the ordinary audit. Exact SDK
+gesture-velocity, keyboard-key and content-size-category constants are supported. The graph records field/global
 identities; old graphs missing that evidence must be regenerated from saved
-artifacts and sealed SIL. Module-fragment cache version 12 invalidates older
+artifacts and sealed SIL. Module-fragment cache version 13 invalidates older
 fragments. This needs no baseline build and does not execute application tests.
 
 Signature evidence must cover the caller

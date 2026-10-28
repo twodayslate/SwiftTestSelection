@@ -388,7 +388,7 @@ public enum SILParser {
                     let signature = String(line[start.upperBound..<end.lowerBound])
                     let call = match[0] + " " + match[1] + signature
                     current!.dynamicCallSignatures?.insert(call)
-                    if ExternalHelperEffects.queryOverloadShapes[declaration] != nil {
+                    if ExternalHelperEffects.tracksReceiverCallSite(declaration) {
                         if let point = location(line), let fields = Pattern.groups(Expressions.location, in: line),
                            let column = Int(fields[2]), column > 0 {
                             current!.dynamicCallSites?.insert(call + "\t" + point.path + "\t" + String(point.startLine) + "\t" + String(column))

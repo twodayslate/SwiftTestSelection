@@ -13,17 +13,22 @@ that evidence is missing. All 125 known consumers remain selected. The retained
 #58 case falls back to its complete 2,000-test inventory; narrowing still needs
 stronger evidence. #55's immutable literal fixture state remains supported.
 The release replay selected **12 of 1,972 tests with zero diagnostics** for #55
-in **12.89 seconds**. For #58 it selected **all 2,000 tests** in
-**13.34 seconds**, retaining all 125 known consumers and the fallback-only
+in **16.11 seconds**. For #58 it selected **all 2,000 tests** in
+**16.80 seconds**, retaining all 125 known consumers and the fallback-only
 NoteLinks example. Both reports passed `verify-build` against the retained products.
 
 The query-overload blocker from PR #57 is now resolved using exact SIL
 file/line/UTF-8-column evidence paired with source argument labels. Mixed
 `matching(identifier:)` and `matching(_:)` calls, including multiple calls on one
-line and calls inside assertion closures, can be verified independently. Crossed
-label/type overloads, method values, missing locations, and source-location
-remapping still fall back. Fragment cache version 12 captures this evidence;
-older saved graphs keep their existing conservative behavior.
+line and calls inside assertion closures, can be verified independently. The
+same position evidence now disambiguates other supported SDK method calls from
+unrelated source names (for example, a `screenshot` Boolean parameter). Crossed
+label/type overloads, method values and missing locations retain conservative
+checks. A source-location directive anywhere in a module prevents its receiver
+proof, including when it points into a different clean file. Older snapshots
+without physical-location evidence must refresh that source evidence. Fragment
+cache version 13 captures the expanded method-site evidence; older saved graphs
+decline proofs that need missing evidence.
 
 The retained #58 replay now gets past the overload audit and reports:
 
@@ -33,11 +38,26 @@ in ChainOfCustodyUITests.CalendarSnapshotUITests.testPortraitCalendarSplit()
 ```
 
 The retained source inventory contains the seven consuming-project Swift modules,
-not the SnapshotTesting source module. A separate exploratory audit of the 125
-known consumers also identifies Objective-C `CalendarHeldDrag` implementations
-outside the SIL model, mutable receiver storage, protocol dispatch, and missing
-explicit SDK origin contracts. This is not a finding that those APIs are unsafe;
-it identifies evidence the current analyzer cannot use to prove isolation.
+not the SnapshotTesting source module. The implementation now supports more
+concrete Swift string/character operations, builtin numeric assertions and
+formatting, standard collection searches, `XCTUnwrap`, typed keyboard/content-size
+constants, and inferred Boolean instance storage. Generic substitutions and
+explicit callbacks are still checked: custom conformances, erased descriptions,
+mutating callbacks, wrappers, observers, macros and unknown storage retain fallback.
+
+An exploratory audit now passes the receiver-origin check for **82 of the 125**
+known consumers. This is not a partial test selection or a full isolation proof.
+The JSON records the first remaining blocker for each other consumer; later
+blockers may be hidden by that first failure. The actual selector still retains
+the complete inventory.
+
+Handwritten Objective-C implementations are outside the tool's analysis scope.
+The consumer plans to rewrite those helpers in Swift; validating the replacement
+requires a fresh build-time SIL capture. Swift-to-Objective-C lowering remains
+within scope and is handled automatically where the captured implementation or
+built-in SDK behavior can establish the proof. No user-audited isolation waiver
+has been introduced. The rewrite alone does not resolve missing third-party
+Swift evidence, erased-value provenance or protocol-dispatch proofs.
 
 **#58 remains open.** The overload fix is covered by compiled positive and negative
 regressions, but does not establish the real fixture's 125-test precision target.
@@ -45,11 +65,12 @@ Unconditionally trusting imports, opaque Objective-C bodies, or unmodeled SDK
 symbols would recreate the unsafe assumptions withdrawn in PR #57. The complete
 inventory remains selected, including all 125 known consumers.
 
-All **330 package tests** and one additional retained replay test passed in
-Xcode 27.0 release (**331 total**, **196.659 seconds**, excluding compilation).
-Xcode 26.6 passed **7 focused tests** in **20.309 seconds**, including compiled
-mixed-query and foreign-overload cases. Capture-helper checks passed six tests;
-release-distribution checks passed five with one platform-specific skip.
+All **336 package tests** and one additional retained replay test passed in
+Xcode 27.0 release (**337 total**, **73.494 seconds**, excluding compilation).
+Xcode 26.6 focused runs passed the compiled overload/source-remapping regressions,
+Swift value and collection controls, and Boolean-storage controls. Capture-helper
+checks passed six tests; release-distribution checks passed five with one
+platform-specific skip.
 The final replay refreshed source proofs and reparsed the sealed UI-module SIL,
 checking unchanged declaration keys, fingerprints, compiler-reference edges and
 dynamic declarations. Original completed bundles and products were unchanged.
@@ -57,8 +78,8 @@ No new application build, baseline build, or application test bodies were execut
 These are local replay measurements, not controlled end-to-end benchmarks.
 
 The machine-readable file separates `currentValidation`, `previousCallbackValidation`,
-and `historicalValidation`. No application test bodies were executed; selection and
-`verify-build` do not establish full-run equivalence.
+`previousQueryValidation`, and `historicalValidation`. Selection and `verify-build`
+do not establish full-run equivalence.
 
 ### Receiver identity and imported overload review
 
@@ -83,7 +104,7 @@ namesakes. Synthesized initializers and enum accessors audit all overlapping dec
 and static-method metatype inputs are omitted only when every matching input is
 unused outside debug instructions. Nested signatures and forwarded values retain
 their evidence. Missing evidence retains
-an explicit recapture diagnostic, and module-fragment cache version 12 invalidates
+an explicit recapture diagnostic, and module-fragment cache version 13 invalidates
 older fragments. Regenerating from valid sealed SIL does not execute test bodies
 or require a new baseline build.
 
@@ -108,7 +129,7 @@ a fresh `Optional<Any>` stack slot is immediately initialized to `.none` and
 switched, with exactly one predecessor. Mutation, aliases, multiple predecessors,
 and mixed reachable bridge calls retain fallback. This preserves #55 without
 trusting live erased bridges. JSON/compact archives retain the new evidence, and
-cache version 12 requires older module fragments to be regenerated.
+cache version 13 requires older module fragments to be regenerated.
 
 ### XCTest callback effect review
 

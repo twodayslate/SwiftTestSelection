@@ -31,7 +31,7 @@ enum SDKReceiverCallSyntax {
                 labels += call.additionalTrailingClosures.map { SDKTestHelperSyntax.canonicalName($0.label.text) }
             }
             shapes[name, default: []].insert(labels)
-            if let locations, name == "matching" || name == "containing" {
+            if let locations {
                 let point = locations.location(for: token.positionAfterSkippingLeadingTrivia)
                 sites[path + "\t" + String(point.line) + "\t" + String(point.column)] = [name] + labels
             }

@@ -8,7 +8,7 @@ import Testing
 private let identifierCall = "objc_method XCUIElementQuery.matching!foreign : (XCUIElementQuery) -> (String) -> XCUIElementQuery"
 private let predicateCall = "objc_method XCUIElementQuery.matching!foreign : (XCUIElementQuery) -> (NSPredicate) -> XCUIElementQuery"
 
-@Test(arguments: ["valid", "literalLocation", "crossed", "missing", "unknown", "partial", "value", "sourceLocation", "legacySource"])
+@Test(arguments: ["valid", "literalLocation", "crossed", "missing", "unknown", "partial", "value", "sourceLocation", "legacySource", "legacyProvenance", "otherFileRemap", "otherFileLegacy"])
 func receiverCallSitePairsEveryOverload(kind: String) throws {
     var text = "import XCTest\nfunc caller() { query.matching(identifier: \"α\"); query.matching(NSPredicate(value: true)) }"
     if kind == "value" { text = text.replacingOccurrences(of: "query.matching(NSPredicate(value: true))", with: "query.matching(identifier:)") }
@@ -29,7 +29,13 @@ func receiverCallSitePairsEveryOverload(kind: String) throws {
     if kind == "unknown" { node.dynamicCallSites!.insert(identifierCall + "\t<unknown>") }
     if kind == "legacySource" { for i in snapshot.units.indices { snapshot.units[i].receiverCallSites = nil } }
     var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
+    if kind == "legacyProvenance" { snapshot.receiverPhysicalLocations = nil }
     current.sources = ["UI:Tests.swift": snapshot]
+    if kind == "otherFileRemap" || kind == "otherFileLegacy" {
+        var other = SwiftSourceSnapshot.parse("#sourceLocation(file: \"Tests.swift\", line: 2)\nfunc hidden() {}", path: "Other.swift", module: "UI")
+        if kind == "otherFileLegacy" { other.receiverPhysicalLocations = nil }
+        current.sources["UI:Other.swift"] = other
+    }
     current.dependencies = .init(functions: [node.id: node], tests: [current.tests[0]: [node.id]])
     for data in [try GraphArchive.encode(current), try JSONEncoder().encode(current)] {
         let restored = try GraphArchive.decode(data)
@@ -37,6 +43,7 @@ func receiverCallSitePairsEveryOverload(kind: String) throws {
         let blocker = proof.blocker(tests: Set(current.tests), current: restored, graph: restored.dependencies!)
         #expect((blocker == nil) == ["valid", "literalLocation"].contains(kind), "\(blocker ?? "no blocker")")
         #expect(restored.dependencies!.functions[node.id]?.dynamicCallSites == node.dynamicCallSites)
+        #expect(restored.sources["UI:Tests.swift"]?.receiverPhysicalLocations == snapshot.receiverPhysicalLocations)
     }
 }
 
