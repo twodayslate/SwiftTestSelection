@@ -297,3 +297,14 @@ private func inlineSelect(_ after: XcodeTestGraph, _ before: XcodeTestGraph, pat
     #expect(inherited.contains { $0.sources == ["App/Notes.swift"] && $0.name.contains("Support/Parent.swift:4") })
     #expect(rules.features.contains { $0.tests?.contains("UI/Checkout/testHistory()") == true && $0.symbols == ["App.shared()"] })
 }
+
+@Test func inlineMappingConditionsCannotRepairInvalidFileSchemaImplicitly() {
+    var graph = inlineModel(inlineUI.replacingOccurrences(of: "{\"symbols\":[\"App.shared()\"]}", with: "{\"when\":{\"sourceChanged\":\"App/Notes.swift\"}}"))
+    graph.mappings = UIFeatureMappings(version: 1, features: [.init(name: "invalid", tests: graph.tests, when: .sourceChanged("App/Notes.swift"))])
+    #expect(throws: MappingValidationError.self) {
+        try graph.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+    }
+    let report = inlineSelect(graph, graph)
+    #expect(report.selectedTests == graph.tests)
+    #expect(report.diagnostics.contains { $0.code == "invalid_ui_mappings" })
+}

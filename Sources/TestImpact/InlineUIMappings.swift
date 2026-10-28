@@ -148,10 +148,13 @@ struct InlineUIMappings {
         var policies: [String: [String]] = [:]
         func applying(to snapshot: XcodeTestGraph) -> XcodeTestGraph {
             var result = snapshot
+            // Adding an inline condition must not upgrade and accidentally
+            // legitimize an invalid version-1 file condition or other bad policy.
+            if let existing = snapshot.mappings, (try? existing.validate()) == nil { return result }
             if !features.isEmpty {
                 var mappings = result.mappings ?? UIFeatureMappings(features: [])
                 mappings.features += features
-                if features.contains(where: { $0.when != nil }) { mappings.version = max(2, mappings.version) }
+                if mappings.version == 1, features.contains(where: { $0.when != nil }) { mappings.version = 2 }
                 result.mappings = mappings
             }
             return result
