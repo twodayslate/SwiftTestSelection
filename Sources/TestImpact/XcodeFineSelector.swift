@@ -126,6 +126,47 @@ public enum XcodeFineSelector {
         }
         oldChanged = Dictionary(grouping: oldChanged, by: { $0.key + $0.region.path }).values.compactMap(\.first)
         newChanged = Dictionary(grouping: newChanged, by: { $0.key + $0.region.path }).values.compactMap(\.first)
+        let hasConditions = [current.mappings, previous?.mappings].contains {
+            $0?.features.contains { $0.when != nil } == true
+        }
+        var comparisonContext = UIConditionContext(sides: [], unavailableReason: nil)
+        if hasConditions {
+            if let previous { comparisonContext.sides.append(.init(revision: "base", snapshot: previous, changed: oldChanged)) }
+            comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged))
+        }
+        if previous == nil { comparisonContext.unavailableReason = "Base compiler evidence unavailable" }
+        if missingCallerMetadata && locationPolicy != .diagnostic {
+            comparisonContext.unavailableReason = "Saved snapshots lack caller-location metadata"
+        }
+        var conditionDecisions: [UIConditionDecision] = []
+        var conditionSourceCoverage: [String: Set<String>] = [:]
+        for (revision, snapshot) in [("base", previous), ("head", Optional(current))] {
+            guard let snapshot, let mappings = snapshot.mappings else { continue }
+            do { try mappings.validate() }
+            catch { fallback("invalid_ui_mappings", "\(revision): \(error)", tests: uiTests) }
+            for feature in mappings.features {
+                guard let condition = feature.when else { continue }
+                let sourcePatterns = condition.sourcePatterns
+                conditionSourceCoverage[revision + ":" + feature.name] = Set((oldChanged + newChanged).filter { unit in
+                    sourcePatterns.contains { UIFeatureMappings.matches(unit.region.path, pattern: $0) }
+                }.map(\.key))
+                let result = comparisonContext.evaluate(condition)
+                conditionDecisions.append(.init(feature: feature.name, revision: revision, result: result))
+                // Resolve against the policy's own revision before excluding
+                // deleted tests. A removed suite is not an unresolved selector.
+                let revisionTests = Set(snapshot.tests.filter { test in mappings.selectors(for: feature).contains { UIFeatureMappings.selects(test, selector: $0) } })
+                let tests = revisionTests.intersection(inventory)
+                for selector in mappings.selectors(for: feature) where !snapshot.tests.contains(where: { UIFeatureMappings.selects($0, selector: selector) }) {
+                    fallback("unresolved_mapping_selector", "\(revision): feature \(feature.name) has no discovered tests for \(selector)", tests: uiTests)
+                }
+                if result.status == .unresolved {
+                    fallback("unresolved_mapping_condition", "\(revision): \(feature.name): \(result.explanation)", tests: revisionTests.isEmpty ? uiTests : tests)
+                } else if result.status == .matched {
+                    include(tests, kind: "explicitCondition", reason: "\(feature.name): \(result.explanation)", revision: revision)
+                    if revisionTests.isEmpty { fallback("unresolved_feature_tests", "\(revision): affected feature \(feature.name) has no test mappings.", tests: uiTests) }
+                }
+            }
+        }
         let knownPaths = Set((current.targets + (previous?.targets ?? [])).flatMap(\.sourceFiles))
         let generatedBoundaries = Array(current.generatedSourceBoundaries?.values ?? [:].values).flatMap { $0 } +
             Array(previous?.generatedSourceBoundaries?.values ?? [:].values).flatMap { $0 }
@@ -239,6 +280,9 @@ public enum XcodeFineSelector {
         if hasSemanticChanges || !changes.isEmpty {
             for message in additionalFallbacks { fallback("base_unavailable", message) }
             if previous?.dependencies == nil { fallback("base_unavailable", "Base compiler graph is unavailable.") }
+            // Conditions can enter this selector without a head compiler graph.
+            // Their UI-only fallback cannot account for missing unit-test edges.
+            if current.dependencies == nil { fallback("head_unavailable", "Head compiler graph is unavailable.") }
             for graph in [current, previous].compactMap({ $0 }) {
                 for message in graph.diagnostics + (graph.dependencies?.diagnostics ?? []) + graph.sources.values.flatMap(\.diagnostics) {
                     fallback("incomplete_graph", message)
@@ -407,11 +451,14 @@ public enum XcodeFineSelector {
                     fallback("unresolved_mapping_boundary", "\(revision): no compiled source/symbol boundary for feature \(feature.name)", tests: uiTests)
                 }
                 for (unitIndex, unit) in productionUnits.enumerated() {
-                    let directlyMapped = (feature.sources ?? []).contains { UIFeatureMappings.matches(unit.region.path, pattern: $0) }
+                    let directlyMapped = ((feature.sources ?? []) + (feature.when?.sourcePatterns ?? [])).contains { UIFeatureMappings.matches(unit.region.path, pattern: $0) }
                     let chain = unitChains[unitIndex][feature.name]
-                    if directlyMapped || chain != nil {
+                    // A semantically edited declaration may move between paths.
+                    // Source predicates cover its identity from either comparison side.
+                    let conditionalSource = conditionSourceCoverage[revision + ":" + feature.name]?.contains(unit.key) == true
+                    if directlyMapped || chain != nil || conditionalSource {
                         featurePaths[feature.name] = (chain ?? []).map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 } + [unit.region.path]
-                        matchedFeatures.insert(feature.name)
+                        if feature.when == nil { matchedFeatures.insert(feature.name) }
                         coveredChanges.insert(unit.key)
                     }
                 }
@@ -446,6 +493,10 @@ public enum XcodeFineSelector {
                                   limitations: ["UI feature mappings are explicit dependency declarations, not measured coverage; keep them complete and validate with full runs.",
                                                 "Test-entry-only selection assumes independent tests: hidden cross-test calls or order-dependent shared state are not inferred. Explicit compiled callers remain selected.",
                                                 "Compiler graphs model the selected build configuration. External runtime behavior and generated code may require conservative fallbacks."])
+        report.uiConditionDecisions = conditionDecisions.isEmpty ? nil : conditionDecisions
+        if !conditionDecisions.isEmpty {
+            report.limitations.append("AND/OR conditions are explicit user selection policies, not proof that omitted tests cannot fail. A false condition is not a veto on other selections.")
+        }
         report.schemaVersion = 2
         if locationPolicy == .diagnostic {
             report.limitations.append("Source-location policy is diagnostic in both revisions: implicit location-value changes do not select tests. Location literals must not control application behavior; explicit macro/directive syntax and compiled dependency changes still participate.")

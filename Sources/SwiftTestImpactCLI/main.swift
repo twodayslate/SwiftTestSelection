@@ -307,6 +307,16 @@ private func render(_ report: ImpactReport) -> String {
     var lines = ["Selected \(report.selectedTests.count) of \(report.totalTests) tests", "Base: \(report.baseRevision)"]
     if let mode = report.analysisMode { lines.append("Analysis mode: " + mode) }
     if let head = report.headRevision { lines.append("Head: " + head + " (" + (report.comparisonMode ?? "direct") + ")") }
+    for decision in report.uiConditionDecisions ?? [] {
+        lines.append("UI condition [\(decision.revision)] \(decision.feature): \(decision.result.status.rawValue)")
+        func describe(_ result: UIConditionResult, indent: String) {
+            lines.append(indent + result.operation + (result.pattern.map { " " + $0 } ?? "") + ": " + result.status.rawValue)
+            if let reason = result.reason { lines.append(indent + "  " + reason) }
+            for change in result.changes { lines.append(indent + "  " + change) }
+            for child in result.children { describe(child, indent: indent + "  ") }
+        }
+        describe(decision.result, indent: "  ")
+    }
     for diagnostic in report.diagnostics { lines.append("Diagnostic [\(diagnostic.code)]: \(diagnostic.message)") }
     for reason in report.fullRunReasons { lines.append("Full-suite fallback: \(reason)") }
     for test in report.selectedTests {

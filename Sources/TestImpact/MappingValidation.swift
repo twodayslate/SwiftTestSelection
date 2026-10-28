@@ -47,7 +47,7 @@ extension XcodeTestGraph {
         var diagnostics: [MappingValidationDiagnostic] = []
         for feature in mappings.features {
             let matches = dependencies.map { MappingIndex.symbolMatches(feature, graph: $0) }
-                ?? (feature.symbols ?? []).map { (pattern: $0, roots: Set<String>()) }
+                ?? ((feature.symbols ?? []) + (feature.when?.symbolPatterns ?? [])).map { (pattern: $0, roots: Set<String>()) }
             for match in matches where match.roots.isEmpty {
                 diagnostics.append(.init(code: dependencies == nil ? "mapping_symbol_graph_unavailable" : "unresolved_mapping_symbol",
                     mappingFile: mappingFile, feature: feature.name, pattern: match.pattern, revision: revision,

@@ -10,7 +10,7 @@ struct MappingIndex {
     init(_ mappings: UIFeatureMappings, snapshot: XcodeTestGraph, graph: DependencyGraph, index: DependencyIndex) {
         for feature in mappings.features {
             var symbols = Set<String>()
-            let sourcePatterns = (feature.sources ?? []).map(Glob.init)
+            let sourcePatterns = ((feature.sources ?? []) + (feature.when?.sourcePatterns ?? [])).map(Glob.init)
             for (path, ids) in index.byFile where sourcePatterns.contains(where: { $0.matches(path) }) { symbols.formUnion(ids) }
             for match in Self.symbolMatches(feature, graph: graph) { symbols.formUnion(match.roots) }
             roots[feature.name] = symbols
@@ -27,7 +27,7 @@ struct MappingIndex {
 
     /// Preserve each entry's resolution independently of sibling/source roots.
     static func symbolMatches(_ feature: UIFeatureMappings.Feature, graph: DependencyGraph) -> [(pattern: String, roots: Set<String>)] {
-        (feature.symbols ?? []).map { pattern in
+        ((feature.symbols ?? []) + (feature.when?.symbolPatterns ?? [])).map { pattern in
             let glob = Glob(pattern)
             return (pattern, Set(graph.functions.values.lazy.filter { glob.matches($0.module + "." + $0.name) }.map(\.id)))
         }

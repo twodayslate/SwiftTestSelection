@@ -20,10 +20,25 @@ public struct UIFeatureMappings: Codable, Sendable {
         public var tests: [String]?
         public var fixtures: [String]?
         public var dependsOn: [String]?
+        public var when: Condition?
 
-        public init(name: String, sources: [String] = [], symbols: [String] = [], tests: [String] = [], fixtures: [String] = [], dependsOn: [String] = []) {
+        private enum CodingKeys: String, CodingKey { case name, sources, symbols, tests, fixtures, dependsOn, when }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            name = try container.decode(String.self, forKey: .name)
+            sources = try container.decodeIfPresent([String].self, forKey: .sources)
+            symbols = try container.decodeIfPresent([String].self, forKey: .symbols)
+            tests = try container.decodeIfPresent([String].self, forKey: .tests)
+            fixtures = try container.decodeIfPresent([String].self, forKey: .fixtures)
+            dependsOn = try container.decodeIfPresent([String].self, forKey: .dependsOn)
+            // An explicitly null condition must not silently become a legacy rule.
+            when = container.contains(.when) ? try container.decode(Condition.self, forKey: .when) : nil
+        }
+
+        public init(name: String, sources: [String] = [], symbols: [String] = [], tests: [String] = [], fixtures: [String] = [], dependsOn: [String] = [], when: Condition? = nil) {
             self.name = name; self.sources = sources; self.symbols = symbols
-            self.tests = tests; self.fixtures = fixtures; self.dependsOn = dependsOn
+            self.tests = tests; self.fixtures = fixtures; self.dependsOn = dependsOn; self.when = when
         }
     }
     public var version: Int
@@ -44,7 +59,7 @@ public struct UIFeatureMappings: Codable, Sendable {
     }
 
     public func validate() throws {
-        guard version == 1 else { throw ImpactError("Unsupported UI mapping version: \(version)") }
+        guard version == 1 || version == 2 else { throw ImpactError("Unsupported UI mapping version: \(version)") }
         for pattern in ignoredDocumentation ?? [] {
             guard !pattern.hasPrefix("/"), pattern.hasSuffix(".md"),
                   !pattern.split(separator: "/").contains("..") else {
@@ -64,7 +79,19 @@ public struct UIFeatureMappings: Codable, Sendable {
             }
         }
         guard names.count == features.count, !names.contains("") else { throw ImpactError("UI feature names must be unique and nonempty.") }
+        let conditionalNames = Set(features.filter { $0.when != nil }.map(\.name))
         for feature in features {
+            if let condition = feature.when {
+                guard version == 2 else { throw ImpactError("UI conditions require mapping version 2") }
+                guard (feature.sources ?? []).isEmpty, (feature.symbols ?? []).isEmpty,
+                      (feature.dependsOn ?? []).isEmpty else {
+                    throw ImpactError("Conditional feature \(feature.name) cannot combine when with sources, symbols or dependsOn")
+                }
+                try condition.validate()
+            }
+            guard Set(feature.dependsOn ?? []).isDisjoint(with: conditionalNames) else {
+                throw ImpactError("dependsOn cannot reference a conditional feature: \(feature.name)")
+            }
             for dependency in feature.dependsOn ?? [] where !names.contains(dependency) {
                 throw ImpactError("Unknown dependency \(dependency) in UI feature \(feature.name)")
             }

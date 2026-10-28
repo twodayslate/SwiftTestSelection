@@ -112,6 +112,26 @@ else: sys.exit('Unexpected build/test command')
         assert result.returncode == 0, result.stderr  # Stale base is allowed.
     print('PASS siblings, sources, wildcard matching and head repairs over a stale base')
 
+    # Version-2 conditions validate every symbol leaf, independently of truth.
+    graph['schemaVersion'] = 3
+    graph['mappings']['version'] = 2
+    feature['symbols'], feature['sources'] = [], []
+    for condition in [
+        {'any': [{'symbolChanged': 'App.stillExists()'}, {'symbolChanged': 'App.missing*'}]},
+        {'all': [{'sourceChanged': 'App.swift'}, {'symbolChanged': 'App.missing*'}]},
+    ]:
+        feature['when'] = condition
+        head_file.write_text(json.dumps(graph))
+        for extra in [[], ['--full-suite'], ['--run']]:
+            failure(invoke('select', [*args, '--strict-mappings', *extra]), revision, 'App.missing*')
+    feature['when'] = {'symbolChanged': 'App.still*'}
+    head_file.write_text(json.dumps(graph))
+    assert invoke('select', [*args, '--strict-mappings']).returncode == 0
+    feature.pop('when')
+    graph['schemaVersion'] = 2
+    graph['mappings']['version'] = 1
+    print('PASS all nested condition leaves validate and a repaired head passes')
+
     # Saved execution validates even an empty report, before product/toolchain checks.
     feature['symbols'] = ['App.wasDeleted()']
     head_file.write_text(json.dumps(graph))
