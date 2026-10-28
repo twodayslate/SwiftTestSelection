@@ -65,6 +65,10 @@ test targets; it does not infer Swift Testing or parameterized executable identi
   Without that source proof or compiler import evidence excluding a collision,
   ancestry remains unresolved and the affected tests stay selected. Older saved
   snapshots missing framework-import proof must be regenerated before narrowing.
+  Scoped type imports (including conditional ones) can override otherwise familiar
+  base names even when their module's source is unavailable. Colliding scoped names
+  keep ancestry unresolved; use an unambiguous module-qualified superclass instead.
+  Saved snapshots without scoped-import evidence also require regeneration.
 - Inline and file rules form a union. Selecting a test through either rule keeps it
   selected. There are no override, replace, exclusion or implicit policy switches.
 
@@ -78,7 +82,11 @@ that uncertainty and includes the affected enabled test.
 Disabled declarations do not participate in active rule validation. In particular,
 a disabled method with a stale symbol does not fail its enabled sibling's mapping.
 Orphan directives in UI source files are diagnosed because they cannot be associated
-with an executable safely. The audit command below inspects the **active inventory**;
+with an executable safely. Orphan diagnostics in an enabled test's ancestor or
+inherited-method source are also reported, even when no directive attached
+successfully anywhere in the graph.
+Unrelated support files and ancestors used only by disabled suites do not contribute
+those diagnostics. The audit command below inspects the **active inventory**;
 there is no all-plans/disabled-declarations audit mode. Run it against graphs captured
 for each configuration you maintain.
 

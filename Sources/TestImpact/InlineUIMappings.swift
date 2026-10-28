@@ -28,12 +28,15 @@ public struct InlineMappingSyntax: Codable, Sendable {
     /// Unconditional framework imports that can establish built-in base names.
     /// Older snapshots lack this proof and must not assume a name's identity.
     public var frameworkImports: Set<String>? = nil
+    /// Names introduced by scoped type imports, including conditional imports
+    /// whose activity cannot be proven from source alone.
+    public var scopedTypeImports: Set<String>? = nil
 
     static let prefix = "swift-test-selection:"
 
     static func parse(_ tree: SourceFileSyntax, path: String, module: String, hasDirectives: Bool = true) -> Self {
         let locations = SourceLocationConverter(fileName: path, tree: tree)
-        var result = Self(declarations: [], diagnostics: [], frameworkImports: [])
+        var result = Self(declarations: [], diagnostics: [], frameworkImports: [], scopedTypeImports: [])
         var attached = Set<Int>()
         func directives(_ trivia: Trivia, at position: AbsolutePosition) -> [(Int, Directive)] {
             guard hasDirectives else { return [] }
@@ -83,6 +86,13 @@ public struct InlineMappingSyntax: Codable, Sendable {
             return values
         }
         func walk(_ node: Syntax, scope: String, conditional: Bool, member: Bool) {
+            if let imported = node.as(ImportDeclSyntax.self),
+               let kind = imported.importKindSpecifier?.text,
+               ["typealias", "class", "struct", "enum", "protocol"].contains(kind) {
+                result.scopedTypeImports?.formUnion(imported.path.dropFirst().map {
+                    $0.name.identifier?.name ?? $0.name.text
+                })
+            }
             if let imported = node.as(ImportDeclSyntax.self), !conditional,
                imported.attributes.isEmpty, imported.importKindSpecifier == nil,
                ["XCTest", "Foundation"].contains(imported.path.trimmedDescription) {
@@ -187,7 +197,8 @@ struct InlineUIMappings {
                 diagnose(message, tests: inventory)
             }
         }
-        guard annotated, !inventory.isEmpty else { return result }
+        let hasSyntaxDiagnostics = snapshot.sources.values.contains { !($0.inlineMappings?.diagnostics.isEmpty ?? true) }
+        guard annotated || hasSyntaxDiagnostics, !inventory.isEmpty else { return result }
         let nodes = Array(snapshot.dependencies?.functions.values ?? [:].values)
         let nodesByModule = Dictionary(grouping: nodes, by: \.module)
         let nodesByName = Dictionary(grouping: nodes, by: { $0.module + "." + $0.name })
@@ -202,8 +213,12 @@ struct InlineUIMappings {
             source.units.filter { $0.kind == "type" }.map { SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope) }
         })
         var frameworkImports = Set<String>()
+        var scopedTypeImports: [String: Set<String>] = [:]
         for syntax in snapshot.sources.values.compactMap(\.inlineMappings) {
             for declaration in syntax.declarations {
+                // Legacy import evidence did not account for scoped imports.
+                guard let scoped = syntax.scopedTypeImports else { continue }
+                scopedTypeImports[declaration.module + ":" + declaration.region.path] = scoped
                 for framework in syntax.frameworkImports ?? [] {
                     frameworkImports.insert(declaration.module + ":" + declaration.region.path + ":" + framework)
                 }
@@ -246,17 +261,36 @@ struct InlineUIMappings {
             var pending: String? = module + "." + parts[1]
             var visited = Set<String>()
             var failed = false
+            var diagnosedPaths = testPaths
+            func diagnoseSources(_ applicable: [InlineMappingSyntax.Declaration]) {
+                let paths = Set(applicable.map { $0.region.path }).subtracting(diagnosedPaths)
+                diagnosedPaths.formUnion(paths)
+                for syntax in snapshot.sources.values.compactMap(\.inlineMappings) {
+                    for message in syntax.diagnostics where paths.contains(where: { message.hasPrefix($0 + ":") }) {
+                        diagnose(message, tests: [test])
+                    }
+                }
+            }
             while let key = pending {
                 pending = nil
                 guard visited.insert(key).inserted else { failed = true; break }
                 let candidates = (classes[key] ?? []).filter { !$0.conditional || active($0) }
                 guard candidates.count == 1, let declaration = candidates.first else {
-                    diagnose("Cannot uniquely bind inline suite declarations for \(test): \(key) [" + (classes[key] ?? []).map { "\($0.region.path):\($0.region.startLine)" }.joined(separator: ", ") + "]; need an active class and compiler locations", tests: [test])
+                    if annotated {
+                        diagnose("Cannot uniquely bind inline suite declarations for \(test): \(key) [" + (classes[key] ?? []).map { "\($0.region.path):\($0.region.startLine)" }.joined(separator: ", ") + "]; need an active class and compiler locations", tests: [test])
+                    }
                     failed = true; break
                 }
                 hierarchy.append(declaration)
                 guard let spelling = declaration.superclass else { break }
                 guard let parent = SwiftSourceSnapshot.nominalTypeName(spelling) else { failed = true; break }
+                let importedName = String(parent.prefix { $0 != "." })
+                guard let importedTypes = scopedTypeImports[declaration.module + ":" + declaration.region.path] else {
+                    failed = true; break
+                }
+                if importedTypes.contains(importedName) {
+                    failed = true; break
+                }
                 var scope = (declaration.module + "." + declaration.scope).split(separator: ".").dropLast()
                 let qualifier = parent.firstIndex(of: ".").map { String(parent[..<$0]) }
                 while !scope.isEmpty {
@@ -289,8 +323,11 @@ struct InlineUIMappings {
                     failed = true; break
                 }
             }
+            diagnoseSources(hierarchy)
             if failed {
-                diagnose("Inline ancestry is unresolved for \(test) [" + hierarchy.map { "\($0.region.path):\($0.region.startLine)" }.joined(separator: ", ") + "]; regenerate complete source/compiler evidence and use module-qualified names for imported superclasses", tests: [test])
+                if annotated {
+                    diagnose("Inline ancestry is unresolved for \(test) [" + hierarchy.map { "\($0.region.path):\($0.region.startLine)" }.joined(separator: ", ") + "]; regenerate complete source/compiler evidence and use module-qualified names for imported superclasses", tests: [test])
+                }
                 continue
             }
             var applicable = hierarchy
@@ -300,7 +337,7 @@ struct InlineUIMappings {
                 let bound = methods.filter { active($0, methodOnly: true, roots: roots) }
                 if bound.isEmpty { continue }
                 guard bound.count == 1, let implementation = bound.first else {
-                    diagnose("Ambiguous inline method binding for \(test); compiler locations match multiple declarations", tests: [test])
+                    if annotated { diagnose("Ambiguous inline method binding for \(test); compiler locations match multiple declarations", tests: [test]) }
                     failed = true; break
                 }
                 applicable.append(implementation)
@@ -309,15 +346,11 @@ struct InlineUIMappings {
                 break
             }
             if !applicable.contains(where: { $0.kind == "method" }) {
-                diagnose("No unique compiler-backed method declaration for inline mappings on \(test)", tests: [test]); failed = true
+                if annotated { diagnose("No unique compiler-backed method declaration for inline mappings on \(test)", tests: [test]) }
+                failed = true
             }
+            diagnoseSources(applicable)
             guard !failed else { continue }
-            let applicablePaths = Set(applicable.map { $0.region.path }).subtracting(testPaths)
-            for syntax in snapshot.sources.values.compactMap(\.inlineMappings) {
-                for message in syntax.diagnostics where applicablePaths.contains(where: { message.hasPrefix($0 + ":") }) {
-                    diagnose(message, tests: [test])
-                }
-            }
             for declaration in applicable {
                 guard physical.contains(declaration.module + ":" + declaration.region.path) else {
                     diagnose("\(declaration.region.path):\(declaration.region.startLine): redirected source locations cannot bind inline mappings", tests: [test]); continue
