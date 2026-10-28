@@ -1274,6 +1274,13 @@ Printing and assertion failure messages also require known formatting witnesses.
 Consequently, generic integer/optional equality assertions can retain fallback
 even when their equality implementation is builtin; ordinary Boolean assertions
 and supported concrete string/floating-point assertions remain eligible.
+XCTest can also format errors thrown by assertion inputs and `XCTUnwrap`.
+Receiver proofs require captured error-flow evidence for their explicit input
+producers. Propagated errors, opaque throwing callbacks, indirect calls, or
+missing evidence retain fallback; ordinary nonthrowing inputs remain eligible.
+The audit conservatively includes all explicit producers because the graph does
+not assign each callback a specific SDK argument role. Older graphs must be
+regenerated from retained artifacts and sealed SIL to restore these proofs.
 All uses and captured fragments must satisfy the contract. Missing generic-call
 evidence in older graphs requires regeneration from retained artifacts and sealed
 SIL; it is never interpreted as proof that no receiver can be produced.
@@ -1287,7 +1294,7 @@ that the storage cannot carry receivers or callbacks, not that its users are pur
 Those users and their explicit calls still undergo the ordinary audit. Exact SDK
 gesture-velocity, keyboard-key and content-size-category constants are supported. The graph records field/global
 identities; old graphs missing that evidence must be regenerated from saved
-artifacts and sealed SIL. Module-fragment cache version 13 invalidates older
+artifacts and sealed SIL. Module-fragment cache version 14 invalidates older
 fragments. This needs no baseline build and does not execute application tests.
 
 Signature evidence must cover the caller

@@ -29,7 +29,7 @@ enum SDKReceiverContracts {
         "$s6XCTest17XCTAssertLessThan___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlFfA1_",
         "$s6XCTest24XCTAssertLessThanOrEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlFfA1_",
         "$s6XCTest27XCTAssertGreaterThanOrEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlFfA1_",
-        // Unwrap forwards the supplied value, invoking only explicit input/message closures.
+        // Unwrap also formats thrown errors; receiver proofs audit its input producers.
         "$s6XCTest9XCTUnwrap__4file4linexxSgyKXK_SSyXKs12StaticStringVSutKlF",
         // Concrete CoreGraphics value operations and the SDK keyboard-key value wrapper.
         "$sSo6CGRectV12CoreGraphicsE4minXAC7CGFloatVvg", "$sSo6CGRectV12CoreGraphicsE4minYAC7CGFloatVvg",
@@ -169,6 +169,12 @@ enum SDKReceiverContracts {
 
     static let declarations = primitives.union(transport).union(collections).union(values)
     static let generic = transport.union(collections).union(values)
+    /// These SDK bodies can format a caught Error through runtime protocols.
+    /// Default-message closures do not evaluate or catch input expressions.
+    static let errorFormatting = Set(declarations.filter {
+        $0.hasPrefix("$s6XCTest") && ($0.contains("XCTAssert") || $0.contains("XCTUnwrap")) && $0.hasSuffix("F")
+    })
+
 
     // Printed type names are accepted only alongside the caller's source import,
     // alias and declaration checks. These sets must not grow to arbitrary SDK types.

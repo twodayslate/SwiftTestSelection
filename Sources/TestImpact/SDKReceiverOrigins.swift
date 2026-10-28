@@ -193,6 +193,34 @@ struct SDKReceiverOrigins {
                 return !roots.contains { graph.functions[$0]?.module == module && graph.functions[$0]?.name == initializer }
             }
         }
+        // Check all explicit input producers conservatively: the graph retains
+        // escaped callbacks but does not assign them individual SDK argument roles.
+        // Cache successful checks within this immutable receiver proof.
+        var nonthrowingProducers = Set<String>()
+        func errorFormattingBlocker(_ inputs: Set<String>) -> String? {
+            var pending = inputs, visited = Set<String>()
+            while !pending.isEmpty {
+                let batch = pending.subtracting(visited).subtracting(nonthrowingProducers)
+                pending = []
+                visited.formUnion(batch)
+                let sdk = effects.sdkReceiverDeclarations(batch)
+                for id in batch.subtracting(sdk).sorted() {
+                    guard let node = graph.functions[id], let errors = node.receiverErrorEffects,
+                          let direct = node.compilerReferences else {
+                        return "Missing error-flow evidence for XCTest input producer " + id + "; regenerate the graph from sealed SIL"
+                    }
+                    guard errors.isEmpty, !node.uncertainties.contains("Indirect function invocation") else {
+                        return "Unproven XCTest error formatting from input producer " + node.module + "." + node.name
+                    }
+                    // A Swift throw from any dynamic/indirect call must propagate
+                    // through this body to reach the SDK's catch. Explicit callees
+                    // also cover callback bodies handed to known SDK operations.
+                    pending.formUnion(direct)
+                }
+            }
+            nonthrowingProducers.formUnion(visited)
+            return nil
+        }
         var pending = Set(tests.flatMap { roots($0) }), visited = Set<String>()
         var external = Set<String>()
         while !pending.isEmpty {
@@ -221,6 +249,16 @@ struct SDKReceiverOrigins {
                 // A saved project body with missing provenance is not an opaque
                 // external leaf, even if its declaration has a void result.
                 guard let direct = node.compilerReferences else { return "Missing compiler references for \(node.module).\(node.name)" }
+                if !direct.isDisjoint(with: SDKReceiverContracts.errorFormatting) {
+                    guard let errors = node.receiverErrorEffects else {
+                        return "Missing XCTest error-flow evidence; regenerate the graph from sealed SIL"
+                    }
+                    guard !errors.contains("throwing callback parameter"),
+                          !node.uncertainties.contains("Indirect function invocation") else {
+                        return "Unproven XCTest error formatting from an opaque callback in " + node.module + "." + node.name
+                    }
+                    if let reason = errorFormattingBlocker(direct) { return reason }
+                }
                 var checked = node
                 // A final source-bound XCTest class has no descendant override.
                 // The generic dispatch graph may carry a broad warning caused by

@@ -1,12 +1,12 @@
 {
   "currentValidation": {
-    "status": "operation-specific-conformance-proof-conservative-fallback-required",
+    "status": "error-flow-and-conformance-proof-conservative-fallback-required",
     "historical125TestIsolationClaimSuperseded": true,
     "issue58RemainsOpen": true,
     "toolchain": "Xcode 27.0, Swift release build",
-    "packageTestsPassed": 338,
+    "packageTestsPassed": 343,
     "additionalRetainedReplayTestsPassed": 1,
-    "releaseSuiteSeconds": 136.212,
+    "releaseSuiteSeconds": 97.05,
     "captureHelperTestsPassed": 6,
     "releaseDistributionTestsPassed": 5,
     "releaseDistributionTestsSkipped": 1,
@@ -15,7 +15,7 @@
         "selectedTestCount": 1972,
         "totalTests": 1972,
         "diagnosticCount": 1901,
-        "scopeSeconds": 15.976444005966187,
+        "scopeSeconds": 18.297080039978027,
         "verifyBuildExitCode": 0,
         "baseRevision": "9b08b4be6acd35338c76e7b29ce0d0df7729aa50",
         "headRevision": "30d8454622ced09ff42f60d6f9196453ad2f6526",
@@ -24,7 +24,7 @@
         "blockers": [
           {
             "code": "head_only_helper_callee_effects",
-            "message": "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NoteLinksUITests.swift:387; Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions XCTWaiter.Result",
+            "message": "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NoteLinksUITests.swift:387; Unproven XCTest error formatting from input producer ChainOfCustodyUITests.closure #1 in closure #1 in waitForAllConditions(_:timeout:)",
             "affectedTestCount": 1972
           }
         ],
@@ -35,7 +35,7 @@
         "selectedTestCount": 2000,
         "totalTests": 2000,
         "diagnosticCount": 1929,
-        "scopeSeconds": 16.668990969657898,
+        "scopeSeconds": 19.129534006118774,
         "verifyBuildExitCode": 0,
         "baseRevision": "40c62f971f0aef63c902a14805cf4d821e6784fb",
         "headRevision": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
@@ -45,7 +45,7 @@
         "blockers": [
           {
             "code": "head_only_sdk_helper_boundary",
-            "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; String (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
+            "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven XCTest error formatting from input producer ChainOfCustodyUITests.closure #1 in closure #1 in waitForAllConditions(_:timeout:) (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
             "affectedTestCount": 2000
           }
         ]
@@ -61,12 +61,12 @@
     "blockers": [
       {
         "code": "head_only_sdk_helper_boundary",
-        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; String (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
+        "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven XCTest error formatting from input producer ChainOfCustodyUITests.closure #1 in closure #1 in waitForAllConditions(_:timeout:) (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)",
         "affectedTestCount": 2000
       }
     ],
-    "note": "Operation-specific conformance checks replace builtin-name trust, including runtime assertion formatting. This fixes under-selection but supersedes the previous narrow #55 replay: both retained fixtures now fall back. #58 remains open.",
-    "moduleFragmentCacheVersion": 13,
+    "note": "XCTest input producers now require captured error-flow evidence, including throw_addr and opaque throwing callback inputs. Operation-specific conformance checks and assertion value-formatting checks remain. Both retained fixtures still conservatively select their full inventories; #58 remains open.",
+    "moduleFragmentCacheVersion": 14,
     "compiledFactoryCases": 76,
     "receiverTypeEvidence": "metatypes, enum constructors, captured value-type declarations, source overload shapes, generic call substitutions, and bridge-capable cast destinations",
     "reusesPreviouslyVerifiedSIL": true,
@@ -78,7 +78,7 @@
       "correctedSelectionExitCode": 1,
       "fullFixtureExitCode": 1
     },
-    "releaseRunTestsPassed": 339,
+    "releaseRunTestsPassed": 344,
     "queryCallSiteEvidence": "SIL formal signature paired with physical source path, line and UTF-8 column; all uses required; any module source remapping or missing physical-location evidence declines receiver proof",
     "analysisScope": "Swift source and compiler evidence, including Swift lowered through Objective-C dispatch; handwritten Objective-C implementations are out of scope",
     "debugFocusedRuns": [
@@ -102,21 +102,77 @@
         "seconds": 3.057,
         "compiledCases": 19,
         "note": "Xcode 26.6 operation-specific witness checks, seven retroactive/builtin cases and twelve SDK contract controls."
+      },
+      {
+        "testsPassed": 5,
+        "seconds": 7.558,
+        "compiledCases": 24,
+        "note": "Initial error-flow regression, archives, fragment merging, and existing SDK contract controls."
+      },
+      {
+        "testsPassed": 3,
+        "seconds": 2.891,
+        "compiledCases": 13,
+        "note": "Final typed-throws/error-formatting cases, throw_addr parser control, and six saved-graph evidence cases."
       }
     ],
     "swiftContractCompiledCases": 12,
     "booleanStorageSourceCases": 11,
     "crossFileRemappingCompiledCases": 2,
     "releaseBuildAndTestProcessMeasurement": {
-      "wallSeconds": 236.14,
-      "maxResidentSetBytes": 1711456256,
+      "wallSeconds": 253.36,
+      "maxResidentSetBytes": 2096529408,
       "note": "time -l around swift test -c release, including compilation and child compiler/tests; not an isolated graph memory benchmark."
     },
     "consumerOriginAudit": {
       "knownConsumerCount": 125,
-      "passedOriginAuditCount": 1,
+      "passedOriginAuditCount": 0,
       "note": "Exploratory per-consumer origin audit only. It is not the selection result or a full isolation proof. Each blocked consumer reports only its first blocker, which can mask further missing evidence.",
       "firstBlockers": [
+        {
+          "reason": "Missing error-flow evidence for XCTest input producer $s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF; regenerate the graph from sealed SIL",
+          "testCount": 8,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitExpansionPreservesVisibleRow()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitTimelinePreviewPreservesVisibleRow()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineExpansionPreservesVisibleTime()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineListPreviewPreservesVisibleTime()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesCollapsedUntimedPanel()",
+            "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesAtClampedLateNightDestination()",
+            "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesOnlyWhenAlreadyAtTodayInTimelineAndSplit()",
+            "ChainOfCustodyUITests/CalendarSearchRegressionUITests/testSplitSearchThenDraggingThroughTimelineToListKeepsContentVisible()"
+          ]
+        },
+        {
+          "reason": "Missing error-flow evidence for XCTest input producer $sSS16debugDescriptionSSvg; regenerate the graph from sealed SIL",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testDoneFromNameFieldKeepsBothTextAndName()"
+          ]
+        },
+        {
+          "reason": "Missing error-flow evidence for XCTest input producer $sSo6CGRectV12CoreGraphicsE12intersectionyA2BF; regenerate the graph from sealed SIL",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testFiltersRemainReachableWithAccessibilityTextAndLandscape()"
+          ]
+        },
+        {
+          "reason": "Missing error-flow evidence for XCTest input producer $sSy10FoundationE10components11separatedBySaySSGqd___tSyRd__lF; regenerate the graph from sealed SIL",
+          "testCount": 1,
+          "tests": [
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testHoldingVideoTemporarilyDoublesPlaybackSpeed()"
+          ]
+        },
+        {
+          "reason": "Missing error-flow evidence for XCTest input producer $sSy10FoundationE20replacingOccurrences2of4with7options5rangeSSqd___qd_0_So22NSStringCompareOptionsVSnySS5IndexVGSgtSyRd__SyRd_0_r0_lF; regenerate the graph from sealed SIL",
+          "testCount": 3,
+          "tests": [
+            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testEmptyTextAndDiscardingChanges()",
+            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelStaysOpenAndSavesFormatting()",
+            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelWithSelectAllStaysOpenAndSavesFormatting()"
+          ]
+        },
         {
           "reason": "Receiver type identities are unproven with unsupported source imports: import SnapshotTesting in ChainOfCustodyUITests.CalendarSnapshotUITests.__allocating_init(invocation:)",
           "testCount": 6,
@@ -144,19 +200,67 @@
           ]
         },
         {
-          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual__8accuracy_4file4lineyxyKXK_xyKXKxSSyXKs12StaticStringVSutSFRzlF with substitutions CGFloat",
-          "testCount": 10,
+          "reason": "Unproven XCTest error formatting from input producer ChainOfCustodyUITests.CalendarDetentTransitionUITests.assertCollapsedUntimedPanelSurvivesCancellation(in:)",
+          "testCount": 1,
           "tests": [
-            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesCollapsedUntimedPanel()",
-            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesUntimedCategoryAndScrollPosition()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesUntimedCategoryAndScrollPosition()"
+          ]
+        },
+        {
+          "reason": "Unproven XCTest error formatting from input producer ChainOfCustodyUITests.closure #1 in closure #1 in waitForAllConditions(_:timeout:)",
+          "testCount": 42,
+          "tests": [
+            "ChainOfCustodyUITests/CalendarContentUITests/testEventOnlyCalendarUsesEventPresentationAndCreation()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testAllDayEventSurvivesDraggingThroughBothLayouts()",
+            "ChainOfCustodyUITests/CalendarUntimedHeaderUITests/testDenseUntimedHeaderCapsHeightAndScrollsIndependently()",
+            "ChainOfCustodyUITests/NoteConversionUITests/testCancelStopsWorkAndKeepsSourceBlock()",
+            "ChainOfCustodyUITests/NoteConversionUITests/testExistingLinkConversionValidatesURLAndSavesPlayableVideo()",
+            "ChainOfCustodyUITests/NoteConversionUITests/testFailureKeepsConversionAvailableForRetry()",
+            "ChainOfCustodyUITests/NoteConversionUITests/testSavingContinuesWhenNavigatingAwayAndBack()",
+            "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConversionCountsAsOneBlockAfterReopeningAndReverting()",
+            "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConverterDetailsReversionKeepsRestoredLinkSelected()",
+            "ChainOfCustodyUITests/NoteEromeConversionUITests/testAutomaticallyConvertsEromeAlbumAfterSignIn()",
+            "ChainOfCustodyUITests/NoteEromeConversionUITests/testCancellingEromeSignInKeepsSourceForRetry()",
+            "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumOffersEveryVideoInsteadOfQualityVariants()",
+            "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumWithoutVideoKeepsBrowserAvailableForRetry()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testAutomaticallyUsesAvailableRedditMediaWithoutSignIn()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditExternalFinderPreservesShareURLForRetry()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditSignInKeepsSourceForRetry()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditBrowserOffersMultipleAnimatedVideos()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditEmbeddedPostStaysOnRedditUntilUserChoosesTheVideoSite()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditExternalPostHandsOffToGenericFinderAndSavesChosenVideo()",
+            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditPostWithoutMediaKeepsBrowserAvailableForRetry()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testCancellingGenericPickerPreservesSourceAndAllowsRetry()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testDirectVideoLinkConvertsWithoutChoosingFromAWebpage()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversNewShadowPlayersAndSavesTheSelection()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversVideosAfterSignIn()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderPreviewsAndDownloadsSelectedVideo()",
+            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderWithoutVideoKeepsPageAndRetryAvailable()",
+            "ChainOfCustodyUITests/NoteXConversionUITests/testAutomaticallyConvertsXPostAfterSignIn()",
+            "ChainOfCustodyUITests/NoteXConversionUITests/testCancellingXSignInKeepsSourceForRetry()",
+            "ChainOfCustodyUITests/NoteXConversionUITests/testXPostOffersAllVideosWhileSkippingPhotoAttachments()",
+            "ChainOfCustodyUITests/NoteXConversionUITests/testXPostWithoutMediaKeepsBrowserAvailableForRetry()",
+            "ChainOfCustodyUITests/PairingNotesEditingUITests/testCreatesTaggedFolderAndShowsItInNotes()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testBlockDetailsActionOpensTheInspector()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testDetailSwipesPreserveCarouselSelection()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testEnteringVideoRestoresChromeAfterHidingImageControls()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testFullScreenPagerAndSafariTabBarStaySynchronized()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testPagingWithVisibleVideoControlsKeepsPagerAndCarouselsAligned()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoControlsToggleTogetherAboveCarousel()",
+            "ChainOfCustodyUITests/ScheduleDraftUITests/testEntryTypeSwitchKeepsDraftUntilDiscardIsConfirmed()",
+            "ChainOfCustodyUITests/ScheduleEditorUITests/testEndOfDayConvertsToOneAllDayAssignmentAtCustomBoundary()",
+            "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testAllDayEditorsKeepTheirDatesAfterPairingTimeZoneChanges()",
+            "ChainOfCustodyUITests/TabBarBadgeUITests/testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently()",
+            "ChainOfCustodyUITests/TabBarBadgeUITests/testNotesBadgeCanBeDisabledAndPreferencesSurviveRelaunch()"
+          ]
+        },
+        {
+          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual__8accuracy_4file4lineyxyKXK_xyKXKxSSyXKs12StaticStringVSutSFRzlF with substitutions CGFloat",
+          "testCount": 3,
+          "tests": [
             "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAssignmentTitle()",
             "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAssignmentTitleFromSearch()",
-            "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllSearchesBothCategoriesAndRestoresTimeline()",
-            "ChainOfCustodyUITests/CalendarUntimedHeaderUITests/testDenseUntimedHeaderCapsHeightAndScrollsIndependently()",
-            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelStaysOpenAndSavesFormatting()",
-            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelWithSelectAllStaysOpenAndSavesFormatting()",
-            "ChainOfCustodyUITests/PairingNotesMediaUITests/testFullScreenPagerAndSafariTabBarStaySynchronized()",
-            "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoControlsToggleTogetherAboveCarousel()"
+            "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllSearchesBothCategoriesAndRestoresTimeline()"
           ]
         },
         {
@@ -182,7 +286,7 @@
         },
         {
           "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>",
-          "testCount": 26,
+          "testCount": 16,
           "tests": [
             "ChainOfCustodyUITests/CalendarContentUITests/testTodayButtonPutsCurrentDateAtTopOfList()",
             "ChainOfCustodyUITests/CalendarFilterUITests/testCalendarCanSwitchCalendarAndActivityViews()",
@@ -191,107 +295,54 @@
             "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testHiddenCategoriesPersistAndShowAllRestoresCalendar()",
             "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testSubgroupColorAndNotificationSettingsSaveAndCancel()",
             "ChainOfCustodyUITests/CalendarPermissionUITests/testHolderCanCreateEventWhenEventsAreFilteredOut()",
-            "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesOnlyWhenAlreadyAtTodayInTimelineAndSplit()",
             "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAllDayEventFromSearch()",
-            "ChainOfCustodyUITests/NoteConversionUITests/testFailureKeepsConversionAvailableForRetry()",
-            "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConversionCountsAsOneBlockAfterReopeningAndReverting()",
-            "ChainOfCustodyUITests/NoteEromeConversionUITests/testCancellingEromeSignInKeepsSourceForRetry()",
-            "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditExternalFinderPreservesShareURLForRetry()",
-            "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditSignInKeepsSourceForRetry()",
-            "ChainOfCustodyUITests/NoteWebConversionUITests/testCancellingGenericPickerPreservesSourceAndAllowsRetry()",
-            "ChainOfCustodyUITests/NoteXConversionUITests/testCancellingXSignInKeepsSourceForRetry()",
             "ChainOfCustodyUITests/NotificationSettingsUITests/testPermissionAndPreferencesSurviveRelaunch()",
             "ChainOfCustodyUITests/NotificationSettingsUITests/testQuietHoursControlsAndPairingPreference()",
-            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testEmptyTextAndDiscardingChanges()",
             "ChainOfCustodyUITests/RecurringEventUITests/testAssignmentStatusIconsSaveAndCancelIndependently()",
             "ChainOfCustodyUITests/RecurringEventUITests/testCommonAssignmentReusesAnUndatedOneOffAndSharesItsFilter()",
             "ChainOfCustodyUITests/RecurringEventUITests/testCommonEventPrefillsRecurringSeries()",
             "ChainOfCustodyUITests/RecurringEventUITests/testOccurrenceNotesRemainSeparateFromSeriesAndFilterControls()",
             "ChainOfCustodyUITests/RecurringEventUITests/testPointPresetClearsPreviousAllDaySchedule()",
-            "ChainOfCustodyUITests/SharingPeopleUITests/testRolesLeadSharingDetailsAndOwnerCanChangeRole()",
-            "ChainOfCustodyUITests/TabBarBadgeUITests/testNotesBadgeCanBeDisabledAndPreferencesSurviveRelaunch()"
+            "ChainOfCustodyUITests/SharingPeopleUITests/testRolesLeadSharingDetailsAndOwnerCanChangeRole()"
           ]
         },
         {
           "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; String",
-          "testCount": 2,
-          "tests": [
-            "ChainOfCustodyUITests/HolderRequestUITests/testReleaseOptionsPersistAndEvidenceStartsApprovedRelease()",
-            "ChainOfCustodyUITests/TabBarBadgeUITests/testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently()"
-          ]
-        },
-        {
-          "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; String; XCTWaiter.Result",
           "testCount": 1,
           "tests": [
-            "ChainOfCustodyUITests/CalendarSearchRegressionUITests/testSplitSearchThenDraggingThroughTimelineToListKeepsContentVisible()"
+            "ChainOfCustodyUITests/HolderRequestUITests/testReleaseOptionsPersistAndEvidenceStartsApprovedRelease()"
           ]
         },
         {
           "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; XCTWaiter.Result",
-          "testCount": 4,
+          "testCount": 3,
           "tests": [
             "ChainOfCustodyUITests/PairingNoteActivityUITests/testActivityShowsAuthorsSettingChangesAndJumpsToChangedBlock()",
-            "ChainOfCustodyUITests/PairingNotesMediaUITests/testDetailSwipesPreserveCarouselSelection()",
             "ChainOfCustodyUITests/PairingNotesMediaUITests/testImagePreviewCanZoomPanAndReset()",
             "ChainOfCustodyUITests/PairingNotesTagManagementUITests/testRenamesTagWhileThumbnailAssetIsUnavailable()"
           ]
         },
         {
           "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions String; XCTWaiter.Result",
-          "testCount": 2,
+          "testCount": 1,
           "tests": [
-            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCalendarDetentsRemainInteractive()",
-            "ChainOfCustodyUITests/PairingNotesEditingUITests/testCreatesTaggedFolderAndShowsItInNotes()"
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCalendarDetentsRemainInteractive()"
           ]
         },
         {
           "reason": "Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions XCTWaiter.Result",
-          "testCount": 58,
+          "testCount": 23,
           "tests": [
-            "ChainOfCustodyUITests/CalendarContentUITests/testEventOnlyCalendarUsesEventPresentationAndCreation()",
             "ChainOfCustodyUITests/CalendarCustomIconUITests/testAssignmentIconPickerCancelAndSave()",
             "ChainOfCustodyUITests/CalendarCustomIconUITests/testEventCustomSymbolValidationPersistenceAndReset()",
             "ChainOfCustodyUITests/CalendarCustomIconUITests/testNotificationEventUsesSavedCategoryColor()",
-            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitExpansionPreservesVisibleRow()",
-            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitTimelinePreviewPreservesVisibleRow()",
-            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineExpansionPreservesVisibleTime()",
-            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineListPreviewPreservesVisibleTime()",
             "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testActivityReasonSearchRespectsCategorySelection()",
-            "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testFiltersRemainReachableWithAccessibilityTextAndLandscape()",
             "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testCalendarTabReselectionReturnsListToToday()",
-            "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesAtClampedLateNightDestination()",
-            "ChainOfCustodyUITests/NoteConversionUITests/testCancelStopsWorkAndKeepsSourceBlock()",
-            "ChainOfCustodyUITests/NoteConversionUITests/testExistingLinkConversionValidatesURLAndSavesPlayableVideo()",
-            "ChainOfCustodyUITests/NoteConversionUITests/testSavingContinuesWhenNavigatingAwayAndBack()",
-            "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConverterDetailsReversionKeepsRestoredLinkSelected()",
-            "ChainOfCustodyUITests/NoteEromeConversionUITests/testAutomaticallyConvertsEromeAlbumAfterSignIn()",
-            "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumOffersEveryVideoInsteadOfQualityVariants()",
-            "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumWithoutVideoKeepsBrowserAvailableForRetry()",
             "ChainOfCustodyUITests/NoteRedditConversionUITests/testAutomaticallyConvertsRedditShareAfterSignIn()",
-            "ChainOfCustodyUITests/NoteRedditConversionUITests/testAutomaticallyUsesAvailableRedditMediaWithoutSignIn()",
-            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditBrowserOffersMultipleAnimatedVideos()",
-            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditEmbeddedPostStaysOnRedditUntilUserChoosesTheVideoSite()",
-            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditExternalPostHandsOffToGenericFinderAndSavesChosenVideo()",
-            "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditPostWithoutMediaKeepsBrowserAvailableForRetry()",
-            "ChainOfCustodyUITests/NoteWebConversionUITests/testDirectVideoLinkConvertsWithoutChoosingFromAWebpage()",
-            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversNewShadowPlayersAndSavesTheSelection()",
-            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversVideosAfterSignIn()",
-            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderPreviewsAndDownloadsSelectedVideo()",
-            "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderWithoutVideoKeepsPageAndRetryAvailable()",
-            "ChainOfCustodyUITests/NoteXConversionUITests/testAutomaticallyConvertsXPostAfterSignIn()",
-            "ChainOfCustodyUITests/NoteXConversionUITests/testXPostOffersAllVideosWhileSkippingPhotoAttachments()",
-            "ChainOfCustodyUITests/NoteXConversionUITests/testXPostWithoutMediaKeepsBrowserAvailableForRetry()",
-            "ChainOfCustodyUITests/PairingNoteRichTextUITests/testDoneFromNameFieldKeepsBothTextAndName()",
-            "ChainOfCustodyUITests/PairingNotesMediaUITests/testBlockDetailsActionOpensTheInspector()",
-            "ChainOfCustodyUITests/PairingNotesMediaUITests/testEnteringVideoRestoresChromeAfterHidingImageControls()",
-            "ChainOfCustodyUITests/PairingNotesMediaUITests/testHoldingVideoTemporarilyDoublesPlaybackSpeed()",
-            "ChainOfCustodyUITests/PairingNotesMediaUITests/testPagingWithVisibleVideoControlsKeepsPagerAndCarouselsAligned()",
             "ChainOfCustodyUITests/PairingNotesNavigationUITests/testNotesSearchFindsTagAssignedOnlyToABlock()",
             "ChainOfCustodyUITests/RecurringEventUITests/testCommonGroupCanBeRestoredFromItsRecurringSeriesFilter()",
             "ChainOfCustodyUITests/RecurringEventUITests/testCommonIconEditsFollowExistingOccurrencesUnlessCustomized()",
             "ChainOfCustodyUITests/ScheduleDraftUITests/testAssignmentCancelKeepsOrDiscardsScheduleChanges()",
-            "ChainOfCustodyUITests/ScheduleDraftUITests/testEntryTypeSwitchKeepsDraftUntilDiscardIsConfirmed()",
             "ChainOfCustodyUITests/ScheduleDraftUITests/testEventEndOfDayPersistsAndCancelDiscardsChanges()",
             "ChainOfCustodyUITests/ScheduleDraftUITests/testNewDraftCancellationConfirmsOnlyAfterEditing()",
             "ChainOfCustodyUITests/ScheduleDraftUITests/testRevertedScheduleChangesCancelWithoutConfirmation()",
@@ -300,11 +351,9 @@
             "ChainOfCustodyUITests/ScheduleEditorUITests/testAllDayEventCanBecomeAnInstantThenATimedEventOnAnotherDate()",
             "ChainOfCustodyUITests/ScheduleEditorUITests/testAssignmentAllDayPersistsAndHidesTimeControls()",
             "ChainOfCustodyUITests/ScheduleEditorUITests/testDisablingAllDayRetainsEditedAndSavedMultiDayRanges()",
-            "ChainOfCustodyUITests/ScheduleEditorUITests/testEndOfDayConvertsToOneAllDayAssignmentAtCustomBoundary()",
             "ChainOfCustodyUITests/ScheduleEditorUITests/testSchedulingAnExistingUndatedAssignmentPreservesItsDisplayedStart()",
             "ChainOfCustodyUITests/ScheduleEditorUITests/testStartEditsPreserveExtendedEndOfDayRanges()",
             "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testAllDayDatePersistsWhenPairingAndDeviceUseDifferentTimeZones()",
-            "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testAllDayEditorsKeepTheirDatesAfterPairingTimeZoneChanges()",
             "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testCustomEndsAndDurationsPreserveTheSavedEditingTimeZone()",
             "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testEndOfDayEditorsKeepTheirBoundaryAfterPairingTimeZoneChanges()"
           ]
@@ -384,6 +433,16 @@
       "witnessInvocationCount": 2,
       "exitCode": 0,
       "note": "Standalone XCTest probe; no application test bodies executed."
+    },
+    "errorFormattingCompiledCases": 13,
+    "errorFlowEvidence": "Per-body Swift throw/throw_addr instructions and throwing callback block arguments. Unknown, indirect, or error-propagating input producers decline receiver proof. Legacy graphs require regeneration from sealed SIL.",
+    "runtimeErrorFormattingProbe": {
+      "toolchain": "Xcode 26.6",
+      "expression": "try? XCTUnwrap(failValue())",
+      "errorConformance": "CustomStringConvertible",
+      "descriptionInvocationCount": 1,
+      "exitCode": 0,
+      "note": "Standalone XCTest probe confirmed implicit Swift error formatting; no application test bodies executed."
     }
   },
   "historicalValidation": {

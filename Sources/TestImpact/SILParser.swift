@@ -225,6 +225,7 @@ public enum SILParser {
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
                     current!.dynamicCallSignatures = []
                     current!.dynamicCallSites = []
+                    current!.receiverErrorEffects = []
                     current!.stateAccesses = []
                     current!.receiverTypeOrigins = []
                     current!.receiverGenericCalls = []
@@ -360,6 +361,12 @@ public enum SILParser {
                 }
                 // Generic witness/dynamic calls have no function_ref identity;
                 // receiverProof checks their dispatch evidence independently.
+            }
+            // A thrown error may be formatted implicitly inside XCTest. Keep
+            // propagation even when its producer is an otherwise known value.
+            if line.hasPrefix("throw ") || line.hasPrefix("throw_addr") { current!.receiverErrorEffects?.insert("throw") }
+            if line.hasPrefix("bb"), line.containsASCII("@error") {
+                current!.receiverErrorEffects?.insert("throwing callback parameter")
             }
             if line.containsASCII(" = keypath ") {
                 // Key paths carry getter/setter and captured-index equality/hash

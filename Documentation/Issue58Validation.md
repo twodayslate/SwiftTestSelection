@@ -13,7 +13,8 @@ that evidence is missing. All 125 known consumers remain selected. The retained
 #58 case falls back to its complete 2,000-test inventory; narrowing still needs
 stronger evidence. #55's immutable literal fixture state is still supported, but
 the conformance fix exposes a separate assertion-formatting boundary in its
-caller chain: `XCTAssertEqual<XCTWaiter.Result>`. That fixture now also retains
+caller chain: `XCTAssertEqual<XCTWaiter.Result>`. Error-flow auditing now finds
+an earlier opaque callback boundary as well. That fixture retains
 its complete 1,972-test inventory, including the 12 previously selected tests.
 The previous 12-test precision result is superseded, not preserved by this fix.
 An executed Xcode 26.6 XCTest probe confirmed that a failed generic integer
@@ -31,13 +32,15 @@ label/type overloads, method values and missing locations retain conservative
 checks. A source-location directive anywhere in a module prevents its receiver
 proof, including when it points into a different clean file. Older snapshots
 without physical-location evidence must refresh that source evidence. Fragment
-cache version 13 captures the expanded method-site evidence; older saved graphs
+cache version 14 captures the expanded method-site evidence; older saved graphs
 decline proofs that need missing evidence.
 
-The retained #58 replay gets past the overload audit, but now stops at an
-unproven generic `XCTAssertEqual` receiver contract for `Optional<String>`.
-The earlier unsupported `SnapshotTesting` import remains a separate missing
-proof; fixing one diagnostic does not establish the complete caller chain.
+The retained #55 and #58 replays now first report unproven XCTest error
+formatting in a closure within `waitForAllConditions(_:timeout:)`. That
+producer has an indirect callback, so its error behavior is not established by
+the captured evidence. The earlier generic assertion-formatting and unsupported
+`SnapshotTesting` import boundaries remain separate missing proofs; clearing the
+first diagnostic does not establish the complete caller chain.
 
 The retained source inventory contains the seven consuming-project Swift modules,
 not the SnapshotTesting source module. The implementation now supports more
@@ -60,7 +63,18 @@ retain both the helper caller and the potentially affected reader with an
 explicit diagnostic. This can increase conservative selections for ordinary
 generic integer or optional assertions until their formatting is proven.
 
-An exploratory audit now passes the receiver-origin check for **1 of the 125**
+The error-formatting review also demonstrated that `XCTUnwrap` invokes a thrown
+Swift error's `description`, even when the caller uses `try?`. An executed
+Xcode 26.6 probe confirmed that call. Capture now records Swift error propagation
+and opaque throwing callback inputs, and receiver proofs audit explicit input
+producers before trusting XCTest's catch-and-format behavior. This applies to
+unwrap, equality/accuracy/comparison, Boolean, and nil assertions. Ordinary
+nonthrowing controls remain eligible. Old graphs without this evidence decline
+the proof until regenerated from sealed SIL; fragment cache version 14 forces
+refresh of old fragments. The audit can conservatively include other explicit
+producers in the same body because callback argument roles are not captured.
+
+An exploratory audit now passes the receiver-origin check for **0 of the 125**
 known consumers. This is not a partial test selection or a full isolation proof.
 The JSON records the first remaining blocker for each other consumer; later
 blockers may be hidden by that first failure. The actual selector still retains
@@ -80,8 +94,8 @@ Unconditionally trusting imports, opaque Objective-C bodies, or unmodeled SDK
 symbols would recreate the unsafe assumptions withdrawn in PR #57. The complete
 inventory remains selected, including all 125 known consumers.
 
-All **338 package tests** and one additional retained replay test passed in
-Xcode 27.0 release (**339 total**, **136.212 seconds**, excluding compilation).
+All **343 package tests** and one additional retained replay test passed in
+Xcode 27.0 release (**344 total**, **97.050 seconds**, excluding compilation).
 Xcode 26.6 focused runs passed the compiled overload/source-remapping regressions,
 Swift value and collection controls, and Boolean-storage controls. Capture-helper
 checks passed six tests; release-distribution checks passed five with one
@@ -89,8 +103,8 @@ platform-specific skip.
 The earlier replay assertion requiring #55's 12-test precision failed, exposing
 the now-documented formatting boundary. Final replay assertions verify the full
 inventories and retention of all previously identified consumers. #55 scope
-analysis took **15.98 seconds**; #58 took
-**16.67 seconds**. Both reports passed `verify-build`.
+analysis took **18.30 seconds**; #58 took
+**19.13 seconds**. Both reports passed `verify-build`.
 The final replay refreshed source proofs and reparsed the sealed UI-module SIL,
 checking unchanged declaration keys, fingerprints, compiler-reference edges and
 dynamic declarations. Original completed bundles and products were unchanged.
@@ -124,7 +138,7 @@ namesakes. Synthesized initializers and enum accessors audit all overlapping dec
 and static-method metatype inputs are omitted only when every matching input is
 unused outside debug instructions. Nested signatures and forwarded values retain
 their evidence. Missing evidence retains
-an explicit recapture diagnostic, and module-fragment cache version 13 invalidates
+an explicit recapture diagnostic, and module-fragment cache version 14 invalidates
 older fragments. Regenerating from valid sealed SIL does not execute test bodies
 or require a new baseline build.
 
@@ -149,7 +163,7 @@ a fresh `Optional<Any>` stack slot is immediately initialized to `.none` and
 switched, with exactly one predecessor. Mutation, aliases, multiple predecessors,
 and mixed reachable bridge calls retain fallback. This preserves #55 without
 trusting live erased bridges. JSON/compact archives retain the new evidence, and
-cache version 13 requires older module fragments to be regenerated.
+cache version 14 requires older module fragments to be regenerated.
 
 ### XCTest callback effect review
 

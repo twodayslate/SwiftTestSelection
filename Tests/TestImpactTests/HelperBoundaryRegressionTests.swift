@@ -1770,3 +1770,68 @@ func sdkReceiverRequiresTheOperationsActualConformance(kind: String) throws {
     #expect(report.selectedTests == (kind == "builtin" ? [tests[0]] : tests.sorted()), "\(report.diagnostics)")
     #expect(kind == "builtin" ? report.diagnostics.isEmpty : report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" }, "\(report.diagnostics)")
 }
+
+@Test(arguments: ["unwrap", "typedUnwrap", "ordinaryUnwrap", "equal", "accuracy", "greater", "less", "greaterEqual", "lessEqual", "true", "false", "notNil", "forwarded"])
+func sdkAssertionsAuditImplicitErrorFormatting(kind: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let external = root.appendingPathComponent("External")
+    try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+    try Data("""
+    import XCTest
+    import ObjectiveC
+    @MainActor final class ImpSource: XCUIApplication {
+        override var exists: Bool { UserDefaults.standard.set(true, forKey: "implicit-error-formatting"); return true }
+    }
+    public func install() {
+        let selector = #selector(getter: XCUIElement.exists)
+        let method = class_getInstanceMethod(ImpSource.self, selector)!
+        class_replaceMethod(XCUIElement.self, selector, method_getImplementation(method), method_getTypeEncoding(method))
+    }
+    """.utf8).write(to: external.appendingPathComponent("Support.swift"))
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "Support", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", external.appendingPathComponent("Support.swift").path, "-emit-module-path", external.appendingPathComponent("Support.swiftmodule").path], at: root)
+    let expressions = [
+        "typedUnwrap": "try? XCTUnwrap(failValueGeneric(Failure()))",
+        "unwrap": "try? XCTUnwrap(failValue())", "ordinaryUnwrap": "try? XCTUnwrap(failValue())",
+        "equal": "XCTAssertEqual(try failValue(), \"ok\")",
+        "accuracy": "XCTAssertEqual(try failValue(), 1.0, accuracy: 0.1)",
+        "greater": "XCTAssertGreaterThan(try failValue(), 1.0)",
+        "less": "XCTAssertLessThan(try failValue(), 1.0)",
+        "greaterEqual": "XCTAssertGreaterThanOrEqual(try failValue(), 1.0)",
+        "lessEqual": "XCTAssertLessThanOrEqual(try failValue(), 1.0)",
+        "true": "XCTAssertTrue(try failValue())", "false": "XCTAssertFalse(try failValue())",
+        "notNil": "XCTAssertNotNil(try failValue())", "forwarded": "forward { try failValue() }"
+    ]
+    let expression = expressions[kind]!
+    let type = ["unwrap", "ordinaryUnwrap", "notNil"].contains(kind) ? "Int?" :
+        ["true", "false", "forwarded"].contains(kind) ? "Bool" : kind == "equal" ? "String" : "Double"
+
+    let conformance = """
+    import Support
+    extension Failure: CustomStringConvertible {
+        var description: String { install(); return "configured" }
+    }
+    """
+    let callers = """
+    import XCTest
+    struct Failure: Error {}
+    func failValue() \(kind == "ordinaryUnwrap" ? "" : "throws") -> \(type) { \(kind == "ordinaryUnwrap" ? "return 1" : "throw Failure()") }
+    func failValueGeneric<E: Error>(_ error: E) throws(E) -> Int? { throw error }
+    func forward(_ callback: () throws -> Bool) { XCTAssertTrue(try callback()) }
+    @MainActor final class Suite: XCTestCase {
+        func testWriter() {
+            _ = \(expression)
+            XCTAssertTrue(XCUIApplication().checkValue("1"))
+        }
+        func testReader() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "implicit-error-formatting")) }
+    }
+    """
+    let tests = ["UI/Suite/testWriter()", "UI/Suite/testReader()"]
+    let before = try boundaryGraph(["Waiting.swift": oldSDKQuery, "Tests.swift": callers, "Conformance.swift": conformance], tests: tests, root: root, compilerArguments: ["-I", external.path])
+    let current = try boundaryGraph(["Waiting.swift": newSDKQuery, "Tests.swift": callers, "Conformance.swift": conformance], tests: tests, root: root, compilerArguments: ["-I", external.path])
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: before.sources, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    #expect(report.selectedTests == (kind == "ordinaryUnwrap" ? [tests[0]] : tests.sorted()), "\(report.diagnostics)")
+    #expect(kind == "ordinaryUnwrap" ? report.diagnostics.isEmpty : report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" && $0.message.contains("error formatting") }, "\(report.diagnostics)")
+}
