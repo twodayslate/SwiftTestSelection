@@ -27,7 +27,7 @@ import Testing
         #expect(!SDKReceiverContracts.allows(arguments, for: iterator))
     }
     let equal = "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF"
-    #expect(SDKReceiverContracts.allows("[String: Int?]", for: equal))
+    #expect(!SDKReceiverContracts.allows("[String: Int?]", for: equal))
     #expect(!SDKReceiverContracts.allows("[XCUIElement]", for: equal))
     let bridge = "$ss27_bridgeAnythingToObjectiveCyyXlxlF"
     #expect(SDKReceiverContracts.allows("XCUIApplication", for: bridge))
@@ -194,9 +194,40 @@ func erasedBridgeExemptionRequiresAnUnreachableLiteralNilBlock(kind: String) {
 
 @Test func newValueContractsDoNotAcceptErasedOrCustomConformances() {
     for symbol in ["$sSS10describingSSx_tclufC", "$ss26DefaultStringInterpolationV06appendC0yyxlF", "$ss3maxyxx_xtSLRzlF"] {
-        #expect(SDKReceiverContracts.allows("Int", for: symbol))
+        #expect(SDKReceiverContracts.allows("String", for: symbol))
         for arguments in ["Any", "Optional<Any>", "CustomValue", "[CustomValue]", "Foreign.Int"] {
             #expect(!SDKReceiverContracts.allows(arguments, for: symbol))
         }
     }
+}
+
+@Test func genericContractsRequireOperationSpecificWitnesses() {
+    let description = "$sSS10describingSSx_tcs23CustomStringConvertibleRzlufC"
+    let interpolation = "$ss26DefaultStringInterpolationV06appendC0yyxs06CustomB11ConvertibleRzs20TextOutputStreamableRzlF"
+    let comparison = "$ss3maxyxx_xtSLRzlF"
+    let equality = "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF"
+    let filter = "$sSmsE6filteryxSb7ElementQzKXEKF"
+    let iterator = "$ss16IndexingIteratorV4next7ElementQzSgyF"
+    #expect(SDKReceiverContracts.allows("Int", for: description))
+    #expect(SDKReceiverContracts.allows("String", for: interpolation))
+    #expect(!SDKReceiverContracts.allows("Int", for: interpolation))
+    for type in ["Optional<Int>", "[Int]", "IndexingIterator<[Int]>", "XCTWaiter.Result"] {
+        #expect(!SDKReceiverContracts.allows(type, for: description))
+        #expect(!SDKReceiverContracts.allows(type, for: comparison))
+    }
+    #expect(!SDKReceiverContracts.allows("[String: [Int?]]", for: equality))
+    #expect(!SDKReceiverContracts.allows("Int", for: equality))
+    #expect(SDKReceiverContracts.allows("String", for: equality))
+    #expect(SDKReceiverContracts.allows("String, [Int?]", for: "$sSDyq_Sgxcis"))
+    #expect(!SDKReceiverContracts.allows("IndexingIterator<[Int]>", for: equality))
+    #expect(!SDKReceiverContracts.allows("Array", for: equality))
+    #expect(!SDKReceiverContracts.allows("Int<String>", for: equality))
+    #expect(SDKReceiverContracts.allows("Array<Foreign>, Never", for: filter))
+    #expect(!SDKReceiverContracts.allows("Set<Int>, Never", for: filter))
+    #expect(SDKReceiverContracts.allows("Range<Int>", for: iterator))
+    #expect(!SDKReceiverContracts.allows("Range<Optional<Int>>", for: iterator))
+    #expect(!SDKReceiverContracts.allows("Optional<Int>", for: SDKReceiverContracts.objectBridge))
+    #expect(!SDKReceiverContracts.allows("[Optional<Int>]", for: SDKReceiverContracts.objectBridge))
+    #expect(SDKReceiverContracts.allows("[String: [Int]]", for: SDKReceiverContracts.objectBridge))
+    #expect(!SDKReceiverContracts.allows("Int", for: "unknownBridgeFromObjectiveC"))
 }

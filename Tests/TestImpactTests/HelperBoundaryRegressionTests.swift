@@ -1642,14 +1642,14 @@ func sdkReceiverContractsPreserveSwiftWitnessBoundaries(kind: String) throws {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let bodies = [
-        "stringParsing": "let values = \"12.3,a\".split(separator: \",\").compactMap { Double($0) }; XCTAssertEqual(values.count, 1); XCTAssertEqual(values[0], 12.3); XCTAssertTrue(\"Yes\".localizedCaseInsensitiveContains(\"yes\")); XCTAssertEqual(\"a1\".filter(\\.isNumber), \"1\")",
+        "stringParsing": "let values = \"12.3,a\".split(separator: \",\").compactMap { Double($0) }; XCTAssertTrue(values.count == 1); XCTAssertEqual(values[0], 12.3); XCTAssertTrue(\"Yes\".localizedCaseInsensitiveContains(\"yes\")); XCTAssertEqual(\"a1\".filter(\\.isNumber), \"1\")",
         "booleanStorage": "flag = true; XCTAssertTrue(flag)",
         "collectionCallback": "_ = [1, 2].first(where: { _ in UserDefaults.standard.set(true, forKey: \"witness\"); return true })",
         "unwrapCallback": "_ = try XCTUnwrap({ UserDefaults.standard.set(true, forKey: \"witness\"); return Optional.some(2) }())",
-        "strings": "var text = String(repeating: \"a\", count: 2); for c in text { text.append(c); break }; XCTAssertEqual(text.lowercased().count, 3)",
-        "values": "XCTAssertEqual(String(describing: 42), \"42\"); XCTAssertEqual(Double(2), Double(2), accuracy: 0.01); XCTAssertGreaterThan(abs(-2), min(1, 0)); XCTAssertLessThanOrEqual(1, max(2, 3))",
-        "collections": "let values = [1, 2, 3]; XCTAssertEqual(values.first(where: { $0 == 2 }), 2); XCTAssertEqual(values.max(by: { $0 < $1 }), 3)",
-        "unwrap": "let value = try XCTUnwrap(Optional.some(2)); XCTAssertEqual(value, 2)",
+        "strings": "var text = String(repeating: \"a\", count: 2); for c in text { text.append(c); break }; XCTAssertTrue(text.lowercased().count == 3)",
+        "values": "XCTAssertEqual(String(describing: 42), \"42\"); XCTAssertEqual(Double(2), Double(2), accuracy: 0.01); XCTAssertTrue(abs(-2) > min(1, 0)); XCTAssertTrue(1 <= max(2, 3))",
+        "collections": "let values = [1, 2, 3]; XCTAssertTrue(values.first(where: { $0 == 2 }) == 2); XCTAssertTrue(values.max(by: { $0 < $1 }) == 3)",
+        "unwrap": "let value = try XCTUnwrap(Optional.some(2)); XCTAssertTrue(value == 2)",
         "customDescription": "_ = String(describing: Dangerous())",
         "erasedDescription": "let value: Any = Dangerous(); _ = String(describing: value)",
         "customComparison": "_ = max(Dangerous(), Dangerous())",
@@ -1685,4 +1685,88 @@ func sdkReceiverContractsPreserveSwiftWitnessBoundaries(kind: String) throws {
     let safe = ["strings", "values", "collections", "unwrap", "booleanStorage", "stringParsing"].contains(kind)
     #expect(report.selectedTests == (safe ? [tests[0]] : tests.sorted()), "\(kind): \(report.diagnostics)")
     #expect(safe ? report.diagnostics.isEmpty : report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" })
+}
+
+@Test(arguments: ["optionalDescription", "optionalInterpolation", "integerInterpolation", "integerAssertion", "optionalComparison", "optionalBridge", "builtin"])
+func sdkReceiverRequiresTheOperationsActualConformance(kind: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let external = root.appendingPathComponent("External")
+    try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+    try Data("""
+    import XCTest
+    import ObjectiveC
+    @MainActor final class ImpSource: XCUIApplication {
+        override var exists: Bool { UserDefaults.standard.set(true, forKey: "review59-description"); return true }
+    }
+    public func install() {
+        let selector = #selector(getter: XCUIElement.exists)
+        let method = class_getInstanceMethod(ImpSource.self, selector)!
+        class_replaceMethod(XCUIElement.self, selector, method_getImplementation(method), method_getTypeEncoding(method))
+    }
+    """.utf8).write(to: external.appendingPathComponent("Support.swift"))
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "Support", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", external.appendingPathComponent("Support.swift").path, "-emit-module-path", external.appendingPathComponent("Support.swiftmodule").path], at: root)
+    let expression: String
+    let conformance: String
+    switch kind {
+    case "optionalDescription", "optionalInterpolation":
+        expression = kind == "optionalDescription" ? "String(describing: value)" : "\"\\(value)\""
+        conformance = """
+        import Support
+        extension Optional: @retroactive CustomStringConvertible {
+            public var description: String { install(); return "configured" }
+        }
+        """
+    case "integerInterpolation", "integerAssertion":
+        expression = kind == "integerAssertion" ? "XCTAssertEqual(1, 2)" : "\"\\(1)\""
+        conformance = """
+        import Support
+        extension Int: @retroactive TextOutputStreamable {
+            public func write<T: TextOutputStream>(to target: inout T) { install(); target.write("configured") }
+        }
+        """
+    case "optionalBridge":
+        expression = "value as AnyObject"
+        conformance = """
+        import Foundation
+        import Support
+        extension Optional: @retroactive _ObjectiveCBridgeable {
+            public typealias _ObjectiveCType = NSString
+            public func _bridgeToObjectiveC() -> NSString { install(); return "configured" }
+            public static func _forceBridgeFromObjectiveC(_ source: NSString, result: inout Self?) { result = nil }
+            public static func _conditionallyBridgeFromObjectiveC(_ source: NSString, result: inout Self?) -> Bool { result = nil; return false }
+            public static func _unconditionallyBridgeFromObjectiveC(_ source: NSString?) -> Self { nil }
+        }
+        """
+    case "optionalComparison":
+        expression = "min(value, value)"
+        conformance = """
+        import Support
+        extension Optional: @retroactive Comparable where Wrapped: Comparable {
+            public static func < (lhs: Self, rhs: Self) -> Bool { install(); return false }
+        }
+        """
+    default:
+        expression = "String(describing: 42)"
+        conformance = "import Support"
+    }
+    let callers = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testWriter() {
+            let value: Int? = 1
+            _ = \(expression)
+            XCTAssertTrue(XCUIApplication().checkValue("1"))
+        }
+        func testReader() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "review59-description")) }
+    }
+    """
+    let tests = ["UI/Suite/testWriter()", "UI/Suite/testReader()"]
+    let before = try boundaryGraph(["Waiting.swift": oldSDKQuery, "Tests.swift": callers, "Conformance.swift": conformance], tests: tests, root: root, compilerArguments: ["-I", external.path])
+    let current = try boundaryGraph(["Waiting.swift": newSDKQuery, "Tests.swift": callers, "Conformance.swift": conformance], tests: tests, root: root, compilerArguments: ["-I", external.path])
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: before.sources, mappings: current.mappings), changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    #expect(report.selectedTests == (kind == "builtin" ? [tests[0]] : tests.sorted()), "\(report.diagnostics)")
+    #expect(kind == "builtin" ? report.diagnostics.isEmpty : report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" }, "\(report.diagnostics)")
 }

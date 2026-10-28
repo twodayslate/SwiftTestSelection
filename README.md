@@ -1267,6 +1267,13 @@ APIs, erased Objective-C bridging, and casts to receiver classes or metatypes
 retain fallback. Casts to proven builtin value types remain supported. Generic SDK operations
 also require captured call substitutions: a builtin collection can supply known
 witnesses, while an arbitrary collection or value-protocol implementation cannot.
+The contract is specific to the operation’s protocols and nested type arguments;
+a builtin name alone does not prove its conformance. Retroactive conformances
+on builtin types (such as `Optional: CustomStringConvertible`) retain fallback.
+Printing and assertion failure messages also require known formatting witnesses.
+Consequently, generic integer/optional equality assertions can retain fallback
+even when their equality implementation is builtin; ordinary Boolean assertions
+and supported concrete string/floating-point assertions remain eligible.
 All uses and captured fragments must satisfy the contract. Missing generic-call
 evidence in older graphs requires regeneration from retained artifacts and sealed
 SIL; it is never interpreted as proof that no receiver can be produced.

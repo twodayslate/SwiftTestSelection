@@ -11,11 +11,15 @@ The current analyzer requires captured producer implementations or explicit SDK
 contracts, audits shared receiver storage, and reports a concrete blocker when
 that evidence is missing. All 125 known consumers remain selected. The retained
 #58 case falls back to its complete 2,000-test inventory; narrowing still needs
-stronger evidence. #55's immutable literal fixture state remains supported.
-The release replay selected **12 of 1,972 tests with zero diagnostics** for #55
-in **16.11 seconds**. For #58 it selected **all 2,000 tests** in
-**16.80 seconds**, retaining all 125 known consumers and the fallback-only
-NoteLinks example. Both reports passed `verify-build` against the retained products.
+stronger evidence. #55's immutable literal fixture state is still supported, but
+the conformance fix exposes a separate assertion-formatting boundary in its
+caller chain: `XCTAssertEqual<XCTWaiter.Result>`. That fixture now also retains
+its complete 1,972-test inventory, including the 12 previously selected tests.
+The previous 12-test precision result is superseded, not preserved by this fix.
+An executed Xcode 26.6 XCTest probe confirmed that a failed generic integer
+assertion invokes a retroactive `TextOutputStreamable` witness. Restoring narrow
+selection requires proving formatting behavior as well as equality; nominal type
+names alone cannot waive that obligation.
 
 The query-overload blocker from PR #57 is now resolved using exact SIL
 file/line/UTF-8-column evidence paired with source argument labels. Mixed
@@ -30,12 +34,10 @@ without physical-location evidence must refresh that source evidence. Fragment
 cache version 13 captures the expanded method-site evidence; older saved graphs
 decline proofs that need missing evidence.
 
-The retained #58 replay now gets past the overload audit and reports:
-
-```text
-Receiver type identities are unproven with unsupported source imports: import SnapshotTesting
-in ChainOfCustodyUITests.CalendarSnapshotUITests.testPortraitCalendarSplit()
-```
+The retained #58 replay gets past the overload audit, but now stops at an
+unproven generic `XCTAssertEqual` receiver contract for `Optional<String>`.
+The earlier unsupported `SnapshotTesting` import remains a separate missing
+proof; fixing one diagnostic does not establish the complete caller chain.
 
 The retained source inventory contains the seven consuming-project Swift modules,
 not the SnapshotTesting source module. The implementation now supports more
@@ -45,7 +47,20 @@ constants, and inferred Boolean instance storage. Generic substitutions and
 explicit callbacks are still checked: custom conformances, erased descriptions,
 mutating callbacks, wrappers, observers, macros and unknown storage retain fallback.
 
-An exploratory audit now passes the receiver-origin check for **82 of the 125**
+The conformance review found that builtin nominal names did not prove the
+protocol witnesses actually invoked by an SDK operation. The analyzer now checks
+operation-specific scalar conformances, nested conditional equality/hashability,
+and bridging requirements. Runtime printing and assertion failure formatting
+also need known witnesses. `Optional: CustomStringConvertible`,
+`Optional: Comparable`, and `Int: TextOutputStreamable` can be retroactive Swift
+conformances, so these paths cannot inherit trust from `Optional` or `Int` alone.
+Seven compiled cases cover these conformances, optional bridging, assertion
+formatting, and an ordinary builtin description control. Unsupported combinations
+retain both the helper caller and the potentially affected reader with an
+explicit diagnostic. This can increase conservative selections for ordinary
+generic integer or optional assertions until their formatting is proven.
+
+An exploratory audit now passes the receiver-origin check for **1 of the 125**
 known consumers. This is not a partial test selection or a full isolation proof.
 The JSON records the first remaining blocker for each other consumer; later
 blockers may be hidden by that first failure. The actual selector still retains
@@ -65,12 +80,17 @@ Unconditionally trusting imports, opaque Objective-C bodies, or unmodeled SDK
 symbols would recreate the unsafe assumptions withdrawn in PR #57. The complete
 inventory remains selected, including all 125 known consumers.
 
-All **336 package tests** and one additional retained replay test passed in
-Xcode 27.0 release (**337 total**, **73.494 seconds**, excluding compilation).
+All **338 package tests** and one additional retained replay test passed in
+Xcode 27.0 release (**339 total**, **136.212 seconds**, excluding compilation).
 Xcode 26.6 focused runs passed the compiled overload/source-remapping regressions,
 Swift value and collection controls, and Boolean-storage controls. Capture-helper
 checks passed six tests; release-distribution checks passed five with one
 platform-specific skip.
+The earlier replay assertion requiring #55's 12-test precision failed, exposing
+the now-documented formatting boundary. Final replay assertions verify the full
+inventories and retention of all previously identified consumers. #55 scope
+analysis took **15.98 seconds**; #58 took
+**16.67 seconds**. Both reports passed `verify-build`.
 The final replay refreshed source proofs and reparsed the sealed UI-module SIL,
 checking unchanged declaration keys, fingerprints, compiler-reference edges and
 dynamic declarations. Original completed bundles and products were unchanged.
