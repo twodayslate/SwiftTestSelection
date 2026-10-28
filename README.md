@@ -208,6 +208,49 @@ XCUITest runs across a process boundary. A test-runner call graph cannot tell wh
 
 Compiler dependencies propagate transitively from feature roots. If sharing and notes both call a common function, changing that function selects both features without listing the common file in each mapping. Explicit dependencies supplement this graph for service, runtime, or other relationships it cannot infer. Mappings are read independently from the base and head revisions. Use `--mappings path/to/mappings.json` to choose another repository-relative file.
 
+Use `--strict-mappings` with Xcode `select` to fail when **any individual
+`symbols` entry** has zero matches in the head's compiled graph. A valid sibling
+symbol or matching `sources` boundary does not hide an unresolved entry. Literal
+names and wildcard patterns use the same matching rules as selection; a wildcard
+that still matches one function passes even if another matching function vanished.
+Unmatched source patterns and test selectors retain their existing fallback behavior.
+
+```sh
+swift-test-impact select --project App.xcodeproj --scheme App \
+  --destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  --configuration Debug --base origin/main --head HEAD --strict-mappings
+```
+
+Strict validation always checks the **head mapping against the head build**, even
+for no-op, documentation-only, test-only, scoped, or full-suite selections. Fresh,
+saved (`--base-graph` / `--head-graph`), analysis-cache hits, and `--head-only` paths
+all enforce the same policy. Base mappings retain conservative handling, so updating
+or removing a stale entry at head can repair the base mapping. The default remains
+non-strict. With no mapping file or no symbol entries there is nothing to validate;
+a legacy graph without compiler data fails if it has symbol entries.
+
+A failed validation exits **4** before emitting a selection report or executing tests,
+including with `--run`. The final stderr line is a JSON object with
+`code: "strict_mapping_validation_failed"` and a `diagnostics` array. Each item
+contains `code` (`unresolved_mapping_symbol` or `mapping_symbol_graph_unavailable`),
+`mappingFile`, `feature`, `pattern`, `revision`, `buildContext`, and `message`.
+Earlier stderr lines may contain build progress. `revision` is the resolved head
+commit, or `WORKTREE` when `--head` is omitted. `buildContext` identifies the
+container, scheme, destination, configuration, test plan, and available toolchain
+and captured SDK/architecture evidence. An unspecified configuration/plan uses the
+scheme default. No output file is written on this failure; do not consume a previous
+report after a nonzero exit.
+
+“Did not resolve in this build” can mean a rename/removal, conditional compilation,
+or a different target/configuration. Validate each CI build configuration you rely
+on. This checks symbol existence, not whether a UI suite exercises that symbol;
+no coverage baseline or earlier test run is needed. Saved `run` and `verify-build`
+also accept `--strict-mappings`, validating their saved head graph before execution
+or product verification, including for empty reports. For library clients, set
+`XcodeConfiguration.strictMappings = true`; clients calling the low-level selectors
+directly can call `XcodeTestGraph.validateMappingSymbols(mappingFile:revision:buildContext:)`
+first and handle `MappingValidationError`.
+
 **Mappings are dependency declarations, not measured coverage.** They must cover app startup, shared services, and other cross-process behavior relevant to each UI test. An incorrect but syntactically valid mapping cannot be detected automatically. Narrowing is conditional on the declared boundaries being complete.
 
 To use declared UI boundaries as the complete runtime dependency contract, add
@@ -887,8 +930,14 @@ remaining conservative selections and limits on CI rollout evidence.
 
 ```sh
 swift test
+python3 Scripts/strict_mappings_cli_test.py --tool .build/debug/swift-test-impact
 python3 Scripts/integration_test.py
 ```
+
+For strict validation through real head-only build-time capture, run
+`python3 Scripts/strict_mappings_head_only_test.py --tool .build/debug/swift-test-impact --destination 'platform=iOS Simulator,name=iPhone 17 Pro'`.
+This checks a stale no-op head with `--run` and a repaired head over the stale base.
+
 
 The integration script creates a temporary Git repository from `Fixtures/Shop`, including paths with spaces. It checks real SIL, both test frameworks, empty selections, selected execution, additions, deletions, manifest fallbacks, untracked sources, and DOT export. Unrelated tests intentionally fail in the temporary fixture, so a successful selected run verifies those tests were skipped. The original fixture remains untouched.
 

@@ -469,6 +469,9 @@ extension XcodeAnalysis {
             }
         }
         var current = try graph(comparison.head!, keepBuild: retained != nil)
+        // Validate on both cache hits and fresh captures, before any selection
+        // shortcuts, full-suite policies, scopes, or head-only analysis.
+        try validateMappings(in: current, revision: comparison.head!)
         if !headOnly && cachedBasePolicy == .build {
             if comparison.base == comparison.head { previous = current }
             else {

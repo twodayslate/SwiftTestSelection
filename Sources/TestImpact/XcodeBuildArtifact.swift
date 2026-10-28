@@ -141,6 +141,7 @@ extension XcodeAnalysis {
         guard old.context == new.context, old.toolchain == new.toolchain, old.simulatorRuntimes == new.simulatorRuntimes else {
             throw ImpactError("Cached graphs have incompatible build contexts, toolchains, or simulator runtimes. Recapture with matching scheme, plan, destination, configuration, SDK and architectures.")
         }
+        try validateMappings(in: headGraph, revision: comparison.head!)
         let changes = try GitChanges.readComparison(base: comparison.base, head: comparison.head, at: root)
         var report = XcodeSelector.select(current: headGraph, previous: baseGraph, changes: changes, baseRevision: comparison.base)
         report.headRevision = comparison.head
@@ -157,6 +158,7 @@ extension XcodeAnalysis {
     /// Execute the captured products, even if the checkout has subsequently changed.
     /// Optional relocation must preserve the entire Build/Products tree unchanged.
     public func run(_ report: ImpactReport, using graph: XcodeTestGraph, productsDirectory: URL? = nil) throws -> Int32 {
+        try validateMappings(in: graph, revision: graph.buildArtifact?.revision ?? report.headRevision ?? "HEAD")
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         let artifact = try validateArtifactGraph(graph, root: root)
         guard report.headRevision == artifact.revision, report.buildArtifactID == artifact.id,
@@ -180,6 +182,7 @@ extension XcodeAnalysis {
     /// Validate a saved selection before handing its xctestrun to a custom runner.
     /// This performs no build or test execution. Empty selections remain empty.
     public func verifyBuild(_ report: ImpactReport, using graph: XcodeTestGraph, productsDirectory: URL? = nil) throws -> URL {
+        try validateMappings(in: graph, revision: graph.buildArtifact?.revision ?? report.headRevision ?? "HEAD")
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         let artifact = try validateArtifactGraph(graph, root: root)
         guard report.headRevision == artifact.revision, report.buildArtifactID == artifact.id,

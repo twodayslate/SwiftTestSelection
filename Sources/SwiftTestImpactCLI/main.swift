@@ -77,6 +77,10 @@ Xcode mode selects individual test methods through syntax and SIL dependencies.
 UI feature mappings bridge the app/test process boundary; missing mappings and
 unresolved dependencies produce explicit conservative fallbacks. The default
 mapping file is .swift-test-selection.json at the Git repository root.
+--strict-mappings requires every head symbols entry to resolve in this build,
+even for empty diffs or --full-suite. Available with Xcode select/run/verify-build.
+Failures emit JSON diagnostics on stderr and exit 4 before executing tests.
+Base mappings retain conservative handling so a head commit can repair them.
 
 Analysis does not execute test bodies; discovery can execute initialization code.
 --run executes the selection. --full-suite includes every discovered enabled test
@@ -125,6 +129,7 @@ private struct Options {
         var configuration: String?
         var testPlan: String?
         var mappings: String?
+        var strictMappings = false
         var extractionWorkers = 1
         var derivedData: String?
         var buildLog: String?
@@ -143,6 +148,7 @@ private struct Options {
             if flag == "--merge-base" { mergeBase = true; continue }
             if flag == "--head-only" { headOnly = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
+            if flag == "--strict-mappings" { strictMappings = true; continue }
             guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--cached-base-policy", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture", "--build-time-sil", "--selection-scopes"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
@@ -254,6 +260,9 @@ private struct Options {
         if testProducts != nil && !savedExecution && (baseGraph == nil || !run) {
             throw ImpactError("--test-products requires cached selection with --run.")
         }
+        if strictMappings && (command == "graph" || project == nil && workspace == nil) {
+            throw ImpactError("--strict-mappings requires Xcode select, run, or verify-build.")
+        }
         if command == "select" && base == nil { throw ImpactError("select requires --base REVISION.") }
         if command == "graph" && (base != nil || run || head != nil || mergeBase || fullSuite) { throw ImpactError("Comparison, execution, and full-suite options are only valid with select.") }
         let allowed = command == "graph" ? ["json", "dot", "binary"] : ["text", "json"]
@@ -269,6 +278,7 @@ private struct Options {
                                        path: URL(fileURLWithPath: container), scheme: scheme, destination: destination,
                                        configuration: configuration, testPlan: testPlan)
             xcode!.extractionWorkers = extractionWorkers
+            xcode!.strictMappings = strictMappings
             xcode!.buildTimeSILHelper = buildTimeSIL.map { URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath() }
             if let mappings { xcode!.mappingsPath = mappings }
         } else if scheme != nil || destination != nil || configuration != nil || testPlan != nil || mappings != nil || seen.contains("--extraction-workers") {
@@ -380,6 +390,11 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
             try write(data, to: options.output)
             if options.run { exit(try analysis.run(report)) }
         }
+    } catch let validation as MappingValidationError {
+        if let data = try? JSONEncoder().encode(validation) {
+            FileHandle.standardError.write(data + Data("\n".utf8))
+        }
+        exit(4)
     } catch let miss as XcodeCachedBaseUnavailable {
         if let data = try? JSONEncoder().encode(miss) {
             FileHandle.standardError.write(data + Data("\n".utf8))
