@@ -2,6 +2,13 @@
 
 ## Current status: conservative fallback required
 
+The [predicate callback follow-up](Issue58PredicateCallbacks.md) removes the
+false error-flow blocker in `waitForAllConditions`. Both the original historical
+capture and the Swift-only variant still select all 403 UI tests, including all
+125 known consumers. Their next blocker is the unproven `XCTAssertEqual` value
+formatting contract for `Optional<String>`. The validation details below record
+the preceding implementation; the follow-up has the latest evidence.
+
 The earlier 125-test results below are **historical and superseded**. Review
 found that signature-only and callback-only receiver proofs could miss opaque
 producers and shared-storage injection. They must not be used as evidence that

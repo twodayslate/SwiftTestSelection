@@ -44,7 +44,7 @@ import XCTest
 func evaluate(_ predicate: () -> Bool) -> Bool { predicate() }
 """
 
-@Test(arguments: ["plain", "storedMethod", "escapingCall", "storedPredicate", "mutation", "dynamic", "lifecycle", "removedCall", "localFunction", "escapingLocal", "overload", "inherited", "throwing", "mixedQueries", "sameLineQueries", "escapedQueries"])
+@Test(arguments: ["plain", "storedMethod", "escapingCall", "storedPredicate", "mutation", "dynamic", "lifecycle", "removedCall", "localFunction", "escapingLocal", "overload", "inherited", "throwing", "mixedQueries", "sameLineQueries", "escapedQueries", "nonthrowingPredicate", "nonthrowingPredicateNestedError"])
 func compiledSDKQueryHelperBoundary(safety: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("sdk-query-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -62,6 +62,13 @@ func compiledSDKQueryHelperBoundary(safety: String) throws {
             openFeature(in: app)
         }
         """)
+    case "nonthrowingPredicate", "nonthrowingPredicateNestedError":
+        callers = callers.replacingOccurrences(of: "openFeature(in: XCUIApplication())", with: "XCTAssertTrue(allReady([{ true }])); openFeature(in: XCUIApplication())")
+        if safety == "nonthrowingPredicateNestedError" {
+            callers = callers.replacingOccurrences(of: "allReady([{ true }])", with: "allReady([{ predicate() }])")
+            callers += "\nstruct Failure: Error {}\nfunc fail() throws -> Bool { throw Failure() }\nfunc predicate() -> Bool { XCTAssertTrue(try fail()); return true }\n"
+        }
+        callers += "\nfunc allReady(_ conditions: [() -> Bool]) -> Bool { conditions.allSatisfy { $0() } }\n"
     case "throwing": callers = callers.replacingOccurrences(of: "func openFeature(in app: XCUIApplication) {", with: "func openFeature(in app: XCUIApplication) throws {").replacingOccurrences(of: "func testChange() { openFeature(in:", with: "func testChange() throws { try openFeature(in:")
     case "inherited": callers = callers.replacingOccurrences(of: "@MainActor func openFeature(in app: XCUIApplication) {", with: "@MainActor class FeatureBase: XCTestCase { func openFeature(in app: XCUIApplication) {").replacingOccurrences(of: "@MainActor final class Sharing: XCTestCase", with: "}\n@MainActor final class Sharing: FeatureBase")
     case "overload": callers += "\n@MainActor func openFeature(_ app: XCUIApplication) {}\n@MainActor func other() { openFeature(XCUIApplication()) }\n"
@@ -120,7 +127,7 @@ func compiledSDKQueryHelperBoundary(safety: String) throws {
         #expect(scopes.first?.report.selectedTests == report.selectedTests)
         #expect(scopes.first?.report.diagnostics.contains(where: { $0.code == "head_only_sdk_helper_boundary" }) == (safety != "plain"))
     }
-    if !["plain", "localFunction", "overload", "inherited", "throwing", "mixedQueries", "sameLineQueries", "escapedQueries"].contains(safety) {
+    if !["plain", "localFunction", "overload", "inherited", "throwing", "mixedQueries", "sameLineQueries", "escapedQueries", "nonthrowingPredicate"].contains(safety) {
         #expect(report.selectedTests == tests.sorted())
         #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" })
         return

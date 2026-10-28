@@ -14,10 +14,13 @@ private struct PrecisionReplay: Decodable {
     var obsoleteBlockers: [String]
     var expectedBlocker: String
     var declarationFallbacks: Int
+    var refreshIndirectErrorEvidence: Bool?
+    var fallbackOnlyTests: [String]?
+    var retainedCapture: String?
 }
 
 /// Opt-in source/selection replay over freshly captured retained head products.
-/// No compiler graph is manufactured or patched; source fingerprints must match.
+/// No compiler edges are manufactured or patched; source fingerprints must match.
 @Test(.enabled(if: ProcessInfo.processInfo.environment["IMPACT_PRECISION_REPLAY"] != nil))
 func retainedHeadOnlyPrecisionReplay() throws {
     let path = try #require(ProcessInfo.processInfo.environment["IMPACT_PRECISION_REPLAY"])
@@ -28,7 +31,8 @@ func retainedHeadOnlyPrecisionReplay() throws {
         let output = URL(fileURLWithPath: fixture.output)
         let prior = try JSONDecoder().decode(ImpactReport.self, from: Data(contentsOf: URL(fileURLWithPath: fixture.report)))
         var graph = try GraphArchive.decode(Data(contentsOf: graphPath))
-        let sourceRoot = graphPath.deletingLastPathComponent().appendingPathComponent("source")
+        let retained = fixture.retainedCapture.map { URL(fileURLWithPath: $0) } ?? graphPath.deletingLastPathComponent()
+        let sourceRoot = retained.appendingPathComponent("source")
         let start = Date()
         for key in graph.sources.keys.sorted() {
             let colon = try #require(key.firstIndex(of: ":"))
@@ -39,6 +43,45 @@ func retainedHeadOnlyPrecisionReplay() throws {
             try #require(old.units.map(\.fingerprint) == fresh.units.map(\.fingerprint))
             graph.sources[key] = fresh
         }
+        if fixture.refreshIndirectErrorEvidence == true {
+            // Reparse sealed bytes, never replay the compiler or change edges.
+            let captureRoot = retained.appendingPathComponent("SILCapture")
+            let seal = try JSONDecoder().decode(CapturedSIL.Seal.self, from: Data(contentsOf: captureRoot.appendingPathComponent("build.json")))
+            var files: [String: [URL]] = [:], fingerprints: [String: String] = [:]
+            let module = "ChainOfCustodyUITests"
+            for (relative, digest) in seal.manifests {
+                let manifest = captureRoot.appendingPathComponent(relative)
+                try #require(try ArtifactFiles.digest(manifest) == digest)
+                let job = try JSONDecoder().decode(CapturedSIL.Job.self, from: Data(contentsOf: manifest))
+                let index = try #require(job.arguments.firstIndex(of: "-module-name"))
+                guard job.arguments[index + 1] == module else { continue }
+                try #require(job.status == "complete")
+                for (source, digest) in job.sources {
+                    try #require(try ArtifactFiles.digest(URL(fileURLWithPath: source, relativeTo: URL(fileURLWithPath: job.directory))) == digest)
+                }
+                for filename in job.silFiles {
+                    let file = manifest.deletingLastPathComponent().appendingPathComponent(filename)
+                    files[module, default: []].append(file)
+                    let digest: String = try #require(job.silSHA256[filename])
+                    fingerprints[file.path] = digest
+                }
+            }
+            let capture = CapturedSIL(modules: files, fingerprints: fingerprints, diagnostics: [])
+            let raw = try #require(try capture.parse(module: module, sourceRoot: sourceRoot))
+            let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parsed = try SILOwnership.resolve(raw, module: module, compiler: compiler, directory: root)
+            var refreshed = 0
+            for id in graph.dependencies!.functions.keys.sorted() where graph.dependencies!.functions[id]!.module == module {
+                let old = graph.dependencies!.functions[id]!
+                guard let new = parsed.functions[id] else { continue }
+                try #require(old.compilerReferences == new.compilerReferences)
+                try #require(old.receiverErrorEffects == new.receiverErrorEffects)
+                graph.dependencies!.functions[id]!.receiverIndirectErrorEffects = new.receiverIndirectErrorEffects
+                refreshed += 1
+            }
+            try #require(refreshed > 0)
+            print("Refreshed indirect error evidence from sealed SIL:", refreshed)
+        }
         let scopes = try #require(prior.selectionScopes)
         let reports = try XcodeHeadOnlySelector.scopedReports(current: graph,
             requests: .init(scopes: scopes.map(\.scope)), changes: prior.changedFiles.map { .init(path: $0) },
@@ -47,6 +90,11 @@ func retainedHeadOnlyPrecisionReplay() throws {
             retainedGraphPath: graphPath.path)
         let report = try #require(reports.first?.report)
         #expect(reports.count == 1)
+        for test in fixture.fallbackOnlyTests ?? [] {
+            #expect(report.selectedTests.contains(test))
+            #expect(report.explanations.contains { $0.test == test && $0.kind != "dependency" })
+            #expect(!report.explanations.contains { $0.test == test && $0.kind == "dependency" })
+        }
         #expect(Set(fixture.knownConsumers).isSubset(of: Set(report.selectedTests)))
         #expect(report.diagnostics.filter { $0.code == "head_only_declaration_change" }.count == fixture.declarationFallbacks)
         #expect(report.diagnostics.contains { $0.message.contains(fixture.expectedBlocker) })

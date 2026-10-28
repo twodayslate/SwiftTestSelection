@@ -37,7 +37,7 @@ public enum GraphArchive {
                 for values in [n.dependencies, n.uncertainties, n.dynamicDeclarations, n.resolvedDynamicDeclarations] {
                     row.append(values.count); row += values.sorted().map(intern)
                 }
-                let optionalEvidence = [n.compilerReferences, n.dynamicCallSignatures, n.stateAccesses, n.receiverTypeOrigins, n.receiverGenericCalls, n.dynamicCallSites, n.receiverErrorEffects]
+                let optionalEvidence = [n.compilerReferences, n.dynamicCallSignatures, n.stateAccesses, n.receiverTypeOrigins, n.receiverGenericCalls, n.dynamicCallSites, n.receiverErrorEffects, n.receiverIndirectErrorEffects]
                 if let last = optionalEvidence.lastIndex(where: { $0 != nil }) {
                     for values in optionalEvidence[...last] {
                         if let values { row.append(values.count); row += values.sorted().map(intern) }
@@ -114,7 +114,11 @@ public enum GraphArchive {
                     if row[cursor] == -1 { cursor += 1 }
                     else { node.dynamicCallSites = try values() }
                 }
-                if cursor < row.count { node.receiverErrorEffects = try values() }
+                if cursor < row.count {
+                    if row[cursor] == -1 { cursor += 1 }
+                    else { node.receiverErrorEffects = try values() }
+                }
+                if cursor < row.count { node.receiverIndirectErrorEffects = try values() }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
                 graph.functions[node.id] = node
             }

@@ -132,6 +132,7 @@ public enum SILParser {
         static let nilSwitch = try! NSRegularExpression(pattern: #"^switch_enum_addr (%[\w]+), case #Optional.some!enumelt: (bb[0-9]+), case #Optional.none!enumelt: bb[0-9]+(?:,|$)"#)
         static let receiverCast = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?(?:unconditional_checked_cast(?:_addr|_value)?|checked_cast(?:_addr|_value)?_br|unchecked_(?:addr|trivial_bit|bitwise)_cast)\b.*? to (.+)"#)
         static let genericApply = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?(?:apply|try_apply|begin_apply|partial_apply)(?: \[[^\]]*\])* (%[\w]+)<"#)
+        static let predicateApply = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?apply(?: \[[^\]]*\])* %[\w]+\([^\r\n]*\) : \$@(?:noescape @)?callee_guaranteed \(\) -> (?:@out )?Bool$"#)
         static let apply = try! NSRegularExpression(pattern: #"\b(?:apply|try_apply|begin_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
     }
 
@@ -226,6 +227,7 @@ public enum SILParser {
                     current!.dynamicCallSignatures = []
                     current!.dynamicCallSites = []
                     current!.receiverErrorEffects = []
+                    current!.receiverIndirectErrorEffects = []
                     current!.stateAccesses = []
                     current!.receiverTypeOrigins = []
                     current!.receiverGenericCalls = []
@@ -414,6 +416,14 @@ public enum SILParser {
             }
             if line.containsASCII("apply "), let match = Pattern.groups(Expressions.apply, in: line), !knownValues.contains(match[0]) {
                 current!.uncertainties.insert("Indirect function invocation")
+                // A nonthrowing predicate loaded from a local collection cannot
+                // propagate a Swift error into XCTest's catch-and-format path.
+                // Keep ordinary indirect-call uncertainty: this is not evidence
+                // about the callback implementation or its other effects.
+                let instruction = line.components(separatedBy: ", loc ")[0].components(separatedBy: " // ")[0]
+                if Expressions.predicateApply.firstMatch(in: instruction, range: NSRange(instruction.startIndex..., in: instruction)) == nil {
+                    current!.receiverIndirectErrorEffects?.insert("Unproven indirect error effect: " + instruction)
+                }
             }
             if line.containsASCII("global_addr ") || line.containsASCII("global_value ") {
                 if let start = line.firstIndex(of: "@") {
