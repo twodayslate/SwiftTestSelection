@@ -126,21 +126,30 @@ public enum XcodeFineSelector {
         }
         oldChanged = Dictionary(grouping: oldChanged, by: { $0.key + $0.region.path }).values.compactMap(\.first)
         newChanged = Dictionary(grouping: newChanged, by: { $0.key + $0.region.path }).values.compactMap(\.first)
-        var comparisonContext = UIConditionContext(sides:
-            previous.map { [.init(revision: "base", snapshot: $0, changed: oldChanged)] } ?? [],
-            unavailableReason: nil)
-        comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged))
+        let hasConditions = [current.mappings, previous?.mappings].contains {
+            $0?.features.contains { $0.when != nil } == true
+        }
+        var comparisonContext = UIConditionContext(sides: [], unavailableReason: nil)
+        if hasConditions {
+            if let previous { comparisonContext.sides.append(.init(revision: "base", snapshot: previous, changed: oldChanged)) }
+            comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged))
+        }
         if previous == nil { comparisonContext.unavailableReason = "Base compiler evidence unavailable" }
         if missingCallerMetadata && locationPolicy != .diagnostic {
             comparisonContext.unavailableReason = "Saved snapshots lack caller-location metadata"
         }
         var conditionDecisions: [UIConditionDecision] = []
+        var conditionSourceCoverage: [String: Set<String>] = [:]
         for (revision, snapshot) in [("base", previous), ("head", Optional(current))] {
             guard let snapshot, let mappings = snapshot.mappings else { continue }
             do { try mappings.validate() }
             catch { fallback("invalid_ui_mappings", "\(revision): \(error)", tests: uiTests) }
             for feature in mappings.features {
                 guard let condition = feature.when else { continue }
+                let sourcePatterns = condition.sourcePatterns
+                conditionSourceCoverage[revision + ":" + feature.name] = Set((oldChanged + newChanged).filter { unit in
+                    sourcePatterns.contains { UIFeatureMappings.matches(unit.region.path, pattern: $0) }
+                }.map(\.key))
                 let result = comparisonContext.evaluate(condition)
                 conditionDecisions.append(.init(feature: feature.name, revision: revision, result: result))
                 let tests = Set(inventory.filter { test in mappings.selectors(for: feature).contains { UIFeatureMappings.selects(test, selector: $0) } })
@@ -438,7 +447,10 @@ public enum XcodeFineSelector {
                 for (unitIndex, unit) in productionUnits.enumerated() {
                     let directlyMapped = ((feature.sources ?? []) + (feature.when?.sourcePatterns ?? [])).contains { UIFeatureMappings.matches(unit.region.path, pattern: $0) }
                     let chain = unitChains[unitIndex][feature.name]
-                    if directlyMapped || chain != nil {
+                    // A semantically edited declaration may move between paths.
+                    // Source predicates cover its identity from either comparison side.
+                    let conditionalSource = conditionSourceCoverage[revision + ":" + feature.name]?.contains(unit.key) == true
+                    if directlyMapped || chain != nil || conditionalSource {
                         featurePaths[feature.name] = (chain ?? []).map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 } + [unit.region.path]
                         if feature.when == nil { matchedFeatures.insert(feature.name) }
                         coveredChanges.insert(unit.key)

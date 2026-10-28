@@ -260,3 +260,49 @@ private func compareConditions(_ head: XcodeTestGraph, _ base: XcodeTestGraph = 
         #expect(report.uiConditionDecisions?.allSatisfy { $0.result.status == (expected ? .matched : .notMatched) } == true)
     }
 }
+
+@Test func uiConditionsStrictValidationChecksAllLeavesAndAllowsHeadRepairs() throws {
+    func validate(_ graph: XcodeTestGraph) throws {
+        try graph.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: ["scheme": "App"])
+    }
+    for condition in [UIFeatureMappings.Condition.any([.symbolChanged("App.a()"), .symbolChanged("App.missing*")]),
+                      .all([.sourceChanged("App/**"), .symbolChanged("App.missing*")])] {
+        let head = conditionGraph(condition: condition)
+        for graph in [head, try GraphArchive.decode(GraphArchive.encode(head))] {
+            do {
+                try validate(graph)
+                Issue.record("Missing leaf must fail even when another operand resolves")
+            } catch let error as MappingValidationError {
+                #expect(error.diagnostics.map(\.pattern) == ["App.missing*"])
+                #expect(error.diagnostics.first?.feature == "combined")
+                #expect(error.diagnostics.first?.revision == "head")
+            }
+        }
+        let fixed = conditionGraph(condition: .symbolChanged("App.a*"))
+        try validate(fixed)
+        #expect(compareConditions(fixed, head).uiConditionDecisions?.first?.result.status == .unresolved)
+    }
+    var missing = conditionGraph()
+    missing.dependencies = nil
+    do {
+        try validate(missing)
+        Issue.record("Missing compiler graph cannot bypass condition validation")
+    } catch let error as MappingValidationError {
+        #expect(error.diagnostics.count == 2)
+        #expect(error.diagnostics.allSatisfy { $0.code == "mapping_symbol_graph_unavailable" })
+    }
+    let renamed = conditionGraph(condition: .symbolChanged("App.a()"), renamed: true)
+    #expect(throws: MappingValidationError.self) { try validate(renamed) }
+    try validate(conditionGraph(condition: .symbolChanged("App.renamed()"), renamed: true))
+}
+
+@Test func uiConditionSourceCoverageFollowsEditedDeclarationAcrossMove() {
+    let condition = UIFeatureMappings.Condition.all([.sourceChanged("App/A.swift"), .symbolChanged("App.b()")])
+    let base = conditionGraph(condition: condition)
+    let head = conditionGraph(a: 2, condition: condition, path: "Moved/A.swift")
+    let report = compareConditions(head, base)
+    #expect(report.selectedTests.isEmpty)
+    #expect(report.diagnostics.isEmpty)
+    #expect(report.uiConditionDecisions?.allSatisfy { $0.result.status == .notMatched } == true)
+    #expect(report.uiConditionDecisions?.first?.result.children[0].status == .matched)
+}

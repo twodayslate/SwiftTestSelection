@@ -354,7 +354,7 @@ reports explain each operand. All leaves are resolved without boolean short
 circuiting: a missing symbol/path or missing compiler/source evidence produces
 `unresolved`, even in an otherwise decisive branch, and selects conservatively.
 A deleted symbol that resolves only at base is a valid comparison operand.
-Strict mapping validation enforces every symbol leaf against **head** instead,
+`--strict-mappings` enforces every symbol leaf against **head** instead,
 so repairing or removing a stale base rule remains possible.
 
 Fresh and saved/cached two-graph selection share the same evaluator and semantic
