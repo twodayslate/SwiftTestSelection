@@ -1071,6 +1071,19 @@ an overload or changing an existing name's resolution cannot silently pass.
 The head graph must confirm the callers, complete test/lifecycle bindings, and
 test-only ownership. The proof does not depend on UI feature mappings.
 
+Ordinary XCTest entries may also be declared in multiple plain extensions of an
+existing, uniquely resolved final XCTest class. Empty extension headers are
+containers; repeated headers do not create ambiguous callable declarations.
+Added entries are still included in the primary selection. A scoped report may
+omit them only when its explicit `excludedTestEntries` policy covers their
+separate execution and source/compiler bindings pass the independence checks.
+Conformances, extension attributes or conditions, aliases, conflicting methods,
+and unresolved inheritance retain fallback. Private helpers and their direct
+callers may span the class and plain extensions in the same file; the same escape,
+callee, lifecycle, and receiver checks apply. This does not establish isolation
+for arbitrary extension bodies. See the [tickets #60–62 validation](Documentation/PrecisionTickets60-62.md)
+for the real consumer results and remaining effects.
+
 The supported helper bodies use ordinary String/Bool/Int/Double or XCUIApplication/
 XCUIElement parameters, local `let` values, member queries, XCTest assertions, and
 NSPredicate construction, and direct calls to private helpers. Local screenshot
@@ -1087,7 +1100,11 @@ and head, including deleted source files, inherited members, aliases, and
 construction inside assertions or downstream private helpers. A removed project
 overload cannot acquire the SDK effect contract merely because the head graph
 now calls the SDK. Protocol requirements without implementations and unrelated
-concrete initializers do not replace that call; protocol default implementations
+concrete initializers do not replace that call. Bodyless Swift protocol initializer
+requirements, including `@objc` selector annotations, carry explicit declaration
+evidence; they are not initializer implementations. Missing evidence, SDK owner
+namesakes and aliases still fail. Binding diagnostics identify the rejected
+owner/member and its source location. Protocol default implementations
 and unresolved bindings retain `head_only_helper_callee_effects`. Property overrides
 are checked against the declaring class's ancestry at each revision: a proven
 unrelated class does not invalidate the attachment contract. Missing, ambiguous,
@@ -1125,6 +1142,12 @@ overloads, unproven enum arguments, and dynamic or forwarded class metatypes
 retain fallback. Captured structs and enums may participate through their checked
 implementations; local SDK namesakes cannot establish an SDK signature. A reference to an SDK constructor does not prove that it was
 called with the SDK class: the captured metatype must also be established.
+The imported SDK `XCUIGestureVelocity` value type and its exact immutable
+`slow`/`fast`/`default` constants and exact importer-synthesized equality witness
+are supported in caller loops. The type requires
+trusted source imports and no project type or alias shadow; method overloads
+still require the normal signature and source-call checks. This is not a general
+contract for SDK values or user-defined protocol conformances.
 Implicit static-method metatype inputs are ignored only when SIL proves that
 they are unused outside debug instructions; forwarding or copying them retains
 the origin check.
@@ -1135,7 +1158,10 @@ Older graphs without dynamic-call or receiver-type evidence require regeneration
 build artifacts and sealed SIL capture. Source-proof refresh alone is insufficient;
 reparsing valid saved SIL requires no application rebuild or test execution.
 Helpers cannot capture `self` or free project variables, take
-inout/function-valued/default arguments, or contain closures or macros. Known
+inout/function-valued arguments, or contain closures or macros. Primitive literal
+parameter defaults are supported; their generated thunks remain part of the
+compiler effect check. Effectful defaults and nested local declarations inside
+control flow retain an explicit unsupported-effect diagnostic. Known
 global/shared-state and raw-pointer effects in project callees also
 prevent isolation. Attachment handling never waives compiler-observed state
 checks, including in assertion autoclosures. A failed helper proof that encounters
@@ -1222,13 +1248,14 @@ remain conservative. Concrete project types cannot be ancestors of the trusted S
 classes; their same-named members and free functions do not replace SDK member
 calls. The compiler effect walk also rejects project callees outside the checked
 helper and its callbacks. Private proof
-version 9 and SDK proof version 5 reject older saved evidence. Private version 9
-records all SDK member bindings across the checked callee bodies and validates
+version 10 and SDK proof version 5 reject older saved evidence. Private version 10
+adds plain extension ownership and primitive default-argument checks. It retains
+all SDK member bindings across the checked callee bodies and validates
 argument labels and method references. It also audits subscript bindings at both
 revisions and requires overload labels to agree with the compiler signature.
 Labeled subscripts and ambiguous mixed query overloads retain conservative
-fallback: the saved SIL does not identify which source call produced each method
-reference, so a valid call cannot justify another unproven call. Version-8 and
+fallback when source-call identity is missing or a signature cannot be paired
+with its source labels; one valid call cannot justify another unproven call. Version-9 and
 older private proofs require
 regeneration. Both helper contracts also check the compiled consumer and lifecycle
 closure for opaque factories that could supply an SDK subclass with effectful

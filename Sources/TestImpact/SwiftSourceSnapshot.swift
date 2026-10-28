@@ -35,9 +35,15 @@ public struct SourceUnit: Codable, Sendable {
     public var callerLocations: [String: String]? = nil
     /// Syntax proof for a private helper referenced only by direct test/helper calls.
     public var privateTestHelper: PrivateTestHelperSyntax? = nil
+    /// Concrete source limitation for an otherwise private test-helper candidate.
+    public var privateTestHelperBlocker: String? = nil
     /// Closed name evidence for a separately executed added XCTest entry.
     public var independentAddedTestEntry: String? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
+    /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
+    public var bodylessProtocolRequirement: String? = nil
+    /// Empty, unconditional extension header with no attributes, modifiers or conformance.
+    public var plainExtension: Bool? = nil
     public var helperCallableName: String? = nil
     public var helperReferenceSignature: String? = nil
     public var helperCallerSupported: Bool? = nil
@@ -245,7 +251,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             node.is(SomeOrAnyTypeSyntax.self) ||
                 node.children(viewMode: .sourceAccurate).contains(where: containsOpaqueResult)
         }
-        func add(_ node: Syntax, header: Syntax, kind: String, scope: [String]) {
+        func add(_ node: Syntax, header: Syntax, kind: String, scope: [String], plainExtension: Bool? = nil) {
             if let function = node.as(FunctionDeclSyntax.self), ["!", "==", "!=", "&&", "||"].contains(function.name.text) {
                 result.sdkHelperNamesUnshadowed = false
             }
@@ -361,9 +367,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 callerLocations: calls.locations,
                 privateTestHelper: node.as(FunctionDeclSyntax.self).flatMap {
                     PrivateTestHelperSyntax.prove($0, importsSupported: callerImportsSupported, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [], locations: locations)
-                }, independentAddedTestEntry: node.as(FunctionDeclSyntax.self).flatMap {
+                }, privateTestHelperBlocker: node.as(FunctionDeclSyntax.self).flatMap { PrivateTestHelperSyntax.unsupportedEffect($0, locations: locations) },
+                independentAddedTestEntry: node.as(FunctionDeclSyntax.self).flatMap {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
                 }, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
+                plainExtension: plainExtension,
                 helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },
                 helperReferenceSignature: node.as(FunctionDeclSyntax.self).flatMap { function in
                     function.signature.parameterClause.parameters.allSatisfy { $0.defaultValue == nil && $0.ellipsis == nil } ? SDKTestHelperSyntax.signature(function) : nil
@@ -422,7 +431,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             } else if let value = node.as(ExtensionDeclSyntax.self) {
                 let names = [value.extendedType.trimmedDescription]
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "extension", scope: names)
+                add(header, header: header, kind: "extension", scope: names, plainExtension: PrivateTestHelperSyntax.isPlainExtension(value))
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(FunctionDeclSyntax.self) {
                 add(node, header: Syntax(value.with(\.body, nil)), kind: "function", scope: scope)

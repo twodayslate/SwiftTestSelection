@@ -12,6 +12,10 @@ enum SDKReceiverContracts {
     static let unreachableNil = "@unreachable-literal-nil"
     // Concrete SDK values and XCTest assertions. Explicit callback references stay in the caller graph.
     static let primitives: Set<String> = [
+        // Importer-synthesized Equatable for the SDK's CGFloat-backed velocity.
+        // This exact witness uses the SDK RawValue implementation; it is not a
+        // contract for arbitrary RawRepresentable equality or formatting.
+        "$sSo19XCUIGestureVelocityaSQSCSQ2eeoiySbx_xtFZTW",
         // Concrete String/Character storage operations cannot dispatch a project conformance.
         "$sSS12makeIteratorSS0B0VyF", "$sSS8IteratorV4nextSJSgyF", "$sSS6appendyySJF", "$sSSySSSJcfC",
         "$sSS1poiyS2S_SStFZ", "$sSS9repeating5countS2S_SitcfC", "$sSS5countSivg", "$sSS7isEmptySbvg", "$sSS10lowercasedSSyF",

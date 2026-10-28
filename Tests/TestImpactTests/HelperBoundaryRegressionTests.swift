@@ -45,7 +45,7 @@ func evaluate(_ predicate: () -> Bool) -> Bool { predicate() }
 """
 
 
-private func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = []) throws -> XcodeTestGraph {
+func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = []) throws -> XcodeTestGraph {
     for (path, text) in files { try Data(text.utf8).write(to: root.appendingPathComponent(path)) }
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let sil = root.appendingPathComponent("UI.sil")
@@ -466,7 +466,8 @@ func sdkQueryMemberAuditIncludesHistoricalAndAliasedOwners(member: String, locat
         let reason = SDKTestHelperIsolation.environmentBlocker(current: current,
             base: location == "base" ? ["UI:Support.swift": snapshot] : [:],
             unownedBase: location == "unownedBase" ? ["Support.swift": snapshot] : [:], queriedMembers: [member])
-        #expect(reason == "Project member can replace a trusted SDK query at base or head")
+        #expect(reason?.hasPrefix("Project member can replace a trusted SDK query at base or head: Unproven member binding ") == true)
+        #expect(reason?.contains("Support.swift:") == true)
     }
 }
 
