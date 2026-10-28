@@ -227,7 +227,7 @@ private func propose(_ graph: XcodeTestGraph, _ sessions: [UICoverageArtifact.Se
 }
 
 @Test func coverageValidatesDeclaredDestinationFields() throws {
-    for destination in ["platform=iOS Simulator,id=test", "platform=iOS Simulator,name=Phone,OS=26.5,arch=arm64"] {
+    for destination in ["id=test", "platform=iOS Simulator,id=test", "platform=iOS Simulator,name=Phone,OS=26.5,arch=arm64"] {
         var graph = coverageGraph(); graph.buildArtifact!.context["destination"] = destination
         let good = try session(graph)
         #expect(try propose(graph, [good]).validationPassed)
@@ -247,8 +247,10 @@ private func propose(_ graph: XcodeTestGraph, _ sessions: [UICoverageArtifact.Se
     }
 }
 
-@Test func coverageRetainsDeviceEvidenceAndRejectsIncompatibleSessions() throws {
-    let graph = coverageGraph()
+@Test(arguments: ["platform=iOS Simulator,id=test", "id=test"])
+func coverageRetainsDeviceEvidenceAndRejectsIncompatibleSessions(destination: String) throws {
+    var graph = coverageGraph()
+    graph.buildArtifact!.context["destination"] = destination
     let first = try session(graph)
     var second = try session(graph, test: notes, path: "Notes")
     second.testResults!.devices![0].osVersion = "99.0"

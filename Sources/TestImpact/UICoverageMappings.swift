@@ -353,7 +353,9 @@ public enum UICoverageMappings {
             }
             fields[key] = value
         }
-        guard let platform = fields["platform"], device.platform == platform else {
+        // Xcode also accepts id-only destinations. Only an explicit platform
+        // constrains the result; device IDs and cross-session evidence still do.
+        if let platform = fields["platform"], device.platform != platform {
             throw ImpactError("Result-bundle platform does not match destination: \(destination)")
         }
         for (key, actual) in [("id", Optional(device.deviceId)), ("name", device.deviceName),

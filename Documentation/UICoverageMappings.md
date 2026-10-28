@@ -108,7 +108,8 @@ The raw test report must include exactly one device with `deviceId`, `platform`
 and `osVersion`. Its metadata is retained in proposal provenance. Reported values
 are checked against explicit destination `platform`, `id`, `name`, `OS` and `arch`
 constraints, and device/OS/build metadata must agree across accepted sessions.
-`OS=latest` uses the reported version; a destination specifying only a device ID
+ID-only destinations such as `id=<UUID>` are supported; platform is checked only
+when explicitly supplied. `OS=latest` uses the reported version; a destination specifying only a device ID
 does not independently establish its OS version, but session metadata must still
 agree. Unsupported destination expressions and missing device evidence are errors.
 Older hand-authored manifests that omitted `devices` need the original full

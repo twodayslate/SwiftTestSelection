@@ -97,4 +97,24 @@ with tempfile.TemporaryDirectory(prefix="coverage-cli-") as directory:
     assert report["mappingValidationDiagnostics"][0]["code"] == "unresolved_mapping_symbol"
     run("apply", *common, fail=True)
     assert mappings_path.read_bytes() == saved
+    # Planning, import and apply must agree for Xcode's valid ID-only form.
+    graph["buildArtifact"]["context"]["destination"] = "id=test"
+    graph_path.write_text(json.dumps(graph))
+    plan = run("plan", "--graph", graph_path, "--suite", "UI/Screen", "--app-target", "App")
+    assert plan["identity"]["destination"] == "id=test"
+    artifact["sessions"][0]["identity"] = plan["identity"]
+    artifact_path.write_text(json.dumps(artifact))
+    mappings_path.write_text(json.dumps(existing))
+    report = run("import", *common)
+    assert report["validationPassed"] and len(report["additions"]) == 1, report
+    applied = run("apply", *common)
+    assert json.loads(mappings_path.read_text()) == applied["mappings"]
+    saved = mappings_path.read_bytes()
+    artifact["sessions"][0]["testResults"]["devices"][0]["deviceId"] = "wrong-device"
+    artifact_path.write_text(json.dumps(artifact))
+    report = run("import", *common)
+    assert not report["validationPassed"]
+    assert any(d["code"] == "incompatible_destination" for d in report["diagnostics"])
+    run("apply", *common, fail=True)
+    assert mappings_path.read_bytes() == saved
     print("PASS coverage CLI inspection, bundle names, additive apply, unknown-field preservation, idempotence and rejected writes")
