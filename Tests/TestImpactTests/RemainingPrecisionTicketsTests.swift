@@ -11,6 +11,42 @@ private func precisionRoot() throws -> URL {
     return root
 }
 
+@Test(arguments: [false, true])
+func survivingPrivateHelperLimitationsPreserveDependencySelection(opaqueOther: Bool) throws {
+    let root = try precisionRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import XCTest
+    final class Suite: XCTestCase {
+        func testConsumer() { _ = candidate() }
+        private func candidate() -> Int {
+            if true { let value = 1; return value }
+            return 0
+        }
+    }
+    final class Other: XCTestCase {
+        func testOther() { \(opaqueOther ? "_ = evaluate { true }" : "") }
+    }
+    func evaluate(_ body: () -> Bool) -> Bool { body() }
+    """
+    let after = before.replacingOccurrences(of: "let value = 1", with: "let value = 2")
+    let tests = ["UI/Suite/testConsumer()", "UI/Other/testOther()"]
+    let current = try boundaryGraph(["UI.swift": after], tests: tests, root: root)
+    let helper = try #require(current.sources["UI:UI.swift"]?.units.first { $0.helperCallableName == "candidate" })
+    #expect(helper.privateTestHelper == nil)
+    #expect(helper.privateTestHelperBlocker?.contains("Nested local declaration") == true)
+    let report = XcodeHeadOnlySelector.select(current: current,
+        source: .init(base: ["UI:UI.swift": .parse(before, path: "UI.swift", module: "UI")], mappings: current.mappings),
+        changes: [.init(path: "UI.swift")], baseRevision: "base")
+    #expect(report.selectedTests == (opaqueOther ? tests.sorted() : [tests[0]]))
+    #expect(report.explanations.contains { $0.test == tests[0] && $0.kind == "dependency" })
+    if opaqueOther {
+        #expect(report.diagnostics.contains { $0.code == "head_only_runtime_uncertainty" && $0.tests.contains(tests[1]) })
+    } else {
+        #expect(report.diagnostics.isEmpty)
+    }
+}
+
 @Test(arguments: ["sdk", "namesake", "escapedNamesake", "alias", "escapedAlias", "foreign", "overload", "comparisonOverride"])
 func gestureVelocityRequiresAuthenticatedSDKIdentity(kind: String) throws {
     let root = try precisionRoot()

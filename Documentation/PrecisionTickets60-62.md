@@ -9,9 +9,11 @@ This PR fixes the SDK gesture-velocity identity rejection (#60), recognizes body
 - Multiple plain extension headers are containers rather than ambiguous callables. Their owner must resolve uniquely to the same existing final XCTest hierarchy at both revisions. Added methods still enter the primary selection; only an explicit separate-execution scope can omit independent entries. Attributes, conformances, conditions, aliases and incomplete bindings remain conservative.
 - Private helper callers may span their class and plain extensions in one file. Primitive literal defaults include their compiler-generated thunks in the effect check. Escapes, lifecycle callers, shared effects, competing overloads and effectful defaults remain unsupported. Nested local declarations in control flow report the exact source line requiring further evidence.
 
-Private-helper proof version is 10; the module-fragment cache is version 15. Legacy initializer/extension metadata does not grant the new exemptions.
+Private-helper proof version is 10; the module-fragment cache is version 15. Legacy initializer/extension metadata does not grant the new exemptions. Unsupported syntax prevents an added helper from establishing isolation; it does not by itself force a full run for a surviving body with an unchanged header. Those bodies retain ordinary dependency selection and runtime uncertainty fallbacks.
 
 ## Fresh consumer captures
+
+The capture and replay measurements below were recorded at PR commit `8114257`, before the surviving-helper diagnostic refinement. A separate compiled regression checks that refinement with both complete and opaque dependency graphs.
 
 Each comparison used one fresh head `build-for-testing` with supplementary SIL, all ten modules, a complete normalized test plan and UI mapping, and the original scope/excluded-entry policy. No base compilation or compiler replay occurred. #301, #293 and #299 include the consumer’s Swift touch-helper rewrite identically on both review sides. The two #291 comparisons retain the original historical sources. Handwritten Objective-C is not analyzed.
 

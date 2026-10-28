@@ -1161,7 +1161,9 @@ Helpers cannot capture `self` or free project variables, take
 inout/function-valued arguments, or contain closures or macros. Primitive literal
 parameter defaults are supported; their generated thunks remain part of the
 compiler effect check. Effectful defaults and nested local declarations inside
-control flow retain an explicit unsupported-effect diagnostic. Known
+control flow cannot establish helper isolation. Added helpers retain an explicit
+unsupported-effect diagnostic; surviving bodies with unchanged headers still use
+ordinary compiler dependencies and runtime uncertainty fallbacks. Known
 global/shared-state and raw-pointer effects in project callees also
 prevent isolation. Attachment handling never waives compiler-observed state
 checks, including in assertion autoclosures. A failed helper proof that encounters

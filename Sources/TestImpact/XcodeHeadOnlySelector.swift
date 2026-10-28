@@ -142,7 +142,10 @@ enum XcodeHeadOnlySelector {
             }
             if before.count <= 1, after.count == 1, let unit = after.first,
                let graph = current.dependencies, let index = dependencyIndex {
-                if let blocker = unit.privateTestHelperBlocker ?? before.first?.privateTestHelperBlocker,
+                // An added helper needs an isolation proof because no base
+                // compiler edges exist. A surviving body can still use ordinary
+                // dependency selection, with runtime fallback where needed.
+                if before.isEmpty, let blocker = unit.privateTestHelperBlocker,
                    PrivateTestHelperIsolation.isXCTestHelper(unit, current: current) {
                     fallback("head_only_helper_callee_effects", "Private helper effect is unsupported: \(blocker) (\(unit.region.path):\(unit.region.startLine))")
                     continue
