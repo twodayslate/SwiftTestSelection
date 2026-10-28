@@ -1,0 +1,62 @@
+{
+  "issue": 58,
+  "status": "predicate-error-boundary-fixed; full-isolation-still-unproven",
+  "issueRemainsOpen": true,
+  "baseAnalyzerRevision": "45c4491",
+  "analyzerToolchain": "Xcode 26.6, Swift 6.3.3, release",
+  "captureAndReplaySDK": "Xcode 27.0",
+  "newApplicationBuilds": 0,
+  "baselineBuilds": 0,
+  "compilerReplays": 0,
+  "applicationTestBodiesExecuted": false,
+  "fullRunEquivalenceValidated": false,
+  "moduleFragmentCacheVersion": 16,
+  "replays": [
+    {
+      "variant": "swift-only",
+      "baseRevision": "ebcda2a339c9077c447397123a0cd3d3ab80aa1f",
+      "headRevision": "201a70812718ea822d6df5ca3d4d9bddb0767894",
+      "graphSHA256": "7aaa56c8fdf02c45d6bbb2564cf2f53032ad84457709d143257cc3bcad5134c1",
+      "captureSealSHA256": "cd935e2313e5f13ed829981c5ac9b1745c3f207a39571710f1266e98ba0e3aa8",
+      "scopeReportSHA256": "14a206b837b0095d5c211a4b53ef0cb8dcf458ce85d797da417ee78b25fbf22d",
+      "selectedTests": 2000,
+      "selectedUITests": 403,
+      "knownConsumers": 125,
+      "allKnownConsumersRetained": true,
+      "fallbackOnlyNoteLinksHasNoDependencyExplanation": true,
+      "sourceAndEvidenceRefreshAndSelectionSeconds": 74.83942496776581,
+      "blockers": [
+        "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; String (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)"
+      ],
+      "verifyBuildExitCode": 0
+    },
+    {
+      "variant": "original",
+      "baseRevision": "40c62f971f0aef63c902a14805cf4d821e6784fb",
+      "headRevision": "50a773442d7df21ac8ce3c7d0fa61bf0548303ed",
+      "graphSHA256": "14e4fb11cc31941749ed8207fabc89f47dae0b59a433fc61927a260fc769355b",
+      "captureSealSHA256": "c5a65b4c2034300fc9905b8c1b45a242464bdfe53d83249159c0e25cea8975da",
+      "scopeReportSHA256": "ae9fa9dee723a7e83f97d8bce53bb2f3cd11965ac5ac2ef1557d17bef519d481",
+      "selectedTests": 2000,
+      "selectedUITests": 403,
+      "knownConsumers": 125,
+      "allKnownConsumersRetained": true,
+      "fallbackOnlyNoteLinksHasNoDependencyExplanation": true,
+      "sourceAndEvidenceRefreshAndSelectionSeconds": 44.39220905303955,
+      "blockers": [
+        "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; String (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)"
+      ],
+      "verifyBuildExitCode": 0
+    }
+  ],
+  "validation": {
+    "releaseSuiteReportedPassed": 355,
+    "releaseSuiteSeconds": 72.289,
+    "optInReplaySkippedInFullSuite": true,
+    "separateRetainedReplayPassed": true,
+    "retainedReplayCases": 2,
+    "captureHelperTestsPassed": 6,
+    "releaseDistributionTestsPassed": 5,
+    "releaseDistributionTestsSkipped": 1
+  }
+}

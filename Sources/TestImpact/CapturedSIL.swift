@@ -245,6 +245,9 @@ struct CapturedSIL: Sendable {
                     if let before = old.receiverErrorEffects, let after = node.receiverErrorEffects {
                         old.receiverErrorEffects = before.union(after)
                     } else { old.receiverErrorEffects = nil }
+                    if let before = old.receiverIndirectErrorEffects, let after = node.receiverIndirectErrorEffects {
+                        old.receiverIndirectErrorEffects = before.union(after)
+                    } else { old.receiverIndirectErrorEffects = nil }
                     old.dynamicDeclarations.formUnion(node.dynamicDeclarations)
                     old.uncertainties.formUnion(node.uncertainties)
                     old.regions = Set(old.regions + node.regions).sorted { ($0.path, $0.startLine, $0.endLine) < ($1.path, $1.startLine, $1.endLine) }

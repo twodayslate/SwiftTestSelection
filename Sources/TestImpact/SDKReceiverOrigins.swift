@@ -197,6 +197,13 @@ struct SDKReceiverOrigins {
         // escaped callbacks but does not assign them individual SDK argument roles.
         // Cache successful checks within this immutable receiver proof.
         var nonthrowingProducers = Set<String>()
+        func errorEvidenceDetail(_ node: FunctionNode) -> String {
+            if node.uncertainties.contains("Indirect function invocation"), node.receiverIndirectErrorEffects == nil {
+                return "; missing indirect-call error evidence; regenerate the graph from sealed SIL"
+            }
+            let reasons = (node.receiverErrorEffects ?? []).union(node.receiverIndirectErrorEffects ?? []).sorted()
+            return reasons.isEmpty ? "" : "; " + reasons.prefix(2).joined(separator: "; ")
+        }
         func errorFormattingBlocker(_ inputs: Set<String>) -> String? {
             var pending = inputs, visited = Set<String>()
             while !pending.isEmpty {
@@ -209,8 +216,8 @@ struct SDKReceiverOrigins {
                           let direct = node.compilerReferences else {
                         return "Missing error-flow evidence for XCTest input producer " + id + "; regenerate the graph from sealed SIL"
                     }
-                    guard errors.isEmpty, !node.uncertainties.contains("Indirect function invocation") else {
-                        return "Unproven XCTest error formatting from input producer " + node.module + "." + node.name
+                    guard errors.isEmpty, (!node.uncertainties.contains("Indirect function invocation") || node.receiverIndirectErrorEffects?.isEmpty == true) else {
+                        return "Unproven XCTest error formatting from input producer " + node.module + "." + node.name + errorEvidenceDetail(node)
                     }
                     // A Swift throw from any dynamic/indirect call must propagate
                     // through this body to reach the SDK's catch. Explicit callees
@@ -254,8 +261,8 @@ struct SDKReceiverOrigins {
                         return "Missing XCTest error-flow evidence; regenerate the graph from sealed SIL"
                     }
                     guard !errors.contains("throwing callback parameter"),
-                          !node.uncertainties.contains("Indirect function invocation") else {
-                        return "Unproven XCTest error formatting from an opaque callback in " + node.module + "." + node.name
+                          (!node.uncertainties.contains("Indirect function invocation") || node.receiverIndirectErrorEffects?.isEmpty == true) else {
+                        return "Unproven XCTest error formatting from an opaque callback in " + node.module + "." + node.name + errorEvidenceDetail(node)
                     }
                     if let reason = errorFormattingBlocker(direct) { return reason }
                 }

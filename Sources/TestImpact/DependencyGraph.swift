@@ -45,6 +45,10 @@ public struct FunctionNode: Codable, Sendable {
     public var dynamicCallSites: Set<String>? = nil
     /// Swift error propagation and opaque throwing callback inputs. Nil means missing evidence.
     public var receiverErrorEffects: Set<String>? = nil
+    /// Indirect invocations without a proven nonthrowing predicate signature.
+    /// An empty set proves only error propagation, never callback purity or origin.
+    /// Nil denotes legacy/missing evidence.
+    public var receiverIndirectErrorEffects: Set<String>? = nil
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>
