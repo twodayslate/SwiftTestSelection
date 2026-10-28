@@ -145,8 +145,12 @@ proposed configuration, including preserved user symbols. Strict failures are
 returned in `mappingValidationDiagnostics` and block apply. Capture-time mapping
 load failures also block apply unless an explicitly supplied valid mapping
 replaces the captured mapping. User entries remain intact in the review proposal.
-This implementation supports mapping schema v1 and emits no symbol patterns or
-boolean expressions. Unsupported mapping versions are rejected rather than rewritten.
+Mapping schemas v1 and v2 and captured graph schemas 2 and 3 are supported.
+Existing v2 AND/OR conditions are preserved and their symbol operands receive
+the same strict validation as selection. Coverage never infers or modifies a
+condition: new entries remain additive file-to-suite associations, even when an
+existing condition mentions that file. The mapping version and user policies
+are retained. Unsupported mapping versions are rejected rather than rewritten.
 
 Diagnostic codes are stable machine-readable strings. `severity` is `info`,
 `warning`, or `error`; `session` and `path` provide context when applicable.

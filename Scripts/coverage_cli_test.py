@@ -117,4 +117,35 @@ with tempfile.TemporaryDirectory(prefix="coverage-cli-") as directory:
     assert any(d["code"] == "incompatible_destination" for d in report["diagnostics"])
     run("apply", *common, fail=True)
     assert mappings_path.read_bytes() == saved
-    print("PASS coverage CLI inspection, bundle names, additive apply, unknown-field preservation, idempotence and rejected writes")
+    # Main's conditional mappings use graph schema 3. Preserve the complete
+    # user-authored expression while adding independent positive associations.
+    conditional = copy.deepcopy(existing)
+    conditional["version"] = 2
+    conditional["features"].append(dict(name="conditional", tests=["UI/Screen"],
+        when={"all": [{"sourceChanged": "Screen.swift"}, {"any": [{"symbolChanged": "App.screen()"}]}]},
+        annotation={"owner": "user-condition"}))
+    graph["schemaVersion"] = 3
+    graph["mappings"] = conditional
+    graph_path.write_text(json.dumps(graph))
+    plan = run("plan", "--graph", graph_path, "--suite", "UI/Screen", "--app-target", "App")
+    artifact["sessions"][0]["identity"] = plan["identity"]
+    artifact["sessions"][0]["testResults"]["devices"][0]["deviceId"] = "test"
+    artifact_path.write_text(json.dumps(artifact))
+    mappings_path.write_text(json.dumps(conditional))
+    report = run("import", *common)
+    assert report["validationPassed"] and len(report["additions"]) == 1, report
+    assert report["mappings"]["version"] == 2
+    assert report["mappings"]["features"][:2] == conditional["features"]
+    assert all("when" not in feature for feature in report["additions"])
+    applied = run("apply", *common)
+    assert json.loads(mappings_path.read_text()) == applied["mappings"] == report["mappings"]
+    assert not run("import", *common)["additions"]
+    conditional["features"][1]["when"]["all"][1]["any"].append({"symbolChanged": "App.missing()"})
+    mappings_path.write_text(json.dumps(conditional))
+    saved = mappings_path.read_bytes()
+    report = run("import", *common)
+    assert not report["validationPassed"]
+    assert report["mappingValidationDiagnostics"][0]["pattern"] == "App.missing()"
+    run("apply", *common, fail=True)
+    assert mappings_path.read_bytes() == saved
+    print("PASS coverage CLI inspection, bundle names, additive apply, conditional mappings, unknown-field preservation, idempotence and rejected writes")

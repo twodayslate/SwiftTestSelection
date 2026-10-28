@@ -124,6 +124,49 @@ private func propose(_ graph: XcodeTestGraph, _ sessions: [UICoverageArtifact.Se
     #expect(repeated.mappings.features.count == result.mappings.features.count)
 }
 
+@Test func coverageSupportsConditionalGraphArchivesWithoutInferringConditions() throws {
+    var graph = coverageGraph()
+    let condition = UIFeatureMappings.Condition.all([
+        .sourceChanged("App/Sharing.swift"),
+        .any([.sourceChanged("App/Notes.swift"), .symbolChanged("App.App/Common.swift")])
+    ])
+    graph.mappings = .init(version: 2, features: [
+        .init(name: "manual-condition", tests: ["UI/Sharing"], when: condition)
+    ], runtimeDependencyPolicy: .declared)
+    let captured = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(graph))
+    #expect(captured.schemaVersion == 3)
+    let plan = try UICoverageMappings.plan(graph: captured, suites: ["UI/Sharing"], appTargets: ["App"])
+    #expect(plan.executions.count == 1)
+    let result = try propose(captured, [session(captured)])
+    #expect(result.validationPassed)
+    #expect(result.mappings.version == 2)
+    #expect(result.mappings.runtimeDependencyPolicy == .declared)
+    let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+    #expect(try encoder.encode(result.mappings.features[0]) == encoder.encode(captured.mappings!.features[0]))
+    #expect(result.additions.count == 2)
+    #expect(result.additions.allSatisfy { $0.when == nil })
+    #expect(result.additions.contains { $0.sources == ["App/Sharing.swift"] && $0.tests == ["UI/Sharing"] })
+    #expect(try propose(captured, [session(captured)], existing: result.mappings).additions.isEmpty)
+
+    var downgraded = captured; downgraded.schemaVersion = 2
+    #expect(throws: ImpactError.self) { try UICoverageMappings.identity(for: downgraded) }
+}
+
+@Test func coverageValidatesEveryPreservedConditionSymbol() throws {
+    var graph = coverageGraph()
+    graph.mappings = .init(version: 2, features: [
+        .init(name: "manual-condition", tests: ["UI/Sharing"], when: .any([
+            .symbolChanged("App.App/Sharing.swift"),
+            .all([.sourceChanged("App/Notes.swift"), .symbolChanged("App.missing()")])
+        ]))
+    ])
+    let result = try propose(graph, [session(graph)])
+    #expect(!result.validationPassed)
+    #expect(result.mappingValidationDiagnostics.count == 1)
+    #expect(result.mappingValidationDiagnostics.first?.pattern == "App.missing()")
+    #expect(result.mappingValidationDiagnostics.first?.feature == "manual-condition")
+}
+
 @Test func coverageNormalizesPathsAndDiagnosesGeneratedExternalAndAmbiguousFunctions() throws {
     var graph = coverageGraph()
     graph.dependencies!.functions["another"] = .init(id: "another", module: "App", name: "overload", regions: [.init(path: "App/Sharing.swift", startLine: 1, endLine: 10)])

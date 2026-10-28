@@ -141,7 +141,8 @@ public struct UICoveragePlan: Codable, Sendable {
 /// Coverage is an optional authoring input. Selection never loads these artifacts.
 public enum UICoverageMappings {
     public static func identity(for graph: XcodeTestGraph) throws -> [String: String] {
-        guard graph.schemaVersion == 2, graph.dependencies != nil, let build = graph.buildArtifact,
+        guard [2, 3].contains(graph.schemaVersion), graph.mappings?.version != 2 || graph.schemaVersion == 3,
+              graph.dependencies != nil, let build = graph.buildArtifact,
               !build.revision.isEmpty, !build.toolchain.isEmpty, !build.products.isEmpty,
               let destination = build.context["destination"], !destination.isEmpty else {
             throw ImpactError("Coverage authoring requires a captured compiler graph with build provenance and enabled test inventory.")
