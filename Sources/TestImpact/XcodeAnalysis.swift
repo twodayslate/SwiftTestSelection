@@ -17,6 +17,8 @@ public struct XcodeConfiguration: Sendable {
     public var buildTimeSILHelper: URL? = nil
     /// Repository-relative mapping file, read separately from each revision.
     public var mappingsPath: String = ".swift-test-selection.json"
+    /// Require each head mapping symbol pattern to resolve in the selected build.
+    public var strictMappings = false
 
     public init(container: Container, path: URL, scheme: String, destination: String, configuration: String? = nil, testPlan: String? = nil) {
         self.container = container
@@ -98,6 +100,7 @@ public struct XcodeAnalysis {
             headOptions.path = headRoot.appendingPathComponent(relative)
         }
         let current = try analyze(headOptions, sourceRoot: headRoot)
+        try validateMappings(in: current, revision: comparison.head ?? "WORKTREE")
         var previous: XcodeTestGraph?
         var fallbacks: [String] = []
         if changes.isEmpty { previous = current }
@@ -303,6 +306,7 @@ public struct XcodeAnalysis {
                 try result.mappings?.validate()
             } catch {
                 result.mappings = nil
+                result.mappingLoadError = String(describing: error)
                 result.diagnostics.append("Invalid UI mappings: \(error)")
             }
         }

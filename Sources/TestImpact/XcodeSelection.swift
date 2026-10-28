@@ -44,6 +44,8 @@ public struct XcodeTestGraph: Codable, Sendable {
     public var unresolvedProductRoles: [String: String]? = nil
     public var modules: [String: String] = [:]
     public var mappings: UIFeatureMappings?
+    /// Retain read/decode/schema failures even when invalid mappings are discarded.
+    public var mappingLoadError: String? = nil
     public var runtimeInventory: XcodeRuntimeInventory? = nil
     /// Provenance and product fingerprints for an imported build-for-testing result.
     public var buildArtifact: XcodeBuildArtifact?
