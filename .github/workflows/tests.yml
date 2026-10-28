@@ -40,3 +40,4 @@ jobs:
           python3 Scripts/capture_build_test.py
           python3 Scripts/release_distribution_test.py
           python3 Scripts/coverage_cli_test.py
+          python3 Scripts/inline_mapping_cli_test.py --tool .build/debug/swift-test-impact

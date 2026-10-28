@@ -80,6 +80,9 @@ struct XcodeHeadOnlySources {
 enum XcodeHeadOnlySelector {
     static func select(current: XcodeTestGraph, source: XcodeHeadOnlySources, changes: [FileChange],
                        baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = []) -> ImpactReport {
+        let mappingFilePresent = current.mappings != nil
+        let inline = InlineUIMappings.resolve(current)
+        let current = inline.applying(to: current)
         let inventory = Set(current.tests)
         func target(_ test: String) -> String { String(test.prefix { $0 != "/" }) }
         let uiTargets = Set(current.targets.filter(\.isUITest).map(\.name))
@@ -97,6 +100,23 @@ enum XcodeHeadOnlySelector {
             diagnostics.append(.init(code: code, message: reason, tests: tests.sorted()))
             include(tests, kind: "fallback", reason: reason)
             if tests == inventory { fullReasons.insert(reason) }
+        }
+        for diagnostic in inline.diagnostics {
+            fallback(diagnostic.code, diagnostic.message, tests: Set(diagnostic.tests))
+        }
+        let oldPolicies = InlineUIMappings.policyPaths(source.base)
+        let newPolicies = InlineUIMappings.policyPaths(current.sources)
+        let policyPaths = Set(oldPolicies.keys).union(newPolicies.keys).filter { oldPolicies[$0] != newPolicies[$0] }
+        if !policyPaths.isEmpty {
+            fallback("head_only_inline_policy_changed", "Inline UI policy changed without base compiler bindings: " + policyPaths.sorted().joined(separator: ", "), tests: uiTests)
+        }
+        if let mappings = current.mappings, let graph = current.dependencies {
+            let mi = MappingIndex(mappings, snapshot: current, graph: graph, index: DependencyIndex(graph))
+            for feature in inline.features {
+                for entry in mi.unresolvedEntries[feature.name] ?? [] {
+                    fallback("unresolved_mapping_boundary", "\(feature.name): no compiled boundary matches \(entry)", tests: Set(feature.tests ?? []))
+                }
+            }
         }
         var conditionDecisions: [UIConditionDecision] = []
         let conditionContext = UIConditionContext(sides: [.init(revision: "head", snapshot: current, changed: [])],
@@ -138,7 +158,7 @@ enum XcodeHeadOnlySelector {
         let dependencyIndex = current.dependencies.map(DependencyIndex.init)
         var isolatedHelpers = Set<String>(), isolatedSDKHelpers = Set<String>()
         var changed: [SourceUnit] = []
-        var semanticPaths = Set<String>()
+        var semanticPaths = policyPaths
         for key in Set(old.keys).union(new.keys).sorted() {
             let before = old[key] ?? [], after = new[key] ?? []
             guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() else { continue }
@@ -304,6 +324,7 @@ enum XcodeHeadOnlySelector {
                 }
                 if let mappings = current.mappings, let mi = mappingIndex {
                     var matched = Set<String>(), mappedTests = Set<String>(), covered = Set<String>()
+                    var featurePaths: [String: [String]] = [:]
                     for feature in mappings.features {
                         let tests = mi.tests[feature.name] ?? []
                         mappedTests.formUnion(tests)
@@ -314,20 +335,24 @@ enum XcodeHeadOnlySelector {
                         if feature.when != nil { continue }
                         for unit in production {
                             let ids = Set((index.byFile[unit.region.path] ?? []).filter { id in graph.functions[id]!.regions.contains { $0.intersects(unit.region) } }).intersection(affected)
-                            if (feature.sources ?? []).contains(where: { UIFeatureMappings.matches(unit.region.path, pattern: $0) }) ||
-                                index.paths(to: ids).path(from: mi.roots[feature.name] ?? []) != nil {
+                            let chain = index.paths(to: ids).path(from: mi.roots[feature.name] ?? [])
+                            if (feature.sources ?? []).contains(where: { UIFeatureMappings.matches(unit.region.path, pattern: $0) }) || chain != nil {
                                 matched.insert(feature.name); covered.insert(unit.key)
+                                featurePaths[feature.name] = (chain ?? []).map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 } + [unit.region.path]
                             }
                         }
                     }
                     var previous = Set<String>()
                     while previous != matched {
                         previous = matched
-                        for feature in mappings.features where !Set(feature.dependsOn ?? []).isDisjoint(with: matched) { matched.insert(feature.name) }
+                        for feature in mappings.features where !matched.contains(feature.name) && !Set(feature.dependsOn ?? []).isDisjoint(with: matched) {
+                            matched.insert(feature.name)
+                            featurePaths[feature.name] = (feature.dependsOn ?? []).filter { matched.contains($0) }.sorted()
+                        }
                     }
                     for feature in mappings.features where matched.contains(feature.name) {
                         let tests = mi.tests[feature.name] ?? []
-                        include(tests, kind: "explicitMapping", reason: "Head dependency or declared feature dependency reaches a surviving changed body", path: [feature.name])
+                        include(tests, kind: "explicitMapping", reason: "Head dependency or declared feature dependency reaches a surviving changed body", path: [feature.name] + (featurePaths[feature.name] ?? []))
                         if tests.isEmpty { fallback("head_only_unresolved_mapping", "Affected feature \(feature.name) has no tests", tests: uiTests) }
                     }
                     fallback("head_only_unmapped_ui", "UI tests outside explicit mappings remain selected", tests: uiTests.subtracting(mappedTests))
@@ -351,7 +376,7 @@ enum XcodeHeadOnlySelector {
         report.diagnostics = diagnostics.sorted { ($0.code, $0.message) < ($1.code, $1.message) }
         report.explanations.sort { ($0.test, $0.kind, $0.reason) < ($1.test, $1.kind, $1.reason) }
         let mapped = Set(mappingIndex?.tests.values.flatMap { $0 } ?? [])
-        report.uiMappingCoverage = .init(mappingFilePresent: current.mappings != nil,
+        report.uiMappingCoverage = .init(mappingFilePresent: mappingFilePresent,
             mappedTests: uiTests.intersection(mapped).sorted(), unmappedTests: uiTests.subtracting(mapped).sorted())
         if let mi = mappingIndex, let mappings = current.mappings {
             report.uiMappingCoverage?.unresolvedBoundaries = mappings.features.filter {

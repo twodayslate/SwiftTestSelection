@@ -93,7 +93,7 @@ with tempfile.TemporaryDirectory(prefix='impact-discovery-') as temporary:
         return value
 
     assert canonical(fresh['targets']) == canonical(full['targets']), 'Source ownership changed'
-    assert canonical(fresh['sources']) == canonical(full['sources']), 'Source snapshots changed'
+    assert canonical(fresh['sourceSnapshots']) == canonical(full['sourceSnapshots']), 'Source snapshots changed'
     warm, messages = graph(original)
     assert warm['tests'] == full['tests'] and 'Discovery cache hit:' in messages
     print('PASS stale inactive source list does not block analysis or invalidate discovery', flush=True)

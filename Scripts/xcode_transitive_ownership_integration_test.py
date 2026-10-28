@@ -58,9 +58,9 @@ try:
         assert not graph['diagnostics'], graph['diagnostics']
         for module, path in expected_owners.items():
             assert graph['modules']['Compiler module: ' + module] == module, graph['modules']
-            assert module + ':' + path in graph['sources'], (module, graph['sources'].keys())
+            assert module + ':' + path in graph['sourceSnapshots'], (module, graph['sourceSnapshots'].keys())
         for module in ['ShareExtension', 'ActionExtension', 'UnitTests']:
-            assert module + ':Shared/ExtensionValue.swift' in graph['sources']
+            assert module + ':Shared/ExtensionValue.swift' in graph['sourceSnapshots']
             assert any(node['module'] == module and 'protocol witness for ExtensionValue.value()' in node['name']
                        for node in graph['dependencies']['functions'].values()), (module, 'missing protocol witness')
         assert not any(t['name'] == 'Unclassified build inputs' for t in graph['targets']), graph['targets']

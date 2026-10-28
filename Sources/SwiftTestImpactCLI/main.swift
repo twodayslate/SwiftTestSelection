@@ -13,6 +13,12 @@ private let usage = """
 swift-test-impact — compiler-derived test selection for Swift and Xcode
 
 USAGE
+  swift-test-impact inline-audit --graph FILE [--output FILE]
+  swift-test-impact inline-proposal --source FILE --module MODULE --suite CLASS
+                           [--method 'testName()'] --payload FILE.json [--output FILE]
+  inline-proposal also accepts --coverage-proposal FILE --target TARGET instead of
+  --payload/--method, producing a class insertion with original coverage provenance.
+  Emits a JSON insertion proposal; never overwrites the source or removes mappings.
   swift-test-impact graph [--package-path PATH] [--format json|dot] [--output FILE]
   swift-test-impact select --base REVISION [--head REVISION] [--merge-base]
                            [--package-path PATH] [--format text|json]
@@ -354,6 +360,55 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
     }
 } else {
     do {
+        if arguments.first == "inline-audit" {
+            var values: [String: String] = [:]
+            var cursor = 1
+            while cursor < arguments.count {
+                let key = arguments[cursor]
+                guard ["--graph", "--output"].contains(key), values[key] == nil, cursor + 1 < arguments.count else {
+                    throw ImpactError("inline-audit requires --graph FILE and optional --output FILE")
+                }
+                values[key] = arguments[cursor + 1]; cursor += 2
+            }
+            guard let path = values["--graph"] else { throw ImpactError("inline-audit requires --graph FILE") }
+            if let output = values["--output"], URL(fileURLWithPath: output).standardizedFileURL.resolvingSymlinksInPath() == URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath() {
+                throw ImpactError("Audit output must differ from its input graph")
+            }
+            let graph = try GraphArchive.decode(Data(contentsOf: URL(fileURLWithPath: path)))
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            try write(encoder.encode(InlineMappingAudit.inspect(graph)), to: values["--output"])
+            exit(0)
+        }
+        if arguments.first == "inline-proposal" {
+            var values: [String: String] = [:]
+            var cursor = 1
+            let allowed: Set<String> = ["--source", "--module", "--suite", "--method", "--payload", "--output", "--coverage-proposal", "--target"]
+            while cursor < arguments.count {
+                let key = arguments[cursor]
+                guard allowed.contains(key), values[key] == nil, cursor + 1 < arguments.count else {
+                    throw ImpactError("inline-proposal expects unique --source, --module, --suite, --payload and optional --method/--output values")
+                }
+                values[key] = arguments[cursor + 1]; cursor += 2
+            }
+            guard let path = values["--source"], let module = values["--module"], let suite = values["--suite"] else {
+                throw ImpactError("inline-proposal requires --source, --module and --suite")
+            }
+            if let output = values["--output"], [path, values["--payload"], values["--coverage-proposal"]].compactMap({ $0 }).contains(where: { URL(fileURLWithPath: output).standardizedFileURL.resolvingSymlinksInPath() == URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath() }) {
+                throw ImpactError("Proposal output must differ from source and evidence inputs; review and apply proposedSource separately")
+            }
+            let source = try String(contentsOfFile: path, encoding: .utf8)
+            let proposal: InlineMappingAuthoring.Proposal
+            if let coverage = values["--coverage-proposal"], let target = values["--target"], values["--payload"] == nil, values["--method"] == nil {
+                proposal = try InlineMappingAuthoring.proposeCoverage(source: source, path: path, module: module, target: target, suite: suite,
+                    proposalData: Data(contentsOf: URL(fileURLWithPath: coverage)))
+            } else if let payload = values["--payload"], values["--coverage-proposal"] == nil, values["--target"] == nil {
+                proposal = try InlineMappingAuthoring.propose(source: source, path: path, module: module, suite: suite, method: values["--method"],
+                    payload: String(contentsOfFile: payload, encoding: .utf8))
+            } else { throw ImpactError("Provide --payload, or --coverage-proposal with --target and no --method") }
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            try write(encoder.encode(proposal), to: values["--output"])
+            exit(0)
+        }
         let options = try Options(arguments)
         let package = URL(fileURLWithPath: options.packagePath)
         let encoder = JSONEncoder()

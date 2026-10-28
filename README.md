@@ -9,6 +9,11 @@ Optional coverage-assisted UI mapping authoring is available through
 suite/file mappings from attributed app coverage while keeping normal selection
 independent of any previous test run. See [the workflow and artifact contract](Documentation/UICoverageMappings.md).
 
+Inline UI dependency mappings are supported in structured comments on XCTest classes,
+methods and extensions. They compose additively with file mappings and bind only to
+the selected plan's enabled executable tests. See [inline syntax, change tracking,
+audit/proposal tooling and migration](Documentation/InlineUIMappings.md).
+
 ## Install a prebuilt executable
 
 Versioned [GitHub Releases](https://github.com/twodayslate/SwiftTestSelection/releases)
@@ -313,8 +318,9 @@ empty arrays, empty patterns, null conditions, unknown operators (including NOT)
 and malformed children are rejected. Version 1 retains its existing union and
 transitive dependency behavior and rejects `when`. Older clients reject version
 2 instead of silently ignoring the selection policy. Saved graphs containing
-version-2 mappings use graph schema 3, which older saved-graph clients also
-reject. Current clients continue accepting legacy schema-2 graphs. Version 2 can
+version-2 mappings require graph schema 3 or newer, which older saved-graph
+clients reject. New captures use schema 4 for inline policy metadata; current
+clients continue reading legacy schema-2/3 graphs conservatively. Version 2 can
 also contain ordinary legacy features.
 
 - `symbolChanged` matches the compiled `module + "." + name`, using the same

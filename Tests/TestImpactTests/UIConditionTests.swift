@@ -309,12 +309,12 @@ private func compareConditions(_ head: XcodeTestGraph, _ base: XcodeTestGraph = 
 
 @Test func uiConditionArchivesRequireANewGraphSchemaForOlderClients() throws {
     let graph = conditionGraph()
-    #expect(graph.schemaVersion == 3)
-    #expect(try GraphArchive.decode(GraphArchive.encode(graph)).schemaVersion == 3)
-    #expect(try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(graph)).schemaVersion == 3)
+    #expect(graph.schemaVersion == 4)
+    #expect(try GraphArchive.decode(GraphArchive.encode(graph)).schemaVersion == 4)
+    #expect(try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(graph)).schemaVersion == 4)
     var legacy = XcodeTestGraph(targets: [], tests: [])
     legacy.mappings = .init(features: [.init(name: "legacy", symbols: ["App.a()"], tests: ["UI/Suite"])])
-    #expect(legacy.schemaVersion == 2)
+    #expect(legacy.schemaVersion == 4)
 }
 
 @Test func uiConditionCacheSupportsSchemaThreeAndPreservesComparison() throws {
@@ -324,7 +324,7 @@ private func compareConditions(_ head: XcodeTestGraph, _ base: XcodeTestGraph = 
     let head = conditionGraph(a: 2, b: 2)
     try cache.store(head, identity: ["revision": "head"])
     let loaded = try #require(try cache.load(["revision": "head"]))
-    #expect(loaded.schemaVersion == 3)
+    #expect(loaded.schemaVersion == 4)
     #expect(compareConditions(loaded).selectedTests == [conditionTest])
     #expect(compareConditions(loaded).uiConditionDecisions?.first?.result.status == .matched)
     // A downgraded archive must not be accepted as compatible with old clients.

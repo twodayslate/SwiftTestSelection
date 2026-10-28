@@ -39,12 +39,19 @@ extension XcodeTestGraph {
         }
         // Older saved graphs recorded only this diagnostic and discarded the
         // mappings. They must fail strict validation just like fresh captures.
-        let legacyError = diagnostics.first { $0.hasPrefix("Invalid UI mappings: ") }
+        let legacyError = self.diagnostics.first { $0.hasPrefix("Invalid UI mappings: ") }
         if let error = mappingLoadError ?? legacyError { throw invalidFile(error) }
-        guard let mappings else { return }
+        let inline = InlineUIMappings.resolve(self)
+        var diagnostics = inline.diagnostics.map {
+            MappingValidationDiagnostic(code: $0.code, mappingFile: "<inline>", feature: $0.tests.joined(separator: ", "),
+                pattern: "<directive>", revision: revision, buildContext: buildContext, message: $0.message)
+        }
+        guard let mappings = inline.applying(to: self).mappings else {
+            if !diagnostics.isEmpty { throw MappingValidationError(diagnostics: diagnostics) }
+            return
+        }
         do { try mappings.validate() }
         catch { throw invalidFile(String(describing: error)) }
-        var diagnostics: [MappingValidationDiagnostic] = []
         for feature in mappings.features {
             let matches = dependencies.map { MappingIndex.symbolMatches(feature, graph: $0) }
                 ?? ((feature.symbols ?? []) + (feature.when?.symbolPatterns ?? [])).map { (pattern: $0, roots: Set<String>()) }
@@ -55,6 +62,16 @@ extension XcodeTestGraph {
                     message: dependencies == nil
                         ? "Cannot validate this symbol pattern because this build has no compiled dependency graph. Recapture the graph."
                         : "Symbol pattern did not resolve in this build. Check the mapping and selected build configuration."))
+            }
+        }
+        if let dependencies {
+            let index = MappingIndex(mappings, snapshot: self, graph: dependencies, index: DependencyIndex(dependencies))
+            for feature in inline.features {
+                for entry in index.unresolvedEntries[feature.name] ?? [] where entry.hasPrefix("sources: ") {
+                    diagnostics.append(.init(code: "unresolved_inline_source", mappingFile: "<inline>", feature: feature.name,
+                        pattern: String(entry.dropFirst(9)), revision: revision, buildContext: buildContext,
+                        message: "Source pattern did not resolve in this build. Check the directive and selected configuration."))
+                }
             }
         }
         if !diagnostics.isEmpty { throw MappingValidationError(diagnostics: diagnostics) }
