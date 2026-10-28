@@ -46,10 +46,10 @@ public enum XcodeFineSelector {
             let before = InlineUIMappings.policyPaths(previous!.sources), after = InlineUIMappings.policyPaths(current.sources)
             policyPaths = Set(before.keys).union(after.keys).filter { before[$0] != after[$0] }
         }
-        for snapshot in [current, previous].compactMap({ $0 }) {
-            guard let mappings = snapshot.mappings, let graph = snapshot.dependencies else { continue }
-            let mappingIndex = MappingIndex(mappings, snapshot: snapshot, graph: graph, index: DependencyIndex(graph))
-            for feature in mappings.features where feature.name.hasPrefix("inline:") {
+        for (snapshot, resolution) in [(Optional(current), Optional(headInline)), (previous, baseInline)] {
+            guard let snapshot, let resolution, !resolution.features.isEmpty, let graph = snapshot.dependencies else { continue }
+            let mappingIndex = MappingIndex(UIFeatureMappings(features: resolution.features), snapshot: snapshot, graph: graph, index: DependencyIndex(graph))
+            for feature in resolution.features {
                 for entry in mappingIndex.unresolvedEntries[feature.name] ?? [] {
                     fallback("unresolved_mapping_boundary", "\(feature.name): no compiled boundary matches \(entry)", tests: Set(feature.tests ?? []))
                 }

@@ -110,8 +110,8 @@ enum XcodeHeadOnlySelector {
         if !policyPaths.isEmpty {
             fallback("head_only_inline_policy_changed", "Inline UI policy changed without base compiler bindings: " + policyPaths.sorted().joined(separator: ", "), tests: uiTests)
         }
-        if let mappings = current.mappings, let graph = current.dependencies {
-            let mi = MappingIndex(mappings, snapshot: current, graph: graph, index: DependencyIndex(graph))
+        if !inline.features.isEmpty, let graph = current.dependencies {
+            let mi = MappingIndex(UIFeatureMappings(features: inline.features), snapshot: current, graph: graph, index: DependencyIndex(graph))
             for feature in inline.features {
                 for entry in mi.unresolvedEntries[feature.name] ?? [] {
                     fallback("unresolved_mapping_boundary", "\(feature.name): no compiled boundary matches \(entry)", tests: Set(feature.tests ?? []))
