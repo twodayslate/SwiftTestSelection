@@ -260,3 +260,40 @@ private func inlineSelect(_ after: XcodeTestGraph, _ before: XcodeTestGraph, pat
     try cache.store(legacy, identity: ["revision": "legacy"])
     #expect(try cache.load(["revision": "legacy"]) == nil)
 }
+
+@Test func inlineMappingInheritedMethodReadsAnotherCompiledModule() {
+    let ui = """
+    import XCTest
+    import Helpers
+    /**
+     * swift-test-selection: {"symbols":["App.checkout()"]}
+     */
+    class Checkout: Helpers.Parent {
+        func testHistory() {}
+    }
+    // swift-test-selection: {"sources":["App/Notes.swift"]}
+    class Notes: XCTestCase { func testNotes() {} }
+    """
+    let support = """
+    import XCTest
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Parent: XCTestCase {
+        // swift-test-selection: {"sources":["App/Notes.swift"]}
+        func testBuy() {}
+    }
+    """
+    var graph = inlineModel(ui)
+    let snapshot = SwiftSourceSnapshot.parse(support, path: "Support/Parent.swift", module: "Helpers")
+    graph.sources["Helpers:Support/Parent.swift"] = snapshot
+    graph.modules["Helpers"] = "Helpers"
+    graph.targets.append(.init(name: "Helpers", productType: "com.apple.product-type.framework", sourceFiles: ["Support/Parent.swift"]))
+    let method = snapshot.inlineMappings!.declarations.first { $0.kind == "method" }!
+    graph.dependencies!.functions["parentEntry"] = .init(id: "parentEntry", module: "Helpers", name: "Parent.testBuy()", regions: [method.region])
+    XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
+    let rules = InlineUIMappings.resolve(graph)
+    #expect(rules.diagnostics.isEmpty)
+    let inherited = rules.features.filter { $0.tests?.contains("UI/Checkout/testBuy()") == true }
+    #expect(Set(inherited.flatMap { $0.symbols ?? [] }) == ["App.checkout()", "App.shared()"])
+    #expect(inherited.contains { $0.sources == ["App/Notes.swift"] && $0.name.contains("Support/Parent.swift:4") })
+    #expect(rules.features.contains { $0.tests?.contains("UI/Checkout/testHistory()") == true && $0.symbols == ["App.shared()"] })
+}
