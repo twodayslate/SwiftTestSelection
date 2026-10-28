@@ -83,7 +83,7 @@ public enum XcodeSelector {
         current: XcodeTestGraph, previous: XcodeTestGraph?, changes: [FileChange],
         baseRevision: String, additionalFallbacks: [String] = []
     ) -> ImpactReport {
-        if current.dependencies != nil {
+        if current.dependencies != nil || [current.mappings, previous?.mappings].contains(where: { $0?.features.contains { $0.when != nil } == true }) {
             return XcodeFineSelector.select(current: current, previous: previous, changes: changes, baseRevision: baseRevision, additionalFallbacks: additionalFallbacks)
         }
         var reasons = additionalFallbacks

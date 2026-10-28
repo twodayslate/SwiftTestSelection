@@ -98,6 +98,22 @@ enum XcodeHeadOnlySelector {
             include(tests, kind: "fallback", reason: reason)
             if tests == inventory { fullReasons.insert(reason) }
         }
+        var conditionDecisions: [UIConditionDecision] = []
+        let conditionContext = UIConditionContext(sides: [.init(revision: "head", snapshot: current, changed: [])],
+            unavailableReason: "Head-only mode does not support UI conditions without base compiler evidence")
+        for (revision, mappings) in [("base", source.mappings), ("head", current.mappings)] {
+            guard let mappings else { continue }
+            do { try mappings.validate() }
+            catch { fallback("invalid_ui_mappings", "\(revision): \(error)", tests: uiTests) }
+            for feature in mappings.features {
+                guard let condition = feature.when else { continue }
+                let result = conditionContext.evaluate(condition)
+                conditionDecisions.append(.init(feature: feature.name, revision: revision, result: result))
+                // Unsupported conditions never masquerade as a valid false result,
+                // including no-op comparisons and conditions removed at head.
+                fallback("head_only_unsupported_condition", "\(revision): \(feature.name): \(result.explanation)", tests: uiTests)
+            }
+        }
         let locationPolicy = current.mappings?.sourceLocationPolicy == source.mappings?.sourceLocationPolicy
             ? current.mappings?.sourceLocationPolicy ?? .semantic : .semantic
         func fingerprint(_ unit: SourceUnit) -> String {
@@ -295,6 +311,7 @@ enum XcodeHeadOnlySelector {
                             (!(feature.sources ?? []).isEmpty || !(feature.symbols ?? []).isEmpty) && (mi.roots[feature.name]?.isEmpty ?? true) {
                             fallback("head_only_unresolved_mapping", "Unresolved UI tests or source boundary for \(feature.name)", tests: uiTests)
                         }
+                        if feature.when != nil { continue }
                         for unit in production {
                             let ids = Set((index.byFile[unit.region.path] ?? []).filter { id in graph.functions[id]!.regions.contains { $0.intersects(unit.region) } }).intersection(affected)
                             if (feature.sources ?? []).contains(where: { UIFeatureMappings.matches(unit.region.path, pattern: $0) }) ||
@@ -327,6 +344,7 @@ enum XcodeHeadOnlySelector {
                 "Focused selection supports surviving function bodies with unchanged headers and private test helpers whose nonescaping source callers and compiler bindings prove isolation. Head dependency paths are evidence; absent old edges are never treated as proof for structural changes.",
                 "Tests are assumed independent. Non-UI runtime isolation is not inferred from base source imports; app-hosted and opaque runtime effects retain explicit fallbacks.",
                 "UI feature mappings are explicit dependency contracts, not measured coverage. Validate selections with full runs."])
+        report.uiConditionDecisions = conditionDecisions.isEmpty ? nil : conditionDecisions
         report.schemaVersion = 2; report.analysisMode = "head-only-git-syntax"
         report.onlyTestingArguments = report.selectedTests.map { "-only-testing:" + $0 }
         report.ignoredChanges = ignored.sorted()

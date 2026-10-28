@@ -278,6 +278,91 @@ each path (including both sides of a rename). The report retains the paths in
 `changedFiles` and lists exclusions in `ignoredChanges`. Configuration, resources,
 and other unclassified changes still request a full run.
 
+### AND/OR UI selection policies (mapping version 2)
+
+Use `when` to select a feature from **direct semantic changes across the entire
+base/head comparison**. Operands may match different files or commits:
+
+```json
+{
+  "version": 2,
+  "runtimeDependencyPolicy": "declared",
+  "features": [{
+    "name": "combined-behavior",
+    "tests": ["AppUITests/SuiteX"],
+    "when": {
+      "all": [
+        { "symbolChanged": "App.first()" },
+        { "any": [
+          { "symbolChanged": "App.second()" },
+          { "sourceChanged": "App/Checkout/**" }
+        ] }
+      ]
+    }
+  }]
+}
+```
+
+`all` is AND; `any` is OR. Each node must contain exactly one supported operator;
+empty arrays, empty patterns, null conditions, unknown operators (including NOT),
+and malformed children are rejected. Version 1 retains its existing union and
+transitive dependency behavior and rejects `when`. Older clients reject version
+2 instead of silently ignoring the selection policy. Version 2 can also contain
+ordinary legacy features.
+
+- `symbolChanged` matches the compiled `module + "." + name`, using the same
+  literal and wildcard conventions as `symbols`. It is true when at least one
+  matching declaration changes under the semantic comparison, including changes
+  to its resolved compiler dependencies. Changing only a callee's body does not
+  satisfy the caller's predicate. Compiler symbols without an unambiguous source
+  function declaration (for example unsupported synthesized accessors) are
+  unresolved and broaden selection.
+- `sourceChanged` matches repository-relative source snapshot paths. A leaf is
+  true when at least one declaration in a matching file changes semantically;
+  Git touching a file alone is insufficient. This is for analyzed source, not
+  resources, documentation or arbitrary build inputs. Those retain normal
+  conservative handling. Absolute and parent-traversing paths are rejected.
+- Matching is case sensitive and anchored to the whole value. No wildcard means
+  exact equality; `*` spans zero or more characters except `/`, and `**` spans
+  slashes too. Other punctuation, including `?`, brackets and parentheses, is
+  literal. A wildcard leaf needs **one** changed match, not every match.
+- Additions, deletions, renames and signature changes use the relevant new and
+  old definitions. A body change accompanying a path move matches both old and
+  new paths. Pure moves and trivia edits remain no-ops when syntax, location
+  values, module ownership and compiled dependencies remain equivalent under
+  the existing source-location policy.
+
+Conditional features accept `tests` and reusable `fixtures`. Combining `when`
+with nonempty `sources`, `symbols` or `dependsOn` is rejected, as is a `dependsOn`
+reference to a conditional feature. Runtime policies are unchanged: opaque
+runtime evidence can still select tests unless the existing declared contract
+applies in both revisions.
+
+A valid false condition contributes no tests. Its leaf boundaries (and their
+compiled dependency cones) still provide mapping coverage, so falsity alone
+does not trigger an unmapped-production fallback. Unrelated uncovered changes,
+independent rules, direct test/helper changes and genuine conservative fallbacks
+can still select the same suite. **AND conditions deliberately narrow execution:
+they are user selection policies, not proof that omitted tests cannot fail.**
+Validate these policies with full runs.
+
+Both revision policies are evaluated over the complete comparison and their
+selections are combined. Reports contain `uiConditionDecisions` for every rule,
+including no-op comparisons, with recursive `matched`, `notMatched`, or
+`unresolved` status, leaf patterns and matched revision-tagged changes. Text
+reports explain each operand. All leaves are resolved without boolean short
+circuiting: a missing symbol/path or missing compiler/source evidence produces
+`unresolved`, even in an otherwise decisive branch, and selects conservatively.
+A deleted symbol that resolves only at base is a valid comparison operand.
+Strict mapping validation enforces every symbol leaf against **head** instead,
+so repairing or removing a stale base rule remains possible.
+
+Fresh and saved/cached two-graph selection share the same evaluator and semantic
+comparison. **Head-only mode currently does not support conditional narrowing**:
+it reports every condition as unresolved (`head_only_unsupported_condition`) and
+selects all enabled UI tests, including for an empty diff. This makes the missing
+base compiler evidence explicit rather than interpreting it as a false operand.
+
 ### Documentation and source-location literals
 
 Swift comparisons preserve parsed syntax, operators, strings, and regex contents

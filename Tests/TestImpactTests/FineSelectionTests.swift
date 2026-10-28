@@ -700,7 +700,7 @@ func lineColumnPolicyKeepsBodyAndCallerFileMoves(macro: String) throws {
         other = head; other.mappings!.sourceLocationPolicy = policy
         #expect(!selection(other, old).selectedTests.isEmpty)
     }
-    var invalid = old; invalid.mappings!.version = 2
+    var invalid = old; invalid.mappings!.version = 999
     #expect(!selection(head, invalid).selectedTests.isEmpty)
     // Remove the newly added field from actual archives, as in older saved graphs.
     func legacy(_ graph: XcodeTestGraph) throws -> XcodeTestGraph {
