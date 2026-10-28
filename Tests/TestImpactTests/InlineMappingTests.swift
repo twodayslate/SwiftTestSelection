@@ -197,6 +197,7 @@ private func inlineSelect(_ after: XcodeTestGraph, _ before: XcodeTestGraph, pat
 
 @Test func inlineMappingConditionalClassAndNestedDeclarations() {
     let source = """
+    import XCTest
     enum Namespace {
         // swift-test-selection: {"symbols":["App.shared()"]}
         class Inner: XCTestCase {
@@ -213,7 +214,7 @@ private func inlineSelect(_ after: XcodeTestGraph, _ before: XcodeTestGraph, pat
     """
     var model = inlineModel(source)
     model.tests = ["UI/Checkout/testBuy()", "UI/Namespace.Inner/testNested()"]
-    model.dependencies!.functions = model.dependencies!.functions.filter { $0.value.module != "UI" || $0.value.regions[0].startLine < 11 }
+    model.dependencies!.functions = model.dependencies!.functions.filter { $0.value.module != "UI" || $0.value.regions[0].startLine < 12 }
     XcodeCompilerGraph.bind(tests: model.tests, modules: model.modules, sources: model.sources, graph: &model.dependencies!)
     let resolution = InlineUIMappings.resolve(model)
     #expect(resolution.diagnostics.isEmpty)

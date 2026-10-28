@@ -198,3 +198,117 @@ func inlineMappingUnrelatedSuffixCannotEstablishAncestry(qualified: Bool) throws
         }
     }
 }
+
+@Test(arguments: ["XCTestCase", "NSObject"], ["complete", "absent", "unavailable", "unrelated", "uncaptured", "escapedLocal"])
+func inlineMappingFrameworkNamesCannotBypassImportedAliases(parent: String, evidence: String) throws {
+    let source = """
+    \(["unrelated", "escapedLocal"].contains(evidence) ? "import XCTest" : "")
+    \(evidence == "escapedLocal" ? "typealias `\(parent)` = Support.Parent" : evidence == "unrelated" ? "" : "import Helpers")
+    import Support
+    // swift-test-selection: {"symbols":["App.checkout()"]}
+    class Suite: \(evidence == "unrelated" ? "XCTestCase" : parent) { func testOne() {} }
+    class Other: Support.Parent { func testOther() {} }
+    """
+    let support = """
+    import XCTest
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    open class Parent: XCTestCase {}
+    """
+    func model(_ value: Int) -> XcodeTestGraph {
+        var graph = inlineRegressionGraph(source, value: value, tests: ["UI/Suite/testOne()", "UI/Other/testOther()"])
+        graph.modules["Helpers"] = "Helpers"; graph.modules["Support"] = "Support"
+        for module in ["Helpers", "Support"] {
+            graph.targets.append(.init(name: module, productType: "com.apple.product-type.framework", sourceFiles: [module + ".swift"]))
+        }
+        graph.sources["Helpers:Helpers.swift"] = .parse("import Support\npublic typealias \(parent) = Support.Parent", path: "Helpers.swift", module: "Helpers")
+        graph.sources["Support:Support.swift"] = .parse(support, path: "Support.swift", module: "Support")
+        if evidence == "uncaptured" { graph.sources.removeValue(forKey: "Helpers:Helpers.swift") }
+        graph.dependencies!.testDiagnostics = [:]
+        XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
+        if evidence != "absent" {
+            graph.runtimeInventory = .init(imports: ["UI": evidence == "unrelated" ? ["Support"] : ["Helpers", "Support"],
+                                                    "Helpers": ["Support"], "Support": []], hosts: [:])
+            if evidence == "unavailable" { graph.runtimeInventory!.unavailableModules = ["UI": "incomplete imports"] }
+        }
+        return graph
+    }
+    let base = model(1)
+    let head = try GraphArchive.decode(GraphArchive.encode(model(2)))
+    let report = XcodeFineSelector.select(current: head, previous: base, changes: [.init(path: "App.swift")], baseRevision: "base")
+    if evidence == "unrelated" {
+        #expect(report.selectedTests == ["UI/Other/testOther()"])
+        #expect(report.diagnostics.isEmpty)
+        try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+    } else {
+        #expect(report.selectedTests == head.tests.sorted())
+        #expect(report.diagnostics.contains { $0.code == "invalid_inline_mapping" && $0.tests == ["UI/Suite/testOne()"] })
+        #expect(throws: MappingValidationError.self) {
+            try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        }
+        #expect(InlineMappingAudit.inspect(head).diagnostics.contains { $0.tests == ["UI/Suite/testOne()"] })
+        let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: head.sources, mappings: head.mappings), changes: [], baseRevision: "base")
+        #expect(headOnly.selectedTests.contains("UI/Suite/testOne()"))
+        if evidence == "complete" {
+            // Disabled suites do not acquire mappings or poison an unrelated
+            // enabled suite whose compiler imports prove the alias is invisible.
+            var disabled = head; disabled.tests = ["UI/Other/testOther()"]
+            try disabled.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+            #expect(InlineUIMappings.resolve(disabled).diagnostics.isEmpty)
+        }
+    }
+}
+
+@Test(arguments: ["schema", "reference", "load", "legacy", "collision", "valid"])
+func inlineMappingAuditReportsFileFailuresWithoutHidingInlineEntries(policy: String) throws {
+    let source = """
+    import XCTest
+    // swift-test-selection: {"symbols":["App.checkout()","App.missing()"]}
+    class Suite: XCTestCase { func testOne() {} }
+    class Other: XCTestCase { func testOther() {} }
+    """
+    var graph = inlineRegressionGraph(source, tests: ["UI/Suite/testOne()", "UI/Other/testOther()"])
+    graph.mappings = .init(features: [.init(name: "file", symbols: ["App.shared()"], tests: ["UI/Other"])])
+    switch policy {
+    case "schema": graph.mappings = .init(version: 1, features: [.init(name: "file", tests: ["UI/Other"], when: .sourceChanged("App.swift"))])
+    case "reference": graph.mappings!.features[0].dependsOn = ["absent"]
+    case "load": graph.mappingLoadError = "Invalid mapping JSON"
+    case "legacy": graph.diagnostics = ["Invalid UI mappings: Invalid mapping JSON"]
+    case "collision": graph.mappings!.features[0].name = try #require(InlineUIMappings.resolve(graph).features.first?.name)
+    default: break
+    }
+    for snapshot in [graph, try GraphArchive.decode(GraphArchive.encode(graph))] {
+        let audit = InlineMappingAudit.inspect(snapshot)
+        let rule = try #require(audit.rules.first)
+        #expect(rule.resolvedSymbols == ["App.checkout()"])
+        #expect(rule.unresolvedEntries == ["symbols: App.missing()"])
+        if policy == "valid" {
+            #expect(audit.diagnostics.isEmpty)
+            #expect(audit.unmappedUITests.isEmpty)
+        } else {
+            #expect(audit.diagnostics.contains { $0.code == "invalid_mapping_file" })
+            #expect(audit.unmappedUITests == ["UI/Other/testOther()"])
+        }
+    }
+}
+
+@Test func inlineMappingFrameworkImportsRequireCurrentUnconditionalEvidence() throws {
+    let source = """
+    import XCTest
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Suite: XCTestCase { func testOne() {} }
+    """
+    let current = inlineRegressionGraph(source, tests: ["UI/Suite/testOne()"])
+    try current.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+    var legacy = current
+    legacy.sources["UI:UI.swift"]!.inlineMappings!.frameworkImports = nil
+    let conditional = inlineRegressionGraph(source.replacingOccurrences(of: "import XCTest", with: "#if NEVER\nimport XCTest\n#endif"), tests: current.tests)
+    for graph in [legacy, conditional] {
+        let saved = try GraphArchive.decode(GraphArchive.encode(graph))
+        let report = XcodeFineSelector.select(current: saved, previous: saved, changes: [], baseRevision: "base")
+        #expect(report.selectedTests == current.tests)
+        #expect(report.diagnostics.contains { $0.code == "invalid_inline_mapping" })
+        #expect(throws: MappingValidationError.self) {
+            try saved.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        }
+    }
+}

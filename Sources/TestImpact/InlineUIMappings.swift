@@ -25,12 +25,15 @@ public struct InlineMappingSyntax: Codable, Sendable {
     }
     public var declarations: [Declaration]
     public var diagnostics: [String]
+    /// Unconditional framework imports that can establish built-in base names.
+    /// Older snapshots lack this proof and must not assume a name's identity.
+    public var frameworkImports: Set<String>? = nil
 
     static let prefix = "swift-test-selection:"
 
     static func parse(_ tree: SourceFileSyntax, path: String, module: String, hasDirectives: Bool = true) -> Self {
         let locations = SourceLocationConverter(fileName: path, tree: tree)
-        var result = Self(declarations: [], diagnostics: [])
+        var result = Self(declarations: [], diagnostics: [], frameworkImports: [])
         var attached = Set<Int>()
         func directives(_ trivia: Trivia, at position: AbsolutePosition) -> [(Int, Directive)] {
             guard hasDirectives else { return [] }
@@ -80,6 +83,11 @@ public struct InlineMappingSyntax: Codable, Sendable {
             return values
         }
         func walk(_ node: Syntax, scope: String, conditional: Bool, member: Bool) {
+            if let imported = node.as(ImportDeclSyntax.self), !conditional,
+               imported.attributes.isEmpty, imported.importKindSpecifier == nil,
+               ["XCTest", "Foundation"].contains(imported.path.trimmedDescription) {
+                result.frameworkImports?.insert(imported.path.trimmedDescription)
+            }
             var nextScope = scope
             var kind: String?
             var method: String?
@@ -188,13 +196,36 @@ struct InlineUIMappings {
         })
         let methodsByOwner = Dictionary(grouping: declarations.filter { $0.kind == "method" }, by: { $0.module + "." + $0.scope })
         let extensionsByOwner = Dictionary(grouping: declarations.filter { $0.kind == "extension" }, by: { $0.module + "." + $0.scope })
-        let aliases = Set(snapshot.sources.values.flatMap { $0.typeAliases ?? [] })
+        let aliases = Set(snapshot.sources.values.flatMap { $0.typeAliases ?? [] }.map(SDKTestHelperSyntax.canonicalName))
         let classes = Dictionary(grouping: declarations.filter { $0.kind == "class" }, by: { $0.module + "." + $0.scope })
         let nominalTypes = Set(snapshot.sources.values.flatMap { source in
-            source.units.filter { $0.kind == "type" }.map { String($0.key.prefix { $0 != ":" }) + "." + $0.scope }
+            source.units.filter { $0.kind == "type" }.map { SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope) }
         })
+        var frameworkImports = Set<String>()
+        for syntax in snapshot.sources.values.compactMap(\.inlineMappings) {
+            for declaration in syntax.declarations {
+                for framework in syntax.frameworkImports ?? [] {
+                    frameworkImports.insert(declaration.module + ":" + declaration.region.path + ":" + framework)
+                }
+            }
+        }
         func containsAlias(_ name: String) -> Bool {
             aliases.contains(name) || name.indices.contains { name[$0] == "." && aliases.contains(String(name[..<$0])) }
+        }
+        let globalNames = aliases.union(nominalTypes).filter { $0.split(separator: ".").count == 2 }
+        func couldShadowFrameworkBase(_ parent: String, in module: String) -> Bool {
+            let name = String(parent.prefix { $0 != "." })
+            return globalNames.contains { candidate in
+                guard candidate.hasSuffix("." + name) else { return false }
+                let owner = String(candidate.prefix { $0 != "." })
+                guard owner != module else { return false } // Checked lexically above.
+                // These maps contain transitive project imports. Only a complete
+                // inventory can rule out an unrelated module's exported name.
+                guard let inventory = snapshot.runtimeInventory, inventory.diagnostics.isEmpty,
+                      inventory.unavailableModules?[module] == nil, let imports = inventory.imports[module],
+                      inventory.imports[owner] != nil || inventory.unavailableModules?[owner] != nil else { return true }
+                return imports.contains(owner)
+            }
         }
         func active(_ declaration: InlineMappingSyntax.Declaration, methodOnly: Bool = false, roots: Set<String>? = nil) -> Bool {
             // #sourceLocation can make a physical-region match misleading.
@@ -242,7 +273,15 @@ struct InlineUIMappings {
                 }
                 if failed || containsAlias(parent) { failed = true; break }
                 if pending == nil, classes[parent] != nil { pending = parent }
-                if pending == nil, ["XCTestCase", "XCTest.XCTestCase", "NSObject", "Foundation.NSObject"].contains(parent) { break }
+                if pending == nil, ["XCTestCase", "XCTest.XCTestCase", "NSObject", "Foundation.NSObject"].contains(parent) {
+                    // The spelling alone cannot distinguish a framework class
+                    // from a project alias or type exported under the same name.
+                    let source = declaration.module + ":" + declaration.region.path + ":"
+                    let imported = frameworkImports.contains(source + "XCTest") ||
+                        (parent.hasSuffix("NSObject") && frameworkImports.contains(source + "Foundation"))
+                    if !imported || couldShadowFrameworkBase(parent, in: declaration.module) { failed = true }
+                    break
+                }
                 if pending == nil {
                     // A unique suffix is not proof of Swift name lookup: an
                     // unrelated nested type or unimported module may match while

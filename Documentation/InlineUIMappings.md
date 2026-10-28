@@ -59,6 +59,12 @@ test targets; it does not infer Swift Testing or parameterized executable identi
   Superclasses must resolve lexically or by an explicit module-qualified name;
   a unique name suffix elsewhere in the captured sources is not sufficient. Use
   `Helpers.Parent` for imported bases, with that declaration's source captured.
+  Framework base names such as `XCTestCase` are also checked for project types or
+  aliases that could shadow them. Their declaring source must directly import
+  `XCTest` (or `Foundation` for `NSObject`) outside conditional compilation.
+  Without that source proof or compiler import evidence excluding a collision,
+  ancestry remains unresolved and the affected tests stay selected. Older saved
+  snapshots missing framework-import proof must be regenerated before narrowing.
 - Inline and file rules form a union. Selecting a test through either rule keeps it
   selected. There are no override, replace, exclusion or implicit policy switches.
 
@@ -141,6 +147,9 @@ swift-test-impact inline-proposal \
 `inline-audit` accepts JSON or compact graph archives. Its JSON contains the bound
 rules, exact enabled test identifiers, resolved compiler symbols, every unresolved
 entry, binding diagnostics and unmapped UI tests (including file rule coverage).
+File loading/schema errors are reported separately. Inline entries are still
+resolved when the file policy is invalid, and invalid file rules do not count as
+coverage for otherwise unmapped tests.
 Normal `select --format json` supplies real-diff graph paths and condition decisions.
 
 `inline-proposal` emits a source digest, declaration location, normalized directive,

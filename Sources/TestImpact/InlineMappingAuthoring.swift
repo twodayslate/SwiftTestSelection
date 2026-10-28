@@ -116,16 +116,33 @@ public struct InlineMappingAudit: Codable, Sendable {
 
     public static func inspect(_ snapshot: XcodeTestGraph) -> Self {
         let inline = InlineUIMappings.resolve(snapshot)
-        let combined = inline.applying(to: snapshot)
         let graph = snapshot.dependencies ?? DependencyGraph()
-        let mappings = combined.mappings ?? UIFeatureMappings(features: [])
-        let index = MappingIndex(mappings, snapshot: snapshot, graph: graph, index: DependencyIndex(graph))
-        let mapped = Set(index.tests.values.flatMap { $0 })
+        let dependencyIndex = DependencyIndex(graph)
+        // Selection intentionally refuses to compose an invalid file policy.
+        // Audit must still resolve every inline entry rather than indexing that
+        // rejected composition and reporting absent results as successful ones.
+        let index = MappingIndex(UIFeatureMappings(features: inline.features), snapshot: snapshot, graph: graph, index: dependencyIndex)
+        var mapped = Set(index.tests.values.flatMap { $0 })
         let targets = Set(snapshot.targets.filter(\.isUITest).map(\.name))
+        let uiTests = snapshot.tests.filter { targets.contains(String($0.prefix { $0 != "/" })) }.sorted()
+        var diagnostics = inline.diagnostics
+        func invalidFile(_ message: String) {
+            diagnostics.append(.init(code: "invalid_mapping_file", message: "Invalid UI mapping file: " + message, tests: uiTests))
+        }
+        if let error = snapshot.mappingLoadError ?? snapshot.diagnostics.first(where: { $0.hasPrefix("Invalid UI mappings: ") }) {
+            invalidFile(error)
+        } else if let mappings = snapshot.mappings {
+            do {
+                try mappings.validate()
+                try inline.applying(to: snapshot).mappings?.validate()
+                let fileIndex = MappingIndex(mappings, snapshot: snapshot, graph: graph, index: dependencyIndex)
+                mapped.formUnion(fileIndex.tests.values.flatMap { $0 })
+            } catch { invalidFile(String(describing: error)) }
+        }
         return Self(rules: inline.features.map { feature in
             Rule(feature: feature, resolvedSymbols: (index.roots[feature.name] ?? []).compactMap { graph.functions[$0].map { $0.module + "." + $0.name } }.sorted(),
                  unresolvedEntries: index.unresolvedEntries[feature.name] ?? [])
-        }.sorted { $0.feature.name < $1.feature.name }, diagnostics: inline.diagnostics,
-                    unmappedUITests: snapshot.tests.filter { targets.contains(String($0.prefix { $0 != "/" })) && !mapped.contains($0) }.sorted())
+        }.sorted { $0.feature.name < $1.feature.name }, diagnostics: diagnostics.sorted { ($0.code, $0.message) < ($1.code, $1.message) },
+                    unmappedUITests: uiTests.filter { !mapped.contains($0) })
     }
 }
