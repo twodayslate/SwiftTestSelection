@@ -14,13 +14,17 @@ struct ExternalHelperEffects {
     private static let runtimeChecks: Set<String> = ["swift_task_isCurrentExecutor", "swift_task_reportUnexpectedExecutor"]
 
     mutating func allows(_ symbols: Set<String>, resolve: ([String]) -> String? = Self.resolve) -> Bool {
+        unprovenEffects(symbols, resolve: resolve).isEmpty
+    }
+
+    mutating func unprovenEffects(_ symbols: Set<String>, resolve: ([String]) -> String? = Self.resolve) -> Set<String> {
         let missing = symbols.filter { trusted[$0] == nil && !Self.runtimeChecks.contains($0) }.sorted()
         if !missing.isEmpty {
             let output = resolve(missing)
             let allowed = output.map { Self.trustedDeclarations($0) } ?? []
             for symbol in missing { trusted[symbol] = allowed.contains(symbol) }
         }
-        return symbols.allSatisfy { Self.runtimeChecks.contains($0) || trusted[$0] == true }
+        return Set(symbols.filter { !Self.runtimeChecks.contains($0) && trusted[$0] != true })
     }
 
     private static let receiverRuntime = runtimeChecks.union(["swift_getAtKeyPath", "$sSo7NSErrorCSgIeyBhy_ytTZ_", "$sSo7NSErrorCSgIeyBhy_ytTz_",
@@ -58,7 +62,8 @@ struct ExternalHelperEffects {
     static let sdkActions: Set<String> = ["tap", "doubleTap", "swipeUp", "swipeDown", "swipeLeft", "swipeRight", "typeText", "press"]
     static let sdkCallLabels: [String: Set<[String]>] = [
         "tap": [[]], "doubleTap": [[]], "swipeUp": [[]], "swipeDown": [[]], "swipeLeft": [[]], "swipeRight": [[]],
-        "typeText": [["_"]], "press": [["forDuration"]], "screenshot": [[]], "waitForExistence": [["timeout"]], "waitForNonExistence": [["timeout"]],
+        "typeText": [["_"]], "press": [["forDuration"], ["forDuration", "thenDragTo"]],
+        "coordinate": [["withNormalizedOffset"]], "withOffset": [["_"]], "screenshot": [[]], "waitForExistence": [["timeout"]], "waitForNonExistence": [["timeout"]],
         "descendants": [["matching"]], "children": [["matching"]],
         "matching": [["identifier"], ["_"], ["_", "identifier"]],
         "containing": [["_"], ["_", "identifier"]], "element": [["boundBy"]],
@@ -246,6 +251,10 @@ struct ExternalHelperEffects {
 
     private static let sdkDynamicSignatures: Set<String> = {
         var calls: Set<String> = [
+            "XCUIElement.frame!getter.foreign : (XCUIElement) -> () -> CGRect",
+            "XCUIElement.coordinate!foreign : (XCUIElement) -> (CGVector) -> XCUICoordinate",
+            "XCUICoordinate.withOffset!foreign : (XCUICoordinate) -> (CGVector) -> XCUICoordinate",
+            "XCUICoordinate.press!foreign : (XCUICoordinate) -> (Double, XCUICoordinate) -> ()",
             "XCUIElement.screenshot!foreign : (XCUIElement) -> () -> XCUIScreenshot",
             "XCUIElement.waitForExistence!foreign : (XCUIElement) -> (Double) -> Bool",
             "XCUIElement.waitForNonExistence!foreign : (XCUIElement) -> (Double) -> Bool",
@@ -314,6 +323,19 @@ struct ExternalHelperEffects {
         "$sSo25XCTNSPredicateExpectationC9predicate6objectABSo11NSPredicateC_ypSgtcfcTO"
     ]
 
+    // Concrete value operations used to calculate a scrolling viewport. These
+    // are effect contracts, independently enumerated from receiver-origin trust.
+    private static let geometryEffects: Set<String> = [
+        "$sSo6CGRectV12CoreGraphicsE4minXAC7CGFloatVvg",
+        "$sSo6CGRectV12CoreGraphicsE4maxYAC7CGFloatVvg",
+        "$sSo6CGRectV12CoreGraphicsE4midXAC7CGFloatVvg",
+        "$sSo6CGRectV12CoreGraphicsE4midYAC7CGFloatVvg",
+        "$sSo6CGRectV12CoreGraphicsE5widthAC7CGFloatVvg",
+        "$sSo6CGRectV12CoreGraphicsE7isEmptySbvg",
+        "$sSo6CGRectV12CoreGraphicsE12intersectionyA2BF",
+        "$sSo6CGRectV12CoreGraphicsE8containsySbABF"
+    ]
+
     static func trustedDeclarations(_ output: String, receiverOrigins: Bool = false) -> Set<String> {
         let owners = SILOwnership.declarationOwners(output)
         let modules = SDKTestHelperSyntax.trustedCallerModules.union(receiverOrigins ? ["CoreGraphics"] : [])
@@ -327,6 +349,9 @@ struct ExternalHelperEffects {
         }
         var accepted = Set(owners.filter { modules.contains($0.value) &&
             (!receiverOrigins || SDKReceiverContracts.declarations.contains($0.key)) }.keys)
+        if !receiverOrigins {
+            accepted.formUnion(owners.filter { $0.value == "CoreGraphics" && geometryEffects.contains($0.key) }.keys)
+        }
         for block in output.components(separatedBy: "Demangling for ").dropFirst() {
             let lines = block.components(separatedBy: .newlines)
             guard let symbol = lines.first, ["__C", "__C_Synthesized"].contains(owners[symbol] ?? ""),

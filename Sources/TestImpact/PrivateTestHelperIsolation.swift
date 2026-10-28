@@ -98,7 +98,7 @@ enum PrivateTestHelperIsolation {
                   guard let roots = graph.tests[test], !roots.isEmpty, graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
                   return roots.allSatisfy { graph.functions[$0] != nil }
               }) else { return nil }
-        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules),
+        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules.union(["CoreGraphics"])),
               (Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)).allSatisfy({ $0.helperNamesUnshadowed == true }) else {
             traversal.hasUnprovenCalleeEffects = true
             return nil
@@ -184,7 +184,7 @@ enum PrivateTestHelperIsolation {
             let revisions = [Array(current.sources.values), Array(base.values) + Array(unownedBase.values)]
             let owners: Set<String> = ["XCTAttachment", "XCUIScreenshot", "XCUIElement", "XCUIApplication",
                                        "XCTestCase", "XCTest", "NSObject", "NSObjectProtocol", "XCUIElementQuery",
-                                       "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter"]
+                                       "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter", "XCUICoordinate", "CGRect", "CGVector", "CGFloat"]
             // Bare SDK construction cannot dynamically invoke a project
             // subclass's initializer. Ordinary member overrides can, so audit
             // those names even when an alias hides the superclass.
@@ -256,7 +256,9 @@ enum PrivateTestHelperIsolation {
             }
             pending += node.dependencies
         }
-        if !traversal.externalEffects.allows(external) {
+        let unprovenExternal = traversal.externalEffects.unprovenEffects(external)
+        if !unprovenExternal.isEmpty {
+            traversal.receiverOriginBlocker = "Unproven external helper effects: " + unprovenExternal.sorted().joined(separator: ", ")
             traversal.hasUnprovenCalleeEffects = true
             effectsSupported = false
         }

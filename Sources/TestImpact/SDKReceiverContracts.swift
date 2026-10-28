@@ -38,6 +38,7 @@ enum SDKReceiverContracts {
         // Concrete CoreGraphics value operations and the SDK keyboard-key value wrapper.
         "$sSo6CGRectV12CoreGraphicsE4minXAC7CGFloatVvg", "$sSo6CGRectV12CoreGraphicsE4minYAC7CGFloatVvg",
         "$sSo6CGRectV12CoreGraphicsE4maxXAC7CGFloatVvg", "$sSo6CGRectV12CoreGraphicsE4maxYAC7CGFloatVvg",
+        "$sSo6CGRectV12CoreGraphicsE7isEmptySbvg", "$sSo6CGRectV12CoreGraphicsE12intersectionyA2BF",
         "$sSo6CGRectV12CoreGraphicsE8containsySbABF", "$sSo6CGRectV12CoreGraphicsE10intersectsySbABF", "$sSo15XCUIKeyboardKeya8rawValueSSvg",
         "$sSo21UIContentSizeCategorya8rawValueSSvg",
         // Wrap an existing continuation handle without resuming it or producing

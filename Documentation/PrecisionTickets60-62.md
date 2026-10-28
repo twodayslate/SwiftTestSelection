@@ -1,5 +1,7 @@
 # Precision tickets #60–62 validation
 
+Follow-up: [issue #61 validation](Issue61Validation.md) records the control-flow support, remaining `Optional<String>` formatting boundary, and historical policy replay for the two #291 comparisons. The measurements below describe the earlier implementation.
+
 This PR fixes the SDK gesture-velocity identity rejection (#60), recognizes bodyless Swift protocol initializers (#62), and supports independent XCTest entries and bounded private helpers in plain extensions (#61). It does **not** restore the proposed focused real-app selections. The remaining blockers below stay conservative; #58 remains open, and #61 still needs a control-flow effect proof for its real scrolling helper.
 
 ## Implementation boundaries
