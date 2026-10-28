@@ -322,7 +322,7 @@ struct ExternalHelperEffects {
         var importedTypes: Set<String> = ["XCTAttachment", "XCUIApplication", "XCUIElement", "XCUIElementType", "XCUIScreenshot",
             "XCTestCase", "XCTest", "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter", "XCTWaiterResult"]
         if receiverOrigins {
-            importedTypes.formUnion(["XCTestExpectation", "NSDateFormatter", "UIDeviceOrientation", "XCUIKeyboardKey", "UIContentSizeCategory",
+            importedTypes.formUnion(["XCUIGestureVelocity", "XCTestExpectation", "NSDateFormatter", "UIDeviceOrientation", "XCUIKeyboardKey", "UIContentSizeCategory",
                 "UIGraphicsImageRenderer", "UIGraphicsImageRendererFormat", "CGRect", "CGSize", "CGPoint", "CGVector", "XCUIApplicationState"])
         }
         var accepted = Set(owners.filter { modules.contains($0.value) &&
@@ -343,7 +343,7 @@ struct ExternalHelperEffects {
                (!receiverOrigins || !SDKReceiverContracts.primitives.contains(symbol)) { continue }
             // The importer synthesizes the standard enum conformances. Never
             // extend this exception to user/retroactive conformance modules.
-            if owners[symbol] == "__C_Synthesized" && !(receiverOrigins ? ["XCTWaiterResult", "XCUIApplicationState", "XCUIElementType"] : ["XCTWaiterResult"]).contains(type) { continue }
+            if owners[symbol] == "__C_Synthesized" && !(receiverOrigins ? ["XCUIGestureVelocity", "XCTWaiterResult", "XCUIApplicationState", "XCUIElementType"] : ["XCTWaiterResult"]).contains(type) { continue }
             if module > 0, lines[module - 1].trimmingCharacters(in: .whitespaces) == "kind=Class",
                !importedClassContracts.contains(symbol) { continue }
             accepted.insert(symbol)

@@ -17,6 +17,7 @@ enum PrivateTestHelperIsolation {
         fileprivate var callbacksChecked = false
         fileprivate var callbackBlocker: String?
         fileprivate var sdkEffectDeclarations: [String: [SourceUnit]] = [:]
+        fileprivate var sdkEnvironmentRejections: [String: (ids: Set<String>, reason: String)] = [:]
         fileprivate(set) var receiverOriginBlocker: String?
         private(set) var evaluationCount = 0
         fileprivate(set) var sharedStateSymbols = Set<String>()
@@ -161,9 +162,11 @@ enum PrivateTestHelperIsolation {
             }
             let queries = Set(supported.flatMap { $0.sdkTestHelper!.queriedMembers }).union(
                 baseUnits.filter { old in supported.contains { $0.key == old.key && $0.region.path == old.region.path } }.compactMap(\.sdkTestHelper).flatMap(\.queriedMembers))
-            let environmentSupported = SDKTestHelperIsolation.environmentBlocker(current: current, base: base, unownedBase: unownedBase, queriedMembers: queries) == nil
-            traversal.sdkEffectIDs[module] = environmentSupported
-                ? supported.reduce(into: Set<String>()) { $0.formUnion(symbols($1, graph: graph, index: index)) } : []
+            let environmentBlocker = SDKTestHelperIsolation.environmentBlocker(current: current, base: base, unownedBase: unownedBase, queriedMembers: queries)
+            let environmentSupported = environmentBlocker == nil
+            let supportedIDs = supported.reduce(into: Set<String>()) { $0.formUnion(symbols($1, graph: graph, index: index)) }
+            if let environmentBlocker { traversal.sdkEnvironmentRejections[module] = (supportedIDs, environmentBlocker) }
+            traversal.sdkEffectIDs[module] = environmentSupported ? supportedIDs : []
             traversal.sdkEffectDeclarations[module] = environmentSupported
                 ? supported + baseUnits.filter { old in supported.contains { $0.key == old.key && $0.region.path == old.region.path } } : []
         }
@@ -186,10 +189,12 @@ enum PrivateTestHelperIsolation {
             // subclass's initializer. Ordinary member overrides can, so audit
             // those names even when an alias hides the superclass.
             let dynamicMembers = sdkBindings.subtracting(["init"])
+            let bindingBlocker = SDKTestHelperIsolation.memberBindingBlocker(revisions: revisions,
+                members: sdkBindings, sdkOwners: owners, provenHelpers: traversal.sdkEffectDeclarations[module] ?? [])
+            if let bindingBlocker { traversal.receiverOriginBlocker = bindingBlocker }
             sdkBindingsSupported = SDKTestHelperIsolation.overridesUnshadowed(revisions: revisions,
                 members: dynamicMembers, sdkReceivers: owners.subtracting(["NSObject", "NSObjectProtocol"])) &&
-                SDKTestHelperIsolation.memberBindingsUnshadowed(revisions: revisions,
-                    members: sdkBindings, sdkOwners: owners, provenHelpers: traversal.sdkEffectDeclarations[module] ?? [])
+                bindingBlocker == nil
             // Still walk the head's compiler effects so existing shared-state
             // diagnostics survive even when the historical binding is unproven.
             if !sdkBindingsSupported { traversal.hasUnprovenCalleeEffects = true }
@@ -239,6 +244,9 @@ enum PrivateTestHelperIsolation {
                 effectsSupported = false
             }
             if projectModules.contains(node.module) && node.hasProjectRuntimeContext && !proof.effectIDs.contains(id) {
+                if let rejection = traversal.sdkEnvironmentRejections[node.module], rejection.ids.contains(id) {
+                    traversal.receiverOriginBlocker = rejection.reason
+                }
                 traversal.hasUnprovenCalleeEffects = true
                 effectsSupported = false
             }
@@ -293,6 +301,14 @@ enum PrivateTestHelperIsolation {
         return result
     }
 
+    static func isXCTestHelper(_ unit: SourceUnit, current: XcodeTestGraph) -> Bool {
+        let module = String(unit.key.prefix { $0 != ":" })
+        let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
+        guard !owners.isEmpty, owners.allSatisfy({ $0.isTest && !$0.hasProductionRole && current.modules[$0.name] == module }) else { return false }
+        return safeHierarchy(unit.scope, module: module,
+            sources: current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value))
+    }
+
     static func provesAddedEntry(_ unit: SourceUnit, current: XcodeTestGraph,
                                  base: [String: SwiftSourceSnapshot]) -> Bool {
         guard let name = unit.independentAddedTestEntry, unit.headOnlyBodySupported == true,
@@ -309,7 +325,7 @@ enum PrivateTestHelperIsolation {
               current.unresolvedProductRoles?[module] == nil else { return false }
         let headSources = Array(current.sources.values), baseSources = Array(base.values)
         guard (headSources + baseSources).allSatisfy({ $0.helperNamesUnshadowed == true }) else { return false }
-        let headUnits = headSources.flatMap(\.units), baseUnits = baseSources.flatMap(\.units)
+        let headUnits = headSources.flatMap(\.units)
         func snapshotsInModule(_ snapshots: [String: SwiftSourceSnapshot]) -> [SwiftSourceSnapshot] {
             snapshots.filter { key, snapshot in
                 key.hasPrefix(module + ":") || snapshot.units.contains { $0.key.hasPrefix(module + ":") }
@@ -330,8 +346,37 @@ enum PrivateTestHelperIsolation {
               oldModuleSources.filter({ !existed || !$0.units.contains { $0.region.path == unit.region.path } }).allSatisfy({ !$0.identifierNames!.contains(name) }),
               safeHierarchy(unit.scope, module: module, sources: moduleSources),
               safeHierarchy(unit.scope, module: module, sources: oldModuleSources),
-              !(headUnits + baseUnits).contains(where: { $0.kind == "extension" && [$0.scope, module + "." + $0.scope].contains(module + "." + unit.scope) }),
+              extensionsSupported(owner: unit.scope, module: module, revisions: [moduleSources, oldModuleSources]),
               Set(headUnits.filter { $0.kind == "function" && $0.region.intersects(unit.region) }.map(\.key)) == [unit.key] else { return false }
+        return true
+    }
+
+    /// Empty extension headers are containers, not callable declarations. Their
+    /// multiplicity has no effect, provided the owner is a unique existing final
+    /// XCTest class and every extension is unconditional and unadorned.
+    static func provesExtensionHeaders(_ units: [SourceUnit], current: XcodeTestGraph,
+                                       base: [String: SwiftSourceSnapshot]) -> Bool {
+        guard let unit = units.first, units.allSatisfy({ $0.kind == "extension" && $0.plainExtension == true && $0.scope == unit.scope }) else { return false }
+        let module = String(unit.key.prefix { $0 != ":" })
+        let revisions = [current.sources, base].map { sources in
+            sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value)
+        }
+        return extensionsSupported(owner: unit.scope, module: module, revisions: revisions)
+    }
+
+    private static func extensionsSupported(owner: String, module: String, revisions: [[SwiftSourceSnapshot]]) -> Bool {
+        for sources in revisions {
+            let units = sources.flatMap(\.units)
+            let extensions = units.filter { $0.kind == "extension" && [$0.scope, module + "." + $0.scope].contains(module + "." + owner) }
+            guard extensions.allSatisfy({ $0.plainExtension == true }) else { return false }
+            // With no extensions, retain the existing class-body proof. An
+            // extension requires explicit finality and unambiguous ancestry.
+            if !extensions.isEmpty || revisions.contains(where: { $0.flatMap(\.units).contains { $0.kind == "extension" && $0.scope == owner } }) {
+                let classes = units.filter { $0.kind == "type" && $0.scope == owner }
+                guard classes.count == 1, sources.compactMap({ $0.classFinality?[owner] }) == [true],
+                      safeHierarchy(owner, module: module, sources: sources) else { return false }
+            }
+        }
         return true
     }
 

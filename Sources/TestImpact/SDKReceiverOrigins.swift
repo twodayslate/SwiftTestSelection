@@ -73,7 +73,7 @@ struct SDKReceiverOrigins {
                 return "Receiver type identities are unproven with unsupported source imports" +
                     (imports.isEmpty ? " (missing import details; refresh source evidence)" : ": " + imports.joined(separator: ", "))
             }
-            let sdkLiterals: Set<String> = ["MainActor", "DefaultStringInterpolation", "URL", "UUID", "UIDeviceOrientation", "XCUIApplication.State", "String", "Character", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Array", "Dictionary", "Set", "Optional", "Any",
+            let sdkLiterals: Set<String> = ["XCUIGestureVelocity", "MainActor", "DefaultStringInterpolation", "URL", "UUID", "UIDeviceOrientation", "XCUIApplication.State", "String", "Character", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Array", "Dictionary", "Set", "Optional", "Any",
                 "XCUIApplication", "XCUIElement", "XCUIElement.ElementType", "XCTestCase", "XCTAttachment", "XCTAttachment.Lifetime", "NSPredicate", "XCTNSPredicateExpectation",
                 "XCTWaiter", "XCTWaiter.Result", "XCTestExpectation", "UIDevice", "XCUIScreen", "XCUIDevice", "JSONSerialization"]
             func localValueType(_ name: String) -> Bool {
@@ -137,8 +137,8 @@ struct SDKReceiverOrigins {
                       !names.isEmpty, names.subtracting(sdkLiterals).allSatisfy(localValueType), !owners.isEmpty,
                       owners.allSatisfy({ $0.receiverImportsSupported == true }),
                       (sources[node.module] ?? []).allSatisfy({ $0.1.helperNamesUnshadowed == true && $0.1.typeAliases != nil &&
-                          !$0.1.typeAliases!.contains(where: { $0.split(separator: ".").last.map(String.init).map(names.contains) == true }) &&
-                          !$0.1.units.contains(where: { $0.kind == "type" && $0.scope.split(separator: ".").last.map(String.init).map(sdkNames.contains) == true }) }) else {
+                          !$0.1.typeAliases!.contains(where: { $0.split(separator: ".").last.map(String.init).map(SDKTestHelperSyntax.canonicalName).map(names.contains) == true }) &&
+                          !$0.1.units.contains(where: { $0.kind == "type" && $0.scope.split(separator: ".").last.map(String.init).map(SDKTestHelperSyntax.canonicalName).map(sdkNames.contains) == true }) }) else {
                     return "Unproven receiver metatype: " + origin
                 }
             }

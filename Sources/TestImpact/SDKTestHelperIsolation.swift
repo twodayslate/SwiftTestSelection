@@ -240,9 +240,9 @@ enum SDKTestHelperIsolation {
         guard sources.allSatisfy({ snapshot in
             snapshot.units.allSatisfy { $0.helperCallableName.map { !waitNames.contains(canonicalName($0)) } ?? true }
         }) else { return "Project declaration can replace a trusted SDK wait overload" }
-        guard memberBindingsUnshadowed(revisions: [Array(current.sources.values), Array(base.values) + Array(unownedBase.values)],
-            members: queriedMembers.union(["init"]), sdkOwners: sdkClasses.union(["NSObject", "NSObjectProtocol"])) else {
-            return "Project member can replace a trusted SDK query at base or head"
+        if let blocker = memberBindingBlocker(revisions: [Array(current.sources.values), Array(base.values) + Array(unownedBase.values)],
+            members: queriedMembers.union(["init"]), sdkOwners: sdkClasses.union(["NSObject", "NSObjectProtocol"])) {
+            return "Project member can replace a trusted SDK query at base or head: " + blocker
         }
         let protected: Set<String> = ["XCUIElement.exists", "XCUIElement.value", "XCUIElement.isEnabled", "XCUIElement.isHittable", "XCUIElement.isSelected",
             "NSPredicate.evaluate", "NSPredicate.init", "XCTNSPredicateExpectation.init", "XCTWaiter.wait", "XCUIElement.waitForExistence", "XCUIElement.waitForNonExistence"]
@@ -328,65 +328,79 @@ enum SDKTestHelperIsolation {
     /// ambiguous historical owner. This also works with existing saved snapshots.
     static func memberBindingsUnshadowed(revisions: [[SwiftSourceSnapshot]], members: Set<String>,
                                          sdkOwners: Set<String>, provenHelpers: [SourceUnit] = []) -> Bool {
+        memberBindingBlocker(revisions: revisions, members: members, sdkOwners: sdkOwners, provenHelpers: provenHelpers) == nil
+    }
+
+    static func memberBindingBlocker(revisions: [[SwiftSourceSnapshot]], members: Set<String>,
+                                    sdkOwners: Set<String>, provenHelpers: [SourceUnit] = []) -> String? {
         let canonicalName = SDKTestHelperSyntax.canonicalName
-        guard revisions.joined().allSatisfy({ $0.diagnostics.isEmpty && $0.dispatchMembers != nil && $0.typeAliases != nil }) else { return false }
-        for revision in revisions {
+        guard revisions.joined().allSatisfy({ $0.diagnostics.isEmpty && $0.dispatchMembers != nil && $0.typeAliases != nil }) else {
+            return "Missing declaration/member binding evidence"
+        }
+        for (revisionIndex, revision) in revisions.enumerated() {
             let types = Dictionary(grouping: revision.flatMap(\.units).filter { $0.kind == "type" }, by: {
                 canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope)
             })
             let concreteOwners = Set(types.compactMap { name, declarations -> String? in
-                // Conditional declarations may share a name. Every candidate
-                // must be concrete before excluding this owner from the audit.
+                // All conditional candidates must be concrete before their
+                // members can be excluded from an SDK binding audit.
                 guard declarations.allSatisfy({ unit in
                     ["classDecl[", "structDecl[", "enumDecl["].contains(where: unit.fingerprint.hasPrefix)
                 }) else { return nil }
                 return name
             })
             let aliases = Set(revision.flatMap { $0.typeAliases! }.map(canonicalName))
-            guard revision.allSatisfy({ snapshot in
+            for snapshot in revision.sorted(by: { ($0.units.first?.region.path ?? "") < ($1.units.first?.region.path ?? "") }) {
                 let modules = Set(snapshot.units.map { canonicalName(String($0.key.prefix { $0 != ":" })) })
-                return snapshot.dispatchMembers!.allSatisfy { member in
+                for member in snapshot.dispatchMembers!.sorted() {
                     let parts = canonicalName(member).split(separator: ".")
-                    guard let name = parts.last, members.contains(String(name)) else { return true }
+                    guard let name = parts.last, members.contains(String(name)) else { continue }
                     let owner = parts.dropLast().joined(separator: ".")
                     let declarations = snapshot.units.filter { canonicalName($0.scope) == owner }
+                    let location = declarations.first(where: {
+                        $0.helperCallableName.map(canonicalName) == String(name) ||
+                        name == "init" && $0.fingerprint.hasPrefix("initializerDecl[")
+                    })?.region ?? declarations.first?.region
+                    let rejected = "Unproven member binding \(member) at \(location?.path ?? "unknown source"):\(location?.startLine ?? 0) (revision \(revisionIndex + 1))"
+                    // Requirements cannot authenticate SDK namesakes or aliases.
+                    let unshadowedOwner = parts.dropLast().last.map { !sdkOwners.contains(String($0)) } == true &&
+                        !aliases.contains(where: { $0 == owner || $0.hasSuffix("." + owner) })
                     if name == "subscript" {
+                        // A labeled-only subscript cannot replace the SDK's
+                        // single unlabeled getter. Missing evidence still fails.
                         let subscripts = declarations.filter { $0.fingerprint.hasPrefix("subscriptDecl[") }
-                        // A labeled-only subscript cannot replace the one-argument
-                        // SDK getter. Missing evidence, defaults and variadics
-                        // that admit an unlabeled argument remain conservative.
-                        if !subscripts.isEmpty, subscripts.allSatisfy({ $0.subscriptAcceptsSingleUnlabeledArgument == false }) { return true }
+                        if !subscripts.isEmpty, subscripts.allSatisfy({ $0.subscriptAcceptsSingleUnlabeledArgument == false }) { continue }
                     }
                     let methods = declarations.filter { $0.helperCallableName.map(canonicalName) == String(name) }
+                    let requirements = declarations.filter { $0.bodylessProtocolRequirement == String(name) }
+                    // Evidence comes only from direct protocol members with no body.
+                    // Each extension/default implementation has its own dispatch
+                    // inventory and must pass this audit independently.
+                    if unshadowedOwner, !requirements.isEmpty,
+                       declarations.filter({ $0.kind == "type" }).allSatisfy({ $0.fingerprint.hasPrefix("protocolDecl[") }),
+                       methods.allSatisfy({ $0.bodylessProtocolRequirement == String(name) }),
+                       (name != "init" || declarations.filter { $0.fingerprint.hasPrefix("initializerDecl[") }.allSatisfy { $0.bodylessProtocolRequirement == "init" }) {
+                        continue
+                    }
+                    // Preserve support for older bodyless method evidence, but
+                    // never infer an initializer requirement from a state unit.
                     let typesAtOwner = declarations.filter { $0.kind == "type" }
-                    // A protocol requirement has no implementation to replace
-                    // the SDK effect. Default implementations in extensions are
-                    // audited separately, including ones in other source files.
-                    if !typesAtOwner.isEmpty, typesAtOwner.allSatisfy({ $0.fingerprint.hasPrefix("protocolDecl[") }),
+                    if unshadowedOwner, !typesAtOwner.isEmpty, typesAtOwner.allSatisfy({ $0.fingerprint.hasPrefix("protocolDecl[") }),
                        !methods.isEmpty, declarations.allSatisfy({ ["type", "function"].contains($0.kind) }),
-                       methods.allSatisfy({ $0.headOnlyBodySupported == true && $0.key.hasSuffix(":" + ($0.syntaxFingerprint ?? $0.fingerprint)) }) {
-                        return true
-                    }
-                    if !provenHelpers.isEmpty {
-                        // Dispatch evidence stores a name rather than an overload
-                        // signature. Exempt it only if every matching method at this owner
-                        // is proven at both revisions and no unmodeled member
-                        // (such as a callable property) could share the binding.
-                        if !methods.isEmpty,
-                           declarations.allSatisfy({ ["type", "extension", "function"].contains($0.kind) }),
-                           methods.allSatisfy({ method in provenHelpers.contains {
-                               $0.key == method.key && $0.region.path == method.region.path && $0.fingerprint == method.fingerprint
-                           } }) { return true }
-                    }
-                    guard let ownerName = parts.dropLast().last, !sdkOwners.contains(String(ownerName)) else { return false }
-                    // Never infer an alias's target from a same-spelled nominal
-                    // in another module; source-only resolution is ambiguous.
-                    guard !aliases.contains(where: { $0 == owner || $0.hasSuffix("." + owner) }) else { return false }
-                    return concreteOwners.contains(owner) || modules.contains { concreteOwners.contains($0 + "." + owner) }
+                       methods.allSatisfy({ $0.headOnlyBodySupported == true && $0.key.hasSuffix(":" + ($0.syntaxFingerprint ?? $0.fingerprint)) }) { continue }
+                    // A name-only dispatch record is exempt only when every
+                    // overload is proven and no unmodeled member can compete.
+                    if !provenHelpers.isEmpty, !methods.isEmpty,
+                       declarations.allSatisfy({ ["type", "extension", "function"].contains($0.kind) }),
+                       methods.allSatisfy({ method in provenHelpers.contains {
+                           $0.key == method.key && $0.region.path == method.region.path && $0.fingerprint == method.fingerprint
+                       } }) { continue }
+                    guard unshadowedOwner,
+                          concreteOwners.contains(owner) || modules.contains(where: { concreteOwners.contains($0 + "." + owner) }) else { return rejected }
                 }
-            }) else { return false }
+            }
         }
-        return true
+        return nil
     }
 
 }

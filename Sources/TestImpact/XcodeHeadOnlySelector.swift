@@ -127,6 +127,7 @@ enum XcodeHeadOnlySelector {
             let before = old[key] ?? [], after = new[key] ?? []
             guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() else { continue }
             semanticPaths.formUnion((before + after).map { $0.region.path })
+            if PrivateTestHelperIsolation.provesExtensionHeaders(before + after, current: current, base: source.base) { continue }
             if after.count == 1, let unit = after.first, (unit.sdkTestHelper != nil || ["XCUIElement", "XCTest.XCUIElement"].contains(unit.scope)),
                let graph = current.dependencies, let index = dependencyIndex {
                 if let blocker = SDKTestHelperIsolation.blocker(unit, previous: before.count == 1 ? before.first : nil,
@@ -141,6 +142,14 @@ enum XcodeHeadOnlySelector {
             }
             if before.count <= 1, after.count == 1, let unit = after.first,
                let graph = current.dependencies, let index = dependencyIndex {
+                // An added helper needs an isolation proof because no base
+                // compiler edges exist. A surviving body can still use ordinary
+                // dependency selection, with runtime fallback where needed.
+                if before.isEmpty, let blocker = unit.privateTestHelperBlocker,
+                   PrivateTestHelperIsolation.isXCTestHelper(unit, current: current) {
+                    fallback("head_only_helper_callee_effects", "Private helper effect is unsupported: \(blocker) (\(unit.region.path):\(unit.region.startLine))")
+                    continue
+                }
                 let proofs = [unit.privateTestHelper, before.first?.privateTestHelper].compactMap { $0 }
                 if proofs.contains(where: { $0.proofVersion != PrivateTestHelperSyntax.currentProofVersion }) {
                     fallback("head_only_helper_proof_version", "Private helper proof is missing or uses an unsupported version; recapture the head graph: \(unit.region.path)")

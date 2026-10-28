@@ -1,0 +1,245 @@
+{
+  "toolchain": "Xcode 27.0 (27A266a), Swift 6.4",
+  "simulator": "iPhone 17 Pro, iOS 26.2",
+  "configuration": "Debug application, release analyzer",
+  "capture_executable_sha256": "90dbacd2a5c22ecb785086774dd28d277e162829f3aa4843ce15c0e027b2cb73",
+  "final_executable_sha256": "be1e2b37d18d92622a295a1ab4bb0892242cac7b0adeb6b4a75c565258753956",
+  "source_proofs_refreshed": true,
+  "source_keys_and_fingerprints_unchanged": true,
+  "compiler_graph_modified": false,
+  "application_test_bodies_executed": false,
+  "full_suite_equivalence_validated": false,
+  "package_validation": {
+    "release_functions_passed": 351,
+    "xcode26_focused_functions_passed": 7,
+    "capture_helper_passed": 6,
+    "distribution_passed": 5,
+    "distribution_skipped": 1
+  },
+  "comparisons": [
+    {
+      "issue": 60,
+      "consumer_pr": 301,
+      "historical_run": "40340806833",
+      "original_base": "f05ef8f1fca15c50dfb4a71c708e28312ccb23fa",
+      "original_head": "26fe0a02a6b6f1eed5f3888ed5655933eadc2c73",
+      "normalized_base": "fa6defbf057ab0993344995d620efeb9348c603f",
+      "normalized_head": "8766bd5b77fbd402560135be456321a959766d78",
+      "swift_touch_overlay": true,
+      "scope": {
+        "excludedTestEntries": [
+          "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testCalendarTabShowsRowsAfterSelection()",
+          "ChainOfCustodyUITests/PairingNotesMediaUITests/testBlockDetailsActionOpensTheInspector()",
+          "ChainOfCustodyUITests/PairingNotesMediaUITests/testDetailSwipesPreserveCarouselSelection()",
+          "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoPlaybackControlsRemainUsableInDetails()",
+          "ChainOfCustodyUITests/SettingsLayoutUITests/testPairingSwitcherLongPressPreservesCurrentTab()",
+          "ChainOfCustodyUITests/SettingsLayoutUITests/testPairingSwitcherPreservesNativeTabDragging()"
+        ],
+        "name": "regression-support",
+        "paths": [
+          "ChainOfCustodyUITests/SettingsLayoutUITests.swift"
+        ]
+      },
+      "total_tests": 2014,
+      "selected_tests": 2014,
+      "selected_ui": 403,
+      "known_consumers": 2,
+      "known_consumers_retained": true,
+      "declaration_fallbacks": 1,
+      "remaining_blockers": [
+        "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: ChainOfCustodyUITests/SettingsLayoutUITests.swift",
+        "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/SettingsLayoutUITests.swift:386; Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions XCTWaiter.Result"
+      ],
+      "head_builds": 1,
+      "base_builds": 0,
+      "compiler_replays": 0,
+      "captured_modules": 10,
+      "capture_elapsed_seconds": 353.485467208,
+      "capture_maximum_rss_bytes": 2541256704,
+      "capture_peak_footprint_bytes": 2016446624,
+      "final_source_refresh_and_scope_seconds": 20.417479038238525,
+      "raw_and_scoped_product_verification": true,
+      "final_scope_product_verification": true,
+      "source_export_sha256": "9bd4e9fa38bc7e90020adeb18fef054206b57fcf4fc55d5c76dd8d7d8f94f19b",
+      "sealed_capture_sha256": "5bdf041913e6994fae6eb14274db356e10191deb3566203c8f3d84a898cc6aad",
+      "final_report_sha256": "0ba1a23c2aab8c883833227bd66380709a3905e469537c944c2d58bbe0841f12"
+    },
+    {
+      "issue": 62,
+      "consumer_pr": 293,
+      "historical_run": "40058859478",
+      "original_base": "31bbaa5a964637445b6c56ad7de46463d5db0e7c",
+      "original_head": "49e130b2dab1f9125e836fa8969fd0815effb7be",
+      "normalized_base": "fe70b820b0c6c71a255ac2764e80c131481314e4",
+      "normalized_head": "979c4473a6de49054eb06225f1dbe106f345bb94",
+      "swift_touch_overlay": true,
+      "scope": {
+        "excludedTestEntries": [
+          "ChainOfCustodyUITests/NoteLinksUITests/testMessageCardIsOfferedWhenCompositionIsAvailable()",
+          "ChainOfCustodyUITests/NoteLinksUITests/testUnavailableMessagesStillOffersLinkSharing()",
+          "ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()"
+        ],
+        "name": "regression-support",
+        "paths": [
+          "ChainOfCustodyUITests/NoteLinksUITests.swift"
+        ]
+      },
+      "total_tests": 1972,
+      "selected_tests": 1972,
+      "selected_ui": 394,
+      "known_consumers": 12,
+      "known_consumers_retained": true,
+      "declaration_fallbacks": 0,
+      "remaining_blockers": [
+        "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NoteLinksUITests.swift:387; Unproven XCTest error formatting from input producer ChainOfCustodyUITests.closure #1 in closure #1 in waitForAllConditions(_:timeout:)"
+      ],
+      "head_builds": 1,
+      "base_builds": 0,
+      "compiler_replays": 0,
+      "captured_modules": 10,
+      "capture_elapsed_seconds": 368.33994737499995,
+      "capture_maximum_rss_bytes": 2515107840,
+      "capture_peak_footprint_bytes": 1954007152,
+      "final_source_refresh_and_scope_seconds": 20.683977961540222,
+      "raw_and_scoped_product_verification": true,
+      "final_scope_product_verification": true,
+      "source_export_sha256": "9fa12535b5562fb20824a99c4797d2fd81f46898e5f8f1e63ce25d4266393260",
+      "sealed_capture_sha256": "9b392dbf6ff1da0c3dcaff3bb1218cf9cb862be08ebe31f3674760b17b8ce549",
+      "final_report_sha256": "f5a38acff075c66aac57ab88f62ff93a24610a355ef6917dede30f0d76e94840"
+    },
+    {
+      "issue": 62,
+      "consumer_pr": 299,
+      "historical_run": "40159996488",
+      "original_base": "55ee3b78dc0fae3478508e6e35b0decbadc397a7",
+      "original_head": "0fcd75da18ddef3aa58160dbd3e2b32500793840",
+      "normalized_base": "ebcda2a339c9077c447397123a0cd3d3ab80aa1f",
+      "normalized_head": "201a70812718ea822d6df5ca3d4d9bddb0767894",
+      "swift_touch_overlay": true,
+      "scope": {
+        "excludedTestEntries": [
+          "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesCollapsedUntimedPanel()",
+          "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesUntimedCategoryAndScrollPosition()"
+        ],
+        "name": "regression-support",
+        "paths": [
+          "ChainOfCustodyUITests/XCUIElement+Waiting.swift"
+        ]
+      },
+      "total_tests": 2000,
+      "selected_tests": 2000,
+      "selected_ui": 403,
+      "known_consumers": 125,
+      "known_consumers_retained": true,
+      "declaration_fallbacks": 0,
+      "remaining_blockers": [
+        "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven XCTest error formatting from input producer ChainOfCustodyUITests.closure #1 in closure #1 in waitForAllConditions(_:timeout:) (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)"
+      ],
+      "head_builds": 1,
+      "base_builds": 0,
+      "compiler_replays": 0,
+      "captured_modules": 10,
+      "capture_elapsed_seconds": 344.71894800000007,
+      "capture_maximum_rss_bytes": 2586607616,
+      "capture_peak_footprint_bytes": 1866385616,
+      "final_source_refresh_and_scope_seconds": 21.638900995254517,
+      "raw_and_scoped_product_verification": true,
+      "final_scope_product_verification": true,
+      "source_export_sha256": "951a705f191d496095a5cd4d34143b267dd4bd7ca9ea14a375ff1a034ed6afcb",
+      "sealed_capture_sha256": "cd935e2313e5f13ed829981c5ac9b1745c3f207a39571710f1266e98ba0e3aa8",
+      "final_report_sha256": "21028cd9245b780d9d81f461cbe053192707acf7658ab8a71bd8fc25524bb08b"
+    },
+    {
+      "issue": 61,
+      "consumer_pr": 291,
+      "historical_run": "40031610717",
+      "original_base": "1de869ad9e2f39d74a01920d98bbf91482d620bf",
+      "original_head": "1884b2fa641d0fb450e23c5b3af1191374742a9d",
+      "normalized_base": "42af3eed81268abdba552c4ec0c82d1506baa011",
+      "normalized_head": "b0dbfc5fd35dc9cb61d72462497e37d684aa644d",
+      "swift_touch_overlay": false,
+      "scope": {
+        "excludedTestEntries": [
+          "ChainOfCustodyUITests/NotificationHubUITests/testAccessibilityTextKeepsSelectionActionsVisible()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testFiltersAndBulkReadClearOnlyAffectVisibleSelection()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testHubBadgeOpeningCommentAndClearingPersist()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testNewNoteHubEntryOpensCorrectNoteAndClearOnePreservesOther()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testSelectionModeFreezesFiltersAndCancelPreservesUpdates()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testSetupAndSwipeReadStateSurviveRelaunch()"
+        ],
+        "name": "regression-support",
+        "paths": [
+          "ChainOfCustodyUITests/NotificationUITests.swift"
+        ]
+      },
+      "total_tests": 1961,
+      "selected_tests": 1961,
+      "selected_ui": 384,
+      "known_consumers": 1,
+      "known_consumers_retained": true,
+      "declaration_fallbacks": 0,
+      "remaining_blockers": [
+        "Private helper effect is unsupported: Nested local declaration at line 336 requires control-flow effect evidence (ChainOfCustodyUITests/NotificationUITests.swift:331)"
+      ],
+      "head_builds": 1,
+      "base_builds": 0,
+      "compiler_replays": 0,
+      "captured_modules": 10,
+      "capture_elapsed_seconds": 252.03241645899993,
+      "capture_maximum_rss_bytes": 2514796544,
+      "capture_peak_footprint_bytes": 1939753072,
+      "final_source_refresh_and_scope_seconds": 8.586418986320496,
+      "raw_and_scoped_product_verification": true,
+      "final_scope_product_verification": true,
+      "source_export_sha256": "4a103634e301b747b1cc2280d3d12e67c71aa27423be2bdcef790958ef76791c",
+      "sealed_capture_sha256": "2d67eb9b17cc5319d842b1d658e33867a7f0acfd046e204c9498e17173f68f9a",
+      "final_report_sha256": "4278cce6dcc54dd0fe3c7f046afa6c3d351d6591da89208c87b42b4e1e57912b"
+    },
+    {
+      "issue": 61,
+      "consumer_pr": 291,
+      "historical_run": "40035642452",
+      "original_base": "31bbaa5a964637445b6c56ad7de46463d5db0e7c",
+      "original_head": "f2d68a5627c959dd8417c59ae0fe53a36d06967e",
+      "normalized_base": "d6095cce46260b925d568fd590e23299dbcd10e9",
+      "normalized_head": "c3bc226f13b57b30851f1565c797866bc8ef7a8e",
+      "swift_touch_overlay": false,
+      "scope": {
+        "excludedTestEntries": [
+          "ChainOfCustodyUITests/NotificationHubUITests/testAccessibilityTextKeepsSelectionActionsVisible()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testFiltersAndBulkReadClearOnlyAffectVisibleSelection()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testHubBadgeOpeningCommentAndClearingPersist()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testNewNoteHubEntryOpensCorrectNoteAndClearOnePreservesOther()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testSelectionModeFreezesFiltersAndCancelPreservesUpdates()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testSetupAndSwipeReadStateSurviveRelaunch()"
+        ],
+        "name": "regression-support",
+        "paths": [
+          "ChainOfCustodyUITests/NotificationUITests.swift"
+        ]
+      },
+      "total_tests": 1981,
+      "selected_tests": 1981,
+      "selected_ui": 397,
+      "known_consumers": 1,
+      "known_consumers_retained": true,
+      "declaration_fallbacks": 0,
+      "remaining_blockers": [
+        "Private helper effect is unsupported: Nested local declaration at line 336 requires control-flow effect evidence (ChainOfCustodyUITests/NotificationUITests.swift:331)"
+      ],
+      "head_builds": 1,
+      "base_builds": 0,
+      "compiler_replays": 0,
+      "captured_modules": 10,
+      "capture_elapsed_seconds": 258.075589584,
+      "capture_maximum_rss_bytes": 2626715648,
+      "capture_peak_footprint_bytes": 1959725216,
+      "final_source_refresh_and_scope_seconds": 8.69367003440857,
+      "raw_and_scoped_product_verification": true,
+      "final_scope_product_verification": true,
+      "source_export_sha256": "20ad3943f59aa5d46f1f718c8731809add1e4f6e2cc503b331fe216b5eb13b5e",
+      "sealed_capture_sha256": "f2698885d6bbe66526bb8e4d94e8a3722b7cb13e2af6a5f87b0a70ce46aa6b56",
+      "final_report_sha256": "35b799b3adeb3b2bf6decc4fa36fa0477ff0b138e35144237ae4d9a7929abef7"
+    }
+  ]
+}

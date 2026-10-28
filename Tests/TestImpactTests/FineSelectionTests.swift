@@ -1146,3 +1146,32 @@ func headOnlyScopeExclusionsRequireCompleteConsumerBindings(kind: String) {
     }
     #expect(!messages.contains { $0.hasPrefix("Running ") })
 }
+
+@Test func privateLoopDiagnosticsDoNotBroadenProductionSelection() throws {
+    let before = """
+    class Parent {}
+    final class Worker: Parent {
+        private func sharing() -> Int {
+            for _ in 0..<2 { let value = 1; _ = value }
+            return 42
+        }
+    }
+    func notes() -> Int { common() }
+    func common() -> Int { 42 }
+    """
+    let after = before.replacingOccurrences(of: "let value = 1", with: "let value = 2")
+    func graph(_ text: String) -> XcodeTestGraph {
+        var value = headOnlyModel(app: text)
+        value.mappings!.features[0].symbols = ["App.Worker.sharing()"]
+        value.dependencies!.functions["UI.Notes.testNotes()"]!.uncertainties.insert("Indirect function invocation")
+        return value
+    }
+    let current = graph(after)
+    let helper = try #require(current.sources.values.flatMap(\.units).first { $0.scope == "Worker" && $0.kind == "function" })
+    #expect(helper.privateTestHelperBlocker != nil)
+    #expect(helper.privateTestHelper == nil)
+    let report = headOnlySelection(current, old: graph(before), paths: ["App/Features.swift"])
+    #expect(report.selectedTests.count == 4)
+    #expect(!report.selectedTests.contains("UI/Notes/testNotes()"))
+    #expect(report.diagnostics.isEmpty, "\(report.diagnostics)")
+}
