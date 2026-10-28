@@ -7,6 +7,8 @@ import Testing
 
 private let sharing = "UI/Sharing/testScreen()"
 private let notes = "UI/Notes/testScreen()"
+private let coverageDevice = UICoverageTestResults.Device(deviceId: "test", deviceName: "Phone",
+    architecture: "arm64", modelName: "iPhone 17 Pro", platform: "iOS Simulator", osVersion: "26.5", osBuildNumber: "23F77")
 
 private func coverageGraph() -> XcodeTestGraph {
     let paths = ["App/Sharing.swift", "App/Notes.swift", "App/Common.swift"]
@@ -27,7 +29,7 @@ private func coverageGraph() -> XcodeTestGraph {
 private func session(_ graph: XcodeTestGraph, test: String = sharing, path: String = "Sharing") throws -> UICoverageArtifact.Session {
     .init(id: path, identity: try UICoverageMappings.identity(for: graph), sourceRoot: "/repo", enabledTests: graph.tests,
           selectedSuites: [test.split(separator: "/").prefix(2).joined(separator: "/")], appTargets: ["App"], resultBundle: path + ".xcresult", status: "complete",
-          testResults: .init(testNodes: [.init(nodeType: "Test Case", name: "testScreen()", nodeIdentifier: test, result: "Passed")]),
+          testResults: .init(devices: [coverageDevice], testNodes: [.init(nodeType: "Test Case", name: "testScreen()", nodeIdentifier: test, result: "Passed")]),
           coverage: .init(targets: [.init(name: "App", executableLines: 20, files: [path, "Common"].map {
               .init(path: "/repo/App/" + $0 + ".swift", functions: [.init(name: "title()", lineNumber: 2, executionCount: 1)])
           })]))
@@ -61,7 +63,7 @@ private func propose(_ graph: XcodeTestGraph, _ sessions: [UICoverageArtifact.Se
     var combined = try session(graph)
     combined.testResults = nil
     #expect(try propose(graph, [combined]).diagnostics.contains { $0.code == "missing_execution_evidence" })
-    combined.testResults = .init(testNodes: [sharing, notes].map { .init(nodeType: "Test Case", name: "test", nodeIdentifier: $0, result: "Passed") })
+    combined.testResults = .init(devices: [coverageDevice], testNodes: [sharing, notes].map { .init(nodeType: "Test Case", name: "test", nodeIdentifier: $0, result: "Passed") })
     combined.selectedSuites = ["UI/Sharing", "UI/Notes"]
     let result = try propose(graph, [combined])
     #expect(result.evidence.allSatisfy { $0.attribution == "coarseMultipleSuites" && $0.suites.count == 2 })
@@ -159,7 +161,7 @@ private func propose(_ graph: XcodeTestGraph, _ sessions: [UICoverageArtifact.Se
     let graph = coverageGraph()
     var value = try session(graph)
     value.coverage!.targets[0].name = "App.app"
-    value.testResults = .init(testNodes: [.init(nodeType: "Test Plan", name: "All tests", children: [
+    value.testResults = .init(devices: [coverageDevice], testNodes: [.init(nodeType: "Test Plan", name: "All tests", children: [
         .init(nodeType: "UI test bundle", name: "UI.xctest", children: [
             .init(nodeType: "Test Suite", name: "Sharing", children: [
                 .init(nodeType: "Test Case", name: "testScreen()", nodeIdentifier: "Sharing/testScreen()", result: "Passed")
@@ -189,4 +191,116 @@ private func propose(_ graph: XcodeTestGraph, _ sessions: [UICoverageArtifact.Se
     #expect(result.mappings.features.count == 1)
     #expect(result.unmappedSuites == ["UI/Notes", "UI/Sharing"])
     #expect(!result.diagnostics.contains { $0.code == "measured_empty" })
+}
+
+
+@Test func coverageRejectsEveryIncompleteTestCaseWithoutLosingOtherSuites() throws {
+    let graph = coverageGraph()
+    for malformed in [
+        UICoverageTestResults.Node(nodeType: "Test Case", name: "notes", nodeIdentifier: notes),
+        .init(nodeType: "Test Case", name: "notes", result: "Failed"),
+        .init(nodeType: "Test Case", name: "notes", nodeIdentifier: "", result: "Passed"),
+        .init(nodeType: "Test Case", name: "notes", nodeIdentifier: notes, result: ""),
+        .init(nodeType: "Test Case", name: "notes", nodeIdentifier: "UI//notes", result: "Passed")
+    ] {
+        var value = try session(graph)
+        // The second suite's coverage cannot become isolated Sharing evidence
+        // just because its test-case record cannot be decoded into an execution.
+        value.coverage!.targets[0].files.append(.init(path: "/repo/App/Notes.swift",
+            functions: [.init(name: "notes()", lineNumber: 2, executionCount: 1)]))
+        value.testResults!.testNodes.append(.init(nodeType: "Test Suite", name: "Notes", children: [malformed]))
+        let result = try propose(graph, [value])
+        #expect(!result.validationPassed)
+        #expect(result.additions.isEmpty && result.evidence.isEmpty)
+        #expect(result.diagnostics.contains { $0.code == "invalid_execution_evidence" && $0.severity == "error" })
+    }
+}
+
+@Test func coverageRejectsMissingAndMultipleResultDestinations() throws {
+    let graph = coverageGraph()
+    for devices in [nil, [], [coverageDevice, coverageDevice]] as [[UICoverageTestResults.Device]?] {
+        var value = try session(graph); value.testResults!.devices = devices
+        let result = try propose(graph, [value])
+        #expect(!result.validationPassed && result.additions.isEmpty)
+        #expect(result.diagnostics.contains { $0.code == "invalid_destination_evidence" })
+    }
+}
+
+@Test func coverageValidatesDeclaredDestinationFields() throws {
+    for destination in ["platform=iOS Simulator,id=test", "platform=iOS Simulator,name=Phone,OS=26.5,arch=arm64"] {
+        var graph = coverageGraph(); graph.buildArtifact!.context["destination"] = destination
+        let good = try session(graph)
+        #expect(try propose(graph, [good]).validationPassed)
+        for field in ["platform", "id", "name", "OS", "arch"] where destination.contains(field + "=") {
+            var value = good
+            switch field {
+            case "id": value.testResults!.devices![0].deviceId = "another-device"
+            case "platform": value.testResults!.devices![0].platform = "macOS"
+            case "name": value.testResults!.devices![0].deviceName = "Other phone"
+            case "OS": value.testResults!.devices![0].osVersion = "99.0"
+            default: value.testResults!.devices![0].architecture = "x86_64"
+            }
+            let result = try propose(graph, [value])
+            #expect(!result.validationPassed && result.additions.isEmpty)
+            #expect(result.diagnostics.contains { $0.code == "incompatible_destination" })
+        }
+    }
+}
+
+@Test func coverageRetainsDeviceEvidenceAndRejectsIncompatibleSessions() throws {
+    let graph = coverageGraph()
+    let first = try session(graph)
+    var second = try session(graph, test: notes, path: "Notes")
+    second.testResults!.devices![0].osVersion = "99.0"
+    let result = try propose(graph, [first, second])
+    #expect(!result.validationPassed)
+    #expect(result.diagnostics.contains { $0.code == "incompatible_destination" })
+    let encoded = try JSONEncoder().encode(result)
+    let decoded = try JSONDecoder().decode(UICoverageProposal.self, from: encoded)
+    #expect(decoded.provenance[0].testResults?.devices == [coverageDevice])
+    #expect(decoded.provenance[1].testResults?.devices?[0].osVersion == "99.0")
+}
+
+@Test func coverageAcceptsLatestAndEquivalentOSVersions() throws {
+    for os in ["latest", "26.5.0"] {
+        var graph = coverageGraph(); graph.buildArtifact!.context["destination"] = "platform=iOS Simulator,id=TEST,OS=" + os
+        #expect(try propose(graph, [session(graph)]).validationPassed)
+    }
+}
+
+@Test func coverageRunsStrictSymbolValidationOnPreservedMappings() throws {
+    let graph = coverageGraph()
+    let valid = UIFeatureMappings(features: [.init(name: "manual", symbols: ["App.App/Sharing.swift"], tests: ["UI/Sharing"])])
+    #expect(try propose(graph, [session(graph)], existing: valid).validationPassed)
+    var invalid = valid; invalid.features[0].symbols!.append("App.missing")
+    let result = try propose(graph, [session(graph)], existing: invalid)
+    #expect(!result.validationPassed)
+    #expect(result.mappingValidationDiagnostics.count == 1)
+    #expect(result.mappingValidationDiagnostics.first?.code == "unresolved_mapping_symbol")
+    #expect(result.mappingValidationDiagnostics.first?.pattern == "App.missing")
+    #expect(result.diagnostics.contains { $0.code == "strict_mapping_validation_failed" })
+    #expect(result.mappings.features[0].symbols == invalid.features[0].symbols)
+}
+
+@Test func coverageDoesNotReplaceDiscardedInvalidMappingsUnlessExplicitlySupplied() throws {
+    for legacy in [false, true] {
+        var graph = coverageGraph()
+        if legacy { graph.diagnostics.append("Invalid UI mappings: invalid JSON") }
+        else { graph.mappingLoadError = "invalid JSON" }
+        let result = try propose(graph, [session(graph)])
+        #expect(!result.validationPassed)
+        #expect(result.mappingValidationDiagnostics.first?.code == "invalid_mapping_file")
+        let repaired = try propose(graph, [session(graph)], existing: UIFeatureMappings(features: []))
+        #expect(repaired.validationPassed)
+    }
+}
+
+
+@Test func coverageRejectsIncompleteNestedTestCaseEvidence() throws {
+    let graph = coverageGraph()
+    var value = try session(graph)
+    value.testResults!.testNodes[0].children = [.init(nodeType: "Test Case", name: "incomplete", result: "Failed")]
+    let result = try propose(graph, [value])
+    #expect(!result.validationPassed && result.additions.isEmpty)
+    #expect(result.diagnostics.contains { $0.code == "invalid_execution_evidence" })
 }

@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix="coverage-cli-") as directory:
     assert len(plan["executions"]) == 1
     artifact = dict(schemaVersion=1, sessions=[dict(id="isolated", identity=plan["identity"], sourceRoot="/source",
                     enabledTests=graph["tests"], selectedSuites=["UI/Screen"], appTargets=["App"], resultBundle="screen.xcresult", status="complete",
-                    testResults=dict(testNodes=[dict(nodeType="UI test bundle", name="UI", children=[
+                    testResults=dict(devices=[dict(deviceId="test", deviceName="Phone", platform="iOS Simulator", osVersion="26.5", architecture="arm64")], testNodes=[dict(nodeType="UI test bundle", name="UI", children=[
                         dict(nodeType="Test Case", name="testScreen()", nodeIdentifier="Screen/testScreen()", result="Passed")])]),
                     coverage=dict(targets=[dict(name="App.app", executableLines=3, files=[dict(path="/source/Screen.swift", functions=[
                         dict(name="screen()", lineNumber=1, executionCount=1)])])]))])
@@ -63,7 +63,7 @@ with tempfile.TemporaryDirectory(prefix="coverage-cli-") as directory:
     assert json.loads(mappings_path.read_text()) == applied["mappings"] == proposed["mappings"]
     assert not run("import", *common)["additions"]
     saved = mappings_path.read_bytes()
-    for mutation in ["failed", "unknownIdentity", "missingEvidence", "partial"]:
+    for mutation in ["failed", "unknownIdentity", "missingEvidence", "partial", "missingResult", "missingIdentifier", "deviceMismatch", "missingDevices"]:
         bad = copy.deepcopy(artifact)
         session = bad["sessions"][0]
         if mutation == "failed":
@@ -72,11 +72,29 @@ with tempfile.TemporaryDirectory(prefix="coverage-cli-") as directory:
             session["identity"]["revision"] = "other"
         elif mutation == "missingEvidence":
             del session["testResults"]
-        else:
+        elif mutation == "partial":
             session["testResults"]["testNodes"][0]["children"][0]["result"] = "Skipped"
+        elif mutation in ["missingResult", "missingIdentifier"]:
+            case = dict(nodeType="Test Case", name="otherTest()", nodeIdentifier="Other/otherTest()", result="Failed")
+            del case["result" if mutation == "missingResult" else "nodeIdentifier"]
+            session["testResults"]["testNodes"][0]["children"].append(case)
+        elif mutation == "deviceMismatch":
+            session["testResults"]["devices"][0]["deviceId"] = "different-device"
+        else:
+            del session["testResults"]["devices"]
         artifact_path.write_text(json.dumps(bad))
         report = run("import", *common)
         assert any(d["severity"] == "error" for d in report["diagnostics"]), report
         run("apply", *common, fail=True)
         assert mappings_path.read_bytes() == saved
+    artifact_path.write_text(json.dumps(artifact))
+    invalid_symbols = copy.deepcopy(existing)
+    invalid_symbols["features"][0]["symbols"] = ["App.screen()", "App.missing()"]
+    mappings_path.write_text(json.dumps(invalid_symbols))
+    saved = mappings_path.read_bytes()
+    report = run("import", *common)
+    assert not report["validationPassed"]
+    assert report["mappingValidationDiagnostics"][0]["code"] == "unresolved_mapping_symbol"
+    run("apply", *common, fail=True)
+    assert mappings_path.read_bytes() == saved
     print("PASS coverage CLI inspection, bundle names, additive apply, unknown-field preservation, idempotence and rejected writes")

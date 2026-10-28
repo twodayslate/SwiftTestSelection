@@ -96,11 +96,23 @@ must supply accurate build provenance. This format is an evidence record, not a
 cryptographic attestation of a test run. A coverage percentage or an intended
 `-only-testing` argument is insufficient attribution evidence.
 
-Every enabled method of an attributed suite must have a passed result. Unknown,
-failed, skipped and partial results do not generate candidates. Duplicate session
+Every enabled method of an attributed suite must have a passed result. Every
+`Test Case` node must have a nonempty, resolvable identifier and a nonempty result;
+an incomplete node invalidates the session rather than disappearing from its
+attribution. Unknown, failed, skipped and partial results do not generate candidates. Duplicate session
 IDs are rejected. Revisions, source/build identities, toolchains, configurations,
 destinations, runtime contexts, graph IDs and inventories must match the graph;
 incompatible sessions are diagnosed and excluded, not merged.
+
+The raw test report must include exactly one device with `deviceId`, `platform`
+and `osVersion`. Its metadata is retained in proposal provenance. Reported values
+are checked against explicit destination `platform`, `id`, `name`, `OS` and `arch`
+constraints, and device/OS/build metadata must agree across accepted sessions.
+`OS=latest` uses the reported version; a destination specifying only a device ID
+does not independently establish its OS version, but session metadata must still
+agree. Unsupported destination expressions and missing device evidence are errors.
+Older hand-authored manifests that omitted `devices` need the original full
+`xcresulttool` export; do not fill it from the intended destination.
 
 A full-plan report without executed-test evidence is rejected. A report with
 multiple complete UI suites can produce **coarse associations with all of those
@@ -126,11 +138,14 @@ symlink paths are not automatically remapped. An unresolved function may still
 support a compiler-owned file boundary; no exact symbol mapping is invented.
 
 Proposals use `UIFeatureMappings.validate()` and the same `MappingIndex` and
-`DependencyIndex` as selection to validate added sources and selectors. This
-implementation targets the mapping schema supported on its base branch (v1).
-It emits no symbol patterns and does not claim strict symbol validation from
-issue #64 or boolean-expression support from issue #65 before those APIs land.
-Unsupported mapping versions are rejected rather than rewritten.
+`DependencyIndex` as selection to validate added sources and selectors. They also
+run `XcodeTestGraph.validateMappingSymbols`, introduced by #69, on the complete
+proposed configuration, including preserved user symbols. Strict failures are
+returned in `mappingValidationDiagnostics` and block apply. Capture-time mapping
+load failures also block apply unless an explicitly supplied valid mapping
+replaces the captured mapping. User entries remain intact in the review proposal.
+This implementation supports mapping schema v1 and emits no symbol patterns or
+boolean expressions. Unsupported mapping versions are rejected rather than rewritten.
 
 Diagnostic codes are stable machine-readable strings. `severity` is `info`,
 `warning`, or `error`; `session` and `path` provide context when applicable.
@@ -140,6 +155,8 @@ Diagnostic codes are stable machine-readable strings. `severity` is `info`,
 | `incompatible_artifact`, `missing_provenance` | Build identity/inventory differs or provenance is absent |
 | `collection_incomplete`, `collection_failed`, `collection_crashed` | Run did not complete successfully |
 | `missing_execution_evidence`, `suite_attribution_mismatch` | No attributable executed-test results, or intent differs from execution |
+| `invalid_execution_evidence` | A test-case record has a missing or unresolved identifier/result; the entire session is excluded |
+| `invalid_destination_evidence`, `incompatible_destination` | Result-bundle device evidence is missing, mixed, or contradicts the destination or another session |
 | `unsuccessful_or_unknown_tests`, `partial_suite_execution` | Results cannot establish complete successful suite execution |
 | `coverage_unavailable` | Coverage was not exported successfully |
 | `invalid_app_targets` | Requested targets are absent or not production targets in the graph |
@@ -149,10 +166,12 @@ Diagnostic codes are stable machine-readable strings. `severity` is `info`,
 | `external_source`, `generated_or_unowned_source`, `invalid_source_location` | Source cannot be safely mapped |
 | `unresolved_compiler_identity`, `ambiguous_compiler_identity` | File boundary may be proposed, but no exact function identity is asserted |
 | `shared_dependency`, `unmapped_suite` | Shared associations retained, or no usable observations for an enabled UI suite |
+| `strict_mapping_validation_failed` | The complete proposal fails the shared strict symbol/file validator; structured details are in `mappingValidationDiagnostics` |
 | `proposal_validation_failed` | An added source boundary or selector did not resolve |
 
 Import emits diagnostic-bearing proposals even if some sessions are unusable, so
-agents can explain or repair the collection. Apply refuses any error diagnostic.
+agents can explain or repair the collection. Any error diagnostic makes
+`validationPassed` false and blocks apply.
 CLI input/decoding failures emit JSON on stderr with `code: coverage_command_failed`
 and exit 1. An invalid artifact is never reported as a successful empty collection.
 

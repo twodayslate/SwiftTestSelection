@@ -24,6 +24,18 @@ public struct UICoverageReport: Codable, Sendable {
 }
 
 public struct UICoverageTestResults: Codable, Sendable {
+    public struct Device: Codable, Sendable, Equatable {
+        public var deviceId: String
+        public var deviceName: String?
+        public var architecture: String?
+        public var modelName: String?
+        public var platform: String?
+        public var osVersion: String?
+        public var osBuildNumber: String?
+    }
+    /// Retain the actual result-bundle destination, not just the manifest assertion.
+    public var devices: [Device]? = nil
+
     public struct Node: Codable, Sendable {
         public var nodeType: String
         public var name: String
@@ -34,21 +46,26 @@ public struct UICoverageTestResults: Codable, Sendable {
     public var testNodes: [Node]
 
     /// Only actual test-case results establish attribution; suite names alone do not.
-    func executions() -> [(id: String, result: String)] {
-        func walk(_ nodes: [Node], target: String?) -> [(String, String)] {
-            nodes.flatMap { node in
+    func executions() throws -> [(id: String, result: String)] {
+        func walk(_ nodes: [Node], target: String?) throws -> [(String, String)] {
+            try nodes.flatMap { node in
                 let target = node.nodeType == "UI test bundle" || node.nodeType == "Unit test bundle"
                     ? node.name.replacingOccurrences(of: ".xctest", with: "") : target
-                if node.nodeType == "Test Case", let id = node.nodeIdentifier, let result = node.result {
-                    let parts = id.split(separator: "/")
-                    if parts.count == 3 { return [(id, result)] }
-                    if parts.count == 2, let target { return [(target + "/" + id, result)] }
-                    return [(id, result)] // Retain malformed identities for explicit rejection.
+                if node.nodeType == "Test Case" {
+                    guard let id = node.nodeIdentifier, !id.isEmpty,
+                          let result = node.result, !result.isEmpty else {
+                        throw ImpactError("Test case \(node.name) is missing its identifier or result; suite attribution is incomplete.")
+                    }
+                    let parts = id.split(separator: "/", omittingEmptySubsequences: false)
+                    guard !parts.contains(""), parts.count == 3 || parts.count == 2 && target?.isEmpty == false else {
+                        throw ImpactError("Test case \(node.name) has an unresolved identifier: \(id)")
+                    }
+                    return [(parts.count == 3 ? id : target! + "/" + id, result)] + (try walk(node.children ?? [], target: target))
                 }
-                return walk(node.children ?? [], target: target)
+                return try walk(node.children ?? [], target: target)
             }
         }
-        return walk(testNodes, target: nil)
+        return try walk(testNodes, target: nil)
     }
 }
 
@@ -99,6 +116,7 @@ public struct UICoverageProposal: Codable, Sendable {
     public var unmappedSuites: [String]
     public var provenance: [UICoverageArtifact.Session]
     public var validationPassed: Bool
+    public var mappingValidationDiagnostics: [MappingValidationDiagnostic] = []
     public var limitations: [String]
 }
 
@@ -175,6 +193,7 @@ public enum UICoverageMappings {
             .union(graph.sources.keys.map { key in key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) } ?? key })
         let dependencyIndex = DependencyIndex(graph.dependencies!)
         var sessionIDs = Set<String>()
+        var acceptedDevice: UICoverageTestResults.Device?
         for session in artifact.sessions.sorted(by: { $0.id < $1.id }) {
             guard sessionIDs.insert(session.id).inserted else { throw ImpactError("Duplicate coverage session ID: \(session.id)") }
             let differences = Set(expectedIdentity.keys).union(session.identity.keys).filter { expectedIdentity[$0] != session.identity[$0] }.sorted()
@@ -188,10 +207,25 @@ public enum UICoverageMappings {
                 diagnose("collection_" + (["failed", "crashed", "incomplete"].contains(session.status) ? session.status : "incomplete"),
                          "Collection is \(session.status); no proposal is derived from this session.", session.id, severity: "error"); continue
             }
-            guard let results = session.testResults, !results.executions().isEmpty else {
+            guard let results = session.testResults else {
                 diagnose("missing_execution_evidence", "Aggregate coverage without exact executed-test results cannot establish suite attribution.", session.id, severity: "error"); continue
             }
-            let executions = results.executions()
+            let executions: [(id: String, result: String)]
+            do { executions = try results.executions() }
+            catch { diagnose("invalid_execution_evidence", String(describing: error), session.id, severity: "error"); continue }
+            guard !executions.isEmpty else {
+                diagnose("missing_execution_evidence", "No actual test-case executions were recorded.", session.id, severity: "error"); continue
+            }
+            guard let devices = results.devices, devices.count == 1,
+                  let device = devices.first, !device.deviceId.isEmpty,
+                  device.platform?.isEmpty == false, device.osVersion?.isEmpty == false else {
+                diagnose("invalid_destination_evidence", "Exactly one result-bundle device with an ID, platform and OS version is required.", session.id, severity: "error"); continue
+            }
+            do { try validateDestination(expectedIdentity["destination"]!, device: device) }
+            catch { diagnose("incompatible_destination", String(describing: error), session.id, severity: "error"); continue }
+            if let acceptedDevice, acceptedDevice != device {
+                diagnose("incompatible_destination", "Result-bundle device metadata differs between collection sessions, including device identity, architecture or OS version/build.", session.id, severity: "error"); continue
+            }
             let executed = Set(executions.map(\.id))
             guard executed.isSubset(of: ui), executions.allSatisfy({ $0.result == "Passed" }) else {
                 diagnose("unsuccessful_or_unknown_tests", "Results contain failed, skipped, unknown, or non-UI tests; cannot attribute this session.", session.id, severity: "error"); continue
@@ -220,6 +254,7 @@ public enum UICoverageMappings {
                   targets.allSatisfy({ $0.executableLines > 0 && !$0.files.isEmpty }) else {
                 diagnose("missing_app_instrumentation", "Expected app targets have no measurable coverage; UI-runner coverage alone is insufficient.", session.id, severity: "error"); continue
             }
+            acceptedDevice = device
             let observed = targets.flatMap(\.files).flatMap { file in
                 file.functions.filter { $0.executionCount > 0 }.map { (file.path, $0) }
             }
@@ -266,7 +301,26 @@ public enum UICoverageMappings {
             mappings.features.append(feature); additions.append(feature)
         }
         try mappings.validate() // Same schema validation used by selection.
-        var valid = true
+        var valid = !diagnostics.contains { $0.severity == "error" }
+        var validationGraph = graph
+        validationGraph.mappings = mappings
+        if existing != nil {
+            // An explicitly supplied mapping replaces the captured mapping. A
+            // corrected file must not inherit stale capture-time loading errors.
+            validationGraph.mappingLoadError = nil
+            validationGraph.diagnostics.removeAll { $0.hasPrefix("Invalid UI mappings: ") }
+        }
+        var mappingValidationDiagnostics: [MappingValidationDiagnostic] = []
+        do {
+            var context = graph.buildArtifact!.context
+            context["toolchain"] = graph.buildArtifact!.toolchain
+            try validationGraph.validateMappingSymbols(mappingFile: "<coverage proposal>",
+                revision: graph.buildArtifact!.revision, buildContext: context)
+        } catch let error as MappingValidationError {
+            valid = false
+            mappingValidationDiagnostics = error.diagnostics
+            diagnose(error.code, error.description, severity: "error")
+        }
         // Resolve every proposed boundary/selector using selection's own index.
         let index = MappingIndex(mappings, snapshot: graph, graph: graph.dependencies!, index: dependencyIndex)
         for feature in additions where index.roots[feature.name]?.isEmpty != false || !(index.unmatched[feature.name] ?? []).isEmpty {
@@ -279,12 +333,44 @@ public enum UICoverageMappings {
         return UICoverageProposal(mappings: mappings, additions: additions,
             evidence: evidence.sorted { ($0.session, $0.path, $0.line, $0.coverageFunction) < ($1.session, $1.path, $1.line, $1.coverageFunction) },
             diagnostics: diagnostics, unmappedSuites: unmapped, provenance: artifact.sessions,
-            validationPassed: valid, limitations: [
+            validationPassed: valid, mappingValidationDiagnostics: mappingValidationDiagnostics, limitations: [
                 "Positive observations do not prove complete runtime dependencies; runtimeDependencyPolicy is never changed.",
                 "File boundaries are additive OR associations; co-execution never implies an AND condition.",
                 "Source lines establish candidate compiler identities, not exact symbol identity. Generated and external code require manual review.",
                 "This version validates using the mapping schema and selection index available in this build."
             ])
+    }
+
+    private static func validateDestination(_ destination: String, device: UICoverageTestResults.Device) throws {
+        var fields: [String: String] = [:]
+        for component in destination.split(separator: ",", omittingEmptySubsequences: false) {
+            let pair = component.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard pair.count == 2 else { throw ImpactError("Unsupported destination expression: \(destination)") }
+            let key = pair[0].trimmingCharacters(in: .whitespaces)
+            let value = pair[1].trimmingCharacters(in: .whitespaces)
+            guard ["platform", "id", "name", "OS", "arch"].contains(key), !value.isEmpty, fields[key] == nil else {
+                throw ImpactError("Unsupported or repeated destination field: \(key)")
+            }
+            fields[key] = value
+        }
+        guard let platform = fields["platform"], device.platform == platform else {
+            throw ImpactError("Result-bundle platform does not match destination: \(destination)")
+        }
+        for (key, actual) in [("id", Optional(device.deviceId)), ("name", device.deviceName),
+                              ("arch", device.architecture), ("OS", device.osVersion)] {
+            guard let expected = fields[key], !(key == "OS" && expected.lowercased() == "latest") else { continue }
+            let matches: Bool
+            if key == "id" { matches = actual?.lowercased() == expected.lowercased() }
+            else if key == "OS", let actual {
+                func version(_ value: String) -> [Substring] {
+                    var parts = value.split(separator: ".")
+                    while parts.last == "0" { parts.removeLast() }
+                    return parts
+                }
+                matches = version(actual) == version(expected)
+            } else { matches = actual == expected }
+            guard matches else { throw ImpactError("Result-bundle \(key) (\(actual ?? "missing")) differs from destination \(key)=\(expected).") }
+        }
     }
 
     private static func validateAppTargets(_ targets: [String], graph: XcodeTestGraph) throws {
