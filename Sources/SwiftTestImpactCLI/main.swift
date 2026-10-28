@@ -24,6 +24,14 @@ USAGE
                            [--base REVISION] [--head REVISION] [--merge-base]
                            [--format FORMAT] [--output FILE] [--full-suite] [--run]
 
+Optional UI mapping authoring (JSON output; no coverage required for selection):
+  coverage plan --graph FILE --suite Target/Class --app-target App [--output FILE]
+  coverage import --graph FILE --artifact FILE [--mappings FILE] [--output FILE]
+  coverage apply --graph FILE --artifact FILE --mappings FILE [--output FILE]
+Repeat --suite and --app-target as needed. Plan reuses a coverage-enabled captured
+build once per suite. Import only proposes additions; apply explicitly writes them.
+See Documentation/UICoverageMappings.md for collection and portable artifact format.
+
 Persistent Xcode analysis:
   select <Xcode options> --base REV --head REV [--merge-base]
          --analysis-cache PATH --cache-context EXTERNAL_INPUT_DIGEST
@@ -338,6 +346,12 @@ private func render(_ report: ImpactReport) -> String {
 let arguments = Array(CommandLine.arguments.dropFirst())
 if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h") {
     print(usage)
+} else if arguments.first == "coverage" {
+    do { try CoverageCommand.run(Array(arguments.dropFirst())) }
+    catch {
+        let data = try! JSONSerialization.data(withJSONObject: ["code": "coverage_command_failed", "message": String(describing: error)], options: [.sortedKeys])
+        FileHandle.standardError.write(data + Data("\n".utf8)); exit(1)
+    }
 } else {
     do {
         let options = try Options(arguments)

@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Zachary Gorak
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+"""Offline CLI contract checks: inspect, additive apply, preservation, and failures."""
+import copy
+import json
+import os
+import pathlib
+import subprocess
+import tempfile
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+TOOL = pathlib.Path(os.environ.get("SWIFT_TEST_IMPACT", ROOT / ".build/debug/swift-test-impact"))
+
+with tempfile.TemporaryDirectory(prefix="coverage-cli-") as directory:
+    work = pathlib.Path(directory)
+    graph_path, artifact_path, mappings_path = [work / name for name in ["graph.json", "artifact.json", "mappings.json"]]
+    graph = dict(schemaVersion=2, analysisKind="xcode-sil-and-ui-mappings", tests=["UI/Screen/testScreen()"], diagnostics=[],
+                 targets=[dict(name="App", productType="com.apple.product-type.application", sourceFiles=["Screen.swift"]),
+                          dict(name="UI", productType="com.apple.product-type.bundle.ui-testing", sourceFiles=["UITests.swift"])],
+                 sources={"Screen.swift": dict(units=[], inheritance={}, diagnostics=[])}, modules={},
+                 dependencies=dict(schemaVersion=1, toolchain="test", tests={}, diagnostics=[], testDiagnostics={},
+                                   functions={"screen": dict(id="screen", name="screen()", module="App", dependencies=[],
+                                                             regions=[dict(path="Screen.swift", startLine=1, endLine=3)],
+                                                             uncertainties=[], dynamicDeclarations=[], resolvedDynamicDeclarations=[])}),
+                 buildArtifact=dict(schemaVersion=1, id="build", revision="revision", context={"configuration": "Debug", "destination": "platform=iOS Simulator,id=test"},
+                                    toolchain="test", buildLogDigest="log", buildSettingsDigest="settings", productsDirectory="/build", xctestrun="App.xctestrun", products={"App": "digest"}))
+    graph_path.write_text(json.dumps(graph))
+
+    def run(*args, fail=False):
+        result = subprocess.run([str(TOOL), "coverage", *map(str, args)], text=True, capture_output=True)
+        if fail:
+            assert result.returncode == 1, result
+            assert json.loads(result.stderr)["code"] == "coverage_command_failed", result
+            return
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    plan = run("plan", "--graph", graph_path, "--suite", "UI/Screen", "--app-target", "App")
+    assert len(plan["executions"]) == 1
+    artifact = dict(schemaVersion=1, sessions=[dict(id="isolated", identity=plan["identity"], sourceRoot="/source",
+                    enabledTests=graph["tests"], selectedSuites=["UI/Screen"], appTargets=["App"], resultBundle="screen.xcresult", status="complete",
+                    testResults=dict(testNodes=[dict(nodeType="UI test bundle", name="UI", children=[
+                        dict(nodeType="Test Case", name="testScreen()", nodeIdentifier="Screen/testScreen()", result="Passed")])]),
+                    coverage=dict(targets=[dict(name="App.app", executableLines=3, files=[dict(path="/source/Screen.swift", functions=[
+                        dict(name="screen()", lineNumber=1, executionCount=1)])])]))])
+    artifact_path.write_text(json.dumps(artifact))
+    existing = dict(version=1, features=[dict(name="manual", sources=["Unobserved.swift"], tests=["UI/Screen"], annotation={"owner": "user"})],
+                    runtimeDependencyPolicy="conservative", customPolicy={"review": True})
+    mappings_path.write_text(json.dumps(existing))
+    original = mappings_path.read_bytes()
+    common = ["--graph", graph_path, "--artifact", artifact_path, "--mappings", mappings_path]
+    proposed = run("import", *common)
+    assert mappings_path.read_bytes() == original
+    assert len(proposed["additions"]) == 1 and proposed["validationPassed"]
+    assert proposed["mappings"]["features"][0] == existing["features"][0]
+    assert proposed["mappings"]["customPolicy"] == existing["customPolicy"]
+    run("import", *common, "--output", mappings_path, fail=True)
+    assert mappings_path.read_bytes() == original
+    run("apply", *common, "--output", work / "missing-parent/proposal.json", fail=True)
+    assert mappings_path.read_bytes() == original
+    applied = run("apply", *common)
+    assert json.loads(mappings_path.read_text()) == applied["mappings"] == proposed["mappings"]
+    assert not run("import", *common)["additions"]
+    saved = mappings_path.read_bytes()
+    for mutation in ["failed", "unknownIdentity", "missingEvidence", "partial"]:
+        bad = copy.deepcopy(artifact)
+        session = bad["sessions"][0]
+        if mutation == "failed":
+            session["status"] = "failed"
+        elif mutation == "unknownIdentity":
+            session["identity"]["revision"] = "other"
+        elif mutation == "missingEvidence":
+            del session["testResults"]
+        else:
+            session["testResults"]["testNodes"][0]["children"][0]["result"] = "Skipped"
+        artifact_path.write_text(json.dumps(bad))
+        report = run("import", *common)
+        assert any(d["severity"] == "error" for d in report["diagnostics"]), report
+        run("apply", *common, fail=True)
+        assert mappings_path.read_bytes() == saved
+    print("PASS coverage CLI inspection, bundle names, additive apply, unknown-field preservation, idempotence and rejected writes")

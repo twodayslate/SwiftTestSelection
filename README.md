@@ -4,6 +4,11 @@ Select Swift tests from a Git diff and a compiler-derived dependency graph. **No
 
 A Swift package providing a `swift-test-impact` executable and reusable `TestImpact` library. SwiftPM packages use a function dependency graph with XCTest and Swift Testing discovery. Xcode projects/workspaces select individual XCTest methods through syntax and compiler dependencies, with explicit feature mappings for XCUITest. It is experimental static analysis, not a guarantee of the smallest safe test set.
 
+Optional coverage-assisted UI mapping authoring is available through
+`coverage plan`, `coverage import`, and `coverage apply`. It proposes additive
+suite/file mappings from attributed app coverage while keeping normal selection
+independent of any previous test run. See [the workflow and artifact contract](Documentation/UICoverageMappings.md).
+
 ## Install a prebuilt executable
 
 Versioned [GitHub Releases](https://github.com/twodayslate/SwiftTestSelection/releases)
