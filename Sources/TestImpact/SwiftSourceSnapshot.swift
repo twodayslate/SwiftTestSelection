@@ -83,6 +83,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     public var identifierNames: Set<String>? = nil
     public var helperSafeClasses: [String: String]? = nil
     public var helperNamesUnshadowed: Bool? = nil
+    /// Complete operator declaration inventory, including conditional/nested
+    /// implementations and precedence declarations. Nil is legacy evidence.
+    public var helperOperatorDeclarations: Set<String>? = nil
     public var attachmentAddUnshadowed: Bool? = nil
     public var helperReferences: [String: SDKTestHelperSyntax.References]? = nil
     public var sdkHelperNamesUnshadowed: Bool? = nil
@@ -128,6 +131,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         result.helperNamesUnshadowed = PrivateTestHelperSyntax.reservedNames.allSatisfy { name in
             !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
         }
+        result.helperOperatorDeclarations = Set(tree.tokens(viewMode: .sourceAccurate).compactMap { token in
+            if let function = token.parent?.as(FunctionDeclSyntax.self), function.name.id == token.id,
+               token.identifier == nil { return token.text }
+            if let declaration = token.parent?.as(OperatorDeclSyntax.self), declaration.name.id == token.id { return token.text }
+            return nil
+        })
         result.attachmentAddUnshadowed = !(identifiers["add"] ?? []).contains(where: PrivateTestHelperSyntax.shadowsAttachmentAdd)
         let unsupportedCallerImports = SDKTestHelperSyntax.unsupportedCallerImports(tree)
         let callerImportsSupported = unsupportedCallerImports.isEmpty

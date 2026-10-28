@@ -103,6 +103,35 @@ enum PrivateTestHelperIsolation {
             traversal.hasUnprovenCalleeEffects = true
             return nil
         }
+        // Imported project operators are already excluded by the source import
+        // proof. Within this module, a deleted overload (including a static or
+        // conditional one) can silently rebind to Swift at head. Unknown base
+        // ownership cannot establish that an operator belongs to another module.
+        let module = String(unit.key.prefix { $0 != ":" })
+        guard let operators = syntax.effectOperators,
+              previous == nil || previous?.privateTestHelper?.effectOperators != nil else {
+            traversal.hasUnprovenCalleeEffects = true
+            traversal.receiverOriginBlocker = "Missing helper operator binding evidence; refresh source proofs"
+            return nil
+        }
+        let usedOperators = operators.union(previous?.privateTestHelper?.effectOperators ?? [])
+        if !usedOperators.isEmpty {
+            let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
+                base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(unownedBase.values)
+            for source in sources {
+                guard source.diagnostics.isEmpty, let declarations = source.helperOperatorDeclarations else {
+                    traversal.hasUnprovenCalleeEffects = true
+                    traversal.receiverOriginBlocker = "Missing source operator declaration evidence; refresh source proofs"
+                    return nil
+                }
+                let rebound = declarations.intersection(usedOperators)
+                if !rebound.isEmpty {
+                    traversal.hasUnprovenCalleeEffects = true
+                    traversal.receiverOriginBlocker = "Unproven helper operator binding at base or head: " + rebound.sorted().joined(separator: ", ")
+                    return nil
+                }
+            }
+        }
         if !traversal.callbacksChecked {
             traversal.callbackBlocker = XCTestCallbackIsolation.blocker(current: current, base: base, unownedBase: unownedBase)
             traversal.callbacksChecked = true
@@ -113,7 +142,6 @@ enum PrivateTestHelperIsolation {
             return nil
         }
         guard contextAllows(unit, name: syntax.name, existed: previous != nil, current: current, base: base) else { return nil }
-        let module = String(unit.key.prefix { $0 != ":" })
         let headUnits = current.sources.values.flatMap(\.units), baseUnits = base.values.flatMap(\.units)
         let ids = symbols(unit, graph: graph, index: index)
         guard !ids.isEmpty else { return nil }

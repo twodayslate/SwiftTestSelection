@@ -10,7 +10,7 @@
   "full_suite_equivalence_validated": false,
   "consumer_policy_replayed": true,
   "focused_46_ui_target_achieved": false,
-  "executable_sha256": "e1a11954025852de6e8cc7650d788f1ffd2c50ea5d77ee017f8ec2434965a29f",
+  "executable_sha256": "d9d55cad9481590825a8d23a7d5152e6c4b8257fd3dfebad90079d8d9462812b",
   "comparisons": [
     {
       "run": "40031610717",
@@ -32,7 +32,7 @@
       "final_ui": 384,
       "final_non_ui": 1577,
       "verified": true,
-      "verification_seconds": 8.742235291,
+      "verification_seconds": 14.373196499999999,
       "identity": {
         "id": "46BD4146-305F-4A0A-96A8-74875A44C643",
         "revision": "b0dbfc5fd35dc9cb61d72462497e37d684aa644d"
@@ -65,7 +65,7 @@
       "capture_reused_from": "PrecisionTickets60-62.json",
       "source_export_sha256": "4a103634e301b747b1cc2280d3d12e67c71aa27423be2bdcef790958ef76791c",
       "sealed_capture_sha256": "2d67eb9b17cc5319d842b1d658e33867a7f0acfd046e204c9498e17173f68f9a",
-      "source_refresh_and_scope_seconds": 46.13799202442169
+      "source_refresh_and_scope_seconds": 21.855711936950684
     },
     {
       "run": "40035642452",
@@ -87,7 +87,7 @@
       "final_ui": 397,
       "final_non_ui": 1584,
       "verified": true,
-      "verification_seconds": 8.06996475,
+      "verification_seconds": 11.869547042,
       "identity": {
         "id": "BD7D2E09-959E-4AA4-9354-909CCA60C25E",
         "revision": "c3bc226f13b57b30851f1565c797866bc8ef7a8e"
@@ -120,11 +120,11 @@
       "capture_reused_from": "PrecisionTickets60-62.json",
       "source_export_sha256": "20ad3943f59aa5d46f1f718c8731809add1e4f6e2cc503b331fe216b5eb13b5e",
       "sealed_capture_sha256": "f2698885d6bbe66526bb8e4d94e8a3722b7cb13e2af6a5f87b0a70ce46aa6b56",
-      "source_refresh_and_scope_seconds": 22.453992009162903
+      "source_refresh_and_scope_seconds": 21.161911010742188
     }
   ],
   "package_validation": {
-    "swift_release_tests_reported": 390,
+    "swift_release_tests_reported": 393,
     "historical_replay_cases_passed": 2,
     "compiled_scrolling_cases_passed": 20,
     "python_capture_passed": 6,
@@ -133,6 +133,9 @@
     "compiled_global_binding_cases_passed": 3,
     "global_binding_scenarios_per_case": 3,
     "compiled_local_type_cases_passed": 6,
-    "local_type_scenarios_per_case": 2
+    "local_type_scenarios_per_case": 2,
+    "compiled_operator_binding_cases_passed": 4,
+    "operator_syntax_inventory_test_passed": true,
+    "compiled_interpolation_binding_cases_passed": 1
   }
 }

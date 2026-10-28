@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 13 checks contextual local types and default literal bindings.
-    static let currentProofVersion = 13
+    // Version 14 authenticates transitive operator bindings at both revisions.
+    static let currentProofVersion = 14
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -29,6 +29,9 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     /// Call shapes across the checked transitive body. Ambiguous overload sets
     /// cannot prove a binding when SIL omits labels and source call-site identity.
     public var sdkCallShapes: [String: Set<[String]>]? = nil
+    /// Prefix, infix and postfix operators across the checked transitive body.
+    /// Nil is incomplete evidence; literal operands do not prove SDK ownership.
+    public var effectOperators: Set<String>? = nil
 
     public struct Statement: Codable, Sendable {
         public var signature: String
@@ -239,13 +242,13 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         }
         guard !callers.isEmpty else { return nil }
         var effectCallees: [String: Int] = [:]
-        var attachmentMembers = Set<String>(), sdkMembers = Set<String>()
+        var attachmentMembers = Set<String>(), sdkMembers = Set<String>(), operators = Set<String>()
         var callShapes: [String: Set<[String]>] = [:]
         let effects = importsSupported ? safeCalleeEffects(function, methods: owner.methods, locations: locations,
-            proven: &effectCallees, attachmentMembers: &attachmentMembers, sdkMembers: &sdkMembers, callShapes: &callShapes) : nil
+            proven: &effectCallees, attachmentMembers: &attachmentMembers, sdkMembers: &sdkMembers, callShapes: &callShapes, operators: &operators) : nil
         return Self(name: name, callerLines: callers, proofVersion: currentProofVersion, statements: statements(in: function),
                     localAttachmentState: attachmentState || (effects ?? false), calleeEffectsSupported: effects != nil, effectCalleeLines: effects == nil ? nil : effectCallees,
-                    attachmentEffectMembers: effects == nil ? nil : attachmentMembers, sdkEffectMembers: effects == nil ? nil : sdkMembers, sdkCallShapes: effects == nil ? nil : callShapes)
+                    attachmentEffectMembers: effects == nil ? nil : attachmentMembers, sdkEffectMembers: effects == nil ? nil : sdkMembers, sdkCallShapes: effects == nil ? nil : callShapes, effectOperators: effects == nil ? nil : operators)
     }
 
     /// Added entries may be omitted only under an explicit separate-execution
@@ -268,7 +271,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     private static func safeCalleeEffects(_ function: FunctionDeclSyntax, methods allMethods: [FunctionDeclSyntax],
                                           locations: SourceLocationConverter, proven: inout [String: Int],
                                           attachmentMembers: inout Set<String>, sdkMembers: inout Set<String>,
-                                          callShapes: inout [String: Set<[String]>]) -> Bool? {
+                                          callShapes: inout [String: Set<[String]>], operators: inout Set<String>) -> Bool? {
         let methods = Dictionary(grouping: allMethods.filter { $0.modifiers.map(\.name.text) == ["private"] }, by: { $0.name.text })
         var usesAttachments = false, memberNames = Set<String>()
         var active = Set<SyntaxIdentifier>()
@@ -290,6 +293,17 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
                       let attachments = safeBody(candidate, methods: allMethods, validateBindings: true), let body = candidate.body else { return nil }
                 var callees: [FunctionDeclSyntax] = [], seen = Set<SyntaxIdentifier>()
                 for token in body.tokens(viewMode: .sourceAccurate) {
+                    // Interpolation lowers to member calls absent from the
+                    // expression's spelling. A concrete project overload can
+                    // disappear at head just like an explicit SDK member.
+                    if token.parent?.as(ExpressionSegmentSyntax.self)?.backslash.id == token.id {
+                        memberNames.formUnion(["init", "appendLiteral", "appendInterpolation"])
+                    }
+                    if token.parent?.as(BinaryOperatorExprSyntax.self)?.operator.id == token.id ||
+                        token.parent?.as(PrefixOperatorExprSyntax.self)?.operator.id == token.id ||
+                        token.parent?.as(PostfixOperatorExprSyntax.self)?.operator.id == token.id {
+                        operators.insert(token.text)
+                    }
                     if let subscriptCall = token.parent?.as(SubscriptCallExprSyntax.self), subscriptCall.leftSquare.id == token.id {
                         memberNames.insert("subscript")
                     }
@@ -368,8 +382,9 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             }
             if let loop = node.as(ForStmtSyntax.self) {
                 // Only a fixed literal range with no bound value or pattern
-                // matching is admitted. Compiler edges still authenticate the
-                // range operator and iterator implementations.
+                // matching is admitted. Both revisions must exclude project
+                // operator bindings before the head compiler can authenticate
+                // the standard range and iterator implementations.
                 guard loop.pattern.is(WildcardPatternSyntax.self), loop.whereClause == nil,
                       loop.tryKeyword == nil, loop.awaitKeyword == nil,
                       let range = loop.sequence.as(SequenceExprSyntax.self), range.elements.count == 3,
