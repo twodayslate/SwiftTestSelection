@@ -226,14 +226,19 @@ for no-op, documentation-only, test-only, scoped, or full-suite selections. Fres
 saved (`--base-graph` / `--head-graph`), analysis-cache hits, and `--head-only` paths
 all enforce the same policy. Base mappings retain conservative handling, so updating
 or removing a stale entry at head can repair the base mapping. The default remains
-non-strict. With no mapping file or no symbol entries there is nothing to validate;
+non-strict. An unreadable, malformed, or structurally invalid head mapping fails
+strict validation, including when loaded from a saved graph or cache. With no mapping
+file or a valid mapping without symbol entries there is nothing to validate;
 a legacy graph without compiler data fails if it has symbol entries.
 
 A failed validation exits **4** before emitting a selection report or executing tests,
 including with `--run`. The final stderr line is a JSON object with
 `code: "strict_mapping_validation_failed"` and a `diagnostics` array. Each item
-contains `code` (`unresolved_mapping_symbol` or `mapping_symbol_graph_unavailable`),
+contains `code` (`unresolved_mapping_symbol`, `mapping_symbol_graph_unavailable`,
+or `invalid_mapping_file`),
 `mappingFile`, `feature`, `pattern`, `revision`, `buildContext`, and `message`.
+`feature` and `pattern` are omitted for file-level errors. Older saved graphs with
+mapping-load failures in their diagnostics also fail strict validation.
 Earlier stderr lines may contain build progress. `revision` is the resolved head
 commit, or `WORKTREE` when `--head` is omitted. `buildContext` identifies the
 container, scheme, destination, configuration, test plan, and available toolchain

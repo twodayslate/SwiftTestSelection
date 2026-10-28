@@ -306,6 +306,7 @@ public struct XcodeAnalysis {
                 try result.mappings?.validate()
             } catch {
                 result.mappings = nil
+                result.mappingLoadError = String(describing: error)
                 result.diagnostics.append("Invalid UI mappings: \(error)")
             }
         }

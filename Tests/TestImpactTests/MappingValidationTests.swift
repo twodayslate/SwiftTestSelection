@@ -98,3 +98,43 @@ private func validate(_ graph: XcodeTestGraph) throws {
     // No test inventory or changed production source is required for validation.
     #expect(graph.tests.isEmpty)
 }
+
+@Test func strictMappingsRetainFileErrorsAcrossGraphArchives() throws {
+    var graph = mappingGraph(symbols: [])
+    graph.mappings = nil
+    graph.mappingLoadError = "Unknown fixture missing in UI feature checkout"
+    graph.diagnostics = ["Invalid UI mappings: " + graph.mappingLoadError!]
+    let json = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(graph))
+    let binary = try GraphArchive.decode(GraphArchive.encode(graph))
+    var legacy = graph
+    legacy.mappingLoadError = nil
+    // Old snapshots have only the existing diagnostic, with no new field.
+    legacy = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(legacy))
+    for snapshot in [graph, json, binary, legacy] {
+        do {
+            try validate(snapshot)
+            Issue.record("A discarded invalid mapping must not pass strict validation")
+        } catch let error as MappingValidationError {
+            let diagnostic = try #require(error.diagnostics.first)
+            #expect(diagnostic.code == "invalid_mapping_file")
+            #expect(diagnostic.mappingFile == "Config/ui.json")
+            #expect(diagnostic.revision == "head-sha")
+            #expect(diagnostic.feature == nil && diagnostic.pattern == nil)
+            #expect(diagnostic.message.contains("Unknown fixture missing"))
+        }
+        let options = XcodeConfiguration(container: .project, path: URL(fileURLWithPath: "/App.xcodeproj"),
+                                         scheme: "App", destination: "platform=macOS")
+        try XcodeAnalysis(options: options).validateMappings(in: snapshot, revision: "head")
+    }
+}
+
+@Test func strictMappingsReportStructuralErrorsForInMemoryMappings() throws {
+    var graph = mappingGraph(symbols: ["App.wasDeleted()"])
+    graph.mappings!.features[0].fixtures = ["missing"]
+    do {
+        try validate(graph)
+        Issue.record("Invalid in-memory mappings must return a structured error")
+    } catch let error as MappingValidationError {
+        #expect(error.diagnostics.first?.code == "invalid_mapping_file")
+    }
+}

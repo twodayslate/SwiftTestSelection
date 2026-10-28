@@ -6,8 +6,9 @@ import Foundation
 public struct MappingValidationDiagnostic: Codable, Sendable {
     public var code: String
     public var mappingFile: String
-    public var feature: String
-    public var pattern: String
+    /// Absent for file-level loading or schema errors.
+    public var feature: String?
+    public var pattern: String?
     public var revision: String
     public var buildContext: [String: String]
     public var message: String
@@ -18,7 +19,11 @@ public struct MappingValidationError: Error, Codable, Sendable, CustomStringConv
     public var code = "strict_mapping_validation_failed"
     public var diagnostics: [MappingValidationDiagnostic]
     public var description: String {
-        diagnostics.map { "\($0.mappingFile): feature \($0.feature), pattern \($0.pattern), revision \($0.revision): \($0.message)" }.joined(separator: "\n")
+        diagnostics.map { diagnostic in
+            [diagnostic.mappingFile, diagnostic.feature.map { "feature " + $0 },
+             diagnostic.pattern.map { "pattern " + $0 }, "revision " + diagnostic.revision,
+             diagnostic.message].compactMap { $0 }.joined(separator: ": ")
+        }.joined(separator: "\n")
     }
 }
 
@@ -27,8 +32,18 @@ extension XcodeTestGraph {
     /// or test selection. Low-level selector clients can invoke this explicitly.
     /// Base mappings are intentionally not validated by strict head policy.
     public func validateMappingSymbols(mappingFile: String, revision: String, buildContext: [String: String]) throws {
+        func invalidFile(_ reason: String) -> MappingValidationError {
+            MappingValidationError(diagnostics: [.init(code: "invalid_mapping_file", mappingFile: mappingFile,
+                revision: revision, buildContext: buildContext,
+                message: "Cannot validate mapping symbols because the mapping file could not be loaded or is invalid: " + reason)])
+        }
+        // Older saved graphs recorded only this diagnostic and discarded the
+        // mappings. They must fail strict validation just like fresh captures.
+        let legacyError = diagnostics.first { $0.hasPrefix("Invalid UI mappings: ") }
+        if let error = mappingLoadError ?? legacyError { throw invalidFile(error) }
         guard let mappings else { return }
-        try mappings.validate()
+        do { try mappings.validate() }
+        catch { throw invalidFile(String(describing: error)) }
         var diagnostics: [MappingValidationDiagnostic] = []
         for feature in mappings.features {
             let matches = dependencies.map { MappingIndex.symbolMatches(feature, graph: $0) }

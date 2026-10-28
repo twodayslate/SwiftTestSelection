@@ -62,15 +62,15 @@ else: sys.exit('Unexpected build/test command')
     def invoke(command, extra):
         return subprocess.run([common[0], command, *common[1:], *map(str, extra)], cwd=root, env=env, text=True, capture_output=True)
 
-    def failure(result, revision, pattern='App.wasDeleted()', code='unresolved_mapping_symbol'):
+    def failure(result, revision, pattern='App.wasDeleted()', code='unresolved_mapping_symbol', feature='checkout'):
         assert result.returncode == 4, result.stderr
         assert not result.stdout, result.stdout
         error = json.loads(result.stderr.splitlines()[-1])
         assert error['code'] == 'strict_mapping_validation_failed', error
         assert len(error['diagnostics']) == 1, error
         diagnostic = error['diagnostics'][0]
-        for key, value in dict(code=code, revision=revision, pattern=pattern, feature='checkout', mappingFile='ui.json').items():
-            assert diagnostic[key] == value, diagnostic
+        for key, value in dict(code=code, revision=revision, pattern=pattern, feature=feature, mappingFile='ui.json').items():
+            assert diagnostic.get(key) == value, diagnostic
         assert diagnostic['buildContext']['scheme'] == 'App', diagnostic
         return diagnostic
 
@@ -147,6 +147,59 @@ else: sys.exit('Unexpected build/test command')
     assert all('test' not in c and ('test-without-building' not in c or '-enumerate-tests' in c)
                for c in map(json.loads, calls.read_text().splitlines()))
     print('PASS fresh/cold/warm validation including no-op and non-production diffs; no test execution')
+
+    # Mapping parse/schema failures must survive being discarded by the loader.
+    invalid_policies = [
+        ('fixture', json.dumps(dict(version=1, features=[dict(name='checkout', symbols=['App.wasDeleted()'], fixtures=['missing'])]))),
+        ('duplicate', json.dumps(dict(version=1, features=[dict(name='checkout', symbols=['App.wasDeleted()'])] * 2))),
+        ('json', '{broken json'),
+    ]
+    for label, contents in invalid_policies:
+        (root / 'ui.json').write_text(contents)
+        git('add', 'ui.json')
+        git('commit', '-qm', 'Invalid mapping: ' + label)
+        revision = git('rev-parse', 'HEAD')
+        no_op = ['--base', revision, '--head', revision, '--format', 'json']
+        cache = ['--analysis-cache', root / ('invalid-' + label), '--cache-context', 'fixture']
+        for extra in [[], cache]:
+            # Default behavior is unchanged; this also seeds a non-strict cache.
+            ordinary = invoke('select', [*no_op, *extra])
+            assert ordinary.returncode == 0, ordinary.stderr
+            before = len(calls.read_text().splitlines())
+            failure(invoke('select', [*no_op, *extra, '--strict-mappings']), revision,
+                    pattern=None, feature=None, code='invalid_mapping_file')
+            if extra:
+                warm_calls = list(map(json.loads, calls.read_text().splitlines()[before:]))
+                assert not any('build-for-testing' in c and '-showBuildSettings' not in c for c in warm_calls)
+                assert not any('-enumerate-tests' in c for c in warm_calls)
+        cold_cache = ['--analysis-cache', root / ('invalid-cold-' + label), '--cache-context', 'fixture']
+        failure(invoke('select', [*no_op, *cold_cache, '--strict-mappings']), revision,
+                pattern=None, feature=None, code='invalid_mapping_file')
+        failure(invoke('select', ['--base', base, '--strict-mappings', '--run']), 'WORKTREE',
+                pattern=None, feature=None, code='invalid_mapping_file')
+    # Both new and pre-field saved graphs retain enough evidence to reject the file.
+    graph['dependencies'] = dict(schemaVersion=1, toolchain='', functions={}, tests={}, diagnostics=[], testDiagnostics={})
+    graph.pop('mappings')
+    graph['buildArtifact']['revision'] = revision
+    graph['diagnostics'] = ['Invalid UI mappings: Unknown fixture missing in UI feature checkout']
+    report['headRevision'] = revision
+    report_file.write_text(json.dumps(report))
+    for legacy in [False, True]:
+        if legacy:
+            graph.pop('mappingLoadError')
+        else:
+            graph['mappingLoadError'] = 'Unknown fixture missing in UI feature checkout'
+        head_file.write_text(json.dumps(graph))
+        failure(invoke('select', [*no_op, '--base-graph', head_file, '--head-graph', head_file, '--strict-mappings', '--run']),
+                revision, pattern=None, feature=None, code='invalid_mapping_file')
+        for command in ['run', 'verify-build']:
+            failure(invoke(command, ['--report', report_file, '--head-graph', head_file, '--strict-mappings']),
+                    revision, pattern=None, feature=None, code='invalid_mapping_file')
+    print('PASS new and legacy saved graphs reject invalid mappings before selection or execution')
+
+    assert not any(c[0] == 'test' or c[0] == 'test-without-building' and '-enumerate-tests' not in c
+                   for c in map(json.loads, calls.read_text().splitlines()))
+    print('PASS malformed/structurally invalid mappings fail on fresh/cold/warm no-op paths before --run')
 
     for command in [[str(tool), 'select', '--base', 'HEAD', '--strict-mappings'],
                     [common[0], 'graph', *common[1:], '--strict-mappings']]:
