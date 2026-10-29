@@ -421,9 +421,17 @@ enum PrivateTestHelperIsolation {
             return true
         }
         for (revision, sources) in revisions.enumerated() {
-            for unit in sources.flatMap(\.units) where unit.kind == "state" {
+            for unit in sources.flatMap(\.units) {
                 let owner = SDKTestHelperSyntax.canonicalName(String(unit.key.prefix { $0 != ":" }) + "." + unit.scope)
                 guard auditedOwners.contains(owner) else { continue }
+                // XCTest invokes lifecycle hooks without spelling their names
+                // in a caller. Reading their old bindings does not prove an old
+                // body whose direct SDK effects disappeared from the head graph.
+                if unit.helperCallableName.map(SDKTestHelperSyntax.lifecycle.contains) == true,
+                   !units.contains(where: { $0.key == unit.key && $0.fingerprint == unit.fingerprint }) {
+                    return "Unproven historical caller lifecycle implementation at " + unit.region.path + ":" + String(unit.region.startLine)
+                }
+                guard unit.kind == "state" else { continue }
                 guard let initialized = unit.helperStoredInitializer else {
                     return "Missing historical caller storage initializer evidence; refresh source proofs"
                 }

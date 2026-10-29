@@ -131,15 +131,17 @@ func compiledEnumCasesWithoutDefaultsPreserveIsolation(payload: Bool) throws {
         changes: [.init(path: "UI.swift")], baseRevision: "base")
     #expect(report.selectedTests == [tests[0]], "\(report.diagnostics)")
     #expect(report.diagnostics.isEmpty)
-    for revision in ["head", "base"] {
+    for (revision, field) in [("head", "defaults"), ("base", "defaults"), ("head", "arguments"), ("base", "arguments")] {
         var broken = current, old = base
         if revision == "head" {
             for i in broken.sources["UI:Extra.swift"]!.units.indices {
-                broken.sources["UI:Extra.swift"]!.units[i].helperEnumCaseWithoutDefaults = nil
+                if field == "defaults" { broken.sources["UI:Extra.swift"]!.units[i].helperEnumCaseWithoutDefaults = nil }
+                else { broken.sources["UI:Extra.swift"]!.units[i].helperEnumCaseValueArguments = nil }
             }
         } else {
             for i in old["UI:Extra.swift"]!.units.indices {
-                old["UI:Extra.swift"]!.units[i].helperEnumCaseWithoutDefaults = nil
+                if field == "defaults" { old["UI:Extra.swift"]!.units[i].helperEnumCaseWithoutDefaults = nil }
+                else { old["UI:Extra.swift"]!.units[i].helperEnumCaseValueArguments = nil }
             }
         }
         let report = XcodeHeadOnlySelector.select(current: broken, source: .init(base: old, mappings: current.mappings),

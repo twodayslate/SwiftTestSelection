@@ -58,6 +58,9 @@ public struct SourceUnit: Codable, Sendable {
     /// Enum cases without associated-value defaults have no declaration-side
     /// evaluation. Nil cannot establish this exemption for older inventories.
     public var helperEnumCaseWithoutDefaults: Bool? = nil
+    /// Only closed SDK value types can authenticate contextual literal arguments
+    /// without an enum constructor body in the compiler graph.
+    public var helperEnumCaseValueArguments: Bool? = nil
     /// Source overload shapes paired with SIL signatures during receiver audits.
     public var receiverCallShapes: [String: Set<[String]>]? = nil
     public var receiverCallSites: [String: [String]]? = nil
@@ -457,6 +460,16 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 helperEnumCaseWithoutDefaults: node.as(EnumCaseDeclSyntax.self).map { declaration in
                     declaration.elements.allSatisfy { element in
                         element.parameterClause?.parameters.allSatisfy { $0.defaultValue == nil } ?? true
+                    }
+                },
+                helperEnumCaseValueArguments: node.as(EnumCaseDeclSyntax.self).map { declaration in
+                    declaration.elements.allSatisfy { element in
+                        element.parameterClause?.parameters.allSatisfy { parameter in
+                            SDKReceiverContracts.typeNames(parameter.type.trimmedDescription)?.allSatisfy { name in
+                                SDKReceiverContracts.valueTypes.contains(name) ||
+                                    name.hasPrefix("Swift.") && SDKReceiverContracts.valueTypes.contains(String(name.dropFirst(6)))
+                            } == true
+                        } ?? true
                     }
                 },
                 receiverCallShapes: receiverCalls.shapes,

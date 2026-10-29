@@ -410,10 +410,18 @@ enum SDKTestHelperIsolation {
                         guard declarations.allSatisfy({ $0.helperDeclaredMembers != nil }) else { return rejected }
                         let implementations = declarations.filter { $0.helperDeclaredMembers!.contains(String(name)) }
                         guard !implementations.isEmpty, implementations.allSatisfy({ declaration in
-                            // Plain enum construction evaluates only its caller's
-                            // arguments. Associated-value defaults need the same
-                            // exact compiler/body proof as ordinary members.
-                            declaration.helperEnumCaseWithoutDefaults == true || provenHelpers.contains {
+                            if declaration.helperEnumCaseWithoutDefaults == true {
+                                // Literal arguments acquire their type from the
+                                // case signature. A changed payload or project
+                                // alias can run a different literal initializer.
+                                return declaration.helperEnumCaseValueArguments == true && revisions.allSatisfy { sources in
+                                    sources.flatMap(\.units).contains {
+                                        $0.key == declaration.key && $0.fingerprint == declaration.fingerprint &&
+                                            $0.helperEnumCaseWithoutDefaults == true && $0.helperEnumCaseValueArguments == true
+                                    }
+                                }
+                            }
+                            return provenHelpers.contains {
                                 $0.key == declaration.key && $0.region.path == declaration.region.path && $0.fingerprint == declaration.fingerprint
                             }
                         }) else { return rejected }
