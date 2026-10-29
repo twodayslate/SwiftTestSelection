@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 24 authenticates implicit lifecycle declarations, ancestry and import visibility.
-    static let currentProofVersion = 24
+    // Version 25 authenticates protocol defaults, qualified bindings and separate declaration bodies.
+    static let currentProofVersion = 25
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -194,7 +194,17 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
 
     private static func primitiveDefault(_ parameter: FunctionParameterSyntax) -> Bool {
         guard let value = parameter.defaultValue?.value else { return true }
-        switch parameter.type.trimmedDescription {
+        return primitiveValue(value, type: parameter.type.trimmedDescription)
+    }
+
+    /// Defaults may have separate SIL entry points from their owning declaration.
+    /// Only closed primitive literals are safe without visiting those thunks.
+    static func primitiveValue(_ value: ExprSyntax, type: String?) -> Bool {
+        switch type {
+        case nil:
+            return value.is(BooleanLiteralExprSyntax.self) || value.is(IntegerLiteralExprSyntax.self) ||
+                value.is(FloatLiteralExprSyntax.self) ||
+                value.as(StringLiteralExprSyntax.self)?.segments.allSatisfy { $0.is(StringSegmentSyntax.self) } == true
         case "Bool", "Swift.Bool": return value.is(BooleanLiteralExprSyntax.self)
         case "Int", "Swift.Int": return value.is(IntegerLiteralExprSyntax.self)
         case "Double", "Swift.Double": return value.is(FloatLiteralExprSyntax.self) || value.is(IntegerLiteralExprSyntax.self)

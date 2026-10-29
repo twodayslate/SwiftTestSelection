@@ -9,6 +9,9 @@ public struct HelperBindingUses: Codable, Sendable {
     public var operators: Set<String> = []
     public var members: Set<String> = []
     public var globals: Set<String> = []
+    /// Syntactic qualifiers may name the caller's module rather than a value.
+    /// Nil is legacy evidence; an empty map proves no qualified references.
+    public var qualifiedMembers: [String: Set<String>]? = [:]
 
     init(in node: Syntax) {
         for token in node.tokens(viewMode: .sourceAccurate) {
@@ -31,6 +34,10 @@ public struct HelperBindingUses: Codable, Sendable {
             if let reference = token.parent?.as(DeclReferenceExprSyntax.self), reference.baseName.id == token.id,
                reference.parent?.as(MemberAccessExprSyntax.self)?.declName.id == reference.id {
                 members.insert(SDKTestHelperSyntax.canonicalName(reference.baseName.text))
+                if let base = reference.parent?.as(MemberAccessExprSyntax.self)?.base?.as(DeclReferenceExprSyntax.self) {
+                    qualifiedMembers![SDKTestHelperSyntax.canonicalName(base.baseName.text), default: []]
+                        .insert(SDKTestHelperSyntax.canonicalName(reference.baseName.text))
+                }
             }
             if let reference = token.parent?.as(DeclReferenceExprSyntax.self), reference.baseName.id == token.id,
                reference.parent?.as(MemberAccessExprSyntax.self)?.declName.id != reference.id {
@@ -38,6 +45,13 @@ public struct HelperBindingUses: Codable, Sendable {
             }
             if let type = token.parent?.as(IdentifierTypeSyntax.self), type.name.id == token.id {
                 globals.insert(SDKTestHelperSyntax.canonicalName(type.name.text))
+            }
+            if let type = token.parent?.as(MemberTypeSyntax.self), type.name.id == token.id {
+                members.insert(SDKTestHelperSyntax.canonicalName(type.name.text))
+                if let base = type.baseType.as(IdentifierTypeSyntax.self) {
+                    qualifiedMembers![SDKTestHelperSyntax.canonicalName(base.name.text), default: []]
+                        .insert(SDKTestHelperSyntax.canonicalName(type.name.text))
+                }
             }
             // Without the base compiler, a call may be a constructor, ordinary
             // function, or callable value. Audit both implicit member names.

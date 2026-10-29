@@ -52,6 +52,11 @@ public struct SourceUnit: Codable, Sendable {
     public var helperBindingUses: HelperBindingUses? = nil
     /// Member declarations represented by this unit, including storage and initializers.
     public var helperDeclaredMembers: Set<String>? = nil
+    /// A declaration location cannot prove separate defaults, lazy initializers,
+    /// setters or observers. Nil is legacy or incomplete effect evidence.
+    public var helperRegionEffectsComplete: Bool? = nil
+    /// Nominal/extension inheritance, including protocol conformances. Nil is legacy evidence.
+    public var helperInheritedTypes: [String]? = nil
     /// A stored-property initializer may execute through a synthesized constructor.
     /// Nil is legacy evidence and cannot authenticate historical initialization.
     public var helperStoredInitializer: Bool? = nil
@@ -315,6 +320,35 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             node.is(SomeOrAnyTypeSyntax.self) ||
                 node.children(viewMode: .sourceAccurate).contains(where: containsOpaqueResult)
         }
+        func singleGetter(_ block: AccessorBlockSyntax?) -> Bool {
+            guard let accessors = block?.accessors.as(AccessorDeclListSyntax.self) else { return true }
+            return accessors.count == 1 && accessors.first?.accessorSpecifier.text == "get"
+        }
+        func regionEffectsComplete(_ node: Syntax) -> Bool {
+            let parameters = node.as(FunctionDeclSyntax.self)?.signature.parameterClause.parameters
+                ?? node.as(InitializerDeclSyntax.self)?.signature.parameterClause.parameters
+                ?? node.as(SubscriptDeclSyntax.self)?.parameterClause.parameters
+            if let parameters {
+                guard parameters.allSatisfy({ parameter in
+                    parameter.defaultValue.map { PrivateTestHelperSyntax.primitiveValue($0.value, type: parameter.type.trimmedDescription) } ?? true
+                }) else { return false }
+            }
+            if let subscriptDecl = node.as(SubscriptDeclSyntax.self) { return singleGetter(subscriptDecl.accessorBlock) }
+            if let variable = node.as(VariableDeclSyntax.self) {
+                guard !variable.modifiers.contains(where: { $0.name.text == "lazy" }) else { return false }
+                return variable.bindings.allSatisfy { binding in
+                    singleGetter(binding.accessorBlock) && (binding.initializer.map { PrivateTestHelperSyntax.primitiveValue($0.value, type: binding.typeAnnotation?.type.trimmedDescription) } ?? true)
+                }
+            }
+            if let cases = node.as(EnumCaseDeclSyntax.self) {
+                return cases.elements.allSatisfy { element in
+                    element.parameterClause?.parameters.allSatisfy { parameter in
+                        parameter.defaultValue.map { PrivateTestHelperSyntax.primitiveValue($0.value, type: parameter.type.trimmedDescription) } ?? true
+                    } ?? true
+                }
+            }
+            return true
+        }
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String], plainExtension: Bool? = nil) {
             var declaredMembers = Set<String>()
             if scope.isEmpty {
@@ -331,6 +365,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     }
                 } else if let alias = node.as(TypeAliasDeclSyntax.self) {
                     result.helperGlobalDeclarations![SDKTestHelperSyntax.canonicalName(alias.name.text)] = false
+                } else if let actor = node.as(ActorDeclSyntax.self) {
+                    // Actor bodies retain their existing opaque source boundary.
+                    // Their constructors cannot borrow a head struct's proof.
+                    result.helperGlobalDeclarations![SDKTestHelperSyntax.canonicalName(actor.name.text)] = false
                 }
             }
             if let function = node.as(FunctionDeclSyntax.self), ["!", "==", "!=", "&&", "||"].contains(function.name.text) {
@@ -345,6 +383,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 else if node.is(InitializerDeclSyntax.self) { names = ["init"] }
                 else if node.is(DeinitializerDeclSyntax.self) { names = ["deinit"] }
                 else if node.is(SubscriptDeclSyntax.self) { names = ["subscript"] }
+                else if let alias = node.as(TypeAliasDeclSyntax.self) { names = [alias.name.text] }
+                else if let actor = node.as(ActorDeclSyntax.self) { names = [actor.name.text] }
                 else if let cases = node.as(EnumCaseDeclSyntax.self) { names = cases.elements.map { $0.name.text } }
                 else if let variable = node.as(VariableDeclSyntax.self) {
                     names = variable.bindings.compactMap { $0.pattern.as(IdentifierPatternSyntax.self)?.identifier.text }
@@ -463,6 +503,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported),
                 helperBindingUses: HelperBindingUses(in: node),
                 helperDeclaredMembers: declaredMembers,
+                helperRegionEffectsComplete: regionEffectsComplete(node),
+                helperInheritedTypes: (node.as(ClassDeclSyntax.self)?.inheritanceClause
+                    ?? node.as(StructDeclSyntax.self)?.inheritanceClause
+                    ?? node.as(EnumDeclSyntax.self)?.inheritanceClause
+                    ?? node.as(ProtocolDeclSyntax.self)?.inheritanceClause
+                    ?? node.as(ExtensionDeclSyntax.self)?.inheritanceClause)?.inheritedTypes.map { $0.type.trimmedDescription } ?? [],
                 helperStoredInitializer: node.as(VariableDeclSyntax.self)?.bindings.contains { $0.initializer != nil } ?? false,
                 helperEnumCaseWithoutDefaults: node.as(EnumCaseDeclSyntax.self).map { declaration in
                     declaration.elements.allSatisfy { element in

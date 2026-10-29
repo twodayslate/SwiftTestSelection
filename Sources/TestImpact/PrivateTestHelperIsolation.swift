@@ -354,17 +354,25 @@ enum PrivateTestHelperIsolation {
         }
         var operatorsByModule: [String: Set<String>] = [:], globalsByModule: [String: Set<String>] = [:], members = Set<String>()
         for unit in allUnits {
+            guard unit.helperRegionEffectsComplete == true else {
+                return "Unproven or missing historical caller declaration-body effects at " + unit.region.path + ":" + String(unit.region.startLine)
+            }
             // Identical body text can bind to a different external overload
             // after an import changes. Only the head has compiler evidence.
             guard unit.receiverImportsSupported == true else {
                 return "Unproven historical caller imports at " + unit.region.path + ":" + String(unit.region.startLine)
             }
-            guard let uses = unit.helperBindingUses else { return "Missing historical caller expression bindings; refresh source proofs" }
+            guard let uses = unit.helperBindingUses, let qualified = uses.qualifiedMembers else {
+                return "Missing historical caller expression bindings; refresh source proofs"
+            }
             let module = String(unit.key.prefix { $0 != ":" })
             // Unknown ownership must consider every checked module's bindings.
             for candidate in module.isEmpty ? checkedModules : [module] {
                 operatorsByModule[candidate, default: []].formUnion(uses.operators)
                 globalsByModule[candidate, default: []].formUnion(uses.globals)
+                // UI.produce and UI.Worker are module globals/type roots, even
+                // though SwiftSyntax represents them as member references.
+                globalsByModule[candidate, default: []].formUnion(qualified[SDKTestHelperSyntax.canonicalName(candidate)] ?? [])
             }
             members.formUnion(uses.members)
             // Bare references can be getters or method values as well as
@@ -414,40 +422,73 @@ enum PrivateTestHelperIsolation {
             for type in source.units where type.kind == "type" {
                 let module = String(type.key.prefix { $0 != ":" })
                 let root = SDKTestHelperSyntax.canonicalName(String(type.scope.split(separator: ".").first ?? ""))
-                let unknownOwner = module.isEmpty && (globalsByModule.values.contains { $0.contains(root) } ||
+                let leaf = SDKTestHelperSyntax.canonicalName(String(type.scope.split(separator: ".").last ?? ""))
+                // Nested types may be referenced lexically or through Self,
+                // without spelling their enclosing type or module at all.
+                let referenced = globalsByModule[module] ?? []
+                let unknownOwner = module.isEmpty && (globalsByModule.values.contains { $0.contains(root) || $0.contains(leaf) } ||
+                    members.contains(leaf) ||
                     auditedOwners.contains { $0.hasSuffix("." + SDKTestHelperSyntax.canonicalName(type.scope)) })
-                if globalsByModule[module]?.contains(root) == true || unknownOwner {
+                if referenced.contains(root) || referenced.contains(leaf) ||
+                    checkedModules.contains(module) && members.contains(leaf) || unknownOwner {
                     auditedOwners.insert(SDKTestHelperSyntax.canonicalName(module + "." + type.scope))
                 }
             }
         }
-        // The head closure cannot name an ancestor removed by reparenting.
-        // Walk both source hierarchies to a fixed point, including nested,
-        // qualified and specialized parents. Ambiguous names widen the audit;
-        // they must never silently discard a possible project ancestor.
-        let typeOwners = Set(revisions.joined().flatMap(\.units).filter { $0.kind == "type" }.map {
-            SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope)
+        // Follow both superclass and protocol/default-implementation owners.
+        // The head closure cannot name a removed ancestor or a default witness
+        // displaced by an explicit implementation. Ambiguous names widen proof.
+        let typeUnits = revisions.joined().flatMap(\.units).filter { ["type", "extension"].contains($0.kind) }
+        func ownerName(_ unit: SourceUnit) -> String {
+            SDKTestHelperSyntax.canonicalName(String(unit.key.prefix { $0 != ":" }) + "." + unit.scope)
+        }
+        let typeOwners = Set(typeUnits.map(ownerName))
+        let classOwners = Set(Dictionary(grouping: typeUnits.filter { $0.kind == "type" }, by: ownerName).compactMap { owner, declarations in
+            declarations.allSatisfy { $0.fingerprint.hasPrefix("classDecl[") } ? owner : nil
         })
+        let sdkClasses: Set<String> = ["XCTestCase", "XCTest.XCTestCase", "NSObject", "Foundation.NSObject"]
+        var conformingOwners = Set<String>(), parentOwners: [String: Set<String>] = [:]
         var pendingOwners = Array(auditedOwners), visitedOwners = Set<String>()
         while let owner = pendingOwners.popLast() {
             guard visitedOwners.insert(owner).inserted else { continue }
             for source in revisions.joined() {
-                let classes = source.units.filter { $0.kind == "type" && $0.fingerprint.hasPrefix("classDecl[") &&
-                    SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope) == owner }
-                guard !classes.isEmpty else { continue }
-                guard let superclasses = source.superclasses,
-                      let parents = superclasses.first(where: { SDKTestHelperSyntax.canonicalName($0.key) == owner })?.value else {
-                    return "Missing historical caller superclass evidence; refresh source proofs"
-                }
-                for parent in parents {
-                    guard let nominal = SwiftSourceSnapshot.nominalTypeName(parent) else {
-                        return "Unproven historical caller superclass: " + parent
+                for declaration in source.units where ["type", "extension"].contains(declaration.kind) && ownerName(declaration) == owner {
+                    let isClass = declaration.fingerprint.hasPrefix("classDecl[")
+                    if isClass, source.superclasses?.first(where: {
+                        SDKTestHelperSyntax.canonicalName($0.key) == owner
+                    }) == nil {
+                        return "Missing historical caller superclass evidence; refresh source proofs"
                     }
-                    let name = SDKTestHelperSyntax.canonicalName(nominal)
-                    for ancestor in typeOwners where ancestor == name || ancestor.hasSuffix("." + name) {
-                        if auditedOwners.insert(ancestor).inserted { pendingOwners.append(ancestor) }
+                    guard let parents = declaration.helperInheritedTypes else {
+                        return "Missing historical caller conformance evidence; refresh source proofs"
+                    }
+                    for parent in parents {
+                        guard let nominal = SwiftSourceSnapshot.nominalTypeName(parent) else {
+                            return "Unproven historical caller inherited type: " + parent
+                        }
+                        let name = SDKTestHelperSyntax.canonicalName(nominal)
+                        let candidates = typeOwners.filter { $0 == name || $0.hasSuffix("." + name) }
+                        // A class's known superclass does not supply protocol
+                        // defaults. Unknown/aliased inherited types remain opaque.
+                        if !isClass || (!sdkClasses.contains(name) &&
+                            (candidates.isEmpty || !candidates.isSubset(of: classOwners))) {
+                            conformingOwners.insert(owner)
+                        }
+                        parentOwners[owner, default: []].formUnion(candidates)
+                        for ancestor in candidates {
+                            if auditedOwners.insert(ancestor).inserted { pendingOwners.append(ancestor) }
+                        }
                     }
                 }
+            }
+        }
+        // Overrides on descendants can supply a conformance inherited from a
+        // source superclass or protocol, including one removed at head.
+        var expanded = true
+        while expanded {
+            expanded = false
+            for (owner, parents) in parentOwners where !parents.isDisjoint(with: conformingOwners) {
+                if conformingOwners.insert(owner).inserted { expanded = true }
             }
         }
         // Synthesized initializers have no explicit member declaration. Their
@@ -457,7 +498,9 @@ enum PrivateTestHelperIsolation {
         // synthesized construction, without a competing explicit initializer.
         let headUnits = current.sources.values.flatMap(\.units)
         func storedInitializerIsProven(_ old: SourceUnit) -> Bool {
+            guard old.helperRegionEffectsComplete == true else { return false }
             if units.contains(where: { $0.key == old.key && $0.fingerprint == old.fingerprint }) { return true }
+            guard old.helperStoredInitializer == true else { return false }
             let module = String(old.key.prefix { $0 != ":" })
             func sameOwner(_ unit: SourceUnit) -> Bool {
                 unit.key.hasPrefix(module + ":") && unit.scope == old.scope
@@ -476,9 +519,10 @@ enum PrivateTestHelperIsolation {
                 // Changed ancestry can also lead to an imported or aliased
                 // superclass without an auditable project body. Authenticate
                 // the header itself rather than trusting the head's ancestry.
-                if revision == 1, unit.kind == "type", unit.fingerprint.hasPrefix("classDecl["),
+                if revision == 1, ["type", "extension"].contains(unit.kind),
+                   (unit.fingerprint.hasPrefix("classDecl[") || conformingOwners.contains(owner)),
                    !headUnits.contains(where: { $0.key == unit.key && $0.fingerprint == unit.fingerprint }) {
-                    return "Unproven historical caller class header at " + unit.region.path + ":" + String(unit.region.startLine)
+                    return "Unproven historical caller type or conformance header at " + unit.region.path + ":" + String(unit.region.startLine)
                 }
                 // XCTest invokes lifecycle hooks without spelling their names
                 // in a caller. Reading their old bindings does not prove an old
@@ -487,6 +531,20 @@ enum PrivateTestHelperIsolation {
                 // FunctionDeclSyntax, but also execute implicitly.
                 guard let declarations = unit.helperDeclaredMembers else {
                     return "Missing historical caller member declaration evidence; refresh source proofs"
+                }
+                // A default implementation can invoke any requirement without
+                // its name appearing at the call site (isEmpty, first, iteration,
+                // formatting, etc.). With no base compiler, every source member
+                // of a participating historical conformance needs exact head
+                // closure evidence. An unchanged spelling is not an effect proof.
+                if revision == 1, conformingOwners.contains(owner), !declarations.isEmpty,
+                   unit.bodylessProtocolRequirement == nil,
+                   !(unit.fingerprint.hasPrefix("typeAliasDecl[") &&
+                     headUnits.contains { $0.key == unit.key && $0.fingerprint == unit.fingerprint }),
+                   !(unit.helperEnumCaseWithoutDefaults == true && unit.helperEnumCaseValueArguments == true &&
+                     headUnits.contains { $0.key == unit.key && $0.fingerprint == unit.fingerprint }),
+                   !storedInitializerIsProven(unit) {
+                    return "Unproven historical caller conformance implementation at " + unit.region.path + ":" + String(unit.region.startLine)
                 }
                 if !declarations.isDisjoint(with: SDKTestHelperSyntax.lifecycle.union(["init", "deinit"])),
                    !units.contains(where: { $0.key == unit.key && $0.fingerprint == unit.fingerprint }) {
