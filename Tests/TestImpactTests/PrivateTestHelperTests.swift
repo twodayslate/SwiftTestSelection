@@ -90,7 +90,9 @@ func compiledPrivateXCTestHelpersSelectOnlyProvenConsumers(added: Bool, safety: 
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let helper = added ? navigationHelper : sharingHelper
-    let call = added ? "let tab = navigationTab(\"Settings\", in: app); XCTAssertTrue(tab.exists)" : "assertShareOptions(in: app)"
+    // Keep the old caller statements: removed historical SDK effects have no
+    // head compiler evidence, even when the replacement helper itself is safe.
+    let call = added ? "XCTAssertTrue(app.buttons[\"Settings\"].exists); let tab = navigationTab(\"Settings\", in: app); XCTAssertTrue(tab.exists)" : "assertShareOptions(in: app)"
     var before = helperFixture(added ? "" : helper, call: added ? "XCTAssertTrue(app.buttons[\"Settings\"].exists)" : call)
     var after = helperFixture(added ? helper : helper.replacingOccurrences(of: "    XCTAssertTrue(app.buttons[\"Content\"]", with: "    XCTAssertTrue(app.buttons[\"Send in Messages\"].exists, \"Expected a direct Messages card action.\")\n    XCTAssertTrue(app.buttons[\"Content\"]"), call: call)
     func unsafe(_ text: String) -> String {

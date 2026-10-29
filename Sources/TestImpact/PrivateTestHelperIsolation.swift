@@ -342,7 +342,7 @@ enum PrivateTestHelperIsolation {
             // Match by header even after a source move. State-unit keys include
             // their initializers, so include historical storage at this owner.
             // Synthesized initializers can point only at the class header.
-            allUnits += oldUnits.filter { old in
+            let historical = oldUnits.filter { old in
                 // Removed files have an empty module, not their former owner.
                 // They may supply this declaration; absence of ownership is
                 // not evidence that their historical expressions are unrelated.
@@ -351,6 +351,31 @@ enum PrivateTestHelperIsolation {
                     (["state", "type"].contains(unit.kind) && old.kind == "state" ||
                      unit.kind == "type" && old.helperCallableName.map(SDKTestHelperSyntax.lifecycle.contains) == true))
             }
+            for old in historical where old.kind == "function" {
+                // Binding names alone say nothing about an SDK effect removed
+                // from a caller. Only unchanged statements at the start of the
+                // current body retain their execution and lexical context. The
+                // helper-specific proof separately permits inserted assertions.
+                let preservedHelper = provenHelpers.contains {
+                    $0.key == old.key && $0.region.path == old.region.path && $0.fingerprint == old.fingerprint
+                }
+                let counterparts = units.filter { checked in
+                    checked.key == old.key || (old.key.hasPrefix(":") &&
+                        old.key == String(checked.key.drop(while: { $0 != ":" })))
+                }
+                let preservedCaller = counterparts.count == 1 && counterparts.allSatisfy { checked in
+                    if checked.fingerprint == old.fingerprint { return true }
+                    guard let prior = old.helperCallerStatementSignatures,
+                          let head = checked.helperCallerStatementSignatures else { return false }
+                    return head.starts(with: prior)
+                }
+                guard preservedHelper || preservedCaller else {
+                    let boundary = old.helperCallableName.map(SDKTestHelperSyntax.lifecycle.contains) == true
+                        ? "lifecycle implementation" : "body effects"
+                    return "Unproven historical caller " + boundary + " at " + old.region.path + ":" + String(old.region.startLine)
+                }
+            }
+            allUnits += historical
         }
         var operatorsByModule: [String: Set<String>] = [:], globalsByModule: [String: Set<String>] = [:], members = Set<String>()
         for unit in allUnits {
@@ -413,9 +438,27 @@ enum PrivateTestHelperIsolation {
             }
         }
         let revisions = [Array(current.sources.values), oldSources]
-        var auditedOwners = Set(units.filter { !$0.scope.isEmpty }.map {
-            SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope)
-        })
+        let knownModules = Set(revisions.joined().flatMap(\.units).map {
+            SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }))
+        }).subtracting([""])
+        var ownerNames: [String: String] = [:]
+        func ownerName(_ unit: SourceUnit) -> String {
+            let spelling = String(unit.key.prefix { $0 != ":" }) + ":" + unit.scope
+            if let cached = ownerNames[spelling] { return cached }
+            let module = SDKTestHelperSyntax.canonicalName(String(unit.key.prefix { $0 != ":" }))
+            var scope = SDKTestHelperSyntax.canonicalName(SwiftSourceSnapshot.nominalTypeName(unit.scope) ?? unit.scope)
+            // Extension scopes retain their source spelling. A module-qualified
+            // scope must join the same audit as the nominal declaration. For
+            // unowned base files consider every known module qualification.
+            if !module.isEmpty, scope.hasPrefix(module + ".") { scope = String(scope.dropFirst(module.count + 1)) }
+            else if module.isEmpty, let qualifier = knownModules.first(where: { scope.hasPrefix($0 + ".") }) {
+                scope = String(scope.dropFirst(qualifier.count + 1))
+            }
+            let owner = module + "." + scope
+            ownerNames[spelling] = owner
+            return owner
+        }
+        var auditedOwners = Set(units.filter { !$0.scope.isEmpty }.map(ownerName))
         // A receiver construction can disappear at head. Include project type
         // roots mentioned in either revision, even without a current callee.
         for source in revisions.joined() {
@@ -431,7 +474,7 @@ enum PrivateTestHelperIsolation {
                     auditedOwners.contains { $0.hasSuffix("." + SDKTestHelperSyntax.canonicalName(type.scope)) })
                 if referenced.contains(root) || referenced.contains(leaf) ||
                     checkedModules.contains(module) && members.contains(leaf) || unknownOwner {
-                    auditedOwners.insert(SDKTestHelperSyntax.canonicalName(module + "." + type.scope))
+                    auditedOwners.insert(ownerName(type))
                 }
             }
         }
@@ -439,8 +482,17 @@ enum PrivateTestHelperIsolation {
         // The head closure cannot name a removed ancestor or a default witness
         // displaced by an explicit implementation. Ambiguous names widen proof.
         let typeUnits = revisions.joined().flatMap(\.units).filter { ["type", "extension"].contains($0.kind) }
-        func ownerName(_ unit: SourceUnit) -> String {
-            SDKTestHelperSyntax.canonicalName(String(unit.key.prefix { $0 != ":" }) + "." + unit.scope)
+        // An alias may hide the target of an extension-added conformance. The
+        // inventory records alias names, not resolved targets, so none can
+        // establish that its protocol defaults are unrelated to a caller.
+        let aliases = Set(revisions.joined().flatMap { $0.typeAliases ?? [] }.map(SDKTestHelperSyntax.canonicalName))
+        for declaration in typeUnits where declaration.kind == "extension" {
+            let scope = SDKTestHelperSyntax.canonicalName(SwiftSourceSnapshot.nominalTypeName(declaration.scope) ?? declaration.scope)
+            if declaration.helperInheritedTypes?.isEmpty != true,
+               aliases.contains(where: { $0 == scope || $0.hasSuffix("." + scope) ||
+                   scope.split(separator: ".").last == $0.split(separator: ".").last }) {
+                return "Unproven historical caller conformance through a type alias at " + declaration.region.path + ":" + String(declaration.region.startLine)
+            }
         }
         let typeOwners = Set(typeUnits.map(ownerName))
         let classOwners = Set(Dictionary(grouping: typeUnits.filter { $0.kind == "type" }, by: ownerName).compactMap { owner, declarations in
@@ -451,11 +503,19 @@ enum PrivateTestHelperIsolation {
         var pendingOwners = Array(auditedOwners), visitedOwners = Set<String>()
         while let owner = pendingOwners.popLast() {
             guard visitedOwners.insert(owner).inserted else { continue }
+            // A removed extension can lose ownership independently of its
+            // nominal type, including an ancestor discovered during this walk.
+            for candidate in typeOwners where candidate != owner &&
+                (candidate.hasPrefix(".") && owner.hasSuffix(candidate) ||
+                 owner.hasPrefix(".") && candidate.hasSuffix(owner)) {
+                if auditedOwners.insert(candidate).inserted { pendingOwners.append(candidate) }
+            }
             for source in revisions.joined() {
                 for declaration in source.units where ["type", "extension"].contains(declaration.kind) && ownerName(declaration) == owner {
                     let isClass = declaration.fingerprint.hasPrefix("classDecl[")
                     if isClass, source.superclasses?.first(where: {
-                        SDKTestHelperSyntax.canonicalName($0.key) == owner
+                        SDKTestHelperSyntax.canonicalName($0.key) == owner ||
+                            SDKTestHelperSyntax.canonicalName($0.key) == String(declaration.key.prefix { $0 != ":" }) + "." + SDKTestHelperSyntax.canonicalName(declaration.scope)
                     }) == nil {
                         return "Missing historical caller superclass evidence; refresh source proofs"
                     }
@@ -503,7 +563,7 @@ enum PrivateTestHelperIsolation {
             guard old.helperStoredInitializer == true else { return false }
             let module = String(old.key.prefix { $0 != ":" })
             func sameOwner(_ unit: SourceUnit) -> Bool {
-                unit.key.hasPrefix(module + ":") && unit.scope == old.scope
+                unit.key.hasPrefix(module + ":") && ownerName(unit) == ownerName(old)
             }
             guard headUnits.contains(where: { $0.key == old.key && $0.fingerprint == old.fingerprint }),
                   units.contains(where: { sameOwner($0) && $0.kind == "type" }),
@@ -514,7 +574,7 @@ enum PrivateTestHelperIsolation {
         }
         for (revision, sources) in revisions.enumerated() {
             for unit in sources.flatMap(\.units) {
-                let owner = SDKTestHelperSyntax.canonicalName(String(unit.key.prefix { $0 != ":" }) + "." + unit.scope)
+                let owner = ownerName(unit)
                 guard auditedOwners.contains(owner) else { continue }
                 // Changed ancestry can also lead to an imported or aliased
                 // superclass without an auditable project body. Authenticate
@@ -564,8 +624,13 @@ enum PrivateTestHelperIsolation {
         } }
         let proven = provenHelpers + units + historicalDeclarations
         let owners = SDKReceiverContracts.bindingNames.union(["NSObject", "NSObjectProtocol", "XCTest", "XCUIElementQuery", "XCUICoordinate", "CGRect", "CGVector"])
+        // The dispatch inventories keep raw source scopes. Preserve those
+        // aliases too when passing normalized owners into their binding audit.
+        let dispatchOwners = auditedOwners.union(revisions.joined().flatMap(\.units).filter {
+            auditedOwners.contains(ownerName($0))
+        }.map { SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope) })
         if let reason = SDKTestHelperIsolation.memberBindingBlocker(revisions: revisions, members: members,
-            sdkOwners: owners, provenHelpers: proven, auditedProjectOwners: auditedOwners) { return "Caller expression: " + reason }
+            sdkOwners: owners, provenHelpers: proven, auditedProjectOwners: dispatchOwners) { return "Caller expression: " + reason }
         guard SDKTestHelperIsolation.overridesUnshadowed(revisions: revisions, members: members.subtracting(["init"]),
             sdkReceivers: owners.subtracting(["NSObject", "NSObjectProtocol", "XCTest"]), provenMethods: proven) else { return "Unproven historical caller member override" }
         return nil

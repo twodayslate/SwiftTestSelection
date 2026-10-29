@@ -55,6 +55,9 @@ public struct SourceUnit: Codable, Sendable {
     /// A declaration location cannot prove separate defaults, lazy initializers,
     /// setters or observers. Nil is legacy or incomplete effect evidence.
     public var helperRegionEffectsComplete: Bool? = nil
+    /// Whole top-level statements, usable for append-only caller changes. Local
+    /// functions/types can rebind earlier expressions, so they provide no proof.
+    public var helperCallerStatementSignatures: [String]? = nil
     /// Nominal/extension inheritance, including protocol conformances. Nil is legacy evidence.
     public var helperInheritedTypes: [String]? = nil
     /// A stored-property initializer may execute through a synthesized constructor.
@@ -325,6 +328,11 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             return accessors.count == 1 && accessors.first?.accessorSpecifier.text == "get"
         }
         func regionEffectsComplete(_ node: Syntax) -> Bool {
+            // A head compiler visits only its active configuration. Identical
+            // source text cannot authenticate effects in a historical branch.
+            guard !node.tokens(viewMode: .sourceAccurate).contains(where: {
+                $0.parent?.is(IfConfigDeclSyntax.self) == true
+            }) else { return false }
             let parameters = node.as(FunctionDeclSyntax.self)?.signature.parameterClause.parameters
                 ?? node.as(InitializerDeclSyntax.self)?.signature.parameterClause.parameters
                 ?? node.as(SubscriptDeclSyntax.self)?.parameterClause.parameters
@@ -504,6 +512,14 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 helperBindingUses: HelperBindingUses(in: node),
                 helperDeclaredMembers: declaredMembers,
                 helperRegionEffectsComplete: regionEffectsComplete(node),
+                helperCallerStatementSignatures: node.as(FunctionDeclSyntax.self).flatMap { function in
+                    guard let body = function.body,
+                          !body.tokens(viewMode: .sourceAccurate).contains(where: { token in
+                              guard let declaration = token.parent?.as(DeclSyntax.self) else { return false }
+                              return !declaration.is(VariableDeclSyntax.self)
+                          }) else { return nil }
+                    return body.statements.map { fingerprint(Syntax($0.item)) }
+                },
                 helperInheritedTypes: (node.as(ClassDeclSyntax.self)?.inheritanceClause
                     ?? node.as(StructDeclSyntax.self)?.inheritanceClause
                     ?? node.as(EnumDeclSyntax.self)?.inheritanceClause
