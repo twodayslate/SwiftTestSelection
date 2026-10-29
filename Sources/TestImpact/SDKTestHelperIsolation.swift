@@ -376,13 +376,15 @@ enum SDKTestHelperIsolation {
                     })?.region ?? declarations.first?.region
                     let rejected = "Unproven member binding \(member) at \(location?.path ?? "unknown source"):\(location?.startLine ?? 0) (revision \(revisionIndex + 1))"
                     // Requirements cannot authenticate SDK namesakes or aliases.
-                    let unshadowedOwner = parts.dropLast().last.map { !sdkOwners.contains(String($0)) } == true &&
-                        !aliases.contains(where: { $0 == owner || $0.hasSuffix("." + owner) })
+                    let aliasedOwner = aliases.contains { $0 == owner || $0.hasSuffix("." + owner) }
+                    let unshadowedOwner = parts.dropLast().last.map { !sdkOwners.contains(String($0)) } == true && !aliasedOwner
                     let auditedOwner = auditedProjectOwners.contains(owner) ||
-                        modules.contains { auditedProjectOwners.contains($0 + "." + owner) }
-                    if name == "subscript", !auditedOwner {
+                        modules.contains { auditedProjectOwners.contains($0 + "." + owner) } ||
+                        (modules.contains("") && auditedProjectOwners.contains { $0.hasSuffix("." + owner) })
+                    if name == "subscript", !auditedOwner, !aliasedOwner {
                         // A labeled-only subscript cannot replace the SDK's
-                        // single unlabeled getter. Missing evidence still fails.
+                        // single unlabeled getter. An alias may name a checked
+                        // project receiver, whose labeled overloads still matter.
                         let subscripts = declarations.filter { $0.fingerprint.hasPrefix("subscriptDecl[") }
                         if !subscripts.isEmpty, subscripts.allSatisfy({ $0.subscriptAcceptsSingleUnlabeledArgument == false }) { continue }
                     }

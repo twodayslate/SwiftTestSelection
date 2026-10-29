@@ -58,7 +58,10 @@ func compiledHistoricalDestructorsAndAncestorsRequireEffects(kind: String, remov
     try #require(DependencyIndex(graph).paths(to: hooks).path(from: graph.tests[tests[0]] ?? []) != nil)
     for unowned in [false, true] {
         var source = XcodeHeadOnlySources(base: try GraphArchive.decode(GraphArchive.encode(old)).sources, mappings: current.mappings)
-        if unowned { source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift") }
+        if unowned {
+            source.base.removeValue(forKey: "UI:Extra.swift")
+            source.unownedBaseSources["Extra.swift"] = .parse(oldExtra, path: "Extra.swift", module: "")
+        }
         let report = XcodeHeadOnlySelector.select(current: current, source: source,
             changes: [.init(path: "UI.swift")], baseRevision: "base")
         #expect(report.selectedTests == tests.sorted(), "kind=\(kind) removed=\(removed) unowned=\(unowned) selected=\(report.selectedTests) diagnostics=\(report.diagnostics)")
@@ -92,4 +95,3 @@ func compiledHistoricalDestructorsAndAncestorsRequireEffects(kind: String, remov
         }
     }
 }
-

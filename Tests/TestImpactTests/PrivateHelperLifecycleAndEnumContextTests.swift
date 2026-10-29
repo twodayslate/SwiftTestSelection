@@ -52,7 +52,10 @@ func compiledEnumArgumentContextsRequireHistoricalProof(kind: String) throws {
     }
     for unowned in [false, true] {
         var source = XcodeHeadOnlySources(base: try GraphArchive.decode(GraphArchive.encode(old)).sources, mappings: current.mappings)
-        if unowned { source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift") }
+        if unowned {
+            source.base.removeValue(forKey: "UI:Extra.swift")
+            source.unownedBaseSources["Extra.swift"] = .parse(oldExtra, path: "Extra.swift", module: "")
+        }
         let report = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base")
         #expect(report.selectedTests == tests.sorted())
         #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
@@ -107,7 +110,10 @@ func compiledInheritedLifecycleRequiresHistoricalEffects(hook: String, removed: 
     try #require(DependencyIndex(graph).paths(to: hooks).path(from: graph.tests[tests[0]] ?? []) != nil)
     for unowned in [false, true] {
         var source = XcodeHeadOnlySources(base: try GraphArchive.decode(GraphArchive.encode(old)).sources, mappings: current.mappings)
-        if unowned { source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift") }
+        if unowned {
+            source.base.removeValue(forKey: "UI:Extra.swift")
+            source.unownedBaseSources["Extra.swift"] = .parse(oldExtra, path: "Extra.swift", module: "")
+        }
         let report = XcodeHeadOnlySelector.select(current: current, source: source,
             changes: [.init(path: "UI.swift")], baseRevision: "base")
         #expect(report.selectedTests == tests.sorted())

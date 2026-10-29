@@ -1,6 +1,6 @@
 {
   "issue": 61,
-  "base_commit": "d01af86d205eb691ee09fcce8ac9186ebe8746f9",
+  "base_commit": "a43c12fd41f669dd17d7f2f907f9d241cbe5063a",
   "capture_toolchain": "Xcode 27.0 (27A266a), Swift 6.4",
   "validation_toolchain": "Xcode 26.6 (17F113), Swift 6.3.3; release analyzer",
   "source_proofs_refreshed": true,
@@ -10,7 +10,7 @@
   "full_suite_equivalence_validated": false,
   "consumer_policy_replayed": true,
   "focused_46_ui_target_achieved": false,
-  "executable_sha256": "10f5941d933ed74cfa029f51a70bd9fb10865cae92701c5557316f8becfcb36b",
+  "executable_sha256": "60498d5bc2326a4c34369d0907c303baf29d6843c95c12ad6ba5fa556717be20",
   "comparisons": [
     {
       "run": "40031610717",
@@ -32,7 +32,7 @@
       "final_ui": 384,
       "final_non_ui": 1577,
       "verified": true,
-      "verification_seconds": 8.269387083,
+      "verification_seconds": 7.66200425,
       "identity": {
         "id": "46BD4146-305F-4A0A-96A8-74875A44C643",
         "revision": "b0dbfc5fd35dc9cb61d72462497e37d684aa644d"
@@ -65,7 +65,7 @@
       "capture_reused_from": "PrecisionTickets60-62.json",
       "source_export_sha256": "4a103634e301b747b1cc2280d3d12e67c71aa27423be2bdcef790958ef76791c",
       "sealed_capture_sha256": "2d67eb9b17cc5319d842b1d658e33867a7f0acfd046e204c9498e17173f68f9a",
-      "source_refresh_and_scope_seconds": 21.861021995544434
+      "source_refresh_and_scope_seconds": 23.05117893218994
     },
     {
       "run": "40035642452",
@@ -87,7 +87,7 @@
       "final_ui": 397,
       "final_non_ui": 1584,
       "verified": true,
-      "verification_seconds": 7.535254457999999,
+      "verification_seconds": 7.0973112910000005,
       "identity": {
         "id": "BD7D2E09-959E-4AA4-9354-909CCA60C25E",
         "revision": "c3bc226f13b57b30851f1565c797866bc8ef7a8e"
@@ -120,11 +120,11 @@
       "capture_reused_from": "PrecisionTickets60-62.json",
       "source_export_sha256": "20ad3943f59aa5d46f1f718c8731809add1e4f6e2cc503b331fe216b5eb13b5e",
       "sealed_capture_sha256": "f2698885d6bbe66526bb8e4d94e8a3722b7cb13e2af6a5f87b0a70ce46aa6b56",
-      "source_refresh_and_scope_seconds": 21.950305104255676
+      "source_refresh_and_scope_seconds": 22.869675993919373
     }
   ],
   "package_validation": {
-    "swift_release_tests_reported": 414,
+    "swift_release_tests_reported": 480,
     "historical_replay_cases_passed": 2,
     "compiled_scrolling_cases_passed": 20,
     "python_capture_passed": 6,
@@ -148,7 +148,7 @@
     "qualified_caller_type_extension_syntax_test_passed": true,
     "compiled_caller_expression_binding_cases_passed": 18,
     "caller_expression_syntax_inventory_test_passed": true,
-    "compiled_caller_project_member_cases_passed": 10,
+    "compiled_caller_project_member_cases_passed": 12,
     "compiled_bare_caller_member_cases_passed": 4,
     "compiled_stored_initializer_cases_passed": 4,
     "stored_initializer_syntax_test_passed": true,
@@ -157,8 +157,14 @@
     "implicit_iteration_enum_syntax_test_passed": true,
     "compiled_enum_context_cases_passed": 4,
     "compiled_inherited_lifecycle_cases_passed": 8,
-    "enum_context_syntax_test_passed": true
+    "enum_context_syntax_test_passed": true,
+    "compiled_destructor_and_ancestor_cases_passed": 10,
+    "compiled_historical_import_cases_passed": 3,
+    "import_visibility_syntax_test_passed": true,
+    "unowned_base_sources_reparsed_with_empty_module": true,
+    "python_coverage_cli_passed": true,
+    "python_inline_mapping_cli_passed": true
   },
-  "private_helper_proof_version": 23,
-  "module_fragment_cache_version": 28
+  "private_helper_proof_version": 24,
+  "module_fragment_cache_version": 29
 }

@@ -100,6 +100,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source inventories cannot rule out declarations synthesized by macros.
     /// Nil is legacy evidence; false also covers unsupported attributes.
     public var helperDeclarationsComplete: Bool? = nil
+    /// False for module-wide re-exports, whose bindings can affect callers in
+    /// other files. Nil cannot prove file-local import visibility.
+    public var helperImportsLocal: Bool? = nil
     /// Complete operator declaration inventory, including conditional/nested
     /// implementations and precedence declarations. Nil is incomplete evidence.
     public var helperOperatorDeclarations: Set<String>? = nil
@@ -160,6 +163,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         // macros and unknown #expressions may be declaration expansions.
         let unsupportedCallerImports = SDKTestHelperSyntax.unsupportedCallerImports(tree)
         let callerImportsSupported = unsupportedCallerImports.isEmpty
+        result.helperImportsLocal = !tree.tokens(viewMode: .sourceAccurate).contains { token in
+            guard token.tokenKind == .keyword(.import), let declaration = token.parent?.as(ImportDeclSyntax.self) else { return false }
+            return declaration.attributes.contains { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "_exported" }
+        }
         let knownAttributes: Set<String> = ["available", "objc", "objcMembers", "nonobjc",
             "preconcurrency", "inlinable", "usableFromInline", "discardableResult", "testable", "_exported",
             "Sendable", "escaping", "autoclosure", "convention"]

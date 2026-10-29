@@ -60,7 +60,10 @@ func compiledPrivateHelperCallerTypesRequireBothRevisionBindings(kind: String) t
     let archivedCurrent = try GraphArchive.decode(GraphArchive.encode(current))
     for unowned in [false, true] {
         var source = XcodeHeadOnlySources(base: archivedOld.sources, mappings: current.mappings)
-        if unowned { source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift") }
+        if unowned {
+            source.base.removeValue(forKey: "UI:Extra.swift")
+            source.unownedBaseSources["Extra.swift"] = .parse(extra, path: "Extra.swift", module: "")
+        }
         let report = XcodeHeadOnlySelector.select(current: archivedCurrent, source: source,
             changes: [.init(path: "UI.swift")], baseRevision: "base")
         #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })

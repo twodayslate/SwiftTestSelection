@@ -333,6 +333,7 @@ enum PrivateTestHelperIsolation {
     private static func historicalCallerBindingBlocker(units: [SourceUnit]?, current: XcodeTestGraph,
         base: [String: SwiftSourceSnapshot], unownedBase: [String: SwiftSourceSnapshot], provenHelpers: [SourceUnit]) -> String? {
         guard let units, !units.isEmpty else { return "Missing compiler-bound caller source evidence" }
+        let checkedModules = Set(units.map { String($0.key.prefix { $0 != ":" }) })
         let oldSources = Array(base.values) + Array(unownedBase.values)
         let oldUnits = oldSources.flatMap(\.units)
         var allUnits = units
@@ -342,16 +343,29 @@ enum PrivateTestHelperIsolation {
             // their initializers, so include historical storage at this owner.
             // Synthesized initializers can point only at the class header.
             allUnits += oldUnits.filter { old in
-                old.key == unit.key || (old.key.hasPrefix(module + ":") && old.scope == unit.scope &&
+                // Removed files have an empty module, not their former owner.
+                // They may supply this declaration; absence of ownership is
+                // not evidence that their historical expressions are unrelated.
+                old.key == unit.key || (old.key.hasPrefix(":") && old.key == String(unit.key.dropFirst(module.count))) ||
+                    ((old.key.hasPrefix(module + ":") || old.key.hasPrefix(":")) && old.scope == unit.scope &&
                     (["state", "type"].contains(unit.kind) && old.kind == "state" ||
                      unit.kind == "type" && old.helperCallableName.map(SDKTestHelperSyntax.lifecycle.contains) == true))
             }
         }
         var operatorsByModule: [String: Set<String>] = [:], globalsByModule: [String: Set<String>] = [:], members = Set<String>()
         for unit in allUnits {
+            // Identical body text can bind to a different external overload
+            // after an import changes. Only the head has compiler evidence.
+            guard unit.receiverImportsSupported == true else {
+                return "Unproven historical caller imports at " + unit.region.path + ":" + String(unit.region.startLine)
+            }
             guard let uses = unit.helperBindingUses else { return "Missing historical caller expression bindings; refresh source proofs" }
             let module = String(unit.key.prefix { $0 != ":" })
-            operatorsByModule[module, default: []].formUnion(uses.operators)
+            // Unknown ownership must consider every checked module's bindings.
+            for candidate in module.isEmpty ? checkedModules : [module] {
+                operatorsByModule[candidate, default: []].formUnion(uses.operators)
+                globalsByModule[candidate, default: []].formUnion(uses.globals)
+            }
             members.formUnion(uses.members)
             // Bare references can be getters or method values as well as
             // globals/locals. The head compiler cannot resolve their old binding.
@@ -359,7 +373,6 @@ enum PrivateTestHelperIsolation {
             guard let calls = unit.invocationNames else { return "Missing historical caller invocation names; refresh source proofs" }
             // Bare calls may resolve to members, rather than global functions.
             members.formUnion(calls)
-            globalsByModule[module, default: []].formUnion(uses.globals)
         }
         for (module, operators) in operatorsByModule.sorted(by: { $0.key < $1.key }) where !operators.isEmpty {
             let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
@@ -374,6 +387,11 @@ enum PrivateTestHelperIsolation {
             let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
                 base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(unownedBase.values)
             for source in sources {
+                // @_exported imports make names visible in other files of this
+                // module. File-local import proofs cannot close that boundary.
+                guard source.helperImportsLocal == true else {
+                    return "Unproven module-wide caller imports or missing visibility evidence; refresh source proofs"
+                }
                 guard let declarations = source.helperGlobalDeclarations else { return "Missing historical caller global declarations; refresh source proofs" }
                 for name in Set(declarations.keys).intersection(names).sorted() {
                     // Ordinary source producers are valid only when their exact
@@ -396,7 +414,9 @@ enum PrivateTestHelperIsolation {
             for type in source.units where type.kind == "type" {
                 let module = String(type.key.prefix { $0 != ":" })
                 let root = SDKTestHelperSyntax.canonicalName(String(type.scope.split(separator: ".").first ?? ""))
-                if globalsByModule[module]?.contains(root) == true {
+                let unknownOwner = module.isEmpty && (globalsByModule.values.contains { $0.contains(root) } ||
+                    auditedOwners.contains { $0.hasSuffix("." + SDKTestHelperSyntax.canonicalName(type.scope)) })
+                if globalsByModule[module]?.contains(root) == true || unknownOwner {
                     auditedOwners.insert(SDKTestHelperSyntax.canonicalName(module + "." + type.scope))
                 }
             }

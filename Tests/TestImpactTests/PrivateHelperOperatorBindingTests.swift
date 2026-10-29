@@ -46,7 +46,10 @@ func compiledPrivateHelperOperatorsRequireBothRevisionBindings(operation: String
     let roundTripped = try GraphArchive.decode(GraphArchive.encode(current))
     for unowned in [false, true] {
         var source = XcodeHeadOnlySources(base: old.sources, mappings: current.mappings)
-        if unowned { source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift") }
+        if unowned {
+            source.base.removeValue(forKey: "UI:Extra.swift")
+            source.unownedBaseSources["Extra.swift"] = .parse(extra, path: "Extra.swift", module: "")
+        }
         let report = XcodeHeadOnlySelector.select(current: roundTripped, source: source,
             changes: [.init(path: "UI.swift")], baseRevision: "base")
         #expect(report.selectedTests == tests.sorted(), "\(report.diagnostics)")
@@ -148,7 +151,10 @@ func compiledPrivateHelperOperatorsRequireBothRevisionBindings(operation: String
     try #require(DependencyIndex(graph).paths(to: custom).path(from: graph.tests[tests[0]] ?? []) != nil)
     for unowned in [false, true] {
         var source = XcodeHeadOnlySources(base: old.sources, mappings: current.mappings)
-        if unowned { source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift") }
+        if unowned {
+            source.base.removeValue(forKey: "UI:Extra.swift")
+            source.unownedBaseSources["Extra.swift"] = .parse(extra, path: "Extra.swift", module: "")
+        }
         let report = XcodeHeadOnlySelector.select(current: current, source: source,
             changes: [.init(path: "UI.swift")], baseRevision: "base")
         #expect(report.selectedTests == tests.sorted(), "\(report.diagnostics)")

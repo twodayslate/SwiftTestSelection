@@ -48,7 +48,10 @@ func compiledBareCallerMembersRequireHistoricalEffects(kind: String, explicit: B
     try #require(DependencyIndex(graph).paths(to: custom).path(from: graph.tests[tests[0]] ?? []) != nil)
     for unowned in [false, true] {
         var source = XcodeHeadOnlySources(base: try GraphArchive.decode(GraphArchive.encode(old)).sources, mappings: current.mappings)
-        if unowned { source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift") }
+        if unowned {
+            source.base.removeValue(forKey: "UI:Extra.swift")
+            source.unownedBaseSources["Extra.swift"] = .parse(oldExtra, path: "Extra.swift", module: "")
+        }
         let report = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base")
         #expect(report.selectedTests == tests.sorted())
         #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
@@ -90,6 +93,10 @@ func compiledStoredInitializersRequireHistoricalEffects(change: String, removedU
         changes: [.init(path: "UI.swift")], baseRevision: "base")
     #expect(clean.selectedTests == [tests[0]], "\(clean.diagnostics)")
     #expect(clean.diagnostics.isEmpty)
+    var unrelated = XcodeHeadOnlySources(base: cleanBase, mappings: current.mappings)
+    unrelated.unownedBaseSources["Unused.swift"] = .parse("import Foundation\nstruct Unrelated { let value = { UserDefaults.standard.set(true, forKey: \"shared\"); return 1 }() }",
+        path: "Unused.swift", module: "")
+    #expect(XcodeHeadOnlySelector.select(current: current, source: unrelated, changes: [.init(path: "UI.swift")], baseRevision: "base").selectedTests == [tests[0]])
     if !removedUse && change == "changed" {
         for revision in ["head", "base"] {
             var broken = current, source = cleanBase
@@ -114,7 +121,10 @@ func compiledStoredInitializersRequireHistoricalEffects(change: String, removedU
     try #require(DependencyIndex(graph).paths(to: custom).path(from: graph.tests[tests[0]] ?? []) != nil)
     for unowned in [false, true] {
         var source = XcodeHeadOnlySources(base: try GraphArchive.decode(GraphArchive.encode(old)).sources, mappings: current.mappings)
-        if unowned { source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift") }
+        if unowned {
+            source.base.removeValue(forKey: "UI:Extra.swift")
+            source.unownedBaseSources["Extra.swift"] = .parse(oldExtra, path: "Extra.swift", module: "")
+        }
         let report = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base")
         #expect(report.selectedTests == tests.sorted())
         #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })

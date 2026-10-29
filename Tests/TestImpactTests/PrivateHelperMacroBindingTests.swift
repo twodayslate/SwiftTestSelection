@@ -111,7 +111,10 @@ func compiledPrivateHelperMacrosRequireCompleteInventories(scenario: String) thr
     let roundTripped = try GraphArchive.decode(GraphArchive.encode(current))
     for unowned in [false, true] {
         var source = XcodeHeadOnlySources(base: archivedOld.sources, mappings: current.mappings)
-        if unowned { source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift") }
+        if unowned {
+            source.base.removeValue(forKey: "UI:Extra.swift")
+            source.unownedBaseSources["Extra.swift"] = .parse(extra, path: "Extra.swift", module: "")
+        }
         let report = XcodeHeadOnlySelector.select(current: roundTripped, source: source,
             changes: [.init(path: "UI.swift")], baseRevision: "base")
         #expect(report.selectedTests == tests.sorted(), "\(report.diagnostics)")

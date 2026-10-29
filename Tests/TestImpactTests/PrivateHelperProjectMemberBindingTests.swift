@@ -5,7 +5,7 @@ import Foundation
 import Testing
 @testable import TestImpact
 
-@Test(arguments: ["explicit", "callable", "unqualified", "initializer", "subscript"], [false, true])
+@Test(arguments: ["explicit", "callable", "unqualified", "initializer", "subscript", "aliasedSubscript"], [false, true])
 func compiledCallerProjectMembersRequireHistoricalImplementations(kind: String, removedUse: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("caller-projectmembers-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -19,7 +19,7 @@ func compiledCallerProjectMembersRequireHistoricalImplementations(kind: String, 
         expression = "let worker = Worker(1)"
         declaration = "init(_ value: Int, extra: Int = 0) {}"
         overload = "init(_ value: Int) { UserDefaults.standard.set(true, forKey: \"shared\") }"
-    case "subscript":
+    case "subscript", "aliasedSubscript":
         expression = "let value = Worker()[review: 1]"
         declaration = "subscript(review value: Int, extra: Int = 0) -> Int { value }"
         overload = "subscript(review value: Int) -> Int { UserDefaults.standard.set(true, forKey: \"shared\"); return value }"
@@ -51,7 +51,8 @@ func compiledCallerProjectMembersRequireHistoricalImplementations(kind: String, 
     if removedUse { after = after.replacingOccurrences(of: expression, with: "_ = ()") }
     let extra = """
     import XCTest
-    extension Worker {
+    \(kind == "aliasedSubscript" ? "typealias Alias = Worker" : "")
+    extension \(kind == "aliasedSubscript" ? "Alias" : "Worker") {
         \(overload)
     }
     """
@@ -66,7 +67,10 @@ func compiledCallerProjectMembersRequireHistoricalImplementations(kind: String, 
     let archivedCurrent = try GraphArchive.decode(GraphArchive.encode(current))
     for unowned in [false, true] {
         var source = XcodeHeadOnlySources(base: archivedOld.sources, mappings: current.mappings)
-        if unowned { source.unownedBaseSources["Extra.swift"] = source.base.removeValue(forKey: "UI:Extra.swift") }
+        if unowned {
+            source.base.removeValue(forKey: "UI:Extra.swift")
+            source.unownedBaseSources["Extra.swift"] = .parse(extra, path: "Extra.swift", module: "")
+        }
         let report = XcodeHeadOnlySelector.select(current: archivedCurrent, source: source,
             changes: [.init(path: "UI.swift")], baseRevision: "base")
         #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" })
