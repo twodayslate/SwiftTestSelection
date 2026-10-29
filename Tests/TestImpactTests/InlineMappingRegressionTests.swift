@@ -770,3 +770,126 @@ func inlineMappingCompilerImportEvidenceRequiresCurrentArchives(evidence: String
     #expect(resolution.features.first?.tests == saved.tests)
     try saved.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
 }
+
+@Test(arguments: [false, true], ["class", "enum", "struct"])
+func inlineMappingNestedAliasDeclarationsUseCompilerIdentity(methodRule: Bool, container: String) throws {
+    let source = """
+    import XCTest
+    \(container) Outer {}
+    typealias Alias = Outer
+    extension Alias {
+        enum Namespace {
+            \(methodRule ? "" : #"// swift-test-selection: {"symbols":["App.shared()"]}"#)
+            class Suite: XCTestCase {
+                \(methodRule ? #"// swift-test-selection: {"symbols":["App.shared()"]}"# : "")
+                func testOne() {}
+            }
+        }
+    }
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Other: XCTestCase { func testOther() {} }
+    """
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("inline-nested-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("UI.swift"), sil = root.appendingPathComponent("UI.sil")
+    try source.write(to: file, atomically: true, encoding: .utf8)
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", "-emit-sil", "-whole-module-optimization", "-g", "-module-name", "UI", file.path, "-o", sil.path], at: root)
+    let compiled = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
+    func model(_ value: Int) -> XcodeTestGraph {
+        var graph = inlineRegressionGraph(source, value: value, tests: ["UI/Outer.Namespace.Suite/testOne()", "UI/Other/testOther()"])
+        graph.dependencies!.functions = graph.dependencies!.functions.filter { $0.value.module != "UI" }
+        graph.dependencies!.functions.merge(compiled.functions, uniquingKeysWith: { _, new in new })
+        graph.dependencies!.testDiagnostics = [:]
+        XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
+        graph.mappings = .init(features: [.init(name: "suite", symbols: ["App.checkout()"], tests: ["UI/Outer.Namespace.Suite"])], runtimeDependencyPolicy: .declared)
+        return graph
+    }
+    for head in [model(2), try GraphArchive.decode(GraphArchive.encode(model(2))), try GraphArchive.decode(JSONEncoder().encode(model(2)))] {
+        #expect(head.dependencies!.testDiagnostics.isEmpty)
+        #expect(head.dependencies!.tests["UI/Outer.Namespace.Suite/testOne()"]?.isEmpty == false)
+        let report = XcodeFineSelector.select(current: head, previous: model(1), changes: [.init(path: "App.swift")], baseRevision: "base")
+        #expect(report.selectedTests == head.tests.sorted())
+        #expect(InlineMappingAudit.inspect(head).rules.contains { $0.feature.tests?.contains("UI/Outer.Namespace.Suite/testOne()") == true })
+        try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        #expect(InlineMappingAudit.inspect(head).diagnostics.isEmpty)
+        let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: model(1).sources, mappings: head.mappings), changes: [.init(path: "App.swift")], baseRevision: "base")
+        #expect(headOnly.selectedTests == head.tests.sorted())
+        #expect(XcodeFineSelector.select(current: head, previous: head, changes: [], baseRevision: "base").selectedTests.isEmpty)
+
+        for evidence in ["redirected", "missingOwner", "missingLocations"] {
+            var incomplete = head
+            if evidence == "redirected" { incomplete.sources["UI:UI.swift"]!.receiverPhysicalLocations = false }
+            if evidence == "missingOwner" { incomplete.sources["UI:UI.swift"]!.units.removeAll { $0.kind == "type" && $0.scope == "Outer" } }
+            if evidence == "missingLocations" {
+                for id in incomplete.dependencies!.functions.keys where incomplete.dependencies!.functions[id]!.module == "UI" {
+                    incomplete.dependencies!.functions[id]!.regions = []
+                }
+            }
+            #expect(throws: MappingValidationError.self) {
+                try incomplete.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+            }
+            #expect(InlineMappingAudit.inspect(incomplete).diagnostics.contains { $0.tests.contains("UI/Outer.Namespace.Suite/testOne()") })
+            let selected = XcodeFineSelector.select(current: incomplete, previous: model(1), changes: [.init(path: "App.swift")], baseRevision: "base")
+            #expect(selected.selectedTests == head.tests.sorted())
+        }
+        var disabled = head
+        disabled.tests = ["UI/Other/testOther()"]
+        try disabled.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        #expect(InlineMappingAudit.inspect(disabled).diagnostics.isEmpty)
+    }
+}
+
+@Test(arguments: ["Alias", "UI . `Alias`"], ["alias", "inherited", "subclass"])
+func inlineMappingNestedAliasPreservesUncertainAncestry(spelling: String, scenario: String) throws {
+    let inherited = scenario != "alias"
+    let suite = scenario == "subclass" ? "Derived" : "Outer.Suite"
+    let test = "UI/" + suite + "/testOne()"
+    let source = """
+    import XCTest
+    class Outer {}
+    typealias Alias = Outer
+    // swift-test-selection: {"symbols":["App.checkout()"]}
+    class Base: XCTestCase { func testOne() {} }
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Actual: XCTestCase {}
+    extension \(spelling) {
+        typealias Base = Actual
+        // swift-test-selection: {"symbols":["App.shared()"]}
+        class Suite: \(inherited ? "UI.Base" : "Base") {
+            \(inherited ? "" : "func testOne() {}")
+        }
+    }
+    \(scenario == "subclass" ? "class Derived: Outer.Suite {}" : "")
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Other: XCTestCase { func testOther() {} }
+    """
+    // The inherited variant has no emitted method inside the extension; its
+    // class default still needs a diagnostic when no owner can be established.
+    // The other variant proves Outer but must retain the nested Base alias,
+    // rather than treating the unrelated module-level Base as its superclass.
+    var graph = inlineRegressionGraph(source, tests: [test, "UI/Other/testOther()"])
+    if inherited {
+        graph.dependencies!.tests[test] = ["Base.testOne()"]
+        graph.dependencies!.testDiagnostics = [:]
+    } else {
+        for id in graph.dependencies!.functions.keys where graph.dependencies!.functions[id]!.name.hasSuffix(".Suite.testOne()") {
+            graph.dependencies!.functions[id]!.name = "Outer.Suite.testOne()"
+        }
+        XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
+        #expect(graph.dependencies!.tests[test]?.isEmpty == false)
+    }
+    for saved in [graph, try GraphArchive.decode(GraphArchive.encode(graph))] {
+        let resolution = InlineUIMappings.resolve(saved)
+        #expect(resolution.diagnostics.contains { $0.tests == [test] })
+        #expect(!resolution.features.contains { $0.tests?.contains(test) == true })
+        #expect(throws: MappingValidationError.self) {
+            try saved.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        }
+        var disabled = saved
+        disabled.tests = ["UI/Other/testOther()"]
+        try disabled.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        #expect(InlineUIMappings.resolve(disabled).diagnostics.isEmpty)
+    }
+}

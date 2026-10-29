@@ -232,39 +232,59 @@ struct InlineUIMappings {
         let physical = Set(snapshot.sources.values.filter { $0.receiverPhysicalLocations != false }.flatMap {
             $0.inlineMappings?.declarations.map { $0.module + ":" + $0.region.path } ?? []
         })
-        // An alias spelling cannot establish an extension's owner. Its emitted
-        // methods can: require one same-module class identity and physical source
-        // locations for every compiler-backed method in the extension.
-        let classNames = Set(declarations.filter { $0.kind == "class" }.map { $0.module + "." + $0.scope })
+        func enclosed(_ member: InlineMappingSyntax.Declaration, by container: InlineMappingSyntax.Declaration) -> Bool {
+            member.module == container.module && member.region.path == container.region.path &&
+                member.region.startLine >= container.region.startLine && member.region.endLine <= container.region.endLine &&
+                (member.scope == container.scope || member.scope.hasPrefix(container.scope + "."))
+        }
+        var aliases = Set(snapshot.sources.values.flatMap { $0.typeAliases ?? [] }.map(InlineMappingSyntax.canonicalScope))
+        var nominalTypes = Set(snapshot.sources.values.flatMap { source in
+            source.units.filter { $0.kind == "type" }.map { InlineMappingSyntax.canonicalScope(String($0.key.prefix { $0 != ":" }) + "." + $0.scope) }
+        })
+        // An alias spelling cannot establish an extension's owner. Compiler
+        // methods, including nested class methods, can prove the owner after
+        // removing the lexical suffix beneath the extension. Rebind every
+        // enclosed declaration together so class defaults and methods agree.
+        var unresolvedExtensions: [InlineMappingSyntax.Declaration] = []
         for index in declarations.indices where declarations[index].kind == "extension" {
             let ext = declarations[index]
-            guard physical.contains(ext.module + ":" + ext.region.path) else { continue }
-            let members = declarations.indices.filter {
-                let member = declarations[$0]
-                return member.kind == "method" && member.module == ext.module && member.scope == ext.scope &&
-                    member.region.path == ext.region.path && member.region.startLine >= ext.region.startLine && member.region.endLine <= ext.region.endLine
-            }
+            let members = declarations.indices.filter { $0 != index && enclosed(declarations[$0], by: ext) }
             var owners = Set<String>()
-            for member in members {
-                guard let method = declarations[member].method else { continue }
-                for node in nodesByModule[ext.module] ?? [] where node.name.hasSuffix("." + method) && node.regions.contains(where: {
-                    $0.path == ext.region.path && $0.startLine >= declarations[member].region.startLine && $0.startLine <= declarations[member].region.endLine
-                }) {
-                    let name = node.name.hasPrefix("@objc ") ? String(node.name.dropFirst(6)) : node.name
-                    owners.insert(String(name.dropLast(method.count + 1)))
+            if physical.contains(ext.module + ":" + ext.region.path) {
+                for member in members {
+                    guard declarations[member].kind == "method", let method = declarations[member].method else { continue }
+                    let suffix = String(declarations[member].scope.dropFirst(ext.scope.count)) + "." + method
+                    for node in nodesByModule[ext.module] ?? [] where node.name.hasSuffix(suffix) && node.regions.contains(where: {
+                        $0.path == ext.region.path && $0.startLine >= declarations[member].region.startLine && $0.startLine <= declarations[member].region.endLine
+                    }) {
+                        let name = node.name.hasPrefix("@objc ") ? String(node.name.dropFirst(6)) : node.name
+                        owners.insert(String(name.dropLast(suffix.count)))
+                    }
                 }
             }
-            guard owners.count == 1, let owner = owners.first, classNames.contains(ext.module + "." + owner) else { continue }
+            guard owners.count == 1, let owner = owners.first, nominalTypes.contains(ext.module + "." + owner) else {
+                unresolvedExtensions.append(ext)
+                continue
+            }
             declarations[index].scope = owner
-            for member in members { declarations[member].scope = owner }
+            for member in members {
+                declarations[member].scope = owner + declarations[member].scope.dropFirst(ext.scope.count)
+            }
+            // Keep lexical shadowing evidence under the compiler identity too.
+            // Retaining the original names is conservative when conditional
+            // extensions use the same spelling for different owners.
+            let replacement = ext.module + "." + owner + "."
+            // Source snapshots retain a module qualifier in extension scopes;
+            // inline declarations have already stripped it. Preserve both forms.
+            for prefix in [ext.module + "." + ext.scope + ".", ext.module + "." + ext.module + "." + ext.scope + "."] {
+                aliases.formUnion(aliases.filter { $0.hasPrefix(prefix) }.map { replacement + $0.dropFirst(prefix.count) })
+                nominalTypes.formUnion(nominalTypes.filter { $0.hasPrefix(prefix) }.map { replacement + $0.dropFirst(prefix.count) })
+            }
         }
+        let classNames = Set(declarations.filter { $0.kind == "class" }.map { $0.module + "." + $0.scope })
         let methodsByOwner = Dictionary(grouping: declarations.filter { $0.kind == "method" }, by: { $0.module + "." + $0.scope })
         let extensionsByOwner = Dictionary(grouping: declarations.filter { $0.kind == "extension" }, by: { $0.module + "." + $0.scope })
-        let aliases = Set(snapshot.sources.values.flatMap { $0.typeAliases ?? [] }.map(SDKTestHelperSyntax.canonicalName))
         let classes = Dictionary(grouping: declarations.filter { $0.kind == "class" }, by: { $0.module + "." + $0.scope })
-        let nominalTypes = Set(snapshot.sources.values.flatMap { source in
-            source.units.filter { $0.kind == "type" }.map { SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope) }
-        })
         var frameworkImports = Set<String>()
         var scopedTypeImports: [String: Set<String>] = [:]
         var reexportedNames = Set<String>()
@@ -345,7 +365,8 @@ struct InlineUIMappings {
             // location still establishes that binding must succeed or diagnose.
             let located = declarations.filter { declaration in
                 guard declaration.kind == "method", declaration.method == method,
-                      !classNames.contains(declaration.module + "." + declaration.scope) else { return false }
+                      (!classNames.contains(declaration.module + "." + declaration.scope) ||
+                       unresolvedExtensions.contains { enclosed(declaration, by: $0) }) else { return false }
                 if !physical.contains(declaration.module + ":" + declaration.region.path) || roots.isEmpty {
                     return couldImport(declaration.module, into: String(owner.prefix { $0 != "." }))
                 }
@@ -356,12 +377,26 @@ struct InlineUIMappings {
                 }
             }
             if located.contains(where: { !$0.directives.isEmpty }) { return true }
-            if declarations.contains(where: { ext in
-                ext.kind == "extension" && !ext.directives.isEmpty && located.contains {
-                    $0.module == ext.module && $0.scope == ext.scope && $0.region.path == ext.region.path &&
-                    $0.region.startLine >= ext.region.startLine && $0.region.endLine <= ext.region.endLine
+            if declarations.contains(where: { container in
+                ["class", "extension"].contains(container.kind) && !container.directives.isEmpty && located.contains {
+                    $0.scope == container.scope && enclosed($0, by: container)
                 }
             }) { return true }
+            // A nested class with only inherited methods, or a method with
+            // missing locations, may not establish its extension owner. Its
+            // suffix is diagnostic evidence, never enough to bind the alias.
+            func hasUnresolvedNestedPolicy(_ key: String, methodsAllowed: Bool) -> Bool {
+                unresolvedExtensions.contains { ext in
+                    declarations.contains { declaration in
+                        (declaration.kind == "class" || methodsAllowed && declaration.kind == "method" && declaration.method == method) &&
+                            !declaration.directives.isEmpty && enclosed(declaration, by: ext) &&
+                            declaration.scope.hasPrefix(ext.scope + ".") &&
+                            key.hasSuffix(String(declaration.scope.dropFirst(ext.scope.count))) &&
+                            couldImport(declaration.module, into: String(owner.prefix { $0 != "." }))
+                    }
+                }
+            }
+            if hasUnresolvedNestedPolicy(owner, methodsAllowed: true) { return true }
             let implementations = declarations.filter { $0.kind == "method" && $0.method == method && active($0, methodOnly: true, roots: roots) }
             func carriesPolicy(_ declaration: InlineMappingSyntax.Declaration, methodsAllowed: Bool) -> Bool {
                 guard !declaration.directives.isEmpty else { return false }
@@ -386,6 +421,7 @@ struct InlineUIMappings {
                 for declaration in classes[key] ?? [] {
                     guard let spelling = declaration.superclass else { continue }
                     guard let parent = SwiftSourceSnapshot.nominalTypeName(spelling) else { return annotated }
+                    if hasUnresolvedNestedPolicy(declaration.module + "." + parent, methodsAllowed: inheritedMethods) { return true }
                     let qualifier = String(parent.prefix { $0 != "." })
                     var matches = classes.keys.filter { $0 == parent || $0.hasSuffix("." + parent) }
                     let localAlias = aliases.contains { $0 == parent || $0.hasSuffix("." + parent) || $0.hasSuffix("." + qualifier) }
