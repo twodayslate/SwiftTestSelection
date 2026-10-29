@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 15 requires complete declaration inventories at both revisions.
-    static let currentProofVersion = 15
+    // Version 16 includes actor type names in both revisions' binding audits.
+    static let currentProofVersion = 16
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -92,6 +92,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             parent.as(AssociatedTypeDeclSyntax.self)?.name.id == token.id ||
             parent.as(FunctionDeclSyntax.self)?.name.id == token.id ||
             parent.as(ClassDeclSyntax.self)?.name.id == token.id || parent.as(StructDeclSyntax.self)?.name.id == token.id ||
+            parent.as(ActorDeclSyntax.self)?.name.id == token.id ||
             parent.as(EnumDeclSyntax.self)?.name.id == token.id || parent.as(ProtocolDeclSyntax.self)?.name.id == token.id ||
             parent.as(TypeAliasDeclSyntax.self)?.name.id == token.id || parent.is(IdentifierPatternSyntax.self)
     }
