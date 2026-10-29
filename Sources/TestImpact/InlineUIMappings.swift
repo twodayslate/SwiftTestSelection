@@ -246,11 +246,12 @@ struct InlineUIMappings {
         // removing the lexical suffix beneath the extension. Rebind every
         // enclosed declaration together so class defaults and methods agree.
         var unresolvedExtensions: [InlineMappingSyntax.Declaration] = []
+        var unresolvedExtensionMethods = Set<Int>()
         for index in declarations.indices where declarations[index].kind == "extension" {
             let ext = declarations[index]
             let members = declarations.indices.filter { $0 != index && enclosed(declarations[$0], by: ext) }
             var owners = Set<String>()
-            var unknownOwner = false
+            var conflictingOwner = false
             if physical.contains(ext.module + ":" + ext.region.path) {
                 for member in members {
                     guard declarations[member].kind == "method", let method = declarations[member].method else { continue }
@@ -267,14 +268,23 @@ struct InlineUIMappings {
                         let owner = String(name.dropLast(suffix.count))
                         let relativeScope = declarations[member].scope.dropFirst(ext.scope.count)
                         guard node.nominalTypeContext == ext.module + "." + owner + relativeScope else {
-                            unknownOwner = true
+                            if node.nominalTypeContext?.isEmpty != false {
+                                // A private nested helper may lack supported
+                                // nominal evidence. Keep its method unresolved
+                                // without discarding another method's proof.
+                                unresolvedExtensionMethods.insert(member)
+                            } else {
+                                // A known conflicting owner invalidates the
+                                // extension even if another member agrees.
+                                conflictingOwner = true
+                            }
                             continue
                         }
                         owners.insert(owner)
                     }
                 }
             }
-            guard !unknownOwner, owners.count == 1, let owner = owners.first, nominalTypes.contains(ext.module + "." + owner) else {
+            guard !conflictingOwner, owners.count == 1, let owner = owners.first, nominalTypes.contains(ext.module + "." + owner) else {
                 unresolvedExtensions.append(ext)
                 continue
             }
@@ -574,7 +584,14 @@ struct InlineUIMappings {
                 failed = true
             }
             diagnoseSources(applicable)
-            if applicable.contains(where: { declaration in unresolvedExtensions.contains { enclosed(declaration, by: $0) } }) {
+            if applicable.contains(where: { declaration in
+                unresolvedExtensions.contains { enclosed(declaration, by: $0) } ||
+                    (declaration.kind == "method" && unresolvedExtensionMethods.contains { index in
+                        let candidate = declarations[index]
+                        return candidate.module == declaration.module && candidate.scope == declaration.scope &&
+                            candidate.method == declaration.method && candidate.region == declaration.region
+                    })
+            }) {
                 if needsBinding {
                     diagnose("Cannot establish the compiler-qualified extension owner for \(test); regenerate complete nominal type evidence", tests: [test])
                 }

@@ -57,6 +57,9 @@ test targets; it does not infer Swift Testing or parameterized executable identi
   inside aliased extensions, including class, struct, and enum namespaces.
   Compiler-local closures and helpers, including async Objective-C bridges,
   do not compete with the enclosing method's nominal owner evidence.
+  Missing nominal evidence on a private nested helper does not invalidate an
+  independently proven test method. The helper's own method binding stays
+  unresolved, and known conflicting owner evidence still rejects the extension.
   Nested names retain their shadowing evidence under the resolved owner.
   Unresolved owners on enabled annotated declarations produce diagnostics
   instead of silently dropping their rules. This includes inherited defaults when

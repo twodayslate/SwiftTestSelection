@@ -1152,3 +1152,72 @@ func inlineMappingExtensionAuxiliaryFunctionsDoNotInvalidateOwner(spelling: Stri
         }
     }
 }
+
+@Test(arguments: ["", "private", "fileprivate"], ["Suite", "Alias"])
+func inlineMappingPrivateNestedHelpersDoNotInvalidateProvenMethods(access: String, spelling: String) throws {
+    let source = """
+    import XCTest
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Suite: XCTestCase {}
+    typealias Alias = Suite
+    extension \(spelling) {
+        @MainActor func testOne() { Helper().run() }
+        \(access) class Helper { func run() {} }
+    }
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Other: XCTestCase { func testOther() {} }
+    """
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("inline-private-helper-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("UI.swift"), sil = root.appendingPathComponent("UI.sil")
+    try source.write(to: file, atomically: true, encoding: .utf8)
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run(compiler, ["-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", "-emit-sil", "-whole-module-optimization", "-g", "-module-name", "UI", file.path, "-o", sil.path], at: root)
+    let compiled = try SILOwnership.resolve(SILParser.parse(file: sil, module: "UI", sourceRoot: root), module: "UI", compiler: compiler, directory: root)
+    let helper = try #require(compiled.functions.values.first { $0.name == "Suite.Helper.run()" })
+    #expect(helper.nominalTypeContext == (access.isEmpty ? "UI.Suite.Helper" : ""))
+    let implementation = try #require(compiled.functions.values.first { $0.name == "Suite.testOne()" })
+    #expect(compiled.functions.values.contains { $0.name == "Suite.testOne()" && $0.nominalTypeContext == "UI.Suite" })
+    func model(_ value: Int) -> XcodeTestGraph {
+        var graph = inlineRegressionGraph(source, value: value, tests: ["UI/Suite/testOne()", "UI/Other/testOther()"])
+        graph.dependencies!.functions = graph.dependencies!.functions.filter { $0.value.module != "UI" }
+        graph.dependencies!.functions.merge(compiled.functions, uniquingKeysWith: { _, new in new })
+        graph.dependencies!.testDiagnostics = [:]
+        XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
+        graph.mappings = .init(features: [.init(name: "suite", symbols: ["App.checkout()"], tests: ["UI/Suite"])], runtimeDependencyPolicy: .declared)
+        return graph
+    }
+    for head in [model(2), try GraphArchive.decode(GraphArchive.encode(model(2))), try GraphArchive.decode(JSONEncoder().encode(model(2)))] {
+        #expect(head.dependencies!.testDiagnostics.isEmpty)
+        #expect(head.dependencies!.tests["UI/Suite/testOne()"]?.isEmpty == false)
+        let resolution = InlineUIMappings.resolve(head)
+        #expect(resolution.diagnostics.isEmpty)
+        #expect(XcodeFineSelector.select(current: head, previous: head, changes: [], baseRevision: "base").selectedTests.isEmpty)
+        let report = XcodeFineSelector.select(current: head, previous: model(1), changes: [.init(path: "App.swift")], baseRevision: "base")
+        #expect(report.selectedTests == head.tests.sorted())
+        #expect(resolution.features.contains { $0.tests?.contains("UI/Suite/testOne()") == true })
+        try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        #expect(InlineMappingAudit.inspect(head).diagnostics.isEmpty)
+        #expect(XcodeHeadOnlySelector.select(current: head, source: .init(base: head.sources, mappings: head.mappings), changes: [], baseRevision: "base").selectedTests.isEmpty)
+        #expect(XcodeHeadOnlySelector.select(current: head, source: .init(base: model(1).sources, mappings: head.mappings), changes: [.init(path: "App.swift")], baseRevision: "base").selectedTests == head.tests.sorted())
+        // A valid ObjC thunk must not repair missing or conflicting evidence
+        // on the test implementation itself.
+        for evidence: String? in [nil, "", "Support.Suite"] {
+            var invalid = head
+            invalid.dependencies!.functions[implementation.id]!.nominalTypeContext = evidence
+            #expect(InlineUIMappings.resolve(invalid).diagnostics.contains { $0.tests == ["UI/Suite/testOne()"] })
+            #expect(throws: MappingValidationError.self) {
+                try invalid.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+            }
+        }
+        // Known contradictory evidence is different from an unsupported
+        // private context and must still invalidate the extension owner.
+        var contradictory = head
+        contradictory.dependencies!.functions[helper.id]!.nominalTypeContext = "Support.Suite.Helper"
+        #expect(throws: MappingValidationError.self) {
+            try contradictory.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        }
+    }
+}
