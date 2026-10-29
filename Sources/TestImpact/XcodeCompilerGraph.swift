@@ -8,6 +8,7 @@ enum XcodeCompilerGraph {
                         progress: (String) -> Void, ownership: [String: Set<String>] = [:],
                         workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil, measurement: (String, Double) -> Void = { _, _ in }) -> DependencyGraph {
         var graph = DependencyGraph()
+        graph.compilerImplicitImports = [:]
         guard (1...8).contains(workers) else {
             graph.diagnostics.append("Extraction workers must be between 1 and 8.")
             return graph
@@ -30,15 +31,20 @@ enum XcodeCompilerGraph {
                     throw ImpactError("Unrecognized SwiftDriver invocation")
                 }
                 let module = invocation[index + 1]
+                graph.compilerImplicitImports?[module] = try implicitImports(invocation)
                 if let earlier = seen[module] {
                     if earlier != invocation {
+                        graph.compilerImplicitImports = nil
                         graph.diagnostics.append("Multiple distinct compiler invocations for module \(module); architecture/target ambiguity requires a full selection.")
                     }
                     continue
                 }
                 seen[module] = invocation
                 jobs.append(XcodeModuleJob(module: module, compiler: compiler, arguments: Array(invocation.dropFirst())))
-            } catch { graph.diagnostics.append("Compiler dependency extraction failed: \(error)") }
+            } catch {
+                graph.compilerImplicitImports = nil
+                graph.diagnostics.append("Compiler dependency extraction failed: \(error)")
+            }
         }
         if seen.isEmpty { graph.diagnostics.append("No supported SwiftDriver invocations found in Xcode build output.") }
         progress("Extracting \(jobs.count) Xcode modules with \(workers) worker(s)…")
@@ -186,6 +192,26 @@ enum XcodeCompilerGraph {
     static func arguments(_ arguments: [String]) -> [String] {
         let remove: Set<String> = ["-use-frontend-parseable-output", "-save-temps", "-emit-dependencies", "-emit-const-values", "-experimental-emit-module-separately", "-explicit-module-build", "-O", "-Osize", "-Ounchecked", "-Onone", "-whole-module-optimization"]
         return PackageAnalyzer.silArguments(arguments).filter { !remove.contains($0) }
+    }
+
+    static func implicitImports(_ arguments: [String]) throws -> Set<String> {
+        // Driver forwarding markers do not change frontend option/operand pairs.
+        let args = arguments.filter { $0 != "-Xfrontend" }
+        let options: Set<String> = ["-import-module", "-testable-import-module"]
+        var imports = Set<String>()
+        for (index, argument) in args.enumerated() {
+            if options.contains(argument) {
+                guard index + 1 < args.count, !args[index + 1].hasPrefix("-") else {
+                    throw ImpactError("Missing implicit import operand: \(argument)")
+                }
+                imports.insert(args[index + 1])
+            } else if let separator = argument.firstIndex(of: "="), options.contains(String(argument[..<separator])) {
+                let name = String(argument[argument.index(after: separator)...])
+                guard !name.isEmpty else { throw ImpactError("Empty implicit import operand") }
+                imports.insert(name)
+            }
+        }
+        return imports
     }
 
     static func bind(tests: [String], modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph) {

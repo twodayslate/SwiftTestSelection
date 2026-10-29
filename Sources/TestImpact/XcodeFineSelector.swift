@@ -5,6 +5,11 @@ import Foundation
 
 public enum XcodeFineSelector {
     public static func select(current: XcodeTestGraph, previous: XcodeTestGraph?, changes: [FileChange], baseRevision: String, additionalFallbacks: [String] = []) -> ImpactReport {
+        let mappingFilePresent = current.mappings != nil
+        let headInline = InlineUIMappings.resolve(current)
+        let baseInline = previous.map(InlineUIMappings.resolve)
+        let current = headInline.applying(to: current)
+        let previous = previous.map { baseInline!.applying(to: $0) }
         let inventory = Set(current.tests)
         let uiTargets = Set(current.targets.filter(\.isUITest).map(\.name))
         let uiTests = inventory.filter { uiTargets.contains(target(of: $0)) }
@@ -26,6 +31,32 @@ public enum XcodeFineSelector {
             diagnostics.append(SelectionDiagnostic(code: code, message: message, tests: affected.sorted()))
             include(affected, kind: "fallback", reason: message, revision: "base/head")
             if affected == inventory { fullReasons.append(message) }
+        }
+        for resolution in [headInline, baseInline].compactMap({ $0 }) {
+            for diagnostic in resolution.diagnostics {
+                fallback(diagnostic.code, diagnostic.message, tests: Set(diagnostic.tests))
+            }
+        }
+        var policyPaths = Set<String>()
+        if let baseInline {
+            for test in Set(headInline.policies.keys).union(baseInline.policies.keys) where headInline.policies[test] != baseInline.policies[test] {
+                include([test], kind: "inlineMappingChanged", reason: "Inline UI dependency policy changed", revision: "base/head",
+                        path: (headInline.features + baseInline.features).filter { $0.tests?.contains(test) == true }.map(\.name).sorted())
+            }
+            let before = InlineUIMappings.policyPaths(previous!.sources), after = InlineUIMappings.policyPaths(current.sources)
+            policyPaths = Set(before.keys).union(after.keys).filter { before[$0] != after[$0] }
+        }
+        for (snapshot, resolution) in [(Optional(current), Optional(headInline)), (previous, baseInline)] {
+            guard let snapshot, let resolution, !resolution.features.isEmpty, let graph = snapshot.dependencies else { continue }
+            let mappingIndex = MappingIndex(UIFeatureMappings(features: resolution.features), snapshot: snapshot, graph: graph, index: DependencyIndex(graph))
+            // Conditions resolve across both revisions below, including removed
+            // and moved operands. Per-side boundary validation would override a
+            // valid false condition with a spurious conservative selection.
+            for feature in resolution.features where feature.when == nil {
+                for entry in mappingIndex.unresolvedEntries[feature.name] ?? [] {
+                    fallback("unresolved_mapping_boundary", "\(feature.name): no compiled boundary matches \(entry)", tests: Set(feature.tests ?? []))
+                }
+            }
         }
         // Both revisions must opt into treating source locations as diagnostics.
         // Explicit macro/directive syntax remains executable under either policy.
@@ -235,7 +266,7 @@ public enum XcodeFineSelector {
             let paths = [change.path] + (change.previousPath.map { [$0] } ?? [])
             if paths.allSatisfy(ignoredDocumentation) {
                 ignored.insert(change.path)
-            } else if change.path.hasSuffix(".swift"), knownPaths.contains(change.path), analyzedPaths.contains(change.path), !semanticPaths.contains(change.path) {
+            } else if change.path.hasSuffix(".swift"), knownPaths.contains(change.path), analyzedPaths.contains(change.path), !semanticPaths.contains(change.path), !policyPaths.contains(change.path) {
                 ignored.insert(change.path)
             } else if change.isPureMove && change.path.hasSuffix(".pbxproj") {
                 ignored.insert(change.path)
@@ -522,7 +553,7 @@ public enum XcodeFineSelector {
                 current.mappings!.selectors(for: feature).contains { UIFeatureMappings.selects(test, selector: $0) }
             } == true
         })
-        report.uiMappingCoverage = UIMappingCoverage(mappingFilePresent: current.mappings != nil,
+        report.uiMappingCoverage = UIMappingCoverage(mappingFilePresent: mappingFilePresent,
             mappedTests: uiTests.intersection(declaredTests).sorted(), unmappedTests: uiTests.subtracting(declaredTests).sorted())
         if let mappings = current.mappings, current.dependencies != nil {
             for feature in mappings.features {

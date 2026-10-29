@@ -213,7 +213,7 @@ extension XcodeAnalysis {
     }
 
     func validateArtifactGraph(_ graph: XcodeTestGraph, root: URL) throws -> XcodeBuildArtifact {
-        guard [2, 3].contains(graph.schemaVersion), graph.mappings?.version != 2 || graph.schemaVersion == 3, graph.analysisKind == "xcode-sil-and-ui-mappings", graph.dependencies != nil,
+        guard [2, 3, 4].contains(graph.schemaVersion), graph.mappings?.version != 2 || graph.schemaVersion >= 3, graph.analysisKind == "xcode-sil-and-ui-mappings", graph.dependencies != nil,
               !graph.tests.isEmpty, let artifact = graph.buildArtifact, artifact.schemaVersion == 1,
               !artifact.id.isEmpty, !artifact.toolchain.isEmpty, artifact.context["sdkAndArchitecture"]?.isEmpty == false,
               !artifact.products.isEmpty, artifact.products[artifact.xctestrun] != nil,

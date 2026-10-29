@@ -212,7 +212,7 @@ final class XcodeGraphCache {
 
     func load(_ identity: [String: String], onMiss: (String) -> Void = { _ in }) throws -> XcodeTestGraph? {
         try load(identity, as: XcodeTestGraph.self, onMiss: onMiss) { graph in
-            guard [2, 3].contains(graph.schemaVersion), graph.mappings?.version != 2 || graph.schemaVersion == 3, graph.analysisKind == "xcode-sil-and-ui-mappings", graph.dependencies != nil,
+            guard graph.schemaVersion == 4, graph.analysisKind == "xcode-sil-and-ui-mappings", graph.dependencies != nil,
                   !graph.tests.isEmpty, graph.buildArtifact == nil else { throw ImpactError("unsupported or incomplete graph") }
         }
     }
@@ -359,7 +359,7 @@ extension XcodeAnalysis {
             guard !decoded.isEmpty else { throw ImpactError("Cannot cache empty build settings.") }
             let normalized = try XcodeGraphCache.normalizedSettings(settings, workspace: workspace, aliases: keepBuild ? retained.map { [$0] } ?? [] : [])
             var identity = context
-            identity["schema"] = "xcode-analysis-cache-1/graph-2"
+            identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-4"
             identity["repository"] = XcodeGraphCache.digest(Data(repository.utf8))
             identity["revision"] = revision
             identity["analyzerExecutable"] = analyzer

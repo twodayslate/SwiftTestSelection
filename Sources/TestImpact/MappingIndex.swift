@@ -4,15 +4,29 @@
 import Foundation
 
 struct MappingIndex {
+    var unresolvedEntries: [String: [String]] = [:]
     var roots: [String: Set<String>] = [:]
     var tests: [String: Set<String>] = [:]
     var unmatched: [String: [String]] = [:]
     init(_ mappings: UIFeatureMappings, snapshot: XcodeTestGraph, graph: DependencyGraph, index: DependencyIndex) {
+        let capturedPaths = mappings.features.contains { !($0.when?.sourcePatterns.isEmpty ?? true) }
+            ? UIConditionContext.Side(revision: "head", snapshot: snapshot, changed: []).sourcePaths : []
         for feature in mappings.features {
             var symbols = Set<String>()
             let sourcePatterns = ((feature.sources ?? []) + (feature.when?.sourcePatterns ?? [])).map(Glob.init)
             for (path, ids) in index.byFile where sourcePatterns.contains(where: { $0.matches(path) }) { symbols.formUnion(ids) }
-            for match in Self.symbolMatches(feature, graph: graph) { symbols.formUnion(match.roots) }
+            for match in Self.symbolMatches(feature, graph: graph) {
+                symbols.formUnion(match.roots)
+                if match.roots.isEmpty { unresolvedEntries[feature.name, default: []].append("symbols: " + match.pattern) }
+            }
+            for pattern in feature.sources ?? [] where !index.byFile.keys.contains(where: { Glob(pattern).matches($0) }) {
+                unresolvedEntries[feature.name, default: []].append("sources: " + pattern)
+            }
+            // Direct-change predicates resolve against captured sources, including
+            // files with no emitted functions. Boundary roots still require SIL.
+            for pattern in feature.when?.sourcePatterns ?? [] where !capturedPaths.contains(where: { Glob(pattern).matches($0) }) {
+                unresolvedEntries[feature.name, default: []].append("sources: " + pattern)
+            }
             roots[feature.name] = symbols
             var selected = Set<String>()
             for selector in mappings.selectors(for: feature) {

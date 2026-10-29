@@ -28,7 +28,7 @@ public struct XcodeTarget: Codable, Sendable {
 /// Combines build ownership, compiler dependencies and explicit UI mappings.
 /// Compiler edges alone never claim to cross the UI automation process boundary.
 public struct XcodeTestGraph: Codable, Sendable {
-    public var schemaVersion = 2
+    public var schemaVersion = 4
     public var analysisKind = "xcode-sil-and-ui-mappings"
     public var targets: [XcodeTarget]
     /// Exact identifiers emitted by xcodebuild test enumeration.
@@ -62,6 +62,47 @@ public struct XcodeTestGraph: Codable, Sendable {
         self.targets = targets
         self.tests = tests
         self.diagnostics = diagnostics
+    }
+
+    // Changing the required source key makes old synthesized readers reject
+    // new policy-bearing graphs, instead of silently dropping directive metadata.
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case analysisKind
+        case targets
+        case tests
+        case diagnostics
+        case dependencies
+        case sources = "sourceSnapshots"
+        case unsupportedSourceInputs
+        case generatedSourceBoundaries
+        case unresolvedProductRoles
+        case modules
+        case mappings
+        case mappingLoadError
+        case runtimeInventory
+        case buildArtifact
+    }
+    private enum LegacyKeys: String, CodingKey { case sources }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        analysisKind = try values.decode(String.self, forKey: .analysisKind)
+        targets = try values.decode([XcodeTarget].self, forKey: .targets)
+        tests = try values.decode([String].self, forKey: .tests)
+        diagnostics = try values.decode([String].self, forKey: .diagnostics)
+        dependencies = try values.decodeIfPresent(DependencyGraph.self, forKey: .dependencies)
+        sources = try values.decodeIfPresent([String: SwiftSourceSnapshot].self, forKey: .sources) ?? legacy.decode([String: SwiftSourceSnapshot].self, forKey: .sources)
+        unsupportedSourceInputs = try values.decodeIfPresent([String: [String]].self, forKey: .unsupportedSourceInputs)
+        generatedSourceBoundaries = try values.decodeIfPresent([String: [GeneratedSourceBoundary]].self, forKey: .generatedSourceBoundaries)
+        unresolvedProductRoles = try values.decodeIfPresent([String: String].self, forKey: .unresolvedProductRoles)
+        modules = try values.decode([String: String].self, forKey: .modules)
+        mappings = try values.decodeIfPresent(UIFeatureMappings.self, forKey: .mappings)
+        mappingLoadError = try values.decodeIfPresent(String.self, forKey: .mappingLoadError)
+        runtimeInventory = try values.decodeIfPresent(XcodeRuntimeInventory.self, forKey: .runtimeInventory)
+        buildArtifact = try values.decodeIfPresent(XcodeBuildArtifact.self, forKey: .buildArtifact)
+        guard [2, 3, 4].contains(schemaVersion) else { throw ImpactError("Unsupported Xcode graph schema: \(schemaVersion)") }
     }
 
     public func dot() -> String {
