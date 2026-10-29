@@ -155,10 +155,11 @@ func inlineMappingSourceConditionsAcceptCapturedFilesWithoutFunctions(contents: 
 func inlineMappingUnrelatedSuffixCannotEstablishAncestry(qualified: Bool) throws {
     // Parent is imported from External, whose source is not captured. The
     // unrelated Namespace.Parent must not lend its annotation to Suite.
-    // Explicitly naming Namespace.Parent remains a supported lexical binding.
+    // Without the unknown import, explicitly naming Namespace.Parent remains
+    // a supported lexical binding. Unknown exports also make Other conservative.
     let text = """
     import XCTest
-    import External
+    \(qualified ? "" : "import External")
     enum Namespace {
         // swift-test-selection: {"symbols":["App.checkout()"]}
         class Parent: XCTestCase {}
@@ -192,7 +193,7 @@ func inlineMappingUnrelatedSuffixCannotEstablishAncestry(qualified: Bool) throws
             }
             let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: head.sources, mappings: head.mappings),
                 changes: [], baseRevision: "base")
-            #expect(headOnly.selectedTests == [tests[0]])
+            #expect(headOnly.selectedTests == tests.sorted())
             #expect(headOnly.diagnostics.contains { $0.code == "invalid_inline_mapping" })
             #expect(InlineMappingAudit.inspect(head).diagnostics.contains { $0.tests == [tests[0]] })
         }
@@ -415,20 +416,23 @@ func inlineMappingOrphanDiagnosticsFollowEnabledAncestors(extensionMethod: Bool)
     }
 }
 
-@Test(arguments: [false, true])
-func inlineMappingCompiledScopedAliasRetainsConservativeSelection(reexported: Bool) throws {
+@Test(arguments: ["direct", "captured", "uncaptured", "suffix"])
+func inlineMappingCompiledSuperclassAmbiguityRetainsConservativeSelection(evidence: String) throws {
+    let reexported = evidence != "direct"
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("inline-scoped-alias-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let arguments = ["swiftc", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", "-I", root.path]
+    let baseName = evidence == "suffix" ? "Actual" : "Parent"
     let support = """
     import XCTest
     // swift-test-selection: {"symbols":["App.shared()"]}
-    open class Parent: XCTestCase {}
+    open class \(baseName): XCTestCase {}
     """
-    for (module, source) in [("Support", support), ("Helpers", "import Support\npublic typealias XCTestCase = Support.Parent"),
-                             ("Reexport", "@_exported import typealias Helpers.XCTestCase")] {
+    for (module, source) in [("Support", support), ("Helpers", "import Support\npublic typealias XCTestCase = Support.\(baseName)"),
+                             ("Reexport", "@_exported import typealias Helpers.XCTestCase"),
+                             ("External", "import Support\nopen class Parent: Support.\(baseName) {}")] {
         let file = root.appendingPathComponent(module + ".swift")
         try source.write(to: file, atomically: true, encoding: .utf8)
         _ = try CommandRunner.run("xcrun", arguments + ["-emit-module", "-module-name", module, file.path,
@@ -436,11 +440,11 @@ func inlineMappingCompiledScopedAliasRetainsConservativeSelection(reexported: Bo
     }
     let source = """
     import XCTest
-    \(reexported ? "import Reexport" : "import typealias Helpers.XCTestCase")
+    \(evidence == "suffix" ? "import External" : reexported ? "import Reexport" : "import typealias Helpers.XCTestCase")
     import Support
-    // swift-test-selection: {"symbols":["App.checkout()"]}
-    class Suite: XCTestCase { func testOne() {} }
-    let actualSuperclass: Support.Parent.Type = Suite.self
+    \(evidence == "suffix" ? "enum Namespace { class Parent {} }" : #"// swift-test-selection: {"symbols":["App.checkout()"]}"#)
+    class Suite: \(evidence == "suffix" ? "Parent" : "XCTestCase") { func testOne() {} }
+    let actualSuperclass: Support.\(baseName).Type = Suite.self
     """
     let file = root.appendingPathComponent("UI.swift"), sil = root.appendingPathComponent("UI.sil")
     try source.write(to: file, atomically: true, encoding: .utf8)
@@ -449,7 +453,7 @@ func inlineMappingCompiledScopedAliasRetainsConservativeSelection(reexported: Bo
     var graph = inlineRegressionGraph(source, tests: ["UI/Suite/testOne()"])
     graph.modules["Support"] = "Support"
     graph.sources["Support:Support.swift"] = .parse(support, path: "Support.swift", module: "Support")
-    if reexported {
+    if evidence == "captured" {
         graph.sources["Reexport:Reexport.swift"] = .parse("@_exported import typealias Helpers.XCTestCase", path: "Reexport.swift", module: "Reexport")
     }
     graph.dependencies!.functions = graph.dependencies!.functions.filter { $0.value.module != "UI" }
@@ -464,14 +468,14 @@ func inlineMappingCompiledScopedAliasRetainsConservativeSelection(reexported: Bo
     #expect(InlineUIMappings.resolve(saved).features.isEmpty)
 }
 
-@Test(arguments: ["captured", "transitive", "conditional", "sameModule", "missingInventory", "unrelated", "qualified"])
+@Test(arguments: ["captured", "transitive", "conditional", "sameModule", "missingInventory", "unrelated", "qualified", "uncaptured", "partial", "transitiveUncaptured", "unlistedBinary", "legacyExports", "legacyImports", "generated", "sameModuleUncaptured", "unknownQualified"])
 func inlineMappingReexportedScopedNamesCannotEstablishAncestry(mode: String) throws {
     let source = """
     import XCTest
-    \(mode == "unrelated" ? "#if NEVER\nimport Reexport\n#endif" : mode == "transitive" ? "import Facade" : mode == "sameModule" ? "" : "import Reexport")
+    \(mode == "unrelated" ? "#if NEVER\nimport Reexport\n#endif" : ["transitive", "transitiveUncaptured"].contains(mode) ? "import Facade" : ["sameModule", "sameModuleUncaptured"].contains(mode) ? "" : "import Reexport")
     import Support
     // swift-test-selection: {"symbols":["App.checkout()"]}
-    class Suite: \(mode == "qualified" ? "XCTest.XCTestCase" : "XCTestCase") { func testOne() {} }
+    class Suite: \(["qualified", "unknownQualified"].contains(mode) ? "XCTest.XCTestCase" : "XCTestCase") { func testOne() {} }
     class Other: Support.Parent { func testOther() {} }
     """
     func model(_ value: Int) -> XcodeTestGraph {
@@ -486,9 +490,32 @@ func inlineMappingReexportedScopedNamesCannotEstablishAncestry(mode: String) thr
         let exported = "@_exported import typealias Helpers.XCTestCase"
         graph.sources[module + ":Exports.swift"] = .parse(mode == "conditional" ? "#if DEBUG\n\(exported)\n#endif" : exported, path: "Exports.swift", module: module)
         graph.sources["Facade:Facade.swift"] = .parse("@_exported import Reexport", path: "Facade.swift", module: "Facade")
+        if ["uncaptured", "transitiveUncaptured", "unlistedBinary", "unknownQualified"].contains(mode) {
+            graph.sources.removeValue(forKey: module + ":Exports.swift")
+        }
+        if ["partial", "legacyExports", "legacyImports"].contains(mode) {
+            graph.sources[module + ":Exports.swift"] = .parse("import Foundation", path: "Exports.swift", module: module)
+            if mode == "partial" {
+                graph.targets.append(.init(name: module, productType: "com.apple.product-type.framework", sourceFiles: ["Exports.swift", "MissingExports.swift"]))
+            }
+        }
+        if mode == "sameModuleUncaptured" {
+            graph.sources.removeValue(forKey: module + ":Exports.swift")
+            graph.sources["UI:Exports.swift"] = .parse("@_exported import Binary", path: "Exports.swift", module: "UI")
+        }
+        if mode == "generated" {
+            graph.sources[module + ":Exports.swift"] = .parse("import Foundation", path: "Exports.swift", module: module)
+            graph.unsupportedSourceInputs = [module: ["/tmp/GeneratedExports.swift"]]
+        }
+        if mode == "legacyExports" { graph.sources[module + ":Exports.swift"]!.inlineMappings!.reexportedModules = nil }
+        if mode == "legacyImports" { graph.sources["UI:UI.swift"]!.inlineMappings!.moduleImports = nil }
         if mode != "missingInventory" {
             graph.runtimeInventory = .init(imports: ["UI": mode == "unrelated" ? ["Support"] : ["Facade", "Reexport", "Helpers", "Support"],
                 "Facade": ["Reexport", "Helpers", "Support"], "Reexport": ["Helpers", "Support"], "Support": []], hosts: [:])
+        }
+        if mode == "unlistedBinary" {
+            // Runtime inventories enumerate project imports, not binary modules.
+            graph.runtimeInventory = .init(imports: ["UI": ["Support"], "Support": []], hosts: [:])
         }
         XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
         return graph
@@ -561,4 +588,40 @@ func inlineMappingDisabledPoliciesDoNotRequireUnrelatedAncestry(placement: Strin
     #expect(throws: MappingValidationError.self) {
         try enabled.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
     }
+}
+
+@Test(arguments: [false, true])
+func inlineMappingSuffixCandidatesCannotSuppressImportedPolicyUncertainty(archived: Bool) throws {
+    let source = """
+    import XCTest
+    import External
+    import Support
+    enum Namespace { class Parent {} }
+    class Suite: Parent { func testOne() {} }
+    class Other: Support.Actual { func testOther() {} }
+    """
+    func model(_ value: Int) -> XcodeTestGraph {
+        var graph = inlineRegressionGraph(source, value: value, tests: ["UI/Suite/testOne()", "UI/Other/testOther()"])
+        graph.modules["Support"] = "Support"
+        graph.sources["Support:Support.swift"] = .parse("""
+        import XCTest
+        // swift-test-selection: {"symbols":["App.shared()"]}
+        open class Actual: XCTestCase {}
+        """, path: "Support.swift", module: "Support")
+        graph.mappings = .init(features: [.init(name: "suite-file", symbols: ["App.checkout()"], tests: ["UI/Suite"])], runtimeDependencyPolicy: .declared)
+        graph.runtimeInventory = .init(imports: ["UI": ["External", "Support"], "Support": []], hosts: [:])
+        XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
+        return graph
+    }
+    let graph = try archived ? GraphArchive.decode(GraphArchive.encode(model(2))) : model(2)
+    let resolution = InlineUIMappings.resolve(graph)
+    #expect(resolution.diagnostics.contains { $0.tests == ["UI/Suite/testOne()"] })
+    #expect(throws: MappingValidationError.self) {
+        try graph.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+    }
+    let report = XcodeFineSelector.select(current: graph, previous: model(1), changes: [.init(path: "App.swift")], baseRevision: "base")
+    #expect(report.selectedTests == graph.tests.sorted())
+    #expect(InlineMappingAudit.inspect(graph).diagnostics.contains { $0.tests == ["UI/Suite/testOne()"] })
+    let headOnly = XcodeHeadOnlySelector.select(current: graph, source: .init(base: graph.sources, mappings: graph.mappings), changes: [], baseRevision: "base")
+    #expect(headOnly.selectedTests.contains("UI/Suite/testOne()"))
 }

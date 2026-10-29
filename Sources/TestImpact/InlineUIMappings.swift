@@ -34,12 +34,16 @@ public struct InlineMappingSyntax: Codable, Sendable {
     /// Import-only files also contribute to their module's exported namespace.
     public var module: String? = nil
     public var reexportedTypeImports: Set<String>? = nil
+    /// Whole-module imports need export evidence even for binary dependencies.
+    /// Scoped imports expose only the names tracked above.
+    public var moduleImports: Set<String>? = nil
+    public var reexportedModules: Set<String>? = nil
 
     static let prefix = "swift-test-selection:"
 
     static func parse(_ tree: SourceFileSyntax, path: String, module: String, hasDirectives: Bool = true) -> Self {
         let locations = SourceLocationConverter(fileName: path, tree: tree)
-        var result = Self(declarations: [], diagnostics: [], frameworkImports: [], scopedTypeImports: [], module: module, reexportedTypeImports: [])
+        var result = Self(declarations: [], diagnostics: [], frameworkImports: [], scopedTypeImports: [], module: module, reexportedTypeImports: [], moduleImports: [], reexportedModules: [])
         var attached = Set<Int>()
         func directives(_ trivia: Trivia, at position: AbsolutePosition) -> [(Int, Directive)] {
             guard hasDirectives else { return [] }
@@ -89,6 +93,14 @@ public struct InlineMappingSyntax: Codable, Sendable {
             return values
         }
         func walk(_ node: Syntax, scope: String, conditional: Bool, member: Bool) {
+            if let imported = node.as(ImportDeclSyntax.self), imported.importKindSpecifier == nil,
+               let name = imported.path.first?.name {
+                let module = name.identifier?.name ?? name.text
+                result.moduleImports?.insert(module)
+                if imported.attributes.contains(where: { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "_exported" }) {
+                    result.reexportedModules?.insert(module)
+                }
+            }
             if let imported = node.as(ImportDeclSyntax.self),
                let kind = imported.importKindSpecifier?.text,
                ["typealias", "class", "struct", "enum", "protocol"].contains(kind) {
@@ -245,6 +257,35 @@ struct InlineUIMappings {
                   inventory.imports[owner] != nil || inventory.unavailableModules?[owner] != nil else { return true }
             return imports.contains(owner)
         }
+        let sourcesByModule = Dictionary(grouping: snapshot.sources.keys, by: { String($0.prefix { $0 != ":" }) })
+        func hasCompleteExports(_ module: String) -> Bool {
+            guard snapshot.unsupportedSourceInputs?[module]?.isEmpty != false,
+                  let keys = sourcesByModule[module], !keys.isEmpty,
+                  keys.allSatisfy({ snapshot.sources[$0]?.inlineMappings?.reexportedModules != nil &&
+                      snapshot.sources[$0]?.inlineMappings?.reexportedTypeImports != nil }) else { return false }
+            // A captured file cannot prove that another, missing file does not
+            // re-export a scoped name. Check the declared source inventory too.
+            return snapshot.targets.filter { (snapshot.modules[$0.name] ?? $0.name) == module }.allSatisfy { target in
+                target.sourceFiles.allSatisfy { snapshot.sources[module + ":" + $0] != nil }
+            }
+        }
+        func hasUnknownExports(_ declaration: InlineMappingSyntax.Declaration) -> Bool {
+            let module = declaration.module
+            guard hasCompleteExports(module),
+                  let imports = snapshot.sources[module + ":" + declaration.region.path]?.inlineMappings?.moduleImports else { return true }
+            var pending = Array(imports)
+            // Re-exports in another file are visible throughout this module.
+            pending += (sourcesByModule[module] ?? []).flatMap { Array(snapshot.sources[$0]?.inlineMappings?.reexportedModules ?? []) }
+            var visited = Set<String>()
+            while let imported = pending.popLast() {
+                guard visited.insert(imported).inserted, couldImport(imported, into: module) else { continue }
+                // These SDK modules establish the supported terminal bases.
+                if ["XCTest", "Foundation", "Swift"].contains(imported) { continue }
+                guard hasCompleteExports(imported) else { return true }
+                pending += (sourcesByModule[imported] ?? []).flatMap { Array(snapshot.sources[$0]?.inlineMappings?.reexportedModules ?? []) }
+            }
+            return false
+        }
         let globalNames = aliases.union(nominalTypes).filter { $0.split(separator: ".").count == 2 }
         func couldShadow(_ parent: String, in module: String, names: Set<String>, includeOwnModule: Bool = false) -> Bool {
             let name = String(parent.prefix { $0 != "." })
@@ -291,12 +332,12 @@ struct InlineUIMappings {
                     let localAlias = aliases.contains { $0 == parent || $0.hasSuffix("." + parent) || $0.hasSuffix("." + qualifier) }
                     if localAlias { matches += classes.keys.filter { $0.hasPrefix(declaration.module + ".") } }
                     pending.append(contentsOf: matches.map { ($0, inheritedMethods) })
-                    if matches.isEmpty || localAlias {
-                        if declarations.contains(where: {
-                            $0.module != declaration.module && couldImport($0.module, into: declaration.module) &&
-                            carriesPolicy($0, methodsAllowed: inheritedMethods)
-                        }) { return true }
-                    }
+                    // A suffix candidate is not a lookup result and cannot rule
+                    // out an uncaptured imported ancestor carrying these rules.
+                    if declarations.contains(where: {
+                        $0.module != declaration.module && couldImport($0.module, into: declaration.module) &&
+                        carriesPolicy($0, methodsAllowed: inheritedMethods)
+                    }) { return true }
                 }
             }
             return false
@@ -321,6 +362,7 @@ struct InlineUIMappings {
             var pending: String? = module + "." + parts[1]
             var visited = Set<String>()
             var failed = false
+            var unknownExports = false
             var diagnosedPaths = testPaths
             func diagnoseSources(_ applicable: [InlineMappingSyntax.Declaration]) {
                 let paths = Set(applicable.map { $0.region.path }).subtracting(diagnosedPaths)
@@ -348,6 +390,9 @@ struct InlineUIMappings {
                 guard let importedTypes = scopedTypeImports[declaration.module + ":" + declaration.region.path] else {
                     failed = true; break
                 }
+                // Continue through lexical candidates to report their malformed
+                // directives, but never materialize rules from uncertain ancestry.
+                unknownExports = unknownExports || hasUnknownExports(declaration)
                 if importedTypes.contains(importedName) || couldShadow(parent, in: declaration.module, names: reexportedNames, includeOwnModule: true) {
                     failed = true; break
                 }
@@ -410,6 +455,12 @@ struct InlineUIMappings {
                 failed = true
             }
             diagnoseSources(applicable)
+            if unknownExports {
+                if needsBinding {
+                    diagnose("Inline ancestry is unresolved for \(test): imported module exports are not fully captured; regenerate complete source/import evidence", tests: [test])
+                }
+                continue
+            }
             guard !failed else { continue }
             for declaration in applicable {
                 guard physical.contains(declaration.module + ":" + declaration.region.path) else {

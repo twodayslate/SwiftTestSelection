@@ -71,7 +71,13 @@ test targets; it does not infer Swift Testing or parameterized executable identi
   Re-exported scoped names participate across modules, including exports from
   imports-only files and transitive imports. Compiler import evidence must exclude
   an exporting module before its potentially shadowing name can be ignored.
-  Saved snapshots without scoped-import/re-export evidence require regeneration.
+  Whole-module imports also require captured export evidence, including transitively
+  re-exported modules and every declared source file. An uncaptured binary module
+  could re-export a scoped alias; its absence from the project import inventory is
+  not proof that it is invisible. Such uncertainty keeps affected tests selected
+  and fails strict validation. The supported SDK terminal modules (`XCTest`,
+  `Foundation`, and `Swift`) do not require source capture.
+  Saved snapshots without current import/re-export evidence require regeneration.
 - Inline and file rules form a union. Selecting a test through either rule keeps it
   selected. There are no override, replace, exclusion or implicit policy switches.
 
@@ -87,6 +93,7 @@ a disabled method with a stale symbol does not fail its enabled sibling's mappin
 An annotation on a disabled suite, disabled extension method, or overridden base
 method does not require unrelated enabled tests to prove inline ancestry. Class
 defaults and policies on plausible ancestors still require conservative binding.
+An unrelated suffix match cannot exclude policies on an uncaptured imported ancestor.
 Orphan directives in UI source files are diagnosed because they cannot be associated
 with an executable safely. Orphan diagnostics in an enabled test's ancestor or
 inherited-method source are also reported, even when no directive attached
