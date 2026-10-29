@@ -57,7 +57,10 @@ test targets; it does not infer Swift Testing or parameterized executable identi
   inside aliased extensions, including class, struct, and enum namespaces.
   Nested names retain their shadowing evidence under the resolved owner.
   Unresolved owners on enabled annotated declarations produce diagnostics
-  instead of silently dropping their rules. Extensions of imported types remain
+  instead of silently dropping their rules. This includes inherited defaults when
+  an unannotated nested suite and its methods are declared in separate extensions:
+  unresolved nested classes remain candidates for ancestry diagnostics.
+  Extensions of imported types remain
   unresolved: their compiling module and display name cannot establish a local
   type identity. A same-named local type must not supply their superclass rules.
   Older saved graphs missing nominal owner evidence require regeneration for

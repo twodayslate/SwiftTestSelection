@@ -392,18 +392,17 @@ struct InlineUIMappings {
             // A nested class with only inherited methods, or a method with
             // missing locations, may not establish its extension owner. Its
             // suffix is diagnostic evidence, never enough to bind the alias.
-            func hasUnresolvedNestedPolicy(_ key: String, methodsAllowed: Bool) -> Bool {
-                unresolvedExtensions.contains { ext in
-                    declarations.contains { declaration in
+            func unresolvedNestedCandidates(_ key: String, methodsAllowed: Bool) -> [InlineMappingSyntax.Declaration] {
+                declarations.filter { declaration in
+                    unresolvedExtensions.contains { ext in
                         (declaration.kind == "class" || methodsAllowed && declaration.kind == "method" && declaration.method == method) &&
-                            !declaration.directives.isEmpty && enclosed(declaration, by: ext) &&
+                            enclosed(declaration, by: ext) &&
                             declaration.scope.hasPrefix(ext.scope + ".") &&
                             key.hasSuffix(String(declaration.scope.dropFirst(ext.scope.count))) &&
                             couldImport(declaration.module, into: String(owner.prefix { $0 != "." }))
                     }
                 }
             }
-            if hasUnresolvedNestedPolicy(owner, methodsAllowed: true) { return true }
             let implementations = declarations.filter { $0.kind == "method" && $0.method == method && active($0, methodOnly: true, roots: roots) }
             func carriesPolicy(_ declaration: InlineMappingSyntax.Declaration, methodsAllowed: Bool) -> Bool {
                 guard !declaration.directives.isEmpty else { return false }
@@ -427,6 +426,13 @@ struct InlineUIMappings {
             var pending = ([owner] + rawOwners + possibleOwners).map { ($0, true) }, visited = Set<String>()
             while let (key, methodsAllowed) = pending.popLast() {
                 guard visited.insert(key + ":" + String(methodsAllowed)).inserted else { continue }
+                let nested = unresolvedNestedCandidates(key, methodsAllowed: methodsAllowed)
+                if nested.contains(where: { !$0.directives.isEmpty }) { return true }
+                // The nested declaration may have no directive of its own.
+                // Follow its raw ancestry too: a method in another extension
+                // (or subclass) can inherit the base class's policy. These
+                // suffix candidates only require diagnostics, never binding.
+                pending.append(contentsOf: nested.filter { $0.kind == "class" }.map { ($0.module + "." + $0.scope, methodsAllowed) })
                 if declarations.contains(where: {
                     $0.module + "." + $0.scope == key && carriesPolicy($0, methodsAllowed: methodsAllowed)
                 }) { return true }
@@ -434,7 +440,7 @@ struct InlineUIMappings {
                 for declaration in classes[key] ?? [] {
                     guard let spelling = declaration.superclass else { continue }
                     guard let parent = SwiftSourceSnapshot.nominalTypeName(spelling) else { return annotated }
-                    if hasUnresolvedNestedPolicy(declaration.module + "." + parent, methodsAllowed: inheritedMethods) { return true }
+                    pending.append((declaration.module + "." + parent, inheritedMethods))
                     let qualifier = String(parent.prefix { $0 != "." })
                     var matches = classes.keys.filter { $0 == parent || $0.hasSuffix("." + parent) }
                     let localAlias = aliases.contains { $0 == parent || $0.hasSuffix("." + parent) || $0.hasSuffix("." + qualifier) }

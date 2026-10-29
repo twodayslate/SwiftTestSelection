@@ -1002,3 +1002,78 @@ func inlineMappingExtensionOwnerEvidenceSurvivesArchives(evidence: String, compa
         #expect(InlineMappingAudit.inspect(saved).diagnostics.contains { $0.tests == saved.tests })
     }
 }
+
+@Test(arguments: ["Alias", "UI . `Alias`"], ["split", "subclass", "unrelated", "overridden"])
+func inlineMappingSplitNestedAliasPreservesInheritedPolicy(spelling: String, scenario: String) throws {
+    let subclass = scenario == "subclass"
+    let test = "UI/" + (subclass ? "Derived" : "Outer.Suite") + "/testOne()"
+    let inheritsPolicy = ["split", "subclass"].contains(scenario)
+    let source = """
+    import XCTest
+    class Outer {}
+    typealias Alias = Outer
+    \(inheritsPolicy ? #"// swift-test-selection: {"symbols":["App.shared()"]}"# : "")
+    class Base: XCTestCase {
+        // Disabled or overridden method policies must not invalidate this test.
+        // swift-test-selection: {"symbols":["App.stale()"]}
+        @objc dynamic func \(scenario == "overridden" ? "testOne" : "testDisabled")() {}
+    }
+    extension \(spelling) {
+        class Suite: Base {}
+    }
+    \(subclass ? "class Derived: Outer.Suite" : "extension Outer.Suite") {
+        @objc \(scenario == "overridden" ? "override " : "")func testOne() {}
+    }
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Other: XCTestCase { func testOther() {} }
+    """
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("inline-split-alias-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("UI.swift"), sil = root.appendingPathComponent("UI.sil")
+    try source.write(to: file, atomically: true, encoding: .utf8)
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run(compiler, ["-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", "-emit-sil", "-whole-module-optimization", "-g", "-module-name", "UI", file.path, "-o", sil.path], at: root)
+    let compiled = try SILOwnership.resolve(SILParser.parse(file: sil, module: "UI", sourceRoot: root), module: "UI", compiler: compiler, directory: root)
+    func model(_ value: Int) -> XcodeTestGraph {
+        var graph = inlineRegressionGraph(source, value: value, tests: [test, "UI/Other/testOther()"])
+        graph.dependencies!.functions = graph.dependencies!.functions.filter { $0.value.module != "UI" }
+        graph.dependencies!.functions.merge(compiled.functions, uniquingKeysWith: { _, new in new })
+        graph.dependencies!.testDiagnostics = [:]
+        XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
+        graph.mappings = .init(features: [.init(name: "suite", symbols: ["App.checkout()"], tests: [test])], runtimeDependencyPolicy: .declared)
+        return graph
+    }
+    for head in [model(2), try GraphArchive.decode(GraphArchive.encode(model(2))), try GraphArchive.decode(JSONEncoder().encode(model(2)))] {
+        if subclass {
+            #expect(head.dependencies!.testDiagnostics[test]?.contains { $0.contains("Outer.Suite") } == true)
+        } else {
+            // The split-extension bug must not be hidden by a compiler-binding fallback.
+            #expect(head.dependencies!.testDiagnostics.isEmpty)
+        }
+        #expect(head.dependencies!.tests[test]?.isEmpty == false)
+        let resolution = InlineUIMappings.resolve(head)
+        let report = XcodeFineSelector.select(current: head, previous: model(1), changes: [.init(path: "App.swift")], baseRevision: "base")
+        let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: model(1).sources, mappings: head.mappings), changes: [.init(path: "App.swift")], baseRevision: "base")
+        if inheritsPolicy {
+            #expect(report.selectedTests == head.tests.sorted())
+            #expect(headOnly.selectedTests == head.tests.sorted())
+            #expect(resolution.diagnostics.contains { $0.tests == [test] })
+            #expect(!resolution.features.contains { $0.tests?.contains(test) == true })
+            #expect(InlineMappingAudit.inspect(head).diagnostics.contains { $0.tests == [test] })
+            #expect(throws: MappingValidationError.self) {
+                try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+            }
+        } else {
+            #expect(report.selectedTests == ["UI/Other/testOther()"])
+            #expect(headOnly.selectedTests == ["UI/Other/testOther()"])
+            #expect(resolution.diagnostics.isEmpty)
+            try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        }
+        var disabled = head
+        disabled.tests = ["UI/Other/testOther()"]
+        try disabled.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        #expect(InlineMappingAudit.inspect(disabled).diagnostics.isEmpty)
+    }
+}
