@@ -185,6 +185,14 @@ enum SDKReceiverContracts {
     // alias and declaration checks. These sets must not grow to arbitrary SDK types.
     static let valueTypes: Set<String> = ["String", "Substring", "Character", "Bool", "Int", "UInt", "Int64", "UInt64", "Int32", "UInt32", "Int16", "UInt16", "Int8", "UInt8", "Float", "Double", "CGFloat", "Never", "StaticString", "Array", "Dictionary", "Set", "Optional", "IndexingIterator", "ReversedCollection", "Range", "ClosedRange", "DefaultStringInterpolation", "XCTWaiter.Result", "XCUIElement.ElementType"]
     static let receiverTypes: Set<String> = ["XCUIApplication", "XCUIElement", "XCTestExpectation", "XCTAttachment", "XCUIScreenshot", "NSPredicate", "XCTNSPredicateExpectation", "Any", "AnyObject"]
+    // Shared with the historical binding audit: accepting an SDK type at head
+    // cannot authenticate a base-only alias with the same spelling.
+    static let literalTypes: Set<String> = ["XCUIGestureVelocity", "MainActor", "DefaultStringInterpolation", "URL", "UUID", "UIDeviceOrientation", "XCUIApplication.State", "String", "Character", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Array", "Dictionary", "Set", "Optional", "Any",
+        "XCUIApplication", "XCUIElement", "XCUIElement.ElementType", "XCTestCase", "XCTAttachment", "XCTAttachment.Lifetime", "NSPredicate", "XCTNSPredicateExpectation",
+        "XCTWaiter", "XCTWaiter.Result", "XCTestExpectation", "UIDevice", "XCUIScreen", "XCUIDevice", "JSONSerialization"]
+    private static let boundTypes = valueTypes.union(receiverTypes).union(literalTypes)
+    static let bindingNames = Set(boundTypes.map { String($0.split(separator: ".")[0]) })
+    static let nestedBindingNames = Set(boundTypes.flatMap { $0.split(separator: ".").dropFirst().map(String.init) })
     private static let collectionRoots: Set<String> = ["Array", "Dictionary", "String", "Substring", "Set", "Range", "ClosedRange"]
 
     private struct Nominal {

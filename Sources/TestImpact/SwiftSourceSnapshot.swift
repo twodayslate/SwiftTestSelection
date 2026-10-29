@@ -133,6 +133,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         result.identifierNames = Set(identifiers.keys)
         result.helperNamesUnshadowed = PrivateTestHelperSyntax.reservedNames.allSatisfy { name in
             !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
+        } && SDKReceiverContracts.nestedBindingNames.allSatisfy { name in
+            !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsNestedCallerType)
         }
         // Inspect the entire syntax tree, including inactive branches and
         // attributes on declarations other than the changed helper. Without

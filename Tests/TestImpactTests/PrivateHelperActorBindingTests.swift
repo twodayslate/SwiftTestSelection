@@ -76,7 +76,7 @@ func compiledPrivateHelperActorNamesRequireBothRevisionBindings(name: String) th
 @Test func privateHelperReservedNamesIncludeEveryNominalDeclaration() {
     for name in PrivateTestHelperSyntax.reservedNames.sorted() {
         for kind in ["actor", "distributed actor", "class", "struct", "enum", "protocol"] {
-            for declaration in ["\(kind) \(name) {}", "struct Holder { \(kind) \(name) {} }", "#if CUSTOM\n\(kind) \(name) {}\n#endif"] {
+            for declaration in ["\(kind) `\(name)` {}", "struct Holder { \(kind) `\(name)` {} }", "#if CUSTOM\n\(kind) `\(name)` {}\n#endif"] {
                 let source = SwiftSourceSnapshot.parse(declaration, path: "Extra.swift", module: "UI")
                 #expect(source.diagnostics.isEmpty, "\(declaration)")
                 #expect(source.helperNamesUnshadowed == false, "\(declaration)")

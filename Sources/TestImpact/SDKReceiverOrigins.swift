@@ -73,9 +73,7 @@ struct SDKReceiverOrigins {
                 return "Receiver type identities are unproven with unsupported source imports" +
                     (imports.isEmpty ? " (missing import details; refresh source evidence)" : ": " + imports.joined(separator: ", "))
             }
-            let sdkLiterals: Set<String> = ["XCUIGestureVelocity", "MainActor", "DefaultStringInterpolation", "URL", "UUID", "UIDeviceOrientation", "XCUIApplication.State", "String", "Character", "Bool", "Int", "UInt", "Int64", "UInt64", "Double", "Float", "CGFloat", "Array", "Dictionary", "Set", "Optional", "Any",
-                "XCUIApplication", "XCUIElement", "XCUIElement.ElementType", "XCTestCase", "XCTAttachment", "XCTAttachment.Lifetime", "NSPredicate", "XCTNSPredicateExpectation",
-                "XCTWaiter", "XCTWaiter.Result", "XCTestExpectation", "UIDevice", "XCUIScreen", "XCUIDevice", "JSONSerialization"]
+            let sdkLiterals = SDKReceiverContracts.literalTypes
             func localValueType(_ name: String) -> Bool {
                 // A captured value type cannot be an SDK receiver subclass. Do
                 // not let a local SDK namesake authenticate a printed signature.

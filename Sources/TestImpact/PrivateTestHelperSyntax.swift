@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 17 authenticates SDK namespaces and the MainActor annotation.
-    static let currentProofVersion = 17
+    // Version 18 audits the complete caller/receiver type vocabulary at both revisions.
+    static let currentProofVersion = 18
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -78,8 +78,11 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     // Swift/XCTest to a foreign namespace or MainActor to a custom actor.
     // Audit every component of accepted type spellings and every trusted SDK
     // module name, not just the final type name or the helper file's imports.
+    // Caller/lifecycle proofs accept more types than helper bodies. Their full
+    // vocabulary must also be authenticated in base and unowned base sources.
     static let reservedNames = allowedGlobals
         .union(valueTypes.flatMap { $0.split(separator: ".").map(String.init) })
+        .union(SDKReceiverContracts.bindingNames)
         .union(SDKTestHelperSyntax.trustedCallerModules)
         .union(["CoreGraphics", "MainActor", "XCTestCase",
         "IntegerLiteralType", "FloatLiteralType", "BooleanLiteralType", "StringLiteralType",
@@ -104,6 +107,20 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             parent.as(ActorDeclSyntax.self)?.name.id == token.id ||
             parent.as(EnumDeclSyntax.self)?.name.id == token.id || parent.as(ProtocolDeclSyntax.self)?.name.id == token.id ||
             parent.as(TypeAliasDeclSyntax.self)?.name.id == token.id || parent.is(IdentifierPatternSyntax.self)
+    }
+
+    static func shadowsNestedCallerType(_ token: TokenSyntax) -> Bool {
+        guard shadowsReservedName(token) else { return false }
+        // Names such as State and Result are qualified by an SDK owner. A
+        // project nominal with that owner is already rejected above. Extensions
+        // can add nested names without redeclaring the owner, including through
+        // aliases, so retain fallback for these names in any extension.
+        var ancestor = token.parent
+        while let node = ancestor {
+            if node.is(ExtensionDeclSyntax.self) { return true }
+            ancestor = node.parent
+        }
+        return false
     }
 
     static func shadowsAttachmentAdd(_ token: TokenSyntax) -> Bool {
