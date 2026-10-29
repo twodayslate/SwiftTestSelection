@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 23 authenticates enum argument contexts and implicit lifecycle bodies.
-    static let currentProofVersion = 23
+    // Version 24 authenticates implicit lifecycle declarations and both ancestor chains.
+    static let currentProofVersion = 24
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.

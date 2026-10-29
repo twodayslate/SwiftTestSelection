@@ -401,6 +401,35 @@ enum PrivateTestHelperIsolation {
                 }
             }
         }
+        // The head closure cannot name an ancestor removed by reparenting.
+        // Walk both source hierarchies to a fixed point, including nested,
+        // qualified and specialized parents. Ambiguous names widen the audit;
+        // they must never silently discard a possible project ancestor.
+        let typeOwners = Set(revisions.joined().flatMap(\.units).filter { $0.kind == "type" }.map {
+            SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope)
+        })
+        var pendingOwners = Array(auditedOwners), visitedOwners = Set<String>()
+        while let owner = pendingOwners.popLast() {
+            guard visitedOwners.insert(owner).inserted else { continue }
+            for source in revisions.joined() {
+                let classes = source.units.filter { $0.kind == "type" && $0.fingerprint.hasPrefix("classDecl[") &&
+                    SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope) == owner }
+                guard !classes.isEmpty else { continue }
+                guard let superclasses = source.superclasses,
+                      let parents = superclasses.first(where: { SDKTestHelperSyntax.canonicalName($0.key) == owner })?.value else {
+                    return "Missing historical caller superclass evidence; refresh source proofs"
+                }
+                for parent in parents {
+                    guard let nominal = SwiftSourceSnapshot.nominalTypeName(parent) else {
+                        return "Unproven historical caller superclass: " + parent
+                    }
+                    let name = SDKTestHelperSyntax.canonicalName(nominal)
+                    for ancestor in typeOwners where ancestor == name || ancestor.hasSuffix("." + name) {
+                        if auditedOwners.insert(ancestor).inserted { pendingOwners.append(ancestor) }
+                    }
+                }
+            }
+        }
         // Synthesized initializers have no explicit member declaration. Their
         // historical stored-property initializers must independently match the
         // head body. SIL may locate a synthesized initializer only at its type
@@ -424,10 +453,22 @@ enum PrivateTestHelperIsolation {
             for unit in sources.flatMap(\.units) {
                 let owner = SDKTestHelperSyntax.canonicalName(String(unit.key.prefix { $0 != ":" }) + "." + unit.scope)
                 guard auditedOwners.contains(owner) else { continue }
+                // Changed ancestry can also lead to an imported or aliased
+                // superclass without an auditable project body. Authenticate
+                // the header itself rather than trusting the head's ancestry.
+                if revision == 1, unit.kind == "type", unit.fingerprint.hasPrefix("classDecl["),
+                   !headUnits.contains(where: { $0.key == unit.key && $0.fingerprint == unit.fingerprint }) {
+                    return "Unproven historical caller class header at " + unit.region.path + ":" + String(unit.region.startLine)
+                }
                 // XCTest invokes lifecycle hooks without spelling their names
                 // in a caller. Reading their old bindings does not prove an old
                 // body whose direct SDK effects disappeared from the head graph.
-                if unit.helperCallableName.map(SDKTestHelperSyntax.lifecycle.contains) == true,
+                // Constructors, destructors and lifecycle properties are not
+                // FunctionDeclSyntax, but also execute implicitly.
+                guard let declarations = unit.helperDeclaredMembers else {
+                    return "Missing historical caller member declaration evidence; refresh source proofs"
+                }
+                if !declarations.isDisjoint(with: SDKTestHelperSyntax.lifecycle.union(["init", "deinit"])),
                    !units.contains(where: { $0.key == unit.key && $0.fingerprint == unit.fingerprint }) {
                     return "Unproven historical caller lifecycle implementation at " + unit.region.path + ":" + String(unit.region.startLine)
                 }

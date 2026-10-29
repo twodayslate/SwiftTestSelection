@@ -161,7 +161,7 @@ func compiledPrivateXCTestHelpersSelectOnlyProvenConsumers(added: Bool, safety: 
     }
     legacyProof = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(legacyProof))
     #expect(select(legacyProof).selectedTests.contains(tests[3]))
-    for version in [nil, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, PrivateTestHelperSyntax.currentProofVersion + 1] as [Int?] {
+    for version in [nil, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, PrivateTestHelperSyntax.currentProofVersion + 1] as [Int?] {
         var staleProof = current
         for i in staleProof.sources["UI:UI.swift"]!.units.indices {
             staleProof.sources["UI:UI.swift"]!.units[i].privateTestHelper?.proofVersion = version
