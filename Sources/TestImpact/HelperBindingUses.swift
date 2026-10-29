@@ -7,6 +7,9 @@ import SwiftSyntax
 /// expression when a competing project overload existed in the base revision.
 public struct HelperBindingUses: Codable, Sendable {
     public var operators: Set<String> = []
+    /// Operators invoked by syntax without an operator token. Nil means the
+    /// capture predates this inventory and cannot authenticate historical uses.
+    public var implicitOperators: Set<String>? = []
     public var members: Set<String> = []
     public var globals: Set<String> = []
     /// Syntactic qualifiers may name the caller's module rather than a value.
@@ -14,6 +17,9 @@ public struct HelperBindingUses: Codable, Sendable {
     public var qualifiedMembers: [String: Set<String>]? = [:]
 
     init(in node: Syntax) {
+        let patterns = PatternOperatorUses(viewMode: .sourceAccurate)
+        patterns.walk(node)
+        implicitOperators = patterns.operators
         for token in node.tokens(viewMode: .sourceAccurate) {
             if token.parent?.as(BinaryOperatorExprSyntax.self)?.operator.id == token.id ||
                 token.parent?.as(PrefixOperatorExprSyntax.self)?.operator.id == token.id ||
@@ -63,5 +69,28 @@ public struct HelperBindingUses: Codable, Sendable {
                 members.formUnion(["init", "callAsFunction"])
             }
         }
+    }
+}
+
+private final class PatternOperatorUses: SyntaxVisitor {
+    var operators = Set<String>()
+
+    override func visit(_ node: ExpressionPatternSyntax) -> SyntaxVisitorContinueKind {
+        // Covers switch/catch cases and matching conditions in if, guard,
+        // while and for, including expression patterns inside tuple/optional
+        // patterns. The head's SDK matcher does not prove the base overload.
+        // SwiftParser also represents wildcard/tuple patterns as expressions.
+        // They perform structural matching; inspect their elements instead of
+        // inventing an operator call for `_` or a tuple of binding patterns.
+        var pending = [node.expression]
+        while let expression = pending.popLast() {
+            if let tuple = expression.as(TupleExprSyntax.self) {
+                pending += tuple.elements.map(\.expression)
+            } else if !expression.is(DiscardAssignmentExprSyntax.self) && !expression.is(PatternExprSyntax.self) {
+                operators.insert("~=")
+                break
+            }
+        }
+        return .visitChildren
     }
 }

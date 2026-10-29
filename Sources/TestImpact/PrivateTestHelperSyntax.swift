@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 27 rejects opaque aliases and generic conformance requirements.
-    static let currentProofVersion = 27
+    // Version 28 authenticates implicit pattern-matching operator bindings.
+    static let currentProofVersion = 28
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.

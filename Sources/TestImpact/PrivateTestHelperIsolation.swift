@@ -387,13 +387,15 @@ enum PrivateTestHelperIsolation {
             guard unit.receiverImportsSupported == true else {
                 return "Unproven historical caller imports at " + unit.region.path + ":" + String(unit.region.startLine)
             }
-            guard let uses = unit.helperBindingUses, let qualified = uses.qualifiedMembers else {
+            guard let uses = unit.helperBindingUses, let qualified = uses.qualifiedMembers,
+                  let implicitOperators = uses.implicitOperators else {
                 return "Missing historical caller expression bindings; refresh source proofs"
             }
             let module = String(unit.key.prefix { $0 != ":" })
             // Unknown ownership must consider every checked module's bindings.
             for candidate in module.isEmpty ? checkedModules : [module] {
                 operatorsByModule[candidate, default: []].formUnion(uses.operators)
+                operatorsByModule[candidate, default: []].formUnion(implicitOperators)
                 globalsByModule[candidate, default: []].formUnion(uses.globals)
                 // UI.produce and UI.Worker are module globals/type roots, even
                 // though SwiftSyntax represents them as member references.
