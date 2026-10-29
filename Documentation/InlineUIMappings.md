@@ -68,7 +68,10 @@ test targets; it does not infer Swift Testing or parameterized executable identi
   Scoped type imports (including conditional ones) can override otherwise familiar
   base names even when their module's source is unavailable. Colliding scoped names
   keep ancestry unresolved; use an unambiguous module-qualified superclass instead.
-  Saved snapshots without scoped-import evidence also require regeneration.
+  Re-exported scoped names participate across modules, including exports from
+  imports-only files and transitive imports. Compiler import evidence must exclude
+  an exporting module before its potentially shadowing name can be ignored.
+  Saved snapshots without scoped-import/re-export evidence require regeneration.
 - Inline and file rules form a union. Selecting a test through either rule keeps it
   selected. There are no override, replace, exclusion or implicit policy switches.
 
@@ -81,6 +84,9 @@ that uncertainty and includes the affected enabled test.
 
 Disabled declarations do not participate in active rule validation. In particular,
 a disabled method with a stale symbol does not fail its enabled sibling's mapping.
+An annotation on a disabled suite, disabled extension method, or overridden base
+method does not require unrelated enabled tests to prove inline ancestry. Class
+defaults and policies on plausible ancestors still require conservative binding.
 Orphan directives in UI source files are diagnosed because they cannot be associated
 with an executable safely. Orphan diagnostics in an enabled test's ancestor or
 inherited-method source are also reported, even when no directive attached

@@ -303,8 +303,10 @@ func inlineMappingAuditReportsFileFailuresWithoutHidingInlineEntries(policy: Str
     legacy.sources["UI:UI.swift"]!.inlineMappings!.frameworkImports = nil
     var legacyScoped = current
     legacyScoped.sources["UI:UI.swift"]!.inlineMappings!.scopedTypeImports = nil
+    var legacyReexport = current
+    legacyReexport.sources["UI:UI.swift"]!.inlineMappings!.reexportedTypeImports = nil
     let conditional = inlineRegressionGraph(source.replacingOccurrences(of: "import XCTest", with: "#if NEVER\nimport XCTest\n#endif"), tests: current.tests)
-    for graph in [legacy, legacyScoped, conditional] {
+    for graph in [legacy, legacyScoped, legacyReexport, conditional] {
         let saved = try GraphArchive.decode(GraphArchive.encode(graph))
         let report = XcodeFineSelector.select(current: saved, previous: saved, changes: [], baseRevision: "base")
         #expect(report.selectedTests == current.tests)
@@ -413,7 +415,8 @@ func inlineMappingOrphanDiagnosticsFollowEnabledAncestors(extensionMethod: Bool)
     }
 }
 
-@Test func inlineMappingCompiledScopedAliasRetainsConservativeSelection() throws {
+@Test(arguments: [false, true])
+func inlineMappingCompiledScopedAliasRetainsConservativeSelection(reexported: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("inline-scoped-alias-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -424,7 +427,8 @@ func inlineMappingOrphanDiagnosticsFollowEnabledAncestors(extensionMethod: Bool)
     // swift-test-selection: {"symbols":["App.shared()"]}
     open class Parent: XCTestCase {}
     """
-    for (module, source) in [("Support", support), ("Helpers", "import Support\npublic typealias XCTestCase = Support.Parent")] {
+    for (module, source) in [("Support", support), ("Helpers", "import Support\npublic typealias XCTestCase = Support.Parent"),
+                             ("Reexport", "@_exported import typealias Helpers.XCTestCase")] {
         let file = root.appendingPathComponent(module + ".swift")
         try source.write(to: file, atomically: true, encoding: .utf8)
         _ = try CommandRunner.run("xcrun", arguments + ["-emit-module", "-module-name", module, file.path,
@@ -432,7 +436,7 @@ func inlineMappingOrphanDiagnosticsFollowEnabledAncestors(extensionMethod: Bool)
     }
     let source = """
     import XCTest
-    import typealias Helpers.XCTestCase
+    \(reexported ? "import Reexport" : "import typealias Helpers.XCTestCase")
     import Support
     // swift-test-selection: {"symbols":["App.checkout()"]}
     class Suite: XCTestCase { func testOne() {} }
@@ -445,6 +449,9 @@ func inlineMappingOrphanDiagnosticsFollowEnabledAncestors(extensionMethod: Bool)
     var graph = inlineRegressionGraph(source, tests: ["UI/Suite/testOne()"])
     graph.modules["Support"] = "Support"
     graph.sources["Support:Support.swift"] = .parse(support, path: "Support.swift", module: "Support")
+    if reexported {
+        graph.sources["Reexport:Reexport.swift"] = .parse("@_exported import typealias Helpers.XCTestCase", path: "Reexport.swift", module: "Reexport")
+    }
     graph.dependencies!.functions = graph.dependencies!.functions.filter { $0.value.module != "UI" }
     graph.dependencies!.functions.merge(compiled.functions, uniquingKeysWith: { _, new in new })
     XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
@@ -455,4 +462,103 @@ func inlineMappingOrphanDiagnosticsFollowEnabledAncestors(extensionMethod: Bool)
     #expect(report.selectedTests == graph.tests)
     #expect(report.diagnostics.contains { $0.code == "invalid_inline_mapping" })
     #expect(InlineUIMappings.resolve(saved).features.isEmpty)
+}
+
+@Test(arguments: ["captured", "transitive", "conditional", "sameModule", "missingInventory", "unrelated", "qualified"])
+func inlineMappingReexportedScopedNamesCannotEstablishAncestry(mode: String) throws {
+    let source = """
+    import XCTest
+    \(mode == "unrelated" ? "#if NEVER\nimport Reexport\n#endif" : mode == "transitive" ? "import Facade" : mode == "sameModule" ? "" : "import Reexport")
+    import Support
+    // swift-test-selection: {"symbols":["App.checkout()"]}
+    class Suite: \(mode == "qualified" ? "XCTest.XCTestCase" : "XCTestCase") { func testOne() {} }
+    class Other: Support.Parent { func testOther() {} }
+    """
+    func model(_ value: Int) -> XcodeTestGraph {
+        var graph = inlineRegressionGraph(source, value: value, tests: ["UI/Suite/testOne()", "UI/Other/testOther()"])
+        graph.modules["Support"] = "Support"
+        graph.sources["Support:Support.swift"] = .parse("""
+        import XCTest
+        // swift-test-selection: {"symbols":["App.shared()"]}
+        open class Parent: XCTestCase {}
+        """, path: "Support.swift", module: "Support")
+        let module = mode == "sameModule" ? "UI" : "Reexport"
+        let exported = "@_exported import typealias Helpers.XCTestCase"
+        graph.sources[module + ":Exports.swift"] = .parse(mode == "conditional" ? "#if DEBUG\n\(exported)\n#endif" : exported, path: "Exports.swift", module: module)
+        graph.sources["Facade:Facade.swift"] = .parse("@_exported import Reexport", path: "Facade.swift", module: "Facade")
+        if mode != "missingInventory" {
+            graph.runtimeInventory = .init(imports: ["UI": mode == "unrelated" ? ["Support"] : ["Facade", "Reexport", "Helpers", "Support"],
+                "Facade": ["Reexport", "Helpers", "Support"], "Reexport": ["Helpers", "Support"], "Support": []], hosts: [:])
+        }
+        XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
+        return graph
+    }
+    for head in [model(2), try GraphArchive.decode(GraphArchive.encode(model(2)))] {
+        let report = XcodeFineSelector.select(current: head, previous: model(1), changes: [.init(path: "App.swift")], baseRevision: "base")
+        if ["unrelated", "qualified"].contains(mode) {
+            #expect(report.selectedTests == ["UI/Other/testOther()"])
+            #expect(InlineMappingAudit.inspect(head).diagnostics.isEmpty)
+            try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        } else {
+            #expect(report.selectedTests == head.tests.sorted())
+            #expect(InlineMappingAudit.inspect(head).diagnostics.contains { $0.tests == ["UI/Suite/testOne()"] })
+            #expect(throws: MappingValidationError.self) {
+                try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+            }
+            let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: head.sources, mappings: head.mappings), changes: [], baseRevision: "base")
+            #expect(headOnly.selectedTests.contains("UI/Suite/testOne()"))
+        }
+    }
+}
+
+@Test(arguments: ["class", "method", "extension", "overridden"], ["External.Base", "Base"])
+func inlineMappingDisabledPoliciesDoNotRequireUnrelatedAncestry(placement: String, parent: String) throws {
+    let annotation = "// swift-test-selection: {\"symbols\":[\"App.stale()\"]}"
+    let source: String
+    switch placement {
+    case "class": source = """
+        import XCTest
+        import External
+        \(annotation)
+        class Disabled: XCTestCase { func testDisabled() {} }
+        class Enabled: \(parent) { func testOne() {} }
+        """
+    case "extension": source = """
+        import External
+        class Enabled: \(parent) { func testOne() {} }
+        \(annotation)
+        extension Enabled { func testDisabled() {} }
+        """
+    case "overridden": source = """
+        import External
+        class Parent: \(parent) {
+            \(annotation)
+            func testOne() {}
+        }
+        class Enabled: Parent { override func testOne() {} }
+        """
+    default: source = """
+        import External
+        class Enabled: \(parent) {
+            func testOne() {}
+            \(annotation)
+            func testDisabled() {}
+        }
+        """
+    }
+    var graph = inlineRegressionGraph(source, tests: ["UI/Enabled/testOne()"])
+    graph.mappings = .init(features: [.init(name: "enabled", symbols: ["App.checkout()"], tests: graph.tests)], runtimeDependencyPolicy: .declared)
+    for snapshot in [graph, try GraphArchive.decode(GraphArchive.encode(graph))] {
+        #expect(InlineMappingAudit.inspect(snapshot).diagnostics.isEmpty)
+        try snapshot.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        #expect(XcodeFineSelector.select(current: snapshot, previous: snapshot, changes: [], baseRevision: "base").selectedTests.isEmpty)
+        #expect(XcodeHeadOnlySelector.select(current: snapshot, source: .init(base: snapshot.sources, mappings: snapshot.mappings), changes: [], baseRevision: "base").selectedTests.isEmpty)
+    }
+    // Enabling the annotated executable still requires validation.
+    var enabled = graph
+    enabled.tests = [placement == "class" ? "UI/Disabled/testDisabled()" : placement == "overridden" ? "UI/Parent/testOne()" : "UI/Enabled/testDisabled()"]
+    XcodeCompilerGraph.bind(tests: enabled.tests, modules: enabled.modules, sources: enabled.sources, graph: &enabled.dependencies!)
+    #expect(throws: MappingValidationError.self) {
+        try enabled.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+    }
 }
