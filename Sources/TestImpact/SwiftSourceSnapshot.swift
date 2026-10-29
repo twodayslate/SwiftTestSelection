@@ -50,6 +50,8 @@ public struct SourceUnit: Codable, Sendable {
     /// Expression bindings for historical caller/lifecycle audits. Nil means
     /// legacy or incomplete evidence and cannot authenticate a rebound call.
     public var helperBindingUses: HelperBindingUses? = nil
+    /// Member declarations represented by this unit, including storage and initializers.
+    public var helperDeclaredMembers: Set<String>? = nil
     /// Source overload shapes paired with SIL signatures during receiver audits.
     public var receiverCallShapes: [String: Set<[String]>]? = nil
     public var receiverCallSites: [String: [String]]? = nil
@@ -298,6 +300,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 node.children(viewMode: .sourceAccurate).contains(where: containsOpaqueResult)
         }
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String], plainExtension: Bool? = nil) {
+            var declaredMembers = Set<String>()
             if scope.isEmpty {
                 if let function = node.as(FunctionDeclSyntax.self) {
                     let name = SDKTestHelperSyntax.canonicalName(function.name.text)
@@ -329,6 +332,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 else if let variable = node.as(VariableDeclSyntax.self) {
                     names = variable.bindings.compactMap { $0.pattern.as(IdentifierPatternSyntax.self)?.identifier.text }
                 } else { names = [] }
+                declaredMembers = Set(names.map(SDKTestHelperSyntax.canonicalName))
                 result.dispatchMembers!.formUnion(names.map { scope.joined(separator: ".") + "." + $0 })
                 let modifiers = node.as(FunctionDeclSyntax.self)?.modifiers
                     ?? node.as(InitializerDeclSyntax.self)?.modifiers
@@ -441,6 +445,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 },
                 helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported),
                 helperBindingUses: HelperBindingUses(in: node),
+                helperDeclaredMembers: declaredMembers,
                 receiverCallShapes: receiverCalls.shapes,
                 receiverCallSites: physicalLocations ? receiverCalls.sites : nil,
                 receiverImportsSupported: callerImportsSupported,

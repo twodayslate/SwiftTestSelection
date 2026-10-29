@@ -344,7 +344,8 @@ enum SDKTestHelperIsolation {
     }
 
     static func memberBindingBlocker(revisions: [[SwiftSourceSnapshot]], members: Set<String>,
-                                    sdkOwners: Set<String>, provenHelpers: [SourceUnit] = []) -> String? {
+                                    sdkOwners: Set<String>, provenHelpers: [SourceUnit] = [],
+                                    auditedProjectOwners: Set<String> = []) -> String? {
         let canonicalName = SDKTestHelperSyntax.canonicalName
         guard revisions.joined().allSatisfy({ $0.diagnostics.isEmpty && $0.dispatchMembers != nil && $0.typeAliases != nil }) else {
             return "Missing declaration/member binding evidence"
@@ -377,7 +378,9 @@ enum SDKTestHelperIsolation {
                     // Requirements cannot authenticate SDK namesakes or aliases.
                     let unshadowedOwner = parts.dropLast().last.map { !sdkOwners.contains(String($0)) } == true &&
                         !aliases.contains(where: { $0 == owner || $0.hasSuffix("." + owner) })
-                    if name == "subscript" {
+                    let auditedOwner = auditedProjectOwners.contains(owner) ||
+                        modules.contains { auditedProjectOwners.contains($0 + "." + owner) }
+                    if name == "subscript", !auditedOwner {
                         // A labeled-only subscript cannot replace the SDK's
                         // single unlabeled getter. Missing evidence still fails.
                         let subscripts = declarations.filter { $0.fingerprint.hasPrefix("subscriptDecl[") }
@@ -400,6 +403,17 @@ enum SDKTestHelperIsolation {
                     if unshadowedOwner, !typesAtOwner.isEmpty, typesAtOwner.allSatisfy({ $0.fingerprint.hasPrefix("protocolDecl[") }),
                        !methods.isEmpty, declarations.allSatisfy({ ["type", "function"].contains($0.kind) }),
                        methods.allSatisfy({ $0.headOnlyBodySupported == true && $0.key.hasSuffix(":" + ($0.syntaxFingerprint ?? $0.fingerprint)) }) { continue }
+                    if auditedOwner {
+                        // Concrete project types cannot shadow SDK members, but
+                        // callers can invoke them directly. Every declaration
+                        // in the historical overload set needs its own proof.
+                        guard declarations.allSatisfy({ $0.helperDeclaredMembers != nil }) else { return rejected }
+                        let implementations = declarations.filter { $0.helperDeclaredMembers!.contains(String(name)) }
+                        guard !implementations.isEmpty, implementations.allSatisfy({ declaration in provenHelpers.contains {
+                            $0.key == declaration.key && $0.region.path == declaration.region.path && $0.fingerprint == declaration.fingerprint
+                        } }) else { return rejected }
+                        continue
+                    }
                     // A name-only dispatch record is exempt only when every
                     // overload is proven and no unmodeled member can compete.
                     if !provenHelpers.isEmpty, !methods.isEmpty,

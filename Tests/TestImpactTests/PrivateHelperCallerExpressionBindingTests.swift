@@ -121,9 +121,9 @@ func compiledPrivateHelperCallerExpressionsRequireHistoricalBindings(kind: Strin
     """#, path: "UI.swift", module: "UI")
     let uses = try #require(source.units.first { $0.helperCallableName == "caller" }?.helperBindingUses)
     #expect(uses.operators == ["-", "+", "!", "+++"])
-    #expect(uses.members == ["init", "appendLiteral", "appendInterpolation", "subscript", "method"])
+    #expect(uses.members == ["init", "callAsFunction", "appendLiteral", "appendInterpolation", "subscript", "method"])
     let trailing = try #require(source.units.first { $0.helperCallableName == "trailingConstructor" }?.helperBindingUses)
-    #expect(trailing.members == ["init"])
+    #expect(trailing.members == ["init", "callAsFunction"])
     let mixed = SwiftSourceSnapshot.parse("""
     #if CUSTOM
     let min = makeCallable()

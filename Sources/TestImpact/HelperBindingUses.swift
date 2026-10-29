@@ -34,14 +34,14 @@ public struct HelperBindingUses: Codable, Sendable {
             if let type = token.parent?.as(IdentifierTypeSyntax.self), type.name.id == token.id {
                 globals.insert(SDKTestHelperSyntax.canonicalName(type.name.text))
             }
-            // The source syntax cannot distinguish a bare constructor from a
-            // function or metatype value call. Audit initializer overloads too.
+            // Without the base compiler, a call may be a constructor, ordinary
+            // function, or callable value. Audit both implicit member names.
             if let call = token.parent?.as(FunctionCallExprSyntax.self), call.leftParen?.id == token.id {
-                members.insert("init")
+                members.formUnion(["init", "callAsFunction"])
             }
             if let closure = token.parent?.as(ClosureExprSyntax.self), closure.leftBrace.id == token.id,
                closure.parent?.as(FunctionCallExprSyntax.self)?.trailingClosure?.id == closure.id {
-                members.insert("init")
+                members.formUnion(["init", "callAsFunction"])
             }
         }
     }

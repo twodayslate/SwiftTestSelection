@@ -17,6 +17,9 @@ enum PrivateTestHelperIsolation {
         fileprivate var callbacksChecked = false
         fileprivate var callbackBlocker: String?
         fileprivate var sdkEffectDeclarations: [String: [SourceUnit]] = [:]
+        // Source bindings and statement preservation are checked during prepare.
+        // A successful caller walk separately validates their current effects.
+        fileprivate var preservedHelperDeclarations: [String: [SourceUnit]] = [:]
         fileprivate var sdkEnvironmentRejections: [String: (ids: Set<String>, reason: String)] = [:]
         fileprivate(set) var receiverOriginBlocker: String?
         private(set) var evaluationCount = 0
@@ -59,6 +62,9 @@ enum PrivateTestHelperIsolation {
                     traversal.active.remove(candidate.key)
                     traversal.completed[candidate.key] = false
                     continue
+                }
+                if proof.sdkBindingsSupported {
+                    traversal.preservedHelperDeclarations[candidate.key] = [candidate] + (prior.map { [$0] } ?? [])
                 }
                 pending.append(.finish(proof))
                 for (caller, old) in proof.helpers.reversed() { pending.append(.enter(caller, old)) }
@@ -315,7 +321,8 @@ enum PrivateTestHelperIsolation {
             effectsSupported = false
         } else if effectsSupported, let reason = historicalCallerBindingBlocker(
             units: traversal.receiverOrigins.checkedSourceUnits(for: consumers), current: current, base: base,
-            unownedBase: unownedBase, provenHelpers: traversal.sdkEffectDeclarations.values.flatMap { $0 }) {
+            unownedBase: unownedBase, provenHelpers: traversal.sdkEffectDeclarations.values.flatMap { $0 } +
+                traversal.preservedHelperDeclarations.values.flatMap { $0 }) {
             traversal.receiverOriginBlocker = reason
             traversal.hasUnprovenCalleeEffects = true
             effectsSupported = false
@@ -346,6 +353,9 @@ enum PrivateTestHelperIsolation {
             let module = String(unit.key.prefix { $0 != ":" })
             operatorsByModule[module, default: []].formUnion(uses.operators)
             members.formUnion(uses.members)
+            guard let calls = unit.invocationNames else { return "Missing historical caller invocation names; refresh source proofs" }
+            // Bare calls may resolve to members, rather than global functions.
+            members.formUnion(calls)
             globalsByModule[module, default: []].formUnion(uses.globals)
         }
         for (module, operators) in operatorsByModule.sorted(by: { $0.key < $1.key }) where !operators.isEmpty {
@@ -374,14 +384,27 @@ enum PrivateTestHelperIsolation {
             }
         }
         let revisions = [Array(current.sources.values), oldSources]
-        let checkedMethods = units.filter { $0.kind == "function" }
-        let historicalMethods = oldUnits.filter { old in checkedMethods.contains {
+        var auditedOwners = Set(units.filter { !$0.scope.isEmpty }.map {
+            SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope)
+        })
+        // A receiver construction can disappear at head. Include project type
+        // roots mentioned in either revision, even without a current callee.
+        for source in revisions.joined() {
+            for type in source.units where type.kind == "type" {
+                let module = String(type.key.prefix { $0 != ":" })
+                let root = SDKTestHelperSyntax.canonicalName(String(type.scope.split(separator: ".").first ?? ""))
+                if globalsByModule[module]?.contains(root) == true {
+                    auditedOwners.insert(SDKTestHelperSyntax.canonicalName(module + "." + type.scope))
+                }
+            }
+        }
+        let historicalDeclarations = oldUnits.filter { old in units.contains {
             $0.key == old.key && $0.fingerprint == old.fingerprint
         } }
-        let proven = provenHelpers + checkedMethods + historicalMethods
+        let proven = provenHelpers + units + historicalDeclarations
         let owners = SDKReceiverContracts.bindingNames.union(["NSObject", "NSObjectProtocol", "XCTest", "XCUIElementQuery", "XCUICoordinate", "CGRect", "CGVector"])
         if let reason = SDKTestHelperIsolation.memberBindingBlocker(revisions: revisions, members: members,
-            sdkOwners: owners, provenHelpers: proven) { return "Caller expression: " + reason }
+            sdkOwners: owners, provenHelpers: proven, auditedProjectOwners: auditedOwners) { return "Caller expression: " + reason }
         guard SDKTestHelperIsolation.overridesUnshadowed(revisions: revisions, members: members.subtracting(["init"]),
             sdkReceivers: owners.subtracting(["NSObject", "NSObjectProtocol", "XCTest"]), provenMethods: proven) else { return "Unproven historical caller member override" }
         return nil

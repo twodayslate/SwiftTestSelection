@@ -10,7 +10,7 @@
   "full_suite_equivalence_validated": false,
   "consumer_policy_replayed": true,
   "focused_46_ui_target_achieved": false,
-  "executable_sha256": "c7f53df9364961af363e98e65164aa43efcf1910756e87213246457fe7dacd93",
+  "executable_sha256": "b55d5237f8548698be1ab202841c183e64dafa6a92fe22b12b6c023ab1461071",
   "comparisons": [
     {
       "run": "40031610717",
@@ -32,7 +32,7 @@
       "final_ui": 384,
       "final_non_ui": 1577,
       "verified": true,
-      "verification_seconds": 8.780518208,
+      "verification_seconds": 8.594256042000001,
       "identity": {
         "id": "46BD4146-305F-4A0A-96A8-74875A44C643",
         "revision": "b0dbfc5fd35dc9cb61d72462497e37d684aa644d"
@@ -65,7 +65,7 @@
       "capture_reused_from": "PrecisionTickets60-62.json",
       "source_export_sha256": "4a103634e301b747b1cc2280d3d12e67c71aa27423be2bdcef790958ef76791c",
       "sealed_capture_sha256": "2d67eb9b17cc5319d842b1d658e33867a7f0acfd046e204c9498e17173f68f9a",
-      "source_refresh_and_scope_seconds": 22.62656307220459
+      "source_refresh_and_scope_seconds": 35.42167103290558
     },
     {
       "run": "40035642452",
@@ -87,7 +87,7 @@
       "final_ui": 397,
       "final_non_ui": 1584,
       "verified": true,
-      "verification_seconds": 8.022461624999998,
+      "verification_seconds": 7.956038125000001,
       "identity": {
         "id": "BD7D2E09-959E-4AA4-9354-909CCA60C25E",
         "revision": "c3bc226f13b57b30851f1565c797866bc8ef7a8e"
@@ -120,11 +120,11 @@
       "capture_reused_from": "PrecisionTickets60-62.json",
       "source_export_sha256": "20ad3943f59aa5d46f1f718c8731809add1e4f6e2cc503b331fe216b5eb13b5e",
       "sealed_capture_sha256": "f2698885d6bbe66526bb8e4d94e8a3722b7cb13e2af6a5f87b0a70ce46aa6b56",
-      "source_refresh_and_scope_seconds": 22.656835079193115
+      "source_refresh_and_scope_seconds": 33.812567949295044
     }
   ],
   "package_validation": {
-    "swift_release_tests_reported": 404,
+    "swift_release_tests_reported": 405,
     "historical_replay_cases_passed": 2,
     "compiled_scrolling_cases_passed": 20,
     "python_capture_passed": 6,
@@ -147,8 +147,9 @@
     "caller_type_alias_syntax_test_passed": true,
     "qualified_caller_type_extension_syntax_test_passed": true,
     "compiled_caller_expression_binding_cases_passed": 18,
-    "caller_expression_syntax_inventory_test_passed": true
+    "caller_expression_syntax_inventory_test_passed": true,
+    "compiled_caller_project_member_cases_passed": 10
   },
-  "private_helper_proof_version": 19,
-  "module_fragment_cache_version": 24
+  "private_helper_proof_version": 20,
+  "module_fragment_cache_version": 25
 }
