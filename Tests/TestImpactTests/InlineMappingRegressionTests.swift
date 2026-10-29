@@ -1077,3 +1077,78 @@ func inlineMappingSplitNestedAliasPreservesInheritedPolicy(spelling: String, sce
         #expect(InlineMappingAudit.inspect(disabled).diagnostics.isEmpty)
     }
 }
+
+@Test(arguments: ["Suite", "Alias"], ["sync", "throws", "async", "asyncThrows", "closure", "nestedClosure", "autoclosure", "localFunction"])
+func inlineMappingExtensionAuxiliaryFunctionsDoNotInvalidateOwner(spelling: String, scenario: String) throws {
+    let effects = scenario == "asyncThrows" ? "async throws" : ["throws", "async"].contains(scenario) ? scenario : ""
+    let body: String
+    switch scenario {
+    case "closure": body = "let action = {}; action()"
+    case "nestedClosure": body = "let action = { let nested = {}; nested() }; action()"
+    case "autoclosure": body = "XCTAssertTrue(true)"
+    case "localFunction": body = "func action() {}; action()"
+    default: body = ""
+    }
+    let source = """
+    import XCTest
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Suite: XCTestCase {}
+    typealias Alias = Suite
+    extension \(spelling) {
+        // swift-test-selection: {"symbols":["App.checkout()"]}
+        @MainActor func testOne() \(effects) { \(body) }
+    }
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Other: XCTestCase { func testOther() {} }
+    """
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("inline-method-effects-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("UI.swift"), sil = root.appendingPathComponent("UI.sil")
+    try source.write(to: file, atomically: true, encoding: .utf8)
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run(compiler, ["-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", "-emit-sil", "-whole-module-optimization", "-g", "-module-name", "UI", file.path, "-o", sil.path], at: root)
+    let compiled = try SILOwnership.resolve(SILParser.parse(file: sil, module: "UI", sourceRoot: root), module: "UI", compiler: compiler, directory: root)
+    let implementation = try #require(compiled.functions.values.first { $0.name == "Suite.testOne()" })
+    #expect(implementation.nominalTypeContext == "UI.Suite")
+    if !["sync", "throws"].contains(scenario) {
+        #expect(compiled.functions.values.contains { $0.name.contains(" in Suite.testOne()") })
+    }
+    func model(_ value: Int) -> XcodeTestGraph {
+        var graph = inlineRegressionGraph(source, value: value, tests: ["UI/Suite/testOne()", "UI/Other/testOther()"])
+        graph.dependencies!.functions = graph.dependencies!.functions.filter { $0.value.module != "UI" }
+        graph.dependencies!.functions.merge(compiled.functions, uniquingKeysWith: { _, new in new })
+        graph.dependencies!.testDiagnostics = [:]
+        XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
+        graph.mappings = .init(features: [.init(name: "suite", symbols: ["App.checkout()"], tests: ["UI/Suite"])], runtimeDependencyPolicy: .declared)
+        return graph
+    }
+    for head in [model(2), try GraphArchive.decode(GraphArchive.encode(model(2))), try GraphArchive.decode(JSONEncoder().encode(model(2)))] {
+        #expect(head.dependencies!.testDiagnostics.isEmpty)
+        #expect(head.dependencies!.tests["UI/Suite/testOne()"]?.isEmpty == false)
+        let resolution = InlineUIMappings.resolve(head)
+        #expect(resolution.diagnostics.isEmpty)
+        let report = XcodeFineSelector.select(current: head, previous: model(1), changes: [.init(path: "App.swift")], baseRevision: "base")
+        #expect(report.selectedTests == head.tests.sorted())
+        #expect(resolution.features.contains { $0.tests?.contains("UI/Suite/testOne()") == true })
+        try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        #expect(InlineMappingAudit.inspect(head).diagnostics.isEmpty)
+        #expect(XcodeFineSelector.select(current: head, previous: head, changes: [], baseRevision: "base").selectedTests.isEmpty)
+        let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: model(1).sources, mappings: head.mappings), changes: [.init(path: "App.swift")], baseRevision: "base")
+        #expect(headOnly.selectedTests == head.tests.sorted())
+        #expect(XcodeHeadOnlySelector.select(current: head, source: .init(base: head.sources, mappings: head.mappings), changes: [], baseRevision: "base").selectedTests.isEmpty)
+        let rules = resolution.features.filter { $0.tests?.contains("UI/Suite/testOne()") == true }
+        #expect(Set(rules.flatMap { $0.symbols ?? [] }) == ["App.shared()", "App.checkout()"])
+        // Ignoring local helpers must not ignore missing or contradictory
+        // owner evidence on the actual method, even when its ObjC thunk agrees.
+        for evidence: String? in [nil, "", "Support.Suite"] {
+            var invalid = head
+            invalid.dependencies!.functions[implementation.id]!.nominalTypeContext = evidence
+            #expect(InlineUIMappings.resolve(invalid).diagnostics.contains { $0.tests == ["UI/Suite/testOne()"] })
+            #expect(throws: MappingValidationError.self) {
+                try invalid.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+            }
+        }
+    }
+}

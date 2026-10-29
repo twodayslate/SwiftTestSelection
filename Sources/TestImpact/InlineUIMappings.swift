@@ -259,6 +259,11 @@ struct InlineUIMappings {
                         $0.path == ext.region.path && $0.startLine >= declarations[member].region.startLine && $0.startLine <= declarations[member].region.endLine
                     }) {
                         let name = node.name.hasPrefix("@objc ") ? String(node.name.dropFirst(6)) : node.name
+                        // Closures (including async ObjC bridges) and local
+                        // helpers describe their enclosing method with " in ".
+                        // They share its suffix and locations, but are not
+                        // competing declarations of that method's owner.
+                        guard !name.contains(" in ") else { continue }
                         let owner = String(name.dropLast(suffix.count))
                         let relativeScope = declarations[member].scope.dropFirst(ext.scope.count)
                         guard node.nominalTypeContext == ext.module + "." + owner + relativeScope else {

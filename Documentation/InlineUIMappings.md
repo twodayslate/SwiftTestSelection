@@ -55,6 +55,8 @@ test targets; it does not infer Swift Testing or parameterized executable identi
   can bind to a captured type when compiler-demangled nominal contexts and
   physical source locations prove one owner in the declaring module. This also binds nested classes and their methods
   inside aliased extensions, including class, struct, and enum namespaces.
+  Compiler-local closures and helpers, including async Objective-C bridges,
+  do not compete with the enclosing method's nominal owner evidence.
   Nested names retain their shadowing evidence under the resolved owner.
   Unresolved owners on enabled annotated declarations produce diagnostics
   instead of silently dropping their rules. This includes inherited defaults when
