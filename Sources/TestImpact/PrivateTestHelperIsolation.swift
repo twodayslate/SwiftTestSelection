@@ -482,17 +482,21 @@ enum PrivateTestHelperIsolation {
         // The head closure cannot name a removed ancestor or a default witness
         // displaced by an explicit implementation. Ambiguous names widen proof.
         let typeUnits = revisions.joined().flatMap(\.units).filter { ["type", "extension"].contains($0.kind) }
-        // An alias may hide the target of an extension-added conformance. The
-        // inventory records alias names, not resolved targets, so none can
-        // establish that its protocol defaults are unrelated to a caller.
+        // Aliases can hide an extension target, an inherited protocol, or a
+        // namespace containing either. Their targets are not resolved here;
+        // matching any path component therefore leaves default witnesses opaque.
         let aliases = Set(revisions.joined().flatMap { $0.typeAliases ?? [] }.map(SDKTestHelperSyntax.canonicalName))
-        for declaration in typeUnits where declaration.kind == "extension" {
+        let aliasNames = Set(aliases.compactMap { $0.split(separator: ".").last.map(String.init) })
+        func usesAlias(_ name: String) -> Bool {
+            name.split(separator: ".").contains { aliasNames.contains(String($0)) }
+        }
+        let aliasedExtensions = typeUnits.filter { declaration in
+            guard declaration.kind == "extension" else { return false }
             let scope = SDKTestHelperSyntax.canonicalName(SwiftSourceSnapshot.nominalTypeName(declaration.scope) ?? declaration.scope)
-            if declaration.helperInheritedTypes?.isEmpty != true,
-               aliases.contains(where: { $0 == scope || $0.hasSuffix("." + scope) ||
-                   scope.split(separator: ".").last == $0.split(separator: ".").last }) {
-                return "Unproven historical caller conformance through a type alias at " + declaration.region.path + ":" + String(declaration.region.startLine)
-            }
+            return usesAlias(scope)
+        }
+        if let declaration = aliasedExtensions.first(where: { $0.helperInheritedTypes?.isEmpty != true }) {
+            return "Unproven historical caller extension through a type alias at " + declaration.region.path + ":" + String(declaration.region.startLine)
         }
         let typeOwners = Set(typeUnits.map(ownerName))
         let classOwners = Set(Dictionary(grouping: typeUnits.filter { $0.kind == "type" }, by: ownerName).compactMap { owner, declarations in
@@ -522,14 +526,24 @@ enum PrivateTestHelperIsolation {
                     guard let parents = declaration.helperInheritedTypes else {
                         return "Missing historical caller conformance evidence; refresh source proofs"
                     }
+                    // `protocol P where Self: Q` also supplies Q's defaults.
+                    // Conditional and same-type requirements need resolution
+                    // beyond the nominal ancestry inventory, at both revisions.
+                    guard declaration.helperGenericRequirements?.isEmpty == true else {
+                        return "Unproven or missing historical caller generic requirements at " + declaration.region.path + ":" + String(declaration.region.startLine)
+                    }
                     for parent in parents {
                         guard let nominal = SwiftSourceSnapshot.nominalTypeName(parent) else {
                             return "Unproven historical caller inherited type: " + parent
                         }
                         let name = SDKTestHelperSyntax.canonicalName(nominal)
+                        guard !usesAlias(name) else {
+                            return "Unproven historical caller inherited type alias: " + parent
+                        }
                         let candidates = typeOwners.filter { $0 == name || $0.hasSuffix("." + name) }
                         // A class's known superclass does not supply protocol
-                        // defaults. Unknown/aliased inherited types remain opaque.
+                        // defaults. Imported protocols still require checking
+                        // every project witness on their conforming owner.
                         if !isClass || (!sdkClasses.contains(name) &&
                             (candidates.isEmpty || !candidates.isSubset(of: classOwners))) {
                             conformingOwners.insert(owner)
@@ -541,6 +555,12 @@ enum PrivateTestHelperIsolation {
                     }
                 }
             }
+        }
+        // Even without an inheritance clause an aliased extension can supply
+        // defaults or witnesses for any participating conformance. If there is
+        // none, ordinary member binding checks can still prove unused extensions.
+        if !conformingOwners.isEmpty, let declaration = aliasedExtensions.first {
+            return "Unproven historical caller extension through a type alias at " + declaration.region.path + ":" + String(declaration.region.startLine)
         }
         // Overrides on descendants can supply a conformance inherited from a
         // source superclass or protocol, including one removed at head.

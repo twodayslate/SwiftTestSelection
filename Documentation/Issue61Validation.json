@@ -10,7 +10,7 @@
   "full_suite_equivalence_validated": false,
   "consumer_policy_replayed": true,
   "focused_46_ui_target_achieved": false,
-  "executable_sha256": "98a9183ce0127d4067844f5abfc83e0af0d3391805c9face28265cee747754bd",
+  "executable_sha256": "4bb20cf283425a30207d89e083f934300f667a7e8c583d0583d52f4741d51739",
   "comparisons": [
     {
       "run": "40031610717",
@@ -32,7 +32,7 @@
       "final_ui": 384,
       "final_non_ui": 1577,
       "verified": true,
-      "verification_seconds": 8.176319874999999,
+      "verification_seconds": 8.072091834000002,
       "identity": {
         "id": "46BD4146-305F-4A0A-96A8-74875A44C643",
         "revision": "b0dbfc5fd35dc9cb61d72462497e37d684aa644d"
@@ -65,7 +65,7 @@
       "capture_reused_from": "PrecisionTickets60-62.json",
       "source_export_sha256": "4a103634e301b747b1cc2280d3d12e67c71aa27423be2bdcef790958ef76791c",
       "sealed_capture_sha256": "2d67eb9b17cc5319d842b1d658e33867a7f0acfd046e204c9498e17173f68f9a",
-      "source_refresh_and_scope_seconds": 29.392641067504883
+      "source_refresh_and_scope_seconds": 27.75991702079773
     },
     {
       "run": "40035642452",
@@ -87,7 +87,7 @@
       "final_ui": 397,
       "final_non_ui": 1584,
       "verified": true,
-      "verification_seconds": 7.939418917000001,
+      "verification_seconds": 7.769877083999999,
       "identity": {
         "id": "BD7D2E09-959E-4AA4-9354-909CCA60C25E",
         "revision": "c3bc226f13b57b30851f1565c797866bc8ef7a8e"
@@ -120,11 +120,11 @@
       "capture_reused_from": "PrecisionTickets60-62.json",
       "source_export_sha256": "20ad3943f59aa5d46f1f718c8731809add1e4f6e2cc503b331fe216b5eb13b5e",
       "sealed_capture_sha256": "f2698885d6bbe66526bb8e4d94e8a3722b7cb13e2af6a5f87b0a70ce46aa6b56",
-      "source_refresh_and_scope_seconds": 29.712203979492188
+      "source_refresh_and_scope_seconds": 27.59688091278076
     }
   ],
   "package_validation": {
-    "swift_release_tests_reported": 493,
+    "swift_release_tests_reported": 496,
     "historical_replay_cases_passed": 2,
     "compiled_scrolling_cases_passed": 20,
     "python_capture_passed": 6,
@@ -178,8 +178,13 @@
     "compiled_qualified_extension_conformance_cases_passed": 5,
     "qualified_extension_ownership_modes": 3,
     "append_only_caller_and_missing_evidence_controls_passed": true,
-    "conditional_caller_compiler_definition_case_passed": true
+    "conditional_caller_compiler_definition_case_passed": true,
+    "compiled_inherited_alias_cases_passed": 7,
+    "inherited_alias_ownership_modes": 3,
+    "compiled_aliased_witness_and_generic_requirement_cases_passed": 6,
+    "conformance_requirement_inventory_test_passed": true,
+    "missing_alias_and_generic_requirement_evidence_controls_passed": true
   },
-  "private_helper_proof_version": 26,
-  "module_fragment_cache_version": 31
+  "private_helper_proof_version": 27,
+  "module_fragment_cache_version": 32
 }

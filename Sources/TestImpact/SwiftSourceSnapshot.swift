@@ -60,6 +60,9 @@ public struct SourceUnit: Codable, Sendable {
     public var helperCallerStatementSignatures: [String]? = nil
     /// Nominal/extension inheritance, including protocol conformances. Nil is legacy evidence.
     public var helperInheritedTypes: [String]? = nil
+    /// Generic requirements can introduce ancestry outside the inheritance
+    /// clause, including `where Self: Protocol`. Nil is incomplete evidence.
+    public var helperGenericRequirements: [String]? = nil
     /// A stored-property initializer may execute through a synthesized constructor.
     /// Nil is legacy evidence and cannot authenticate historical initialization.
     public var helperStoredInitializer: Bool? = nil
@@ -525,6 +528,11 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     ?? node.as(EnumDeclSyntax.self)?.inheritanceClause
                     ?? node.as(ProtocolDeclSyntax.self)?.inheritanceClause
                     ?? node.as(ExtensionDeclSyntax.self)?.inheritanceClause)?.inheritedTypes.map { $0.type.trimmedDescription } ?? [],
+                helperGenericRequirements: (node.as(ClassDeclSyntax.self)?.genericWhereClause
+                    ?? node.as(StructDeclSyntax.self)?.genericWhereClause
+                    ?? node.as(EnumDeclSyntax.self)?.genericWhereClause
+                    ?? node.as(ProtocolDeclSyntax.self)?.genericWhereClause
+                    ?? node.as(ExtensionDeclSyntax.self)?.genericWhereClause)?.requirements.map { $0.requirement.trimmedDescription } ?? [],
                 helperStoredInitializer: node.as(VariableDeclSyntax.self)?.bindings.contains { $0.initializer != nil } ?? false,
                 helperEnumCaseWithoutDefaults: node.as(EnumCaseDeclSyntax.self).map { declaration in
                     declaration.elements.allSatisfy { element in
