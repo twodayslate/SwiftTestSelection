@@ -10,7 +10,7 @@
   "full_suite_equivalence_validated": false,
   "consumer_policy_replayed": true,
   "focused_46_ui_target_achieved": false,
-  "executable_sha256": "b55d5237f8548698be1ab202841c183e64dafa6a92fe22b12b6c023ab1461071",
+  "executable_sha256": "7c87670943b258557c54e1af24edd404f937d7cc42ccd1b1fd0a2f96c05b1866",
   "comparisons": [
     {
       "run": "40031610717",
@@ -32,7 +32,7 @@
       "final_ui": 384,
       "final_non_ui": 1577,
       "verified": true,
-      "verification_seconds": 8.594256042000001,
+      "verification_seconds": 8.164050125000001,
       "identity": {
         "id": "46BD4146-305F-4A0A-96A8-74875A44C643",
         "revision": "b0dbfc5fd35dc9cb61d72462497e37d684aa644d"
@@ -65,7 +65,7 @@
       "capture_reused_from": "PrecisionTickets60-62.json",
       "source_export_sha256": "4a103634e301b747b1cc2280d3d12e67c71aa27423be2bdcef790958ef76791c",
       "sealed_capture_sha256": "2d67eb9b17cc5319d842b1d658e33867a7f0acfd046e204c9498e17173f68f9a",
-      "source_refresh_and_scope_seconds": 35.42167103290558
+      "source_refresh_and_scope_seconds": 23.209231972694397
     },
     {
       "run": "40035642452",
@@ -87,7 +87,7 @@
       "final_ui": 397,
       "final_non_ui": 1584,
       "verified": true,
-      "verification_seconds": 7.956038125000001,
+      "verification_seconds": 7.438871042000001,
       "identity": {
         "id": "BD7D2E09-959E-4AA4-9354-909CCA60C25E",
         "revision": "c3bc226f13b57b30851f1565c797866bc8ef7a8e"
@@ -120,11 +120,11 @@
       "capture_reused_from": "PrecisionTickets60-62.json",
       "source_export_sha256": "20ad3943f59aa5d46f1f718c8731809add1e4f6e2cc503b331fe216b5eb13b5e",
       "sealed_capture_sha256": "f2698885d6bbe66526bb8e4d94e8a3722b7cb13e2af6a5f87b0a70ce46aa6b56",
-      "source_refresh_and_scope_seconds": 33.812567949295044
+      "source_refresh_and_scope_seconds": 24.0212219953537
     }
   ],
   "package_validation": {
-    "swift_release_tests_reported": 405,
+    "swift_release_tests_reported": 408,
     "historical_replay_cases_passed": 2,
     "compiled_scrolling_cases_passed": 20,
     "python_capture_passed": 6,
@@ -148,8 +148,11 @@
     "qualified_caller_type_extension_syntax_test_passed": true,
     "compiled_caller_expression_binding_cases_passed": 18,
     "caller_expression_syntax_inventory_test_passed": true,
-    "compiled_caller_project_member_cases_passed": 10
+    "compiled_caller_project_member_cases_passed": 10,
+    "compiled_bare_caller_member_cases_passed": 4,
+    "compiled_stored_initializer_cases_passed": 4,
+    "stored_initializer_syntax_test_passed": true
   },
-  "private_helper_proof_version": 20,
-  "module_fragment_cache_version": 25
+  "private_helper_proof_version": 21,
+  "module_fragment_cache_version": 26
 }

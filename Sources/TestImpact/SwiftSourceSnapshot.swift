@@ -52,6 +52,9 @@ public struct SourceUnit: Codable, Sendable {
     public var helperBindingUses: HelperBindingUses? = nil
     /// Member declarations represented by this unit, including storage and initializers.
     public var helperDeclaredMembers: Set<String>? = nil
+    /// A stored-property initializer may execute through a synthesized constructor.
+    /// Nil is legacy evidence and cannot authenticate historical initialization.
+    public var helperStoredInitializer: Bool? = nil
     /// Source overload shapes paired with SIL signatures during receiver audits.
     public var receiverCallShapes: [String: Set<[String]>]? = nil
     public var receiverCallSites: [String: [String]]? = nil
@@ -446,6 +449,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported),
                 helperBindingUses: HelperBindingUses(in: node),
                 helperDeclaredMembers: declaredMembers,
+                helperStoredInitializer: node.as(VariableDeclSyntax.self)?.bindings.contains { $0.initializer != nil } ?? false,
                 receiverCallShapes: receiverCalls.shapes,
                 receiverCallSites: physicalLocations ? receiverCalls.sites : nil,
                 receiverImportsSupported: callerImportsSupported,

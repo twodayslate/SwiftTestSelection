@@ -353,6 +353,9 @@ enum PrivateTestHelperIsolation {
             let module = String(unit.key.prefix { $0 != ":" })
             operatorsByModule[module, default: []].formUnion(uses.operators)
             members.formUnion(uses.members)
+            // Bare references can be getters or method values as well as
+            // globals/locals. The head compiler cannot resolve their old binding.
+            members.formUnion(uses.globals)
             guard let calls = unit.invocationNames else { return "Missing historical caller invocation names; refresh source proofs" }
             // Bare calls may resolve to members, rather than global functions.
             members.formUnion(calls)
@@ -395,6 +398,37 @@ enum PrivateTestHelperIsolation {
                 let root = SDKTestHelperSyntax.canonicalName(String(type.scope.split(separator: ".").first ?? ""))
                 if globalsByModule[module]?.contains(root) == true {
                     auditedOwners.insert(SDKTestHelperSyntax.canonicalName(module + "." + type.scope))
+                }
+            }
+        }
+        // Synthesized initializers have no explicit member declaration. Their
+        // historical stored-property initializers must independently match the
+        // head body. SIL may locate a synthesized initializer only at its type
+        // header; that evidence is usable only while both revisions still have
+        // synthesized construction, without a competing explicit initializer.
+        let headUnits = current.sources.values.flatMap(\.units)
+        func storedInitializerIsProven(_ old: SourceUnit) -> Bool {
+            if units.contains(where: { $0.key == old.key && $0.fingerprint == old.fingerprint }) { return true }
+            let module = String(old.key.prefix { $0 != ":" })
+            func sameOwner(_ unit: SourceUnit) -> Bool {
+                unit.key.hasPrefix(module + ":") && unit.scope == old.scope
+            }
+            guard headUnits.contains(where: { $0.key == old.key && $0.fingerprint == old.fingerprint }),
+                  units.contains(where: { sameOwner($0) && $0.kind == "type" }),
+                  !(headUnits + oldUnits).contains(where: {
+                      sameOwner($0) && $0.helperDeclaredMembers?.contains("init") == true
+                  }) else { return false }
+            return true
+        }
+        for (revision, sources) in revisions.enumerated() {
+            for unit in sources.flatMap(\.units) where unit.kind == "state" {
+                let owner = SDKTestHelperSyntax.canonicalName(String(unit.key.prefix { $0 != ":" }) + "." + unit.scope)
+                guard auditedOwners.contains(owner) else { continue }
+                guard let initialized = unit.helperStoredInitializer else {
+                    return "Missing historical caller storage initializer evidence; refresh source proofs"
+                }
+                if revision == 1, initialized, !storedInitializerIsProven(unit) {
+                    return "Unproven historical caller storage initializer at " + unit.region.path + ":" + String(unit.region.startLine)
                 }
             }
         }
