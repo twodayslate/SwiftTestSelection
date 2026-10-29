@@ -409,9 +409,14 @@ enum SDKTestHelperIsolation {
                         // in the historical overload set needs its own proof.
                         guard declarations.allSatisfy({ $0.helperDeclaredMembers != nil }) else { return rejected }
                         let implementations = declarations.filter { $0.helperDeclaredMembers!.contains(String(name)) }
-                        guard !implementations.isEmpty, implementations.allSatisfy({ declaration in provenHelpers.contains {
-                            $0.key == declaration.key && $0.region.path == declaration.region.path && $0.fingerprint == declaration.fingerprint
-                        } }) else { return rejected }
+                        guard !implementations.isEmpty, implementations.allSatisfy({ declaration in
+                            // Plain enum construction evaluates only its caller's
+                            // arguments. Associated-value defaults need the same
+                            // exact compiler/body proof as ordinary members.
+                            declaration.helperEnumCaseWithoutDefaults == true || provenHelpers.contains {
+                                $0.key == declaration.key && $0.region.path == declaration.region.path && $0.fingerprint == declaration.fingerprint
+                            }
+                        }) else { return rejected }
                         continue
                     }
                     // A name-only dispatch record is exempt only when every

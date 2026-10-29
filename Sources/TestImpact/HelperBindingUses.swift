@@ -17,6 +17,11 @@ public struct HelperBindingUses: Codable, Sendable {
                 token.parent?.as(PostfixOperatorExprSyntax.self)?.operator.id == token.id {
                 operators.insert(token.text)
             }
+            if let loop = token.parent?.as(ForStmtSyntax.self), loop.forKeyword.id == token.id {
+                // Iteration invokes protocol members absent from the spelling
+                // of a for-in loop, including in historical caller bodies.
+                members.formUnion([loop.awaitKeyword == nil ? "makeIterator" : "makeAsyncIterator", "next"])
+            }
             if token.parent?.as(ExpressionSegmentSyntax.self)?.backslash.id == token.id {
                 members.formUnion(["init", "appendLiteral", "appendInterpolation"])
             }

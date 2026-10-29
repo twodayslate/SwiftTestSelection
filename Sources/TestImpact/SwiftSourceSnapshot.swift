@@ -55,6 +55,9 @@ public struct SourceUnit: Codable, Sendable {
     /// A stored-property initializer may execute through a synthesized constructor.
     /// Nil is legacy evidence and cannot authenticate historical initialization.
     public var helperStoredInitializer: Bool? = nil
+    /// Enum cases without associated-value defaults have no declaration-side
+    /// evaluation. Nil cannot establish this exemption for older inventories.
+    public var helperEnumCaseWithoutDefaults: Bool? = nil
     /// Source overload shapes paired with SIL signatures during receiver audits.
     public var receiverCallShapes: [String: Set<[String]>]? = nil
     public var receiverCallSites: [String: [String]]? = nil
@@ -332,6 +335,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 else if node.is(InitializerDeclSyntax.self) { names = ["init"] }
                 else if node.is(DeinitializerDeclSyntax.self) { names = ["deinit"] }
                 else if node.is(SubscriptDeclSyntax.self) { names = ["subscript"] }
+                else if let cases = node.as(EnumCaseDeclSyntax.self) { names = cases.elements.map { $0.name.text } }
                 else if let variable = node.as(VariableDeclSyntax.self) {
                     names = variable.bindings.compactMap { $0.pattern.as(IdentifierPatternSyntax.self)?.identifier.text }
                 } else { names = [] }
@@ -450,6 +454,11 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 helperBindingUses: HelperBindingUses(in: node),
                 helperDeclaredMembers: declaredMembers,
                 helperStoredInitializer: node.as(VariableDeclSyntax.self)?.bindings.contains { $0.initializer != nil } ?? false,
+                helperEnumCaseWithoutDefaults: node.as(EnumCaseDeclSyntax.self).map { declaration in
+                    declaration.elements.allSatisfy { element in
+                        element.parameterClause?.parameters.allSatisfy { $0.defaultValue == nil } ?? true
+                    }
+                },
                 receiverCallShapes: receiverCalls.shapes,
                 receiverCallSites: physicalLocations ? receiverCalls.sites : nil,
                 receiverImportsSupported: callerImportsSupported,
