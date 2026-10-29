@@ -52,12 +52,16 @@ test targets; it does not infer Swift Testing or parameterized executable identi
 - An extension directive applies to enabled methods **declared in that extension**,
   not every method on the extended class. Class and base-class defaults still apply.
   Escaped and qualified extension names are normalized. A typealiased extension
-  can bind to a captured type when emitted method names and physical source
-  locations prove one owner. This also binds nested classes and their methods
+  can bind to a captured type when compiler-demangled nominal contexts and
+  physical source locations prove one owner in the declaring module. This also binds nested classes and their methods
   inside aliased extensions, including class, struct, and enum namespaces.
   Nested names retain their shadowing evidence under the resolved owner.
   Unresolved owners on enabled annotated declarations produce diagnostics
-  instead of silently dropping their rules.
+  instead of silently dropping their rules. Extensions of imported types remain
+  unresolved: their compiling module and display name cannot establish a local
+  type identity. A same-named local type must not supply their superclass rules.
+  Older saved graphs missing nominal owner evidence require regeneration for
+  affected extension mappings; JSON and compact archives retain this evidence.
 - Nested classes retain their qualified names. Local declarations inside function
   bodies cannot supply test annotations. Ambiguous ancestry, aliases, missing
   compiler locations, and redirected `#sourceLocation` evidence fail conservatively.

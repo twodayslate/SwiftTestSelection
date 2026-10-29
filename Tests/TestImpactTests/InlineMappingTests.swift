@@ -42,6 +42,7 @@ private func inlineModel(_ ui: String = inlineUI, changed: String? = nil) -> Xco
                 let name = declaration.scope + "." + declaration.method!
                 let id = name + ":" + String(declaration.region.startLine)
                 graph.functions[id] = .init(id: id, module: module, name: name, regions: [declaration.region])
+                graph.functions[id]!.nominalTypeContext = module + "." + declaration.scope
             }
         } else {
             let name = path == "App/Checkout.swift" ? "checkout()" : path == "App/Notes.swift" ? "notes()" : "shared()"

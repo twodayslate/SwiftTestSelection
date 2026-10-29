@@ -8,9 +8,19 @@ import Foundation
 /// demangler rather than guessing an owner from a mangled prefix or source path.
 enum SILOwnership {
     static func resolve(_ input: SILModule, module: String, compiler: String, directory: URL) throws -> SILModule {
-        let symbols = (input.sharedSymbols ?? []).filter { input.functions[$0]?.regions.isEmpty == false }.sorted()
+        let shared = Set((input.sharedSymbols ?? []).filter { input.functions[$0]?.regions.isEmpty == false })
+        // Parameterless source methods are the supported inline XCTest boundary.
+        // Display names omit the nominal owner's module, even for extensions.
+        let methods = Set(input.functions.values.filter {
+            $0.nominalTypeContext == nil && !$0.regions.isEmpty && $0.name.contains(".") && $0.name.hasSuffix("()")
+        }.map(\.id))
+        let swiftMethods = methods.filter { $0.hasPrefix("$s") || $0.hasPrefix("$S") || $0.hasPrefix("_T") }
+        let symbols = shared.union(swiftMethods).sorted()
         var result = input
         result.sharedSymbols = nil
+        // Non-Swift symbols cannot prove a Swift nominal context and do not
+        // require a demangler process. Record unsupported evidence explicitly.
+        for symbol in methods.subtracting(swiftMethods) { result.functions[symbol]?.nominalTypeContext = "" }
         guard !symbols.isEmpty else { return result }
         let demangler = compiler.hasPrefix("/")
             ? URL(fileURLWithPath: compiler).deletingLastPathComponent().appendingPathComponent("swift-demangle").path
@@ -18,14 +28,16 @@ enum SILOwnership {
         let output = try CommandRunner.run(demangler, ["--expand", "--tree-only"], at: directory,
             input: Data((symbols.joined(separator: "\n") + "\n").utf8)).text
         let owners = ownerships(output)
-        let unresolved = symbols.filter { owners[$0] == nil }
+        let contexts = nominalTypeContexts(output)
+        for symbol in methods { result.functions[symbol]?.nominalTypeContext = contexts[symbol] ?? "" }
+        let unresolved = shared.filter { owners[$0] == nil }.sorted()
         guard unresolved.isEmpty else {
             let examples = unresolved.prefix(16).joined(separator: ", ")
             let remaining = unresolved.count > 16 ? " (and \(unresolved.count - 16) more)" : ""
             throw ImpactError("Cannot resolve defining module for client-emitted SIL symbol \(examples)\(remaining)")
         }
         var adapters: [String: String] = [:]
-        for symbol in symbols {
+        for symbol in shared {
             let owner = owners[symbol]!
             if result.importedSymbols == nil { result.importedSymbols = [] }
             switch owner {
@@ -63,6 +75,62 @@ enum SILOwnership {
         }
         // Resolved provenance is already in importedSymbols. Cache hits need no
         // demangler process; raw parser fragments retain the pending inventory.
+        return result
+    }
+
+    /// Follow the declaration context, not modules mentioned in signatures.
+    /// An Extension's first child is its declaring module; its second child
+    /// retains the nominal type's original module and must supply this identity.
+    static func nominalTypeContexts(_ output: String) -> [String: String] {
+        struct Node { var depth: Int; var value: String }
+        var result: [String: String] = [:]
+        var symbol: String?, nodes: [Node] = []
+        func children(_ index: Int) -> [Int] {
+            var result: [Int] = []
+            for child in (index + 1)..<nodes.count {
+                if nodes[child].depth <= nodes[index].depth { break }
+                if nodes[child].depth == nodes[index].depth + 1 { result.append(child) }
+            }
+            return result
+        }
+        func text(_ index: Int, kind: String) -> String? {
+            let prefix = "kind=" + kind + ", text="
+            guard nodes[index].value.hasPrefix(prefix), children(index).isEmpty,
+                  let name = try? JSONDecoder().decode(String.self, from: Data(nodes[index].value.dropFirst(prefix.count).utf8)),
+                  !name.isEmpty, !name.contains(".") else { return nil }
+            return name
+        }
+        func context(_ index: Int) -> String? {
+            if let module = text(index, kind: "Module") { return module }
+            let parts = children(index)
+            if nodes[index].value == "kind=Extension" {
+                guard parts.count == 2, text(parts[0], kind: "Module") != nil else { return nil }
+                return context(parts[1])
+            }
+            guard ["kind=Class", "kind=Structure", "kind=Enum", "kind=Protocol"].contains(nodes[index].value),
+                  parts.count == 2, let parent = context(parts[0]), let name = text(parts[1], kind: "Identifier") else { return nil }
+            return parent + "." + name
+        }
+        func finish() {
+            guard let symbol, nodes.first?.value == "kind=Global", nodes.first?.depth == 0 else { return }
+            let declarations = children(0).filter { !["kind=ObjCAttribute", "kind=NonObjCAttribute", "kind=DynamicAttribute"].contains(nodes[$0].value) }
+            guard declarations.count == 1, let function = declarations.first, nodes[function].value == "kind=Function",
+                  let owner = children(function).first, let name = context(owner), name.contains(".") else { return }
+            result[symbol] = name
+        }
+        for line in output.components(separatedBy: .newlines) {
+            if line.hasPrefix("Demangling for ") {
+                finish()
+                symbol = String(line.dropFirst("Demangling for ".count))
+                nodes.removeAll(keepingCapacity: true)
+            } else if symbol != nil, !line.isEmpty {
+                let indent = line.prefix { $0 == " " }.count
+                let value = String(line.dropFirst(indent))
+                guard indent.isMultiple(of: 2), value.hasPrefix("kind=") else { symbol = nil; continue }
+                nodes.append(Node(depth: indent / 2, value: value))
+            }
+        }
+        finish()
         return result
     }
 

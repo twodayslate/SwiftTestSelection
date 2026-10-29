@@ -24,6 +24,7 @@ public enum GraphArchive {
         var diagnostics: [String]
         var testDiagnostics: [String: [String]]
         var compilerImplicitImports: [String: Set<String>]?
+        var nominalTypeContexts: [String: String]?
         init(_ graph: DependencyGraph) {
             var table: [String] = [], ids: [String: Int] = [:]
             func intern(_ s: String) -> Int {
@@ -53,6 +54,7 @@ public enum GraphArchive {
             strings = table; toolchain = graph.toolchain; schema = graph.schemaVersion
             diagnostics = graph.diagnostics; testDiagnostics = graph.testDiagnostics
             compilerImplicitImports = graph.compilerImplicitImports
+            nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
         }
         func unpack() throws -> DependencyGraph {
             func string(_ id: Int) throws -> String {
@@ -123,6 +125,7 @@ public enum GraphArchive {
                 }
                 if cursor < row.count { node.receiverIndirectErrorEffects = try values() }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
+                node.nominalTypeContext = nominalTypeContexts?[node.id]
                 graph.functions[node.id] = node
             }
             graph.tests = try tests.mapValues { try Set($0.map(string)) }

@@ -18,6 +18,7 @@ private func inlineRegressionGraph(_ source: String, value: Int = 1, tests: [Str
     for declaration in ui.inlineMappings!.declarations where declaration.kind == "method" {
         let name = InlineMappingSyntax.canonicalScope(declaration.scope) + "." + declaration.method!
         dependencies.functions[name] = .init(id: name, module: "UI", name: name, regions: [declaration.region])
+        dependencies.functions[name]!.nominalTypeContext = "UI." + InlineMappingSyntax.canonicalScope(declaration.scope)
     }
     for (index, name) in ["shared()", "checkout()"].enumerated() {
         dependencies.functions[name] = .init(id: name, module: "App", name: name, regions: [app.units[index].region])
@@ -389,6 +390,7 @@ func inlineMappingOrphanDiagnosticsFollowEnabledAncestors(extensionMethod: Bool)
         graph.sources["Support:Extension.swift"] = syntax
         let method = try #require(syntax.inlineMappings!.declarations.first { $0.kind == "method" })
         graph.dependencies!.functions["Parent.testOne()"] = .init(id: "Parent.testOne()", module: "Support", name: "Parent.testOne()", regions: [method.region])
+        graph.dependencies!.functions["Parent.testOne()"]!.nominalTypeContext = "Support.Parent"
     }
     graph.mappings = .init(features: [.init(name: "suite", symbols: ["App.checkout()"], tests: ["UI/Suite"]),
                                     .init(name: "other", symbols: ["App.shared()"], tests: ["UI/Other"])], runtimeDependencyPolicy: .declared)
@@ -452,7 +454,7 @@ func inlineMappingCompiledSuperclassAmbiguityRetainsConservativeSelection(eviden
     try source.write(to: file, atomically: true, encoding: .utf8)
     let implicitFlags = implicit ? ["-Xfrontend", evidence == "testableImplicit" ? "-testable-import-module" : "-import-module", "-Xfrontend", "Reexport"] : []
     _ = try CommandRunner.run("xcrun", arguments + implicitFlags + ["-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-module-name", "UI", file.path, "-o", sil.path], at: root)
-    let compiled = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
+    let compiled = try SILOwnership.resolve(SILParser.parse(file: sil, module: "UI", sourceRoot: root), module: "UI", compiler: CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines), directory: root)
     var graph = inlineRegressionGraph(source, tests: ["UI/Suite/testOne()"])
     if implicit {
         let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -658,7 +660,7 @@ func inlineMappingExtensionOwnersUseCompilerIdentity(spelling: String, extension
     let file = root.appendingPathComponent("UI.swift"), sil = root.appendingPathComponent("UI.sil")
     try source.write(to: file, atomically: true, encoding: .utf8)
     _ = try CommandRunner.run("xcrun", ["swiftc", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", "-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-module-name", "UI", file.path, "-o", sil.path], at: root)
-    let compiled = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
+    let compiled = try SILOwnership.resolve(SILParser.parse(file: sil, module: "UI", sourceRoot: root), module: "UI", compiler: CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines), directory: root)
     func graph(_ value: Int) -> XcodeTestGraph {
         var graph = inlineRegressionGraph(source, value: value, tests: ["UI/Suite/testOne()", "UI/Other/testOther()"])
         graph.dependencies!.functions = graph.dependencies!.functions.filter { $0.value.module != "UI" }
@@ -796,7 +798,7 @@ func inlineMappingNestedAliasDeclarationsUseCompilerIdentity(methodRule: Bool, c
     try source.write(to: file, atomically: true, encoding: .utf8)
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     _ = try CommandRunner.run("xcrun", ["swiftc", "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", "-emit-sil", "-whole-module-optimization", "-g", "-module-name", "UI", file.path, "-o", sil.path], at: root)
-    let compiled = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
+    let compiled = try SILOwnership.resolve(SILParser.parse(file: sil, module: "UI", sourceRoot: root), module: "UI", compiler: CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines), directory: root)
     func model(_ value: Int) -> XcodeTestGraph {
         var graph = inlineRegressionGraph(source, value: value, tests: ["UI/Outer.Namespace.Suite/testOne()", "UI/Other/testOther()"])
         graph.dependencies!.functions = graph.dependencies!.functions.filter { $0.value.module != "UI" }
@@ -876,6 +878,7 @@ func inlineMappingNestedAliasPreservesUncertainAncestry(spelling: String, scenar
     } else {
         for id in graph.dependencies!.functions.keys where graph.dependencies!.functions[id]!.name.hasSuffix(".Suite.testOne()") {
             graph.dependencies!.functions[id]!.name = "Outer.Suite.testOne()"
+            graph.dependencies!.functions[id]!.nominalTypeContext = "UI.Outer.Suite"
         }
         XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
         #expect(graph.dependencies!.tests[test]?.isEmpty == false)
@@ -891,5 +894,111 @@ func inlineMappingNestedAliasPreservesUncertainAncestry(spelling: String, scenar
         disabled.tests = ["UI/Other/testOther()"]
         try disabled.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
         #expect(InlineUIMappings.resolve(disabled).diagnostics.isEmpty)
+    }
+}
+
+@Test(arguments: ["Alias", "Support.Outer"], [false, true])
+func inlineMappingImportedExtensionCannotBorrowLocalOwner(spelling: String, nested: Bool) throws {
+    let suite = nested ? "Outer.Suite" : "Outer"
+    let test = "UI/" + suite + "/testOne()"
+    let support = nested ? """
+    import XCTest
+    public class Outer {
+        // swift-test-selection: {"symbols":["App.shared()"]}
+        open class Base: XCTestCase {}
+    }
+    """ : """
+    import XCTest
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    open class Outer: XCTestCase {}
+    """
+    let source = """
+    import XCTest
+    import Support
+    class Outer {}
+    // swift-test-selection: {"symbols":["App.checkout()"]}
+    class Base: XCTestCase {}
+    typealias Alias = Support.Outer
+    extension \(spelling) {
+        \(nested ? "class Suite: Base { func testOne() {} }" : "@objc func testOne() {}")
+    }
+    // swift-test-selection: {"symbols":["App.shared()"]}
+    class Other: XCTestCase { func testOther() {} }
+    """
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("inline-foreign-nested-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("UI.swift"), sil = root.appendingPathComponent("UI.sil")
+    try source.write(to: file, atomically: true, encoding: .utf8)
+    try support.write(to: root.appendingPathComponent("Support.swift"), atomically: true, encoding: .utf8)
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let flags = ["-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib"]
+    _ = try CommandRunner.run("xcrun", ["swiftc"] + flags + ["-emit-module", "-module-name", "Support", "Support.swift", "-o", "Support.swiftmodule"], at: root)
+    _ = try CommandRunner.run("xcrun", ["swiftc"] + flags + ["-I", root.path, "-emit-sil", "-whole-module-optimization", "-g", "-module-name", "UI", file.path, "-o", sil.path], at: root)
+    let compiled = try SILOwnership.resolve(SILParser.parse(file: sil, module: "UI", sourceRoot: root), module: "UI", compiler: CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines), directory: root)
+    let method = try #require(compiled.functions.values.first { $0.name == suite + ".testOne()" })
+    #expect(method.nominalTypeContext == "Support." + suite)
+    func model(_ value: Int) -> XcodeTestGraph {
+        var graph = inlineRegressionGraph(source, value: value, tests: [test, "UI/Other/testOther()"])
+        graph.sources["Support:Support.swift"] = .parse(support, path: "Support.swift", module: "Support")
+        graph.targets.append(.init(name: "Support", productType: "com.apple.product-type.framework", sourceFiles: ["Support.swift"]))
+        graph.modules["Support"] = "Support"
+        graph.dependencies!.compilerImplicitImports?["Support"] = []
+        graph.dependencies!.functions = graph.dependencies!.functions.filter { $0.value.module != "UI" }
+        graph.dependencies!.functions.merge(compiled.functions, uniquingKeysWith: { _, new in new })
+        graph.dependencies!.testDiagnostics = [:]
+        XcodeCompilerGraph.bind(tests: graph.tests, modules: graph.modules, sources: graph.sources, graph: &graph.dependencies!)
+        graph.mappings = .init(features: [.init(name: "suite", symbols: ["App.checkout()"], tests: ["UI/" + suite])], runtimeDependencyPolicy: .declared)
+        return graph
+    }
+    for head in [model(2), try GraphArchive.decode(GraphArchive.encode(model(2))), try GraphArchive.decode(JSONEncoder().encode(model(2)))] {
+        #expect(head.dependencies!.testDiagnostics.isEmpty)
+        #expect(head.dependencies!.tests[test]?.isEmpty == false)
+        let resolution = InlineUIMappings.resolve(head)
+        let report = XcodeFineSelector.select(current: head, previous: model(1), changes: [.init(path: "App.swift")], baseRevision: "base")
+        #expect(report.selectedTests == head.tests.sorted())
+        #expect(!resolution.features.contains { $0.tests?.contains(test) == true && $0.symbols == ["App.checkout()"] })
+        #expect(resolution.diagnostics.contains { $0.tests == [test] })
+        #expect(throws: MappingValidationError.self) {
+            try head.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        }
+        #expect(InlineMappingAudit.inspect(head).diagnostics.contains { $0.tests == [test] })
+        let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: model(1).sources, mappings: head.mappings), changes: [.init(path: "App.swift")], baseRevision: "base")
+        #expect(headOnly.selectedTests == head.tests.sorted())
+        var disabled = head
+        disabled.tests = ["UI/Other/testOther()"]
+        try disabled.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        #expect(InlineMappingAudit.inspect(disabled).diagnostics.isEmpty)
+    }
+}
+
+@Test(arguments: ["current", "legacy", "unsupported", "foreign"], [false, true])
+func inlineMappingExtensionOwnerEvidenceSurvivesArchives(evidence: String, compact: Bool) throws {
+    let source = """
+    import XCTest
+    class Suite: XCTestCase {}
+    extension Suite {
+        // swift-test-selection: {"symbols":["App.shared()"]}
+        func testOne() {}
+    }
+    """
+    var graph = inlineRegressionGraph(source, tests: ["UI/Suite/testOne()"])
+    let id = "Suite.testOne()"
+    if evidence == "legacy" { graph.dependencies!.functions[id]!.nominalTypeContext = nil }
+    if evidence == "unsupported" { graph.dependencies!.functions[id]!.nominalTypeContext = "" }
+    if evidence == "foreign" { graph.dependencies!.functions[id]!.nominalTypeContext = "Support.Suite" }
+    let saved = try GraphArchive.decode(compact ? GraphArchive.encode(graph) : JSONEncoder().encode(graph))
+    #expect(saved.dependencies!.functions[id]!.nominalTypeContext == graph.dependencies!.functions[id]!.nominalTypeContext)
+    if evidence == "current" {
+        try saved.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        #expect(InlineUIMappings.resolve(saved).features.first?.tests == saved.tests)
+        #expect(XcodeFineSelector.select(current: saved, previous: saved, changes: [], baseRevision: "base").selectedTests.isEmpty)
+    } else {
+        #expect(throws: MappingValidationError.self) {
+            try saved.validateMappingSymbols(mappingFile: "ui.json", revision: "head", buildContext: [:])
+        }
+        #expect(InlineUIMappings.resolve(saved).features.isEmpty)
+        #expect(XcodeFineSelector.select(current: saved, previous: saved, changes: [], baseRevision: "base").selectedTests == saved.tests)
+        #expect(InlineMappingAudit.inspect(saved).diagnostics.contains { $0.tests == saved.tests })
     }
 }

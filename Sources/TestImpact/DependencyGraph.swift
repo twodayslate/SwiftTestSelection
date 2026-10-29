@@ -24,6 +24,9 @@ public struct FunctionNode: Codable, Sendable {
     public var module: String
     public var name: String
     public var regions: [SourceRegion]
+    /// Compiler-demangled nominal context, including the original module of an
+    /// extended type. Nil is legacy/missing evidence; empty means unsupported.
+    public var nominalTypeContext: String? = nil
     /// Includes function values passed as callbacks, not only immediate calls.
     public var dependencies: Set<String>
     /// Exact SIL function_ref and key-path function edges (including escaped

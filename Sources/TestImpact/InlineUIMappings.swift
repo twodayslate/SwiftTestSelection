@@ -250,6 +250,7 @@ struct InlineUIMappings {
             let ext = declarations[index]
             let members = declarations.indices.filter { $0 != index && enclosed(declarations[$0], by: ext) }
             var owners = Set<String>()
+            var unknownOwner = false
             if physical.contains(ext.module + ":" + ext.region.path) {
                 for member in members {
                     guard declarations[member].kind == "method", let method = declarations[member].method else { continue }
@@ -258,11 +259,17 @@ struct InlineUIMappings {
                         $0.path == ext.region.path && $0.startLine >= declarations[member].region.startLine && $0.startLine <= declarations[member].region.endLine
                     }) {
                         let name = node.name.hasPrefix("@objc ") ? String(node.name.dropFirst(6)) : node.name
-                        owners.insert(String(name.dropLast(suffix.count)))
+                        let owner = String(name.dropLast(suffix.count))
+                        let relativeScope = declarations[member].scope.dropFirst(ext.scope.count)
+                        guard node.nominalTypeContext == ext.module + "." + owner + relativeScope else {
+                            unknownOwner = true
+                            continue
+                        }
+                        owners.insert(owner)
                     }
                 }
             }
-            guard owners.count == 1, let owner = owners.first, nominalTypes.contains(ext.module + "." + owner) else {
+            guard !unknownOwner, owners.count == 1, let owner = owners.first, nominalTypes.contains(ext.module + "." + owner) else {
                 unresolvedExtensions.append(ext)
                 continue
             }
@@ -411,7 +418,13 @@ struct InlineUIMappings {
                     (implementations.isEmpty || active($0, methodOnly: true, roots: roots))
                 }
             }
-            var pending = [(owner, true)], visited = Set<String>()
+            // A physically bound method in an unresolved extension can still
+            // inherit defaults through its raw nested declaration. Examine that
+            // ancestry for diagnostics, without treating it as a binding.
+            let rawOwners = located.map { $0.module + "." + $0.scope }
+            let displayOwner = String(owner.dropFirst(owner.prefix { $0 != "." }.count + 1))
+            let possibleOwners = located.isEmpty ? [] : classes.keys.filter { $0.hasSuffix("." + displayOwner) }
+            var pending = ([owner] + rawOwners + possibleOwners).map { ($0, true) }, visited = Set<String>()
             while let (key, methodsAllowed) = pending.popLast() {
                 guard visited.insert(key + ":" + String(methodsAllowed)).inserted else { continue }
                 if declarations.contains(where: {
@@ -550,6 +563,12 @@ struct InlineUIMappings {
                 failed = true
             }
             diagnoseSources(applicable)
+            if applicable.contains(where: { declaration in unresolvedExtensions.contains { enclosed(declaration, by: $0) } }) {
+                if needsBinding {
+                    diagnose("Cannot establish the compiler-qualified extension owner for \(test); regenerate complete nominal type evidence", tests: [test])
+                }
+                continue
+            }
             if unknownExports {
                 if needsBinding {
                     diagnose("Inline ancestry is unresolved for \(test): imported module exports are not fully captured; regenerate complete source/import evidence", tests: [test])
