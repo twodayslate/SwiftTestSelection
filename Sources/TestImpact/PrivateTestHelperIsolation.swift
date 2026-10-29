@@ -66,7 +66,7 @@ enum PrivateTestHelperIsolation {
                 let key = proof.unit.key
                 let callersProven = proof.helpers.allSatisfy { traversal.completed[$0.0.key] == true }
                 let result = traversal.completed[key] != false && callersProven &&
-                    finish(proof, current: current, graph: graph, index: index, traversal: &traversal)
+                    finish(proof, current: current, base: base, unownedBase: unownedBase, graph: graph, index: index, traversal: &traversal)
                 traversal.active.remove(key)
                 traversal.completed[key] = result
             }
@@ -247,7 +247,8 @@ enum PrivateTestHelperIsolation {
         return Prepared(unit: unit, syntax: syntax, ids: ids, effectIDs: effectIDs, sdkBindingsSupported: sdkBindingsSupported, callers: callers, helpers: helpers)
     }
 
-    private static func finish(_ proof: Prepared, current: XcodeTestGraph, graph: DependencyGraph,
+    private static func finish(_ proof: Prepared, current: XcodeTestGraph, base: [String: SwiftSourceSnapshot],
+                               unownedBase: [String: SwiftSourceSnapshot], graph: DependencyGraph,
                                index: DependencyIndex, traversal: inout Traversal) -> Bool {
         let callers = proof.callers, syntax = proof.syntax, ids = proof.ids
         let paths = index.paths(to: ids)
@@ -312,8 +313,78 @@ enum PrivateTestHelperIsolation {
             traversal.receiverOriginBlocker = reason
             traversal.hasUnprovenCalleeEffects = true
             effectsSupported = false
+        } else if effectsSupported, let reason = historicalCallerBindingBlocker(
+            units: traversal.receiverOrigins.checkedSourceUnits(for: consumers), current: current, base: base,
+            unownedBase: unownedBase, provenHelpers: traversal.sdkEffectDeclarations.values.flatMap { $0 }) {
+            traversal.receiverOriginBlocker = reason
+            traversal.hasUnprovenCalleeEffects = true
+            effectsSupported = false
         }
         return effectsSupported
+    }
+
+    private static func historicalCallerBindingBlocker(units: [SourceUnit]?, current: XcodeTestGraph,
+        base: [String: SwiftSourceSnapshot], unownedBase: [String: SwiftSourceSnapshot], provenHelpers: [SourceUnit]) -> String? {
+        guard let units, !units.isEmpty else { return "Missing compiler-bound caller source evidence" }
+        let oldSources = Array(base.values) + Array(unownedBase.values)
+        let oldUnits = oldSources.flatMap(\.units)
+        var allUnits = units
+        for unit in units {
+            let module = String(unit.key.prefix { $0 != ":" })
+            // Match by header even after a source move. State-unit keys include
+            // their initializers, so include historical storage at this owner.
+            // Synthesized initializers can point only at the class header.
+            allUnits += oldUnits.filter { old in
+                old.key == unit.key || (old.key.hasPrefix(module + ":") && old.scope == unit.scope &&
+                    (["state", "type"].contains(unit.kind) && old.kind == "state" ||
+                     unit.kind == "type" && old.helperCallableName.map(SDKTestHelperSyntax.lifecycle.contains) == true))
+            }
+        }
+        var operatorsByModule: [String: Set<String>] = [:], globalsByModule: [String: Set<String>] = [:], members = Set<String>()
+        for unit in allUnits {
+            guard let uses = unit.helperBindingUses else { return "Missing historical caller expression bindings; refresh source proofs" }
+            let module = String(unit.key.prefix { $0 != ":" })
+            operatorsByModule[module, default: []].formUnion(uses.operators)
+            members.formUnion(uses.members)
+            globalsByModule[module, default: []].formUnion(uses.globals)
+        }
+        for (module, operators) in operatorsByModule.sorted(by: { $0.key < $1.key }) where !operators.isEmpty {
+            let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
+                base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(unownedBase.values)
+            for source in sources {
+                guard let declarations = source.helperOperatorDeclarations else { return "Missing historical caller operator declarations; refresh source proofs" }
+                let rebound = declarations.intersection(operators)
+                if !rebound.isEmpty { return "Unproven caller operator binding at base or head: " + rebound.sorted().joined(separator: ", ") }
+            }
+        }
+        for (module, names) in globalsByModule.sorted(by: { $0.key < $1.key }) {
+            let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
+                base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(unownedBase.values)
+            for source in sources {
+                guard let declarations = source.helperGlobalDeclarations else { return "Missing historical caller global declarations; refresh source proofs" }
+                for name in Set(declarations.keys).intersection(names).sorted() {
+                    // Ordinary source producers are valid only when their exact
+                    // bodies occur in the compiler-checked closure. A base-only
+                    // overload or changed old body has no such head evidence.
+                    let functions = source.units.filter { $0.scope.isEmpty && $0.helperCallableName == name }
+                    guard declarations[name] == true, !functions.isEmpty, functions.allSatisfy({ declaration in units.contains {
+                        $0.key == declaration.key && $0.fingerprint == declaration.fingerprint
+                    } }) else { return "Unproven caller global binding at base or head: " + name }
+                }
+            }
+        }
+        let revisions = [Array(current.sources.values), oldSources]
+        let checkedMethods = units.filter { $0.kind == "function" }
+        let historicalMethods = oldUnits.filter { old in checkedMethods.contains {
+            $0.key == old.key && $0.fingerprint == old.fingerprint
+        } }
+        let proven = provenHelpers + checkedMethods + historicalMethods
+        let owners = SDKReceiverContracts.bindingNames.union(["NSObject", "NSObjectProtocol", "XCTest", "XCUIElementQuery", "XCUICoordinate", "CGRect", "CGVector"])
+        if let reason = SDKTestHelperIsolation.memberBindingBlocker(revisions: revisions, members: members,
+            sdkOwners: owners, provenHelpers: proven) { return "Caller expression: " + reason }
+        guard SDKTestHelperIsolation.overridesUnshadowed(revisions: revisions, members: members.subtracting(["init"]),
+            sdkReceivers: owners.subtracting(["NSObject", "NSObjectProtocol", "XCTest"]), provenMethods: proven) else { return "Unproven historical caller member override" }
+        return nil
     }
 
     /// The source effect walk is deliberately not an overload resolver. Reject

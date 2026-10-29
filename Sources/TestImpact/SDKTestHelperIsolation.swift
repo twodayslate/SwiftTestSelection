@@ -258,7 +258,8 @@ enum SDKTestHelperIsolation {
     /// Overrides matter only when their declaring class can be a receiver of
     /// the SDK call. Resolve each revision independently; aliases, missing class
     /// declarations and cycles cannot establish an unrelated hierarchy.
-    static func overridesUnshadowed(revisions: [[SwiftSourceSnapshot]], members: Set<String>, sdkReceivers: Set<String>) -> Bool {
+    static func overridesUnshadowed(revisions: [[SwiftSourceSnapshot]], members: Set<String>, sdkReceivers: Set<String>,
+                                    provenMethods: [SourceUnit] = []) -> Bool {
         let canonical = SDKTestHelperSyntax.canonicalName
         for revision in revisions {
             guard revision.allSatisfy({ $0.dispatchOverrides != nil && $0.superclasses != nil && $0.typeAliases != nil }) else { return false }
@@ -313,6 +314,17 @@ enum SDKTestHelperIsolation {
                     let parts = canonical(spelling).split(separator: ".")
                     guard let member = parts.last, members.contains(String(member)) else { continue }
                     let owner = parts.dropLast().joined(separator: ".")
+                    // The caller traversal may already have checked an exact
+                    // lifecycle/receiver implementation. Every overload at this
+                    // revision must match; a removed or changed body cannot use
+                    // a similarly named implementation from the head graph.
+                    let methods = snapshot.units.filter {
+                        $0.helperCallableName.map(canonical) == String(member) &&
+                            canonical(String($0.key.prefix { $0 != ":" }) + "." + $0.scope) == owner
+                    }
+                    if !methods.isEmpty, methods.allSatisfy({ method in provenMethods.contains {
+                        $0.key == method.key && $0.region.path == method.region.path && $0.fingerprint == method.fingerprint
+                    } }) { continue }
                     let result = unrelated(owner)
                     results[owner] = result
                     if !result { return false }

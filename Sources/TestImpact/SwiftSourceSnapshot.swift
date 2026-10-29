@@ -47,6 +47,9 @@ public struct SourceUnit: Codable, Sendable {
     public var helperCallableName: String? = nil
     public var helperReferenceSignature: String? = nil
     public var helperCallerSupported: Bool? = nil
+    /// Expression bindings for historical caller/lifecycle audits. Nil means
+    /// legacy or incomplete evidence and cannot authenticate a rebound call.
+    public var helperBindingUses: HelperBindingUses? = nil
     /// Source overload shapes paired with SIL signatures during receiver audits.
     public var receiverCallShapes: [String: Set<[String]>]? = nil
     public var receiverCallSites: [String: [String]]? = nil
@@ -89,6 +92,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Complete operator declaration inventory, including conditional/nested
     /// implementations and precedence declarations. Nil is incomplete evidence.
     public var helperOperatorDeclarations: Set<String>? = nil
+    /// Top-level names that can replace a bare SDK use. True means every
+    /// declaration is a function; false also includes storage or aliases.
+    public var helperGlobalDeclarations: [String: Bool]? = nil
     public var attachmentAddUnshadowed: Bool? = nil
     public var helperReferences: [String: SDKTestHelperSyntax.References]? = nil
     public var sdkHelperNamesUnshadowed: Bool? = nil
@@ -126,6 +132,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         var result = Self(units: [], inheritance: [:], diagnostics: [])
         result.inlineMappings = InlineMappingSyntax.parse(tree, path: path, module: module, hasDirectives: text.contains(InlineMappingSyntax.prefix))
         result.dispatchMembers = []
+        result.helperGlobalDeclarations = [:]
         result.dispatchOverrides = []
         result.typeAliases = []
         result.superclasses = [:]
@@ -291,6 +298,22 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 node.children(viewMode: .sourceAccurate).contains(where: containsOpaqueResult)
         }
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String], plainExtension: Bool? = nil) {
+            if scope.isEmpty {
+                if let function = node.as(FunctionDeclSyntax.self) {
+                    let name = SDKTestHelperSyntax.canonicalName(function.name.text)
+                    result.helperGlobalDeclarations![name] = result.helperGlobalDeclarations![name] ?? true
+                } else if let variable = node.as(VariableDeclSyntax.self) {
+                    for binding in variable.bindings {
+                        for token in binding.pattern.tokens(viewMode: .sourceAccurate) {
+                            if token.parent?.is(IdentifierPatternSyntax.self) == true {
+                                result.helperGlobalDeclarations![SDKTestHelperSyntax.canonicalName(token.text)] = false
+                            }
+                        }
+                    }
+                } else if let alias = node.as(TypeAliasDeclSyntax.self) {
+                    result.helperGlobalDeclarations![SDKTestHelperSyntax.canonicalName(alias.name.text)] = false
+                }
+            }
             if let function = node.as(FunctionDeclSyntax.self), ["!", "==", "!=", "&&", "||"].contains(function.name.text) {
                 result.sdkHelperNamesUnshadowed = false
             }
@@ -417,6 +440,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     function.signature.parameterClause.parameters.allSatisfy { $0.defaultValue == nil && $0.ellipsis == nil } ? SDKTestHelperSyntax.signature(function) : nil
                 },
                 helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported),
+                helperBindingUses: HelperBindingUses(in: node),
                 receiverCallShapes: receiverCalls.shapes,
                 receiverCallSites: physicalLocations ? receiverCalls.sites : nil,
                 receiverImportsSupported: callerImportsSupported,

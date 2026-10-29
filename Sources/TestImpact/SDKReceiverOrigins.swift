@@ -10,7 +10,7 @@ import Foundation
 struct SDKReceiverOrigins {
     // One immutable graph per instance. Shared helper chains often have the
     // same consumer roots; cache both successful and failed closure checks.
-    private struct Proof { var blocker: String? }
+    private struct Proof { var blocker: String?; var units: [SourceUnit] }
     private var results: [Set<String>: Proof] = [:]
     private var effects = ExternalHelperEffects()
     // Public immutable constants from the SDK's gesture, keyboard and content-size headers.
@@ -34,12 +34,21 @@ struct SDKReceiverOrigins {
 
     mutating func blocker(tests: Set<String>, current: XcodeTestGraph, graph: DependencyGraph) -> String? {
         if let cached = results[tests] { return cached.blocker }
-        let result = inspect(tests: tests, current: current, graph: graph)
-        results[tests] = Proof(blocker: result)
+        var units: [String: SourceUnit] = [:]
+        let result = inspect(tests: tests, current: current, graph: graph, checkedUnits: &units)
+        results[tests] = Proof(blocker: result, units: Array(units.values))
         return result
     }
 
-    private mutating func inspect(tests: Set<String>, current: XcodeTestGraph, graph: DependencyGraph) -> String? {
+    /// Exact project source regions traversed by a successful caller proof,
+    /// including lifecycle roots, closures, defaults and transitive producers.
+    func checkedSourceUnits(for tests: Set<String>) -> [SourceUnit]? {
+        guard let proof = results[tests], proof.blocker == nil else { return nil }
+        return proof.units
+    }
+
+    private mutating func inspect(tests: Set<String>, current: XcodeTestGraph, graph: DependencyGraph,
+                                  checkedUnits: inout [String: SourceUnit]) -> String? {
         let sources = Dictionary(grouping: current.sources.map { (String($0.key.prefix { $0 != ":" }), $0.value) }, by: { $0.0 })
         let physicalModules = Set(sources.filter { !$0.value.isEmpty && $0.value.allSatisfy { $0.1.receiverPhysicalLocations == true } }.keys)
         func units(_ node: FunctionNode) -> [SourceUnit] {
@@ -249,6 +258,7 @@ struct SDKReceiverOrigins {
                     return "Source locations are remapped or lack physical-location evidence in module " + node.module + "; refresh source evidence"
                 }
                 let owners = units(node)
+                for owner in owners { checkedUnits[owner.key + "@" + owner.region.path + ":" + String(owner.region.startLine)] = owner }
                 if let reason = metatypeBlocker(node, owners: owners) { return "\(reason) in \(node.module).\(node.name)" }
                 if let reason = stateBlocker(node) { return "\(reason) in \(node.module).\(node.name)" }
                 // A saved project body with missing provenance is not an opaque
