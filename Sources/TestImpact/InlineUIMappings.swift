@@ -126,7 +126,7 @@ public struct InlineMappingSyntax: Codable, Sendable {
                 kind = "class"
                 superclass = value.inheritanceClause?.inheritedTypes.first?.type.trimmedDescription
             } else if let value = node.as(ExtensionDeclSyntax.self) {
-                nextScope = value.extendedType.trimmedDescription
+                nextScope = Self.canonicalScope(value.extendedType.trimmedDescription)
                 if nextScope.hasPrefix(module + ".") { nextScope = String(nextScope.dropFirst(module.count + 1)) }
                 kind = "extension"
             } else if let name = node.as(StructDeclSyntax.self)?.name ?? node.as(EnumDeclSyntax.self)?.name ?? node.as(ProtocolDeclSyntax.self)?.name {
@@ -174,6 +174,10 @@ public struct InlineMappingSyntax: Codable, Sendable {
         }
         return result
     }
+
+    static func canonicalScope(_ spelling: String) -> String {
+        SDKTestHelperSyntax.canonicalName(SwiftSourceSnapshot.nominalTypeName(spelling) ?? spelling)
+    }
 }
 
 /// Resolves inline rules through the enabled executable inventory and physical
@@ -200,7 +204,11 @@ struct InlineUIMappings {
 
     static func resolve(_ snapshot: XcodeTestGraph) -> Resolution {
         var result = Resolution()
-        let declarations = snapshot.sources.values.flatMap { $0.inlineMappings?.declarations ?? [] }
+        var declarations = snapshot.sources.values.flatMap { $0.inlineMappings?.declarations ?? [] }
+        // Also normalize older saved syntax before matching compiler names.
+        for index in declarations.indices {
+            declarations[index].scope = InlineMappingSyntax.canonicalScope(declarations[index].scope)
+        }
         let annotated = declarations.contains { !$0.directives.isEmpty }
         let uiTargets = Set(snapshot.targets.filter(\.isUITest).map(\.name))
         let inventory = snapshot.tests.filter { uiTargets.contains(String($0.prefix { $0 != "/" })) }
@@ -224,6 +232,32 @@ struct InlineUIMappings {
         let physical = Set(snapshot.sources.values.filter { $0.receiverPhysicalLocations != false }.flatMap {
             $0.inlineMappings?.declarations.map { $0.module + ":" + $0.region.path } ?? []
         })
+        // An alias spelling cannot establish an extension's owner. Its emitted
+        // methods can: require one same-module class identity and physical source
+        // locations for every compiler-backed method in the extension.
+        let classNames = Set(declarations.filter { $0.kind == "class" }.map { $0.module + "." + $0.scope })
+        for index in declarations.indices where declarations[index].kind == "extension" {
+            let ext = declarations[index]
+            guard physical.contains(ext.module + ":" + ext.region.path) else { continue }
+            let members = declarations.indices.filter {
+                let member = declarations[$0]
+                return member.kind == "method" && member.module == ext.module && member.scope == ext.scope &&
+                    member.region.path == ext.region.path && member.region.startLine >= ext.region.startLine && member.region.endLine <= ext.region.endLine
+            }
+            var owners = Set<String>()
+            for member in members {
+                guard let method = declarations[member].method else { continue }
+                for node in nodesByModule[ext.module] ?? [] where node.name.hasSuffix("." + method) && node.regions.contains(where: {
+                    $0.path == ext.region.path && $0.startLine >= declarations[member].region.startLine && $0.startLine <= declarations[member].region.endLine
+                }) {
+                    let name = node.name.hasPrefix("@objc ") ? String(node.name.dropFirst(6)) : node.name
+                    owners.insert(String(name.dropLast(method.count + 1)))
+                }
+            }
+            guard owners.count == 1, let owner = owners.first, classNames.contains(ext.module + "." + owner) else { continue }
+            declarations[index].scope = owner
+            for member in members { declarations[member].scope = owner }
+        }
         let methodsByOwner = Dictionary(grouping: declarations.filter { $0.kind == "method" }, by: { $0.module + "." + $0.scope })
         let extensionsByOwner = Dictionary(grouping: declarations.filter { $0.kind == "extension" }, by: { $0.module + "." + $0.scope })
         let aliases = Set(snapshot.sources.values.flatMap { $0.typeAliases ?? [] }.map(SDKTestHelperSyntax.canonicalName))
@@ -271,14 +305,17 @@ struct InlineUIMappings {
         }
         func hasUnknownExports(_ declaration: InlineMappingSyntax.Declaration) -> Bool {
             let module = declaration.module
-            guard hasCompleteExports(module),
+            guard let implicitImports = snapshot.dependencies?.compilerImplicitImports,
+                  let moduleImports = implicitImports[module],
+                  hasCompleteExports(module),
                   let imports = snapshot.sources[module + ":" + declaration.region.path]?.inlineMappings?.moduleImports else { return true }
-            var pending = Array(imports)
+            var pending = Array(imports.union(moduleImports))
             // Re-exports in another file are visible throughout this module.
             pending += (sourcesByModule[module] ?? []).flatMap { Array(snapshot.sources[$0]?.inlineMappings?.reexportedModules ?? []) }
             var visited = Set<String>()
             while let imported = pending.popLast() {
-                guard visited.insert(imported).inserted, couldImport(imported, into: module) else { continue }
+                guard visited.insert(imported).inserted,
+                      implicitImports[module]?.contains(imported) == true || couldImport(imported, into: module) else { continue }
                 // These SDK modules establish the supported terminal bases.
                 if ["XCTest", "Foundation", "Swift"].contains(imported) { continue }
                 guard hasCompleteExports(imported) else { return true }
@@ -303,6 +340,28 @@ struct InlineUIMappings {
         // require inline ancestry evidence. Preserve uncertainty for plausible
         // ancestors, aliases, and imported policies whose reachability is unknown.
         func mayHavePolicy(owner: String, method: String, roots: Set<String>) -> Bool {
+            // If an extension owner could not be proven above, do not silently
+            // discard a directive on a compiler-bound enabled method. Its source
+            // location still establishes that binding must succeed or diagnose.
+            let located = declarations.filter { declaration in
+                guard declaration.kind == "method", declaration.method == method,
+                      !classNames.contains(declaration.module + "." + declaration.scope) else { return false }
+                if !physical.contains(declaration.module + ":" + declaration.region.path) || roots.isEmpty {
+                    return couldImport(declaration.module, into: String(owner.prefix { $0 != "." }))
+                }
+                return (nodesByModule[declaration.module] ?? []).contains { node in
+                    roots.contains(node.id) && node.name.hasSuffix("." + method) && node.regions.contains {
+                        $0.path == declaration.region.path && $0.startLine >= declaration.region.startLine && $0.startLine <= declaration.region.endLine
+                    }
+                }
+            }
+            if located.contains(where: { !$0.directives.isEmpty }) { return true }
+            if declarations.contains(where: { ext in
+                ext.kind == "extension" && !ext.directives.isEmpty && located.contains {
+                    $0.module == ext.module && $0.scope == ext.scope && $0.region.path == ext.region.path &&
+                    $0.region.startLine >= ext.region.startLine && $0.region.endLine <= ext.region.endLine
+                }
+            }) { return true }
             let implementations = declarations.filter { $0.kind == "method" && $0.method == method && active($0, methodOnly: true, roots: roots) }
             func carriesPolicy(_ declaration: InlineMappingSyntax.Declaration, methodsAllowed: Bool) -> Bool {
                 guard !declaration.directives.isEmpty else { return false }

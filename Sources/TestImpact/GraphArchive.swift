@@ -23,6 +23,7 @@ public enum GraphArchive {
         var schema: Int
         var diagnostics: [String]
         var testDiagnostics: [String: [String]]
+        var compilerImplicitImports: [String: Set<String>]?
         init(_ graph: DependencyGraph) {
             var table: [String] = [], ids: [String: Int] = [:]
             func intern(_ s: String) -> Int {
@@ -51,6 +52,7 @@ public enum GraphArchive {
             tests = graph.tests.mapValues { $0.sorted().map(intern) }
             strings = table; toolchain = graph.toolchain; schema = graph.schemaVersion
             diagnostics = graph.diagnostics; testDiagnostics = graph.testDiagnostics
+            compilerImplicitImports = graph.compilerImplicitImports
         }
         func unpack() throws -> DependencyGraph {
             func string(_ id: Int) throws -> String {
@@ -59,6 +61,7 @@ public enum GraphArchive {
             }
             var graph = DependencyGraph(toolchain: toolchain, diagnostics: diagnostics)
             graph.schemaVersion = schema; graph.testDiagnostics = testDiagnostics
+            graph.compilerImplicitImports = compilerImplicitImports
             guard nodes.count.isMultiple(of: 8) else { throw ImpactError("Truncated compact graph integers") }
             let words: [Int] = nodes.withUnsafeBytes { bytes in
                 stride(from: 0, to: bytes.count, by: 8).map {

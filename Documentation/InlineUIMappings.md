@@ -51,6 +51,10 @@ test targets; it does not infer Swift Testing or parameterized executable identi
   directives; base-class defaults still apply.
 - An extension directive applies to enabled methods **declared in that extension**,
   not every method on the extended class. Class and base-class defaults still apply.
+  Escaped and qualified extension names are normalized. A typealiased extension
+  can bind to a captured class when emitted method names and physical source
+  locations prove one owner. Unresolved owners on enabled annotated methods
+  produce diagnostics instead of silently dropping their rules.
 - Nested classes retain their qualified names. Local declarations inside function
   bodies cannot supply test annotations. Ambiguous ancestry, aliases, missing
   compiler locations, and redirected `#sourceLocation` evidence fail conservatively.
@@ -77,7 +81,11 @@ test targets; it does not infer Swift Testing or parameterized executable identi
   not proof that it is invisible. Such uncertainty keeps affected tests selected
   and fails strict validation. The supported SDK terminal modules (`XCTest`,
   `Foundation`, and `Swift`) do not require source capture.
-  Saved snapshots without current import/re-export evidence require regeneration.
+  Compiler-injected imports (`-import-module` and `-testable-import-module`) also
+  participate, even for binary modules absent from the project import inventory.
+  The compiler options are retained in JSON and compact saved graphs.
+  Saved snapshots without current import/re-export or compiler-option evidence
+  require regeneration.
 - Inline and file rules form a union. Selecting a test through either rule keeps it
   selected. There are no override, replace, exclusion or implicit policy switches.
 

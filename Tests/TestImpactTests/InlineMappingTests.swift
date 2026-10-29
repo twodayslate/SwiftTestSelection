@@ -32,6 +32,7 @@ private func inlineModel(_ ui: String = inlineUI, changed: String? = nil) -> Xco
     ], tests: ["UI/Checkout/testBuy()", "UI/Checkout/testHistory()", "UI/Notes/testNotes()"])
     result.modules = ["UI": "UI", "App": "App"]
     var graph = DependencyGraph()
+    graph.compilerImplicitImports = ["UI": [], "App": []]
     for (path, text) in sources {
         let module = path == "UI.swift" ? "UI" : "App"
         let syntax = SwiftSourceSnapshot.parse(text, path: path, module: module)
@@ -286,7 +287,7 @@ private func inlineSelect(_ after: XcodeTestGraph, _ before: XcodeTestGraph, pat
     var graph = inlineModel(ui)
     let snapshot = SwiftSourceSnapshot.parse(support, path: "Support/Parent.swift", module: "Helpers")
     graph.sources["Helpers:Support/Parent.swift"] = snapshot
-    graph.modules["Helpers"] = "Helpers"
+    graph.modules["Helpers"] = "Helpers"; graph.dependencies!.compilerImplicitImports?["Helpers"] = []
     graph.targets.append(.init(name: "Helpers", productType: "com.apple.product-type.framework", sourceFiles: ["Support/Parent.swift"]))
     let method = snapshot.inlineMappings!.declarations.first { $0.kind == "method" }!
     graph.dependencies!.functions["parentEntry"] = .init(id: "parentEntry", module: "Helpers", name: "Parent.testBuy()", regions: [method.region])

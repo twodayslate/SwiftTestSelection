@@ -94,6 +94,10 @@ public struct DependencyGraph: Codable, Sendable {
     public var tests: [String: Set<String>]
     public var diagnostics: [String]
     public var testDiagnostics: [String: [String]] = [:]
+    /// Imports injected by compiler options, including binary modules absent
+    /// from project inventories. Each captured module has an entry, even when
+    /// empty. Nil or a missing module entry denotes absent compiler-option proof.
+    public var compilerImplicitImports: [String: Set<String>]? = nil
 
     public init(
         toolchain: String = "", functions: [String: FunctionNode] = [:],
