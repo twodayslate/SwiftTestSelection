@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 16 includes actor type names in both revisions' binding audits.
-    static let currentProofVersion = 16
+    // Version 17 authenticates SDK namespaces and the MainActor annotation.
+    static let currentProofVersion = 17
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -69,10 +69,19 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     }
 
     private static let allowedGlobals = assertions.union(["NSPredicate", "XCUIElement", "XCTAttachment", "CGRect", "CGVector", "max"])
+    private static let valueTypes: Set<String> = ["String", "Bool", "Int", "Double", "XCUIApplication", "XCUIElement",
+        "Swift.String", "Swift.Bool", "Swift.Int", "Swift.Double", "XCTest.XCUIApplication", "XCTest.XCUIElement"]
     // Every accepted bare global must participate in the whole-source binding
     // audit, including deleted/unowned base files. A head SDK binding cannot
     // prove the effects of a project declaration that disappeared at head.
-    static let reservedNames = allowedGlobals.union(["XCTestCase", "String", "Bool", "Int", "Double", "XCUIApplication",
+    // Qualification alone does not prove identity: another source can alias
+    // Swift/XCTest to a foreign namespace or MainActor to a custom actor.
+    // Audit every component of accepted type spellings and every trusted SDK
+    // module name, not just the final type name or the helper file's imports.
+    static let reservedNames = allowedGlobals
+        .union(valueTypes.flatMap { $0.split(separator: ".").map(String.init) })
+        .union(SDKTestHelperSyntax.trustedCallerModules)
+        .union(["CoreGraphics", "MainActor", "XCTestCase",
         "IntegerLiteralType", "FloatLiteralType", "BooleanLiteralType", "StringLiteralType",
         "UnicodeScalarLiteralType", "ExtendedGraphemeClusterLiteralType"])
 
@@ -356,8 +365,6 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         guard let body = function.body else { return nil }
         // Query/assertion helpers receive their context as ordinary values. No
         // self/global captures, inout, function-valued arguments, or effectful defaults.
-        let valueTypes: Set<String> = ["String", "Bool", "Int", "Double", "XCUIApplication", "XCUIElement",
-                                        "Swift.String", "Swift.Bool", "Swift.Int", "Swift.Double", "XCTest.XCUIApplication", "XCTest.XCUIElement"]
         if let result = function.signature.returnClause?.type.trimmedDescription,
            !valueTypes.union(["Void", "()"]).contains(result) { return nil }
         var locals = Set<String>()
