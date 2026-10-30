@@ -226,9 +226,29 @@ struct InlineUIMappings {
         }
         let hasSyntaxDiagnostics = snapshot.sources.values.contains { !($0.inlineMappings?.diagnostics.isEmpty ?? true) }
         guard annotated || hasSyntaxDiagnostics, !inventory.isEmpty else { return result }
-        let nodes = Array(snapshot.dependencies?.functions.values ?? [:].values)
-        let nodesByModule = Dictionary(grouping: nodes, by: \.module)
+        // Binding only reads identity and locations. Copying the full effect
+        // graph into every index retains dozens of sets per node on each query.
+        struct BindingNode {
+            var id: String; var module: String; var name: String
+            var regions: [SourceRegion]; var nominalTypeContext: String?
+        }
+        let nodes = (snapshot.dependencies?.functions.values ?? [:].values).compactMap { node -> BindingNode? in
+            guard !node.regions.isEmpty else { return nil }
+            return .init(id: node.id, module: node.module, name: node.name,
+                         regions: node.regions, nominalTypeContext: node.nominalTypeContext)
+        }
         let nodesByName = Dictionary(grouping: nodes, by: { $0.module + "." + $0.name })
+        var nodesByFile: [String: [BindingNode]] = [:]
+        var nodesByScope: [String: [BindingNode]] = [:]
+        for node in nodes {
+            for path in Set(node.regions.map(\.path)) { nodesByFile[node.module + ":" + path, default: []].append(node) }
+            for index in node.name.indices where node.name[index] == "." {
+                nodesByScope[node.module + "." + node.name[..<index], default: []].append(node)
+            }
+        }
+        let declarationsByFile = Dictionary(grouping: declarations.indices, by: {
+            declarations[$0].module + ":" + declarations[$0].region.path
+        })
         let physical = Set(snapshot.sources.values.filter { $0.receiverPhysicalLocations != false }.flatMap {
             $0.inlineMappings?.declarations.map { $0.module + ":" + $0.region.path } ?? []
         })
@@ -249,14 +269,14 @@ struct InlineUIMappings {
         var unresolvedExtensionMethods = Set<Int>()
         for index in declarations.indices where declarations[index].kind == "extension" {
             let ext = declarations[index]
-            let members = declarations.indices.filter { $0 != index && enclosed(declarations[$0], by: ext) }
+            let members = (declarationsByFile[ext.module + ":" + ext.region.path] ?? []).filter { $0 != index && enclosed(declarations[$0], by: ext) }
             var owners = Set<String>()
             var conflictingOwner = false
             if physical.contains(ext.module + ":" + ext.region.path) {
                 for member in members {
                     guard declarations[member].kind == "method", let method = declarations[member].method else { continue }
                     let suffix = String(declarations[member].scope.dropFirst(ext.scope.count)) + "." + method
-                    for node in nodesByModule[ext.module] ?? [] where node.name.hasSuffix(suffix) && node.regions.contains(where: {
+                    for node in nodesByFile[ext.module + ":" + ext.region.path] ?? [] where node.name.hasSuffix(suffix) && node.regions.contains(where: {
                         $0.path == ext.region.path && $0.startLine >= declarations[member].region.startLine && $0.startLine <= declarations[member].region.endLine
                     }) {
                         let name = node.name.hasPrefix("@objc ") ? String(node.name.dropFirst(6)) : node.name
@@ -307,6 +327,18 @@ struct InlineUIMappings {
         let methodsByOwner = Dictionary(grouping: declarations.filter { $0.kind == "method" }, by: { $0.module + "." + $0.scope })
         let extensionsByOwner = Dictionary(grouping: declarations.filter { $0.kind == "extension" }, by: { $0.module + "." + $0.scope })
         let classes = Dictionary(grouping: declarations.filter { $0.kind == "class" }, by: { $0.module + "." + $0.scope })
+        let declarationsByOwner = Dictionary(grouping: declarations, by: { $0.module + "." + $0.scope })
+        let methodsByName = Dictionary(grouping: declarations.filter { $0.kind == "method" }, by: { $0.method ?? "" })
+        let policyDeclarations = declarations.filter { !$0.directives.isEmpty }
+        // Only declarations actually enclosed by unresolved extensions can be
+        // suffix candidates. Build this relation once, not per test/ancestor.
+        var unresolvedNested: [String: [InlineMappingSyntax.Declaration]] = [:]
+        for declaration in declarations where declaration.kind == "class" || declaration.kind == "method" {
+            for ext in unresolvedExtensions where enclosed(declaration, by: ext) && declaration.scope.hasPrefix(ext.scope + ".") {
+                let suffix = String(declaration.scope.dropFirst(ext.scope.count))
+                unresolvedNested[suffix, default: []].append(declaration)
+            }
+        }
         var frameworkImports = Set<String>()
         var scopedTypeImports: [String: Set<String>] = [:]
         var reexportedNames = Set<String>()
@@ -334,7 +366,14 @@ struct InlineUIMappings {
             return imports.contains(owner)
         }
         let sourcesByModule = Dictionary(grouping: snapshot.sources.keys, by: { String($0.prefix { $0 != ":" }) })
+        var completeExportCache: [String: Bool] = [:]
         func hasCompleteExports(_ module: String) -> Bool {
+            if let cached = completeExportCache[module] { return cached }
+            let result = computeCompleteExports(module)
+            completeExportCache[module] = result
+            return result
+        }
+        func computeCompleteExports(_ module: String) -> Bool {
             guard snapshot.unsupportedSourceInputs?[module]?.isEmpty != false,
                   let keys = sourcesByModule[module], !keys.isEmpty,
                   keys.allSatisfy({ snapshot.sources[$0]?.inlineMappings?.reexportedModules != nil &&
@@ -345,25 +384,32 @@ struct InlineUIMappings {
                 target.sourceFiles.allSatisfy { snapshot.sources[module + ":" + $0] != nil }
             }
         }
-        func hasUnknownExports(_ declaration: InlineMappingSyntax.Declaration) -> Bool {
+        func missingExports(_ declaration: InlineMappingSyntax.Declaration) -> Set<String> {
             let module = declaration.module
             guard let implicitImports = snapshot.dependencies?.compilerImplicitImports,
                   let moduleImports = implicitImports[module],
                   hasCompleteExports(module),
-                  let imports = snapshot.sources[module + ":" + declaration.region.path]?.inlineMappings?.moduleImports else { return true }
+                  let imports = snapshot.sources[module + ":" + declaration.region.path]?.inlineMappings?.moduleImports else { return [module + " (source or compiler import inventory)"] }
             var pending = Array(imports.union(moduleImports))
             // Re-exports in another file are visible throughout this module.
             pending += (sourcesByModule[module] ?? []).flatMap { Array(snapshot.sources[$0]?.inlineMappings?.reexportedModules ?? []) }
-            var visited = Set<String>()
+            var visited = Set<String>(), missing = Set<String>()
             while let imported = pending.popLast() {
                 guard visited.insert(imported).inserted,
                       implicitImports[module]?.contains(imported) == true || couldImport(imported, into: module) else { continue }
                 // These SDK modules establish the supported terminal bases.
                 if ["XCTest", "Foundation", "Swift"].contains(imported) { continue }
-                guard hasCompleteExports(imported) else { return true }
+                guard hasCompleteExports(imported) else { missing.insert(imported); continue }
                 pending += (sourcesByModule[imported] ?? []).flatMap { Array(snapshot.sources[$0]?.inlineMappings?.reexportedModules ?? []) }
             }
-            return false
+            return missing
+        }
+        func compilerIdentity(_ declaration: InlineMappingSyntax.Declaration) -> CompilerClassIdentity? {
+            guard physical.contains(declaration.module + ":" + declaration.region.path),
+                  let identity = snapshot.dependencies?.compilerClassIdentities?[declaration.module + "." + declaration.scope],
+                  identity.path == declaration.region.path,
+                  identity.line >= declaration.region.startLine, identity.line <= declaration.region.endLine else { return nil }
+            return identity
         }
         let globalNames = aliases.union(nominalTypes).filter { $0.split(separator: ".").count == 2 }
         func couldShadow(_ parent: String, in module: String, names: Set<String>, includeOwnModule: Bool = false) -> Bool {
@@ -385,21 +431,22 @@ struct InlineUIMappings {
             // If an extension owner could not be proven above, do not silently
             // discard a directive on a compiler-bound enabled method. Its source
             // location still establishes that binding must succeed or diagnose.
-            let located = declarations.filter { declaration in
+            let methodDeclarations = methodsByName[method] ?? []
+            let located = methodDeclarations.filter { declaration in
                 guard declaration.kind == "method", declaration.method == method,
                       (!classNames.contains(declaration.module + "." + declaration.scope) ||
                        unresolvedExtensions.contains { enclosed(declaration, by: $0) }) else { return false }
                 if !physical.contains(declaration.module + ":" + declaration.region.path) || roots.isEmpty {
                     return couldImport(declaration.module, into: String(owner.prefix { $0 != "." }))
                 }
-                return (nodesByModule[declaration.module] ?? []).contains { node in
+                return (nodesByFile[declaration.module + ":" + declaration.region.path] ?? []).contains { node in
                     roots.contains(node.id) && node.name.hasSuffix("." + method) && node.regions.contains {
                         $0.path == declaration.region.path && $0.startLine >= declaration.region.startLine && $0.startLine <= declaration.region.endLine
                     }
                 }
             }
             if located.contains(where: { !$0.directives.isEmpty }) { return true }
-            if declarations.contains(where: { container in
+            if policyDeclarations.contains(where: { container in
                 ["class", "extension"].contains(container.kind) && !container.directives.isEmpty && located.contains {
                     $0.scope == container.scope && enclosed($0, by: container)
                 }
@@ -408,17 +455,15 @@ struct InlineUIMappings {
             // missing locations, may not establish its extension owner. Its
             // suffix is diagnostic evidence, never enough to bind the alias.
             func unresolvedNestedCandidates(_ key: String, methodsAllowed: Bool) -> [InlineMappingSyntax.Declaration] {
-                declarations.filter { declaration in
-                    unresolvedExtensions.contains { ext in
-                        (declaration.kind == "class" || methodsAllowed && declaration.kind == "method" && declaration.method == method) &&
-                            enclosed(declaration, by: ext) &&
-                            declaration.scope.hasPrefix(ext.scope + ".") &&
-                            key.hasSuffix(String(declaration.scope.dropFirst(ext.scope.count))) &&
-                            couldImport(declaration.module, into: String(owner.prefix { $0 != "." }))
-                    }
+                // Enumerate lexical suffixes of the queried owner. The index
+                // retains the same conservative candidates and import checks.
+                key.indices.filter { key[$0] == "." }.flatMap { unresolvedNested[String(key[$0...])] ?? [] }.filter { declaration in
+                    (declaration.kind == "class" || methodsAllowed && declaration.method == method) &&
+                        couldImport(declaration.module, into: String(owner.prefix { $0 != "." }))
                 }
             }
-            let implementations = declarations.filter { $0.kind == "method" && $0.method == method && active($0, methodOnly: true, roots: roots) }
+
+            let implementations = methodDeclarations.filter { active($0, methodOnly: true, roots: roots) }
             func carriesPolicy(_ declaration: InlineMappingSyntax.Declaration, methodsAllowed: Bool) -> Bool {
                 guard !declaration.directives.isEmpty else { return false }
                 if declaration.kind == "class" { return true }
@@ -448,9 +493,7 @@ struct InlineUIMappings {
                 // (or subclass) can inherit the base class's policy. These
                 // suffix candidates only require diagnostics, never binding.
                 pending.append(contentsOf: nested.filter { $0.kind == "class" }.map { ($0.module + "." + $0.scope, methodsAllowed) })
-                if declarations.contains(where: {
-                    $0.module + "." + $0.scope == key && carriesPolicy($0, methodsAllowed: methodsAllowed)
-                }) { return true }
+                if (declarationsByOwner[key] ?? []).contains(where: { carriesPolicy($0, methodsAllowed: methodsAllowed) }) { return true }
                 let inheritedMethods = methodsAllowed && !implementations.contains { $0.module + "." + $0.scope == key }
                 for declaration in classes[key] ?? [] {
                     guard let spelling = declaration.superclass else { continue }
@@ -463,7 +506,7 @@ struct InlineUIMappings {
                     pending.append(contentsOf: matches.map { ($0, inheritedMethods) })
                     // A suffix candidate is not a lookup result and cannot rule
                     // out an uncaptured imported ancestor carrying these rules.
-                    if declarations.contains(where: {
+                    if policyDeclarations.contains(where: {
                         $0.module != declaration.module && couldImport($0.module, into: declaration.module) &&
                         carriesPolicy($0, methodsAllowed: inheritedMethods)
                     }) { return true }
@@ -474,7 +517,7 @@ struct InlineUIMappings {
         func active(_ declaration: InlineMappingSyntax.Declaration, methodOnly: Bool = false, roots: Set<String>? = nil) -> Bool {
             // #sourceLocation can make a physical-region match misleading.
             guard physical.contains(declaration.module + ":" + declaration.region.path) else { return false }
-            let candidates = methodOnly ? nodesByName[declaration.module + "." + declaration.scope + "." + (declaration.method ?? "")] ?? [] : nodesByModule[declaration.module] ?? []
+            let candidates = methodOnly ? nodesByName[declaration.module + "." + declaration.scope + "." + (declaration.method ?? "")] ?? [] : nodesByScope[declaration.module + "." + declaration.scope] ?? []
             return candidates.contains { node in
                 node.module == declaration.module && (roots == nil || roots!.contains(node.id)) &&
                 (methodOnly ? node.name == declaration.scope + "." + (declaration.method ?? "") : node.name.hasPrefix(declaration.scope + ".")) &&
@@ -491,7 +534,8 @@ struct InlineUIMappings {
             var pending: String? = module + "." + parts[1]
             var visited = Set<String>()
             var failed = false
-            var unknownExports = false
+            var unknownExports = Set<String>()
+            var compilerAncestry = true
             var diagnosedPaths = testPaths
             func diagnoseSources(_ applicable: [InlineMappingSyntax.Declaration]) {
                 let paths = Set(applicable.map { $0.region.path }).subtracting(diagnosedPaths)
@@ -521,7 +565,9 @@ struct InlineUIMappings {
                 }
                 // Continue through lexical candidates to report their malformed
                 // directives, but never materialize rules from uncertain ancestry.
-                unknownExports = unknownExports || hasUnknownExports(declaration)
+                unknownExports.formUnion(missingExports(declaration))
+                compilerAncestry = compilerAncestry && hasCompleteExports(declaration.module) &&
+                    snapshot.dependencies?.compilerImplicitImports?[declaration.module] != nil
                 if importedTypes.contains(importedName) || couldShadow(parent, in: declaration.module, names: reexportedNames, includeOwnModule: true) {
                     failed = true; break
                 }
@@ -548,7 +594,15 @@ struct InlineUIMappings {
                     let imported = frameworkImports.contains(source + "XCTest") ||
                         (parent.hasSuffix("NSObject") && frameworkImports.contains(source + "Foundation"))
                     if !imported || couldShadow(parent, in: declaration.module, names: globalNames) { failed = true }
+                    let expected = parent.hasSuffix("XCTestCase") ? "c:objc(cs)XCTestCase" : "c:objc(cs)NSObject"
+                    compilerAncestry = compilerAncestry && compilerIdentity(declaration)?.superclass == expected
                     break
+                }
+                if let parentKey = pending {
+                    let parentDeclarations = classes[parentKey] ?? []
+                    let parentIdentities = Set(parentDeclarations.compactMap { compilerIdentity($0)?.symbol })
+                    compilerAncestry = compilerAncestry && parentIdentities.count == 1 &&
+                        compilerIdentity(declaration).map { parentIdentities.contains($0.superclass) } == true
                 }
                 if pending == nil {
                     // A unique suffix is not proof of Swift name lookup: an
@@ -597,9 +651,9 @@ struct InlineUIMappings {
                 }
                 continue
             }
-            if unknownExports {
+            if !unknownExports.isEmpty && !compilerAncestry {
                 if needsBinding {
-                    diagnose("Inline ancestry is unresolved for \(test): imported module exports are not fully captured; regenerate complete source/import evidence", tests: [test])
+                    diagnose("Inline ancestry is unresolved for \(test): imported module exports are not fully captured (\(unknownExports.sorted().joined(separator: ", "))); missing compiler superclass identity; regenerate from the built Swift modules or retain this rule in JSON", tests: [test])
                 }
                 continue
             }

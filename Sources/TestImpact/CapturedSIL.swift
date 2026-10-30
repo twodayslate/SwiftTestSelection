@@ -223,33 +223,7 @@ struct CapturedSIL: Sendable {
                     if result.functions[id] == nil { result.importedSymbols!.insert(id) }
                 } else { result.importedSymbols!.remove(id) }
                 if var old = result.functions[id] {
-                    old.dependencies.formUnion(node.dependencies)
-                    if let before = old.compilerReferences, let after = node.compilerReferences {
-                        old.compilerReferences = before.union(after)
-                    } else { old.compilerReferences = nil }
-                    if let before = old.stateAccesses, let after = node.stateAccesses {
-                        old.stateAccesses = before.union(after)
-                    } else { old.stateAccesses = nil }
-                    if let before = old.dynamicCallSignatures, let after = node.dynamicCallSignatures {
-                        old.dynamicCallSignatures = before.union(after)
-                    } else { old.dynamicCallSignatures = nil }
-                    if let before = old.receiverTypeOrigins, let after = node.receiverTypeOrigins {
-                        old.receiverTypeOrigins = before.union(after)
-                    } else { old.receiverTypeOrigins = nil }
-                    if let before = old.receiverGenericCalls, let after = node.receiverGenericCalls {
-                        old.receiverGenericCalls = before.union(after)
-                    } else { old.receiverGenericCalls = nil }
-                    if let before = old.dynamicCallSites, let after = node.dynamicCallSites {
-                        old.dynamicCallSites = before.union(after)
-                    } else { old.dynamicCallSites = nil }
-                    if let before = old.receiverErrorEffects, let after = node.receiverErrorEffects {
-                        old.receiverErrorEffects = before.union(after)
-                    } else { old.receiverErrorEffects = nil }
-                    if let before = old.receiverIndirectErrorEffects, let after = node.receiverIndirectErrorEffects {
-                        old.receiverIndirectErrorEffects = before.union(after)
-                    } else { old.receiverIndirectErrorEffects = nil }
-                    old.dynamicDeclarations.formUnion(node.dynamicDeclarations)
-                    old.uncertainties.formUnion(node.uncertainties)
+                    old.mergeEvidence(node)
                     old.regions = Set(old.regions + node.regions).sorted { ($0.path, $0.startLine, $0.endLine) < ($1.path, $1.startLine, $1.endLine) }
                     result.functions[id] = old
                 } else { result.functions[id] = node }

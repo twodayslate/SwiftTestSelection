@@ -370,6 +370,17 @@ enum SDKReceiverContracts {
         return types.names
     }
 
+    /// Explain the missing effect proof separately from a known equality
+    /// witness. Nominal SDK type identity does not close runtime formatting.
+    static func missingWitnessProof(_ arguments: String, for symbol: String) -> String? {
+        guard symbol == "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+              let types = parsedTypes(arguments), types.parameters.count == 1,
+              closedEquality(types.parameters[0]), !allows(arguments, for: symbol) else { return nil }
+        return "Even with a supported Equatable witness, XCTest assertion failure formatting for " + arguments +
+            " may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; " +
+            "the capture does not prove absence or effects of project/foreign runtime formatting conformances"
+    }
+
     static func allows(_ arguments: String, for symbol: String) -> Bool {
         guard generic.contains(symbol) else { return false }
         if symbol == objectBridge && arguments == unreachableNil { return true }

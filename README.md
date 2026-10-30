@@ -175,6 +175,14 @@ Use `--workspace /path/to/App.xcworkspace` instead of `--project` for a workspac
 
 Both revisions are analyzed. Removed functions and dependencies retain their old callers; deleted tests are excluded. New tests are always included. Initializers and lifecycle hooks are associated with their class and ancestors. Stored state/type-layout changes broaden selection to the affected class; file-level declarations may broaden it further. Simple `PBXFileReference` path updates accompanying unchanged Swift file renames are recognized; other project/build changes fall back. Resource renames are not assumed to preserve behavior.
 
+### Mapping maintenance skill
+
+Use the bundled [ui-inline-mappings skill](skills/ui-inline-mappings/SKILL.md) to create,
+improve, explain or audit mappings. The read-only `mapping-review` command resolves
+rules against saved graphs and previews widening/narrowing on a supplied comparison.
+See [installation and commands](Documentation/MappingMaintenance.md). Coverage is
+optional; maintenance does not enable runtime contracts or run tests automatically.
+
 ### Explicit UI feature mappings
 
 XCUITest runs across a process boundary. A test-runner call graph cannot tell which app code an accessibility action exercises. Check in `.swift-test-selection.json` at the **repository root** to declare those relationships:

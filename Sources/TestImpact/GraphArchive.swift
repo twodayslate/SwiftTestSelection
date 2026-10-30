@@ -23,7 +23,10 @@ public enum GraphArchive {
         var schema: Int
         var diagnostics: [String]
         var testDiagnostics: [String: [String]]
+        var compilerClassIdentities: [String: CompilerClassIdentity]?
         var compilerImplicitImports: [String: Set<String>]?
+        var captureModules: [String: Set<String>]?
+        var dynamicDeclarationModules: [String: [String: Set<String>]]?
         var nominalTypeContexts: [String: String]?
         init(_ graph: DependencyGraph) {
             var table: [String] = [], ids: [String: Int] = [:]
@@ -53,8 +56,11 @@ public enum GraphArchive {
             tests = graph.tests.mapValues { $0.sorted().map(intern) }
             strings = table; toolchain = graph.toolchain; schema = graph.schemaVersion
             diagnostics = graph.diagnostics; testDiagnostics = graph.testDiagnostics
+            compilerClassIdentities = graph.compilerClassIdentities
             compilerImplicitImports = graph.compilerImplicitImports
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
+            captureModules = graph.functions.compactMapValues(\.captureModules)
+            dynamicDeclarationModules = graph.functions.compactMapValues(\.dynamicDeclarationModules)
         }
         func unpack() throws -> DependencyGraph {
             func string(_ id: Int) throws -> String {
@@ -63,6 +69,7 @@ public enum GraphArchive {
             }
             var graph = DependencyGraph(toolchain: toolchain, diagnostics: diagnostics)
             graph.schemaVersion = schema; graph.testDiagnostics = testDiagnostics
+            graph.compilerClassIdentities = compilerClassIdentities
             graph.compilerImplicitImports = compilerImplicitImports
             guard nodes.count.isMultiple(of: 8) else { throw ImpactError("Truncated compact graph integers") }
             let words: [Int] = nodes.withUnsafeBytes { bytes in
@@ -126,6 +133,8 @@ public enum GraphArchive {
                 if cursor < row.count { node.receiverIndirectErrorEffects = try values() }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
                 node.nominalTypeContext = nominalTypeContexts?[node.id]
+                node.captureModules = captureModules?[node.id]
+                node.dynamicDeclarationModules = dynamicDeclarationModules?[node.id]
                 graph.functions[node.id] = node
             }
             graph.tests = try tests.mapValues { try Set($0.map(string)) }

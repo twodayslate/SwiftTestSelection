@@ -313,7 +313,13 @@ struct SDKReceiverOrigins {
                                       $0.1.typeAliases != nil && !$0.1.typeAliases!.contains(where: { roots.contains(SDKTestHelperSyntax.canonicalName(String($0.split(separator: ".").last ?? ""))) }) &&
                                       !$0.1.units.contains(where: { $0.kind == "type" && roots.contains(SDKTestHelperSyntax.canonicalName(String($0.scope.split(separator: ".").last ?? ""))) })
                                   }
-                              }) else { return "Unproven generic receiver contract for " + symbol + " with substitutions " + arguments.sorted().joined(separator: "; ") }
+                              }) else {
+                            let missing = arguments.sorted().compactMap { SDKReceiverContracts.missingWitnessProof($0, for: symbol) }
+                            let location = node.regions.first.map { " at " + $0.path + ":" + String($0.startLine) } ?? ""
+                            return "Unproven generic receiver contract for " + symbol + " with substitutions " + arguments.sorted().joined(separator: "; ") +
+                                " in " + node.module + "." + node.name + location +
+                                (missing.isEmpty ? "" : "; " + missing.joined(separator: "; "))
+                        }
                     }
                 }
                 var paired: [String: Set<[String]>] = [:]

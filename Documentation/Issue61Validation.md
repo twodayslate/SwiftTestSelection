@@ -85,3 +85,9 @@ IMPACT_PRECISION_REPLAY=/path/to/replay.json swift test -c release --jobs 3 --fi
 ```
 
 The opt-in replay retains the existing configuration fields. For these cases set `expectedBlocker` to `Optional<String>`, `declarationFallbacks` to 1, and `obsoleteBlockers` to include `Nested local declaration`. Set `expectedSelectedCount`/`expectedUICount` to 1961/384 and 1981/397 respectively. The known consumer is `ChainOfCustodyUITests/NotificationHubUITests/testFiltersAndBulkReadClearOnlyAffectVisibleSelection()`. The replay additionally supports `expectedSelected` for exact selections and a null `expectedBlocker` to require zero diagnostics.
+
+The same remaining Optional assertion boundary now names the compiler function,
+source location and missing runtime formatting-conformance proof (see
+[the #58 diagnostic detail](Issue58PredicateCallbacks.md#more-specific-remaining-effect-diagnostics)).
+This identifies the exact unsupported effect requested by #61; it does not claim
+that the proposed 46-UI selection or full-run equivalence has been established.

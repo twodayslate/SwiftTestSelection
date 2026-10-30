@@ -231,3 +231,15 @@ func erasedBridgeExemptionRequiresAnUnreachableLiteralNilBlock(kind: String) {
     #expect(SDKReceiverContracts.allows("[String: [Int]]", for: SDKReceiverContracts.objectBridge))
     #expect(!SDKReceiverContracts.allows("Int", for: "unknownBridgeFromObjectiveC"))
 }
+
+@Test func assertionFormattingDiagnosticsIdentifyTheUnprovenRuntimeWitness() {
+    let equal = "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF"
+    for type in ["Optional<String>", "XCTWaiter.Result", "Int"] {
+        #expect(!SDKReceiverContracts.allows(type, for: equal))
+        let reason = SDKReceiverContracts.missingWitnessProof(type, for: equal)
+        #expect(reason?.contains("supported Equatable witness") == true)
+        #expect(reason?.contains("runtime formatting conformances") == true)
+    }
+    #expect(SDKReceiverContracts.missingWitnessProof("String", for: equal) == nil)
+    #expect(SDKReceiverContracts.missingWitnessProof("ProjectValue", for: equal) == nil)
+}
