@@ -44,4 +44,20 @@ with tempfile.TemporaryDirectory(prefix='mapping-review-') as directory:
     rejected = subprocess.run(command + ['--base-graph', str(graph)], capture_output=True)
     assert rejected.returncode != 0
     assert graph.read_bytes() == original and candidate.read_bytes() == proposed
-print('PASS: mapping review finds partial staleness, validates repairs, and preserves inputs')
+    broken = json.loads(original)
+    broken['mappings'] = mapping
+    diagnostic = 'Swift syntax could not be parsed completely: App.swift'
+    broken['sourceSnapshots'] = {'App:App.swift': dict(units=[], inheritance={}, diagnostics=[diagnostic])}
+    broken_graph = root / 'broken-source.json'
+    broken_graph.write_text(json.dumps(broken))
+    broken_bytes = broken_graph.read_bytes()
+    result = subprocess.run([str(tool), 'mapping-review', '--graph', str(broken_graph),
+                             '--mappings', str(candidate)], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    review = json.loads(result.stdout)
+    for audit in [review['current'], review['proposed']]:
+        assert not audit['valid']
+        assert audit['errors'] == []
+        assert audit['graphDiagnostics'] == [diagnostic]
+    assert broken_graph.read_bytes() == broken_bytes and candidate.read_bytes() == proposed
+print('PASS: mapping review finds stale entries and source failures, validates repairs, and preserves inputs')

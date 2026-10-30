@@ -83,7 +83,8 @@ public struct MappingMaintenance: Codable, Sendable {
         let unmapped = uiTests.subtracting(mapped).sorted()
         if !unmapped.isEmpty { suggestions.append("Review \(unmapped.count) unmapped UI methods; full identifiers are in unmappedUITests.") }
         if snapshot.dependencies == nil { errors.append("Compiled graph unavailable; recapture this build configuration.") }
-        let diagnostics = (snapshot.diagnostics + graph.diagnostics + graph.testDiagnostics.values.flatMap { $0 }).sorted()
+        let diagnostics = (snapshot.diagnostics + graph.diagnostics + graph.testDiagnostics.values.flatMap { $0 }
+            + snapshot.sources.values.flatMap(\.diagnostics)).sorted()
         return Audit(valid: errors.isEmpty && diagnostics.isEmpty, errors: Array(Set(errors)).sorted(), suggestions: suggestions,
                      rules: rules, inventory: snapshot.tests.sorted(), unmappedUITests: unmapped, graphDiagnostics: diagnostics)
     }

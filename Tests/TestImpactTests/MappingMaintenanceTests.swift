@@ -82,3 +82,32 @@ private func maintenanceGraph(value: Int = 1) -> XcodeTestGraph {
     #expect(uncertain.preview?.after.uiConditionDecisions?.isEmpty == false)
     #expect(uncertain.preview?.newFallbacks.isEmpty == false)
 }
+
+@Test func mappingMaintenanceRejectsCapturedSourceParsingFailures() throws {
+    let base = maintenanceGraph()
+    #expect(MappingMaintenance.inspect(base).valid)
+    var head = maintenanceGraph(value: 2)
+    head.sources["App:App.swift"] = SwiftSourceSnapshot.parse(
+        "func checkout() -> Int { shared() + 2 }\nfunc shared() -> Int { 1",
+        path: "App.swift", module: "App")
+    let sourceDiagnostics = try #require(head.sources["App:App.swift"]?.diagnostics)
+    try #require(!sourceDiagnostics.isEmpty)
+    // The review consumes saved captures, including parser failures retained in
+    // source metadata independently of otherwise valid mappings/compiler roots.
+    head = try GraphArchive.decode(GraphArchive.encode(head))
+    let review = MappingMaintenance.review(current: head, proposed: head.mappings,
+        previous: base, changes: [.init(path: "App.swift")])
+    let proposed = try #require(review.proposed)
+    for audit in [review.current, proposed] {
+        #expect(!audit.valid)
+        #expect(audit.errors.isEmpty)
+        #expect(audit.graphDiagnostics == sourceDiagnostics.sorted())
+    }
+    let preview = try #require(review.preview)
+    for report in [preview.before, preview.after] {
+        #expect(report.selectedTests == head.tests.sorted())
+        for message in sourceDiagnostics {
+            #expect(report.diagnostics.contains { $0.code == "incomplete_graph" && $0.message == message })
+        }
+    }
+}
