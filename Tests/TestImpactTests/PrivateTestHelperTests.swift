@@ -90,7 +90,9 @@ func compiledPrivateXCTestHelpersSelectOnlyProvenConsumers(added: Bool, safety: 
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let helper = added ? navigationHelper : sharingHelper
-    let call = added ? "let tab = navigationTab(\"Settings\", in: app); XCTAssertTrue(tab.exists)" : "assertShareOptions(in: app)"
+    // Keep the old caller statements: removed historical SDK effects have no
+    // head compiler evidence, even when the replacement helper itself is safe.
+    let call = added ? "XCTAssertTrue(app.buttons[\"Settings\"].exists); let tab = navigationTab(\"Settings\", in: app); XCTAssertTrue(tab.exists)" : "assertShareOptions(in: app)"
     var before = helperFixture(added ? "" : helper, call: added ? "XCTAssertTrue(app.buttons[\"Settings\"].exists)" : call)
     var after = helperFixture(added ? helper : helper.replacingOccurrences(of: "    XCTAssertTrue(app.buttons[\"Content\"]", with: "    XCTAssertTrue(app.buttons[\"Send in Messages\"].exists, \"Expected a direct Messages card action.\")\n    XCTAssertTrue(app.buttons[\"Content\"]"), call: call)
     func unsafe(_ text: String) -> String {
@@ -161,7 +163,9 @@ func compiledPrivateXCTestHelpersSelectOnlyProvenConsumers(added: Bool, safety: 
     }
     legacyProof = try JSONDecoder().decode(XcodeTestGraph.self, from: JSONEncoder().encode(legacyProof))
     #expect(select(legacyProof).selectedTests.contains(tests[3]))
-    for version in [nil, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, PrivateTestHelperSyntax.currentProofVersion + 1] as [Int?] {
+    let staleVersions: [Int?] = [nil] + (0..<PrivateTestHelperSyntax.currentProofVersion).map { Optional($0) } +
+        [PrivateTestHelperSyntax.currentProofVersion + 1]
+    for version in staleVersions {
         var staleProof = current
         for i in staleProof.sources["UI:UI.swift"]!.units.indices {
             staleProof.sources["UI:UI.swift"]!.units[i].privateTestHelper?.proofVersion = version

@@ -258,7 +258,8 @@ enum SDKTestHelperIsolation {
     /// Overrides matter only when their declaring class can be a receiver of
     /// the SDK call. Resolve each revision independently; aliases, missing class
     /// declarations and cycles cannot establish an unrelated hierarchy.
-    static func overridesUnshadowed(revisions: [[SwiftSourceSnapshot]], members: Set<String>, sdkReceivers: Set<String>) -> Bool {
+    static func overridesUnshadowed(revisions: [[SwiftSourceSnapshot]], members: Set<String>, sdkReceivers: Set<String>,
+                                    provenMethods: [SourceUnit] = []) -> Bool {
         let canonical = SDKTestHelperSyntax.canonicalName
         for revision in revisions {
             guard revision.allSatisfy({ $0.dispatchOverrides != nil && $0.superclasses != nil && $0.typeAliases != nil }) else { return false }
@@ -313,6 +314,17 @@ enum SDKTestHelperIsolation {
                     let parts = canonical(spelling).split(separator: ".")
                     guard let member = parts.last, members.contains(String(member)) else { continue }
                     let owner = parts.dropLast().joined(separator: ".")
+                    // The caller traversal may already have checked an exact
+                    // lifecycle/receiver implementation. Every overload at this
+                    // revision must match; a removed or changed body cannot use
+                    // a similarly named implementation from the head graph.
+                    let methods = snapshot.units.filter {
+                        $0.helperCallableName.map(canonical) == String(member) &&
+                            canonical(String($0.key.prefix { $0 != ":" }) + "." + $0.scope) == owner
+                    }
+                    if !methods.isEmpty, methods.allSatisfy({ method in provenMethods.contains {
+                        $0.key == method.key && $0.region.path == method.region.path && $0.fingerprint == method.fingerprint
+                    } }) { continue }
                     let result = unrelated(owner)
                     results[owner] = result
                     if !result { return false }
@@ -332,7 +344,8 @@ enum SDKTestHelperIsolation {
     }
 
     static func memberBindingBlocker(revisions: [[SwiftSourceSnapshot]], members: Set<String>,
-                                    sdkOwners: Set<String>, provenHelpers: [SourceUnit] = []) -> String? {
+                                    sdkOwners: Set<String>, provenHelpers: [SourceUnit] = [],
+                                    auditedProjectOwners: Set<String> = []) -> String? {
         let canonicalName = SDKTestHelperSyntax.canonicalName
         guard revisions.joined().allSatisfy({ $0.diagnostics.isEmpty && $0.dispatchMembers != nil && $0.typeAliases != nil }) else {
             return "Missing declaration/member binding evidence"
@@ -363,11 +376,15 @@ enum SDKTestHelperIsolation {
                     })?.region ?? declarations.first?.region
                     let rejected = "Unproven member binding \(member) at \(location?.path ?? "unknown source"):\(location?.startLine ?? 0) (revision \(revisionIndex + 1))"
                     // Requirements cannot authenticate SDK namesakes or aliases.
-                    let unshadowedOwner = parts.dropLast().last.map { !sdkOwners.contains(String($0)) } == true &&
-                        !aliases.contains(where: { $0 == owner || $0.hasSuffix("." + owner) })
-                    if name == "subscript" {
+                    let aliasedOwner = aliases.contains { $0 == owner || $0.hasSuffix("." + owner) }
+                    let unshadowedOwner = parts.dropLast().last.map { !sdkOwners.contains(String($0)) } == true && !aliasedOwner
+                    let auditedOwner = auditedProjectOwners.contains(owner) ||
+                        modules.contains { auditedProjectOwners.contains($0 + "." + owner) } ||
+                        (modules.contains("") && auditedProjectOwners.contains { $0.hasSuffix("." + owner) })
+                    if name == "subscript", !auditedOwner, !aliasedOwner {
                         // A labeled-only subscript cannot replace the SDK's
-                        // single unlabeled getter. Missing evidence still fails.
+                        // single unlabeled getter. An alias may name a checked
+                        // project receiver, whose labeled overloads still matter.
                         let subscripts = declarations.filter { $0.fingerprint.hasPrefix("subscriptDecl[") }
                         if !subscripts.isEmpty, subscripts.allSatisfy({ $0.subscriptAcceptsSingleUnlabeledArgument == false }) { continue }
                     }
@@ -388,6 +405,30 @@ enum SDKTestHelperIsolation {
                     if unshadowedOwner, !typesAtOwner.isEmpty, typesAtOwner.allSatisfy({ $0.fingerprint.hasPrefix("protocolDecl[") }),
                        !methods.isEmpty, declarations.allSatisfy({ ["type", "function"].contains($0.kind) }),
                        methods.allSatisfy({ $0.headOnlyBodySupported == true && $0.key.hasSuffix(":" + ($0.syntaxFingerprint ?? $0.fingerprint)) }) { continue }
+                    if auditedOwner {
+                        // Concrete project types cannot shadow SDK members, but
+                        // callers can invoke them directly. Every declaration
+                        // in the historical overload set needs its own proof.
+                        guard declarations.allSatisfy({ $0.helperDeclaredMembers != nil }) else { return rejected }
+                        let implementations = declarations.filter { $0.helperDeclaredMembers!.contains(String(name)) }
+                        guard !implementations.isEmpty, implementations.allSatisfy({ declaration in
+                            if declaration.helperEnumCaseWithoutDefaults == true {
+                                // Literal arguments acquire their type from the
+                                // case signature. A changed payload or project
+                                // alias can run a different literal initializer.
+                                return declaration.helperEnumCaseValueArguments == true && revisions.allSatisfy { sources in
+                                    sources.flatMap(\.units).contains {
+                                        $0.key == declaration.key && $0.fingerprint == declaration.fingerprint &&
+                                            $0.helperEnumCaseWithoutDefaults == true && $0.helperEnumCaseValueArguments == true
+                                    }
+                                }
+                            }
+                            return provenHelpers.contains {
+                                $0.key == declaration.key && $0.region.path == declaration.region.path && $0.fingerprint == declaration.fingerprint
+                            }
+                        }) else { return rejected }
+                        continue
+                    }
                     // A name-only dispatch record is exempt only when every
                     // overload is proven and no unmodeled member can compete.
                     if !provenHelpers.isEmpty, !methods.isEmpty,

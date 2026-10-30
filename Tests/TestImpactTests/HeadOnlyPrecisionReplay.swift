@@ -12,7 +12,10 @@ private struct PrecisionReplay: Decodable {
     var output: String
     var knownConsumers: [String]
     var obsoleteBlockers: [String]
-    var expectedBlocker: String
+    var expectedBlocker: String?
+    var expectedSelected: [String]?
+    var expectedSelectedCount: Int?
+    var expectedUICount: Int?
     var declarationFallbacks: Int
     var refreshIndirectErrorEvidence: Bool?
     var fallbackOnlyTests: [String]?
@@ -97,7 +100,14 @@ func retainedHeadOnlyPrecisionReplay() throws {
         }
         #expect(Set(fixture.knownConsumers).isSubset(of: Set(report.selectedTests)))
         #expect(report.diagnostics.filter { $0.code == "head_only_declaration_change" }.count == fixture.declarationFallbacks)
-        #expect(report.diagnostics.contains { $0.message.contains(fixture.expectedBlocker) })
+        if let blocker = fixture.expectedBlocker {
+            #expect(report.diagnostics.contains { $0.message.contains(blocker) })
+        } else {
+            #expect(report.diagnostics.isEmpty, "\(report.diagnostics.map(\.message))")
+        }
+        if let selected = fixture.expectedSelected { #expect(report.selectedTests == selected.sorted()) }
+        if let count = fixture.expectedSelectedCount { #expect(report.selectedTests.count == count) }
+        if let count = fixture.expectedUICount { #expect(report.selectedTests.filter { $0.hasPrefix("ChainOfCustodyUITests/") }.count == count) }
         for blocker in fixture.obsoleteBlockers { #expect(!report.diagnostics.contains { $0.message.contains(blocker) }) }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)

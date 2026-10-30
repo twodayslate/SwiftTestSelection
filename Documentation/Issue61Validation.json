@@ -1,0 +1,201 @@
+{
+  "issue": 61,
+  "base_commit": "a43c12fd41f669dd17d7f2f907f9d241cbe5063a",
+  "capture_toolchain": "Xcode 27.0 (27A266a), Swift 6.4",
+  "validation_toolchain": "Xcode 26.6 (17F113), Swift 6.3.3; release analyzer",
+  "source_proofs_refreshed": true,
+  "source_keys_and_fingerprints_unchanged": true,
+  "compiler_graph_modified": false,
+  "application_test_bodies_executed": false,
+  "full_suite_equivalence_validated": false,
+  "consumer_policy_replayed": true,
+  "focused_46_ui_target_achieved": false,
+  "executable_sha256": "d916b96368883c0bd97f0fe0fa7814968f5c67913aaf2fce8fc9dbdda153fec0",
+  "comparisons": [
+    {
+      "run": "40031610717",
+      "base": "42af3eed81268abdba552c4ec0c82d1506baa011",
+      "head": "b0dbfc5fd35dc9cb61d72462497e37d684aa644d",
+      "inventory_ui": 384,
+      "scope_diagnostics": [
+        {
+          "code": "head_only_declaration_change",
+          "message": "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: ChainOfCustodyUITests/NotificationUITests.swift"
+        },
+        {
+          "code": "head_only_helper_callee_effects",
+          "message": "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NotificationUITests.swift:331; Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>"
+        }
+      ],
+      "base_ui": 40,
+      "regression_ui": 344,
+      "final_ui": 384,
+      "final_non_ui": 1577,
+      "verified": true,
+      "verification_seconds": 8.253239375,
+      "identity": {
+        "id": "46BD4146-305F-4A0A-96A8-74875A44C643",
+        "revision": "b0dbfc5fd35dc9cb61d72462497e37d684aa644d"
+      },
+      "policy_revision": "d3291929c914d77da7ef240747aab99d55d67965",
+      "scope_sha256": "fdadcfeeb829930117bcc47bfa235e6b667c6ca17124ce09c5da06df9115b3ea",
+      "scope_selected_count": 1961,
+      "known_consumer": "ChainOfCustodyUITests/NotificationHubUITests/testFiltersAndBulkReadClearOnlyAffectVisibleSelection()",
+      "known_consumer_retained": true,
+      "original_base": "1de869ad9e2f39d74a01920d98bbf91482d620bf",
+      "original_head": "1884b2fa641d0fb450e23c5b3af1191374742a9d",
+      "scope": {
+        "excludedTestEntries": [
+          "ChainOfCustodyUITests/NotificationHubUITests/testAccessibilityTextKeepsSelectionActionsVisible()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testFiltersAndBulkReadClearOnlyAffectVisibleSelection()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testHubBadgeOpeningCommentAndClearingPersist()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testNewNoteHubEntryOpensCorrectNoteAndClearOnePreservesOther()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testSelectionModeFreezesFiltersAndCancelPreservesUpdates()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testSetupAndSwipeReadStateSurviveRelaunch()"
+        ],
+        "name": "regression-support",
+        "paths": [
+          "ChainOfCustodyUITests/NotificationUITests.swift"
+        ]
+      },
+      "head_builds": 1,
+      "base_builds": 0,
+      "compiler_replays": 0,
+      "captured_modules": 10,
+      "capture_reused_from": "PrecisionTickets60-62.json",
+      "source_export_sha256": "4a103634e301b747b1cc2280d3d12e67c71aa27423be2bdcef790958ef76791c",
+      "sealed_capture_sha256": "2d67eb9b17cc5319d842b1d658e33867a7f0acfd046e204c9498e17173f68f9a",
+      "source_refresh_and_scope_seconds": 28.218159914016724
+    },
+    {
+      "run": "40035642452",
+      "base": "d6095cce46260b925d568fd590e23299dbcd10e9",
+      "head": "c3bc226f13b57b30851f1565c797866bc8ef7a8e",
+      "inventory_ui": 397,
+      "scope_diagnostics": [
+        {
+          "code": "head_only_declaration_change",
+          "message": "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: ChainOfCustodyUITests/NotificationUITests.swift"
+        },
+        {
+          "code": "head_only_helper_callee_effects",
+          "message": "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NotificationUITests.swift:331; Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>"
+        }
+      ],
+      "base_ui": 40,
+      "regression_ui": 357,
+      "final_ui": 397,
+      "final_non_ui": 1584,
+      "verified": true,
+      "verification_seconds": 7.725176833000001,
+      "identity": {
+        "id": "BD7D2E09-959E-4AA4-9354-909CCA60C25E",
+        "revision": "c3bc226f13b57b30851f1565c797866bc8ef7a8e"
+      },
+      "policy_revision": "d3291929c914d77da7ef240747aab99d55d67965",
+      "scope_sha256": "8b65403571129662ec554bc592cc2226ec995d2ef8f0452f0ffa143923cb3e56",
+      "scope_selected_count": 1981,
+      "known_consumer": "ChainOfCustodyUITests/NotificationHubUITests/testFiltersAndBulkReadClearOnlyAffectVisibleSelection()",
+      "known_consumer_retained": true,
+      "original_base": "31bbaa5a964637445b6c56ad7de46463d5db0e7c",
+      "original_head": "f2d68a5627c959dd8417c59ae0fe53a36d06967e",
+      "scope": {
+        "excludedTestEntries": [
+          "ChainOfCustodyUITests/NotificationHubUITests/testAccessibilityTextKeepsSelectionActionsVisible()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testFiltersAndBulkReadClearOnlyAffectVisibleSelection()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testHubBadgeOpeningCommentAndClearingPersist()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testNewNoteHubEntryOpensCorrectNoteAndClearOnePreservesOther()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testSelectionModeFreezesFiltersAndCancelPreservesUpdates()",
+          "ChainOfCustodyUITests/NotificationHubUITests/testSetupAndSwipeReadStateSurviveRelaunch()"
+        ],
+        "name": "regression-support",
+        "paths": [
+          "ChainOfCustodyUITests/NotificationUITests.swift"
+        ]
+      },
+      "head_builds": 1,
+      "base_builds": 0,
+      "compiler_replays": 0,
+      "captured_modules": 10,
+      "capture_reused_from": "PrecisionTickets60-62.json",
+      "source_export_sha256": "20ad3943f59aa5d46f1f718c8731809add1e4f6e2cc503b331fe216b5eb13b5e",
+      "sealed_capture_sha256": "f2698885d6bbe66526bb8e4d94e8a3722b7cb13e2af6a5f87b0a70ce46aa6b56",
+      "source_refresh_and_scope_seconds": 28.270249009132385
+    }
+  ],
+  "package_validation": {
+    "swift_release_tests_reported": 502,
+    "historical_replay_cases_passed": 2,
+    "compiled_scrolling_cases_passed": 20,
+    "python_capture_passed": 6,
+    "python_distribution_passed": 5,
+    "python_distribution_skipped": 1,
+    "compiled_global_binding_cases_passed": 3,
+    "global_binding_scenarios_per_case": 3,
+    "compiled_local_type_cases_passed": 6,
+    "local_type_scenarios_per_case": 2,
+    "compiled_operator_binding_cases_passed": 4,
+    "operator_syntax_inventory_test_passed": true,
+    "compiled_interpolation_binding_cases_passed": 1,
+    "compiled_macro_binding_cases_passed": 4,
+    "macro_syntax_inventory_test_passed": true,
+    "compiled_actor_binding_cases_passed": 3,
+    "nominal_declaration_syntax_matrix_passed": true,
+    "compiled_namespace_alias_cases_passed": 3,
+    "namespace_alias_syntax_test_passed": true,
+    "compiled_caller_type_alias_cases_passed": 2,
+    "caller_type_alias_syntax_test_passed": true,
+    "qualified_caller_type_extension_syntax_test_passed": true,
+    "compiled_caller_expression_binding_cases_passed": 18,
+    "caller_expression_syntax_inventory_test_passed": true,
+    "compiled_caller_project_member_cases_passed": 12,
+    "compiled_bare_caller_member_cases_passed": 4,
+    "compiled_stored_initializer_cases_passed": 4,
+    "stored_initializer_syntax_test_passed": true,
+    "compiled_implicit_caller_member_cases_passed": 6,
+    "compiled_plain_enum_cases_passed": 2,
+    "implicit_iteration_enum_syntax_test_passed": true,
+    "compiled_enum_context_cases_passed": 4,
+    "compiled_inherited_lifecycle_cases_passed": 8,
+    "enum_context_syntax_test_passed": true,
+    "compiled_destructor_and_ancestor_cases_passed": 10,
+    "compiled_historical_import_cases_passed": 3,
+    "import_visibility_syntax_test_passed": true,
+    "unowned_base_sources_reparsed_with_empty_module": true,
+    "python_coverage_cli_passed": true,
+    "python_inline_mapping_cli_passed": true,
+    "swift_test_execution": "--no-parallel",
+    "compiled_collection_iterator_cases_passed": 36,
+    "compiled_collection_property_cases_passed": 12,
+    "compiled_qualified_global_cases_passed": 2,
+    "compiled_declaration_body_cases_passed": 3,
+    "compiled_nominal_constructor_cases_passed": 4,
+    "conformance_alias_syntax_test_passed": true,
+    "qualified_binding_syntax_test_passed": true,
+    "declaration_body_syntax_test_passed": true,
+    "actor_binding_syntax_test_passed": true,
+    "compiled_historical_caller_write_cases_passed": 8,
+    "compiled_qualified_extension_conformance_cases_passed": 5,
+    "qualified_extension_ownership_modes": 3,
+    "append_only_caller_and_missing_evidence_controls_passed": true,
+    "conditional_caller_compiler_definition_case_passed": true,
+    "compiled_inherited_alias_cases_passed": 7,
+    "inherited_alias_ownership_modes": 3,
+    "compiled_aliased_witness_and_generic_requirement_cases_passed": 6,
+    "conformance_requirement_inventory_test_passed": true,
+    "missing_alias_and_generic_requirement_evidence_controls_passed": true,
+    "compiled_pattern_binding_cases_passed": 24,
+    "pattern_binding_caller_sites": 3,
+    "unused_pattern_matcher_controls_passed": 3,
+    "implicit_pattern_inventory_and_legacy_decode_passed": true,
+    "missing_implicit_operator_evidence_controls_passed": true,
+    "compiled_assertion_configuration_cases_passed": 18,
+    "assertion_configuration_caller_sites": 3,
+    "assertion_configuration_runtime_probes_passed": 6,
+    "unused_assertion_controls_passed": 3,
+    "assertion_configuration_reference_inventory_passed": true,
+    "all_prior_helper_proof_versions_rejected": true
+  },
+  "private_helper_proof_version": 29,
+  "module_fragment_cache_version": 34
+}

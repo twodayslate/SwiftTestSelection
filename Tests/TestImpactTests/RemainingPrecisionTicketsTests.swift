@@ -20,7 +20,7 @@ func survivingPrivateHelperLimitationsPreserveDependencySelection(opaqueOther: B
     final class Suite: XCTestCase {
         func testConsumer() { _ = candidate() }
         private func candidate() -> Int {
-            if true { let value = 1; return value }
+            if true { var value = 1; value += 1; return value }
             return 0
         }
     }
@@ -29,7 +29,7 @@ func survivingPrivateHelperLimitationsPreserveDependencySelection(opaqueOther: B
     }
     func evaluate(_ body: () -> Bool) -> Bool { body() }
     """
-    let after = before.replacingOccurrences(of: "let value = 1", with: "let value = 2")
+    let after = before.replacingOccurrences(of: "var value = 1", with: "var value = 2")
     let tests = ["UI/Suite/testConsumer()", "UI/Other/testOther()"]
     let current = try boundaryGraph(["UI.swift": after], tests: tests, root: root)
     let helper = try #require(current.sources["UI:UI.swift"]?.units.first { $0.helperCallableName == "candidate" })
@@ -208,7 +208,7 @@ func compiledExtensionEntriesAndHelpersRequireIsolation(kind: String) throws {
     let source = XcodeHeadOnlySources(base: ["UI:UI.swift": .parse(before, path: "UI.swift", module: "UI")], mappings: current.mappings)
     let excluded: Set<String> = ["UI/Suite/testAdded()", "UI/Suite/testSecond()"]
     let report = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base", excludedTestEntries: excluded)
-    if ["entries", "helper"].contains(kind) {
+    if ["entries", "helper", "nestedLocal"].contains(kind) {
         #expect(report.selectedTests == (kind == "entries" ? [] : ["UI/Suite/testAdded()"]), "\(report.diagnostics)")
         #expect(report.diagnostics.isEmpty, "\(report.diagnostics)")
         let primary = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base")
@@ -216,7 +216,6 @@ func compiledExtensionEntriesAndHelpersRequireIsolation(kind: String) throws {
     } else {
         #expect(report.selectedTests.contains("UI/Other/testOther()"), "\(report)")
         #expect(!report.diagnostics.isEmpty)
-        if kind == "nestedLocal" { #expect(report.diagnostics.contains { $0.message.contains("Nested local declaration") }) }
         if kind == "defaultEffect" { #expect(report.diagnostics.contains { $0.message.contains("Default argument") }) }
     }
 }

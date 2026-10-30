@@ -47,6 +47,32 @@ public struct SourceUnit: Codable, Sendable {
     public var helperCallableName: String? = nil
     public var helperReferenceSignature: String? = nil
     public var helperCallerSupported: Bool? = nil
+    /// Expression bindings for historical caller/lifecycle audits. Nil means
+    /// legacy or incomplete evidence and cannot authenticate a rebound call.
+    public var helperBindingUses: HelperBindingUses? = nil
+    /// Member declarations represented by this unit, including storage and initializers.
+    public var helperDeclaredMembers: Set<String>? = nil
+    /// A declaration location cannot prove separate defaults, lazy initializers,
+    /// setters, observers or configuration-dependent bodies. Nil is legacy or
+    /// incomplete effect evidence.
+    public var helperRegionEffectsComplete: Bool? = nil
+    /// Whole top-level statements, usable for append-only caller changes. Local
+    /// functions/types can rebind earlier expressions, so they provide no proof.
+    public var helperCallerStatementSignatures: [String]? = nil
+    /// Nominal/extension inheritance, including protocol conformances. Nil is legacy evidence.
+    public var helperInheritedTypes: [String]? = nil
+    /// Generic requirements can introduce ancestry outside the inheritance
+    /// clause, including `where Self: Protocol`. Nil is incomplete evidence.
+    public var helperGenericRequirements: [String]? = nil
+    /// A stored-property initializer may execute through a synthesized constructor.
+    /// Nil is legacy evidence and cannot authenticate historical initialization.
+    public var helperStoredInitializer: Bool? = nil
+    /// Enum cases without associated-value defaults have no declaration-side
+    /// evaluation. Nil cannot establish this exemption for older inventories.
+    public var helperEnumCaseWithoutDefaults: Bool? = nil
+    /// Only closed SDK value types can authenticate contextual literal arguments
+    /// without an enum constructor body in the compiler graph.
+    public var helperEnumCaseValueArguments: Bool? = nil
     /// Source overload shapes paired with SIL signatures during receiver audits.
     public var receiverCallShapes: [String: Set<[String]>]? = nil
     public var receiverCallSites: [String: [String]]? = nil
@@ -83,6 +109,18 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     public var identifierNames: Set<String>? = nil
     public var helperSafeClasses: [String: String]? = nil
     public var helperNamesUnshadowed: Bool? = nil
+    /// Source inventories cannot rule out declarations synthesized by macros.
+    /// Nil is legacy evidence; false also covers unsupported attributes.
+    public var helperDeclarationsComplete: Bool? = nil
+    /// False for module-wide re-exports, whose bindings can affect callers in
+    /// other files. Nil cannot prove file-local import visibility.
+    public var helperImportsLocal: Bool? = nil
+    /// Complete operator declaration inventory, including conditional/nested
+    /// implementations and precedence declarations. Nil is incomplete evidence.
+    public var helperOperatorDeclarations: Set<String>? = nil
+    /// Top-level names that can replace a bare SDK use. True means every
+    /// declaration is a function; false also includes storage or aliases.
+    public var helperGlobalDeclarations: [String: Bool]? = nil
     public var attachmentAddUnshadowed: Bool? = nil
     public var helperReferences: [String: SDKTestHelperSyntax.References]? = nil
     public var sdkHelperNamesUnshadowed: Bool? = nil
@@ -120,6 +158,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         var result = Self(units: [], inheritance: [:], diagnostics: [])
         result.inlineMappings = InlineMappingSyntax.parse(tree, path: path, module: module, hasDirectives: text.contains(InlineMappingSyntax.prefix))
         result.dispatchMembers = []
+        result.helperGlobalDeclarations = [:]
         result.dispatchOverrides = []
         result.typeAliases = []
         result.superclasses = [:]
@@ -127,10 +166,45 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         result.identifierNames = Set(identifiers.keys)
         result.helperNamesUnshadowed = PrivateTestHelperSyntax.reservedNames.allSatisfy { name in
             !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsReservedName)
+        } && SDKReceiverContracts.nestedBindingNames.allSatisfy { name in
+            !(identifiers[name] ?? []).contains(where: PrivateTestHelperSyntax.shadowsNestedCallerType)
         }
-        result.attachmentAddUnshadowed = !(identifiers["add"] ?? []).contains(where: PrivateTestHelperSyntax.shadowsAttachmentAdd)
+        // Inspect the entire syntax tree, including inactive branches and
+        // attributes on declarations other than the changed helper. Without
+        // expansion evidence, unknown attributes may be member/peer/extension
+        // macros and unknown #expressions may be declaration expansions.
         let unsupportedCallerImports = SDKTestHelperSyntax.unsupportedCallerImports(tree)
         let callerImportsSupported = unsupportedCallerImports.isEmpty
+        result.helperImportsLocal = !tree.tokens(viewMode: .sourceAccurate).contains { token in
+            guard token.tokenKind == .keyword(.import), let declaration = token.parent?.as(ImportDeclSyntax.self) else { return false }
+            return declaration.attributes.contains { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "_exported" }
+        }
+        let knownAttributes: Set<String> = ["available", "objc", "objcMembers", "nonobjc",
+            "preconcurrency", "inlinable", "usableFromInline", "discardableResult", "testable", "_exported",
+            "Sendable", "escaping", "autoclosure", "convention"]
+        let compilerLiterals: Set<String> = ["file", "fileID", "filePath", "line", "column", "function", "dsohandle"]
+        result.helperDeclarationsComplete = !tree.hasError && !tree.tokens(viewMode: .sourceAccurate).contains { token in
+            if token.parent?.is(MacroDeclSyntax.self) == true || token.parent?.is(MacroExpansionDeclSyntax.self) == true { return true }
+            if let macro = token.parent?.as(MacroExpansionExprSyntax.self) {
+                return !compilerLiterals.contains(macro.macroName.text) || macro.leftParen != nil || macro.genericArgumentClause != nil ||
+                    macro.trailingClosure != nil || !macro.additionalTrailingClosures.isEmpty
+            }
+            if let attribute = token.parent?.as(AttributeSyntax.self), token.id == attribute.atSign.id {
+                let name = attribute.attributeName.trimmedDescription
+                // MainActor is a library declaration, unlike compiler
+                // attributes. An untrusted import may supply a namesake macro.
+                if name == "MainActor" || name == "Swift.MainActor" { return !callerImportsSupported }
+                return !knownAttributes.contains(name)
+            }
+            return false
+        }
+        result.helperOperatorDeclarations = result.helperDeclarationsComplete == true ? Set(tree.tokens(viewMode: .sourceAccurate).compactMap { token in
+            if let function = token.parent?.as(FunctionDeclSyntax.self), function.name.id == token.id,
+               token.identifier == nil { return token.text }
+            if let declaration = token.parent?.as(OperatorDeclSyntax.self), declaration.name.id == token.id { return token.text }
+            return nil
+        }) : nil
+        result.attachmentAddUnshadowed = !(identifiers["add"] ?? []).contains(where: PrivateTestHelperSyntax.shadowsAttachmentAdd)
         let physicalLocations = !tree.tokens(viewMode: .sourceAccurate).contains { $0.tokenKind == .poundSourceLocation }
         result.receiverPhysicalLocations = physicalLocations
         let referenceAnalysis = SDKHelperReferenceAnalysis(identifiers: identifiers, locations: locations, callerImportsSupported: callerImportsSupported)
@@ -253,7 +327,75 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             node.is(SomeOrAnyTypeSyntax.self) ||
                 node.children(viewMode: .sourceAccurate).contains(where: containsOpaqueResult)
         }
+        func singleGetter(_ block: AccessorBlockSyntax?) -> Bool {
+            guard let accessors = block?.accessors.as(AccessorDeclListSyntax.self) else { return true }
+            return accessors.count == 1 && accessors.first?.accessorSpecifier.text == "get"
+        }
+        let assertionConfigurationNames: Set<String> = [
+            "assert", "assertionFailure", "precondition", "preconditionFailure", "fatalError",
+            "_isDebugAssertConfiguration", "_isReleaseAssertConfiguration", "_isFastAssertConfiguration",
+            "_isStdlibDebugChecksEnabled"
+        ]
+        func regionEffectsComplete(_ node: Syntax) -> Bool {
+            // A head compiler visits only its active configuration. Identical
+            // source text cannot authenticate effects in a historical branch.
+            guard !node.tokens(viewMode: .sourceAccurate).contains(where: {
+                if $0.parent?.is(IfConfigDeclSyntax.self) == true { return true }
+                // These standard-library bodies/queries can erase effects even
+                // under -Onone when -assert-config changes. Inspect references,
+                // not just calls: a query may be stored as a function value.
+                // Qualified and escaped spellings have the same boundary;
+                // source alone cannot prove a shadowing declaration is safe.
+                guard let reference = $0.parent?.as(DeclReferenceExprSyntax.self),
+                      reference.baseName.id == $0.id else { return false }
+                return assertionConfigurationNames.contains(SDKTestHelperSyntax.canonicalName($0.text))
+            }) else { return false }
+            let parameters = node.as(FunctionDeclSyntax.self)?.signature.parameterClause.parameters
+                ?? node.as(InitializerDeclSyntax.self)?.signature.parameterClause.parameters
+                ?? node.as(SubscriptDeclSyntax.self)?.parameterClause.parameters
+            if let parameters {
+                guard parameters.allSatisfy({ parameter in
+                    parameter.defaultValue.map { PrivateTestHelperSyntax.primitiveValue($0.value, type: parameter.type.trimmedDescription) } ?? true
+                }) else { return false }
+            }
+            if let subscriptDecl = node.as(SubscriptDeclSyntax.self) { return singleGetter(subscriptDecl.accessorBlock) }
+            if let variable = node.as(VariableDeclSyntax.self) {
+                guard !variable.modifiers.contains(where: { $0.name.text == "lazy" }) else { return false }
+                return variable.bindings.allSatisfy { binding in
+                    singleGetter(binding.accessorBlock) && (binding.initializer.map { PrivateTestHelperSyntax.primitiveValue($0.value, type: binding.typeAnnotation?.type.trimmedDescription) } ?? true)
+                }
+            }
+            if let cases = node.as(EnumCaseDeclSyntax.self) {
+                return cases.elements.allSatisfy { element in
+                    element.parameterClause?.parameters.allSatisfy { parameter in
+                        parameter.defaultValue.map { PrivateTestHelperSyntax.primitiveValue($0.value, type: parameter.type.trimmedDescription) } ?? true
+                    } ?? true
+                }
+            }
+            return true
+        }
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String], plainExtension: Bool? = nil) {
+            var declaredMembers = Set<String>()
+            if scope.isEmpty {
+                if let function = node.as(FunctionDeclSyntax.self) {
+                    let name = SDKTestHelperSyntax.canonicalName(function.name.text)
+                    result.helperGlobalDeclarations![name] = result.helperGlobalDeclarations![name] ?? true
+                } else if let variable = node.as(VariableDeclSyntax.self) {
+                    for binding in variable.bindings {
+                        for token in binding.pattern.tokens(viewMode: .sourceAccurate) {
+                            if token.parent?.is(IdentifierPatternSyntax.self) == true {
+                                result.helperGlobalDeclarations![SDKTestHelperSyntax.canonicalName(token.text)] = false
+                            }
+                        }
+                    }
+                } else if let alias = node.as(TypeAliasDeclSyntax.self) {
+                    result.helperGlobalDeclarations![SDKTestHelperSyntax.canonicalName(alias.name.text)] = false
+                } else if let actor = node.as(ActorDeclSyntax.self) {
+                    // Actor bodies retain their existing opaque source boundary.
+                    // Their constructors cannot borrow a head struct's proof.
+                    result.helperGlobalDeclarations![SDKTestHelperSyntax.canonicalName(actor.name.text)] = false
+                }
+            }
             if let function = node.as(FunctionDeclSyntax.self), ["!", "==", "!=", "&&", "||"].contains(function.name.text) {
                 result.sdkHelperNamesUnshadowed = false
             }
@@ -266,9 +408,13 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 else if node.is(InitializerDeclSyntax.self) { names = ["init"] }
                 else if node.is(DeinitializerDeclSyntax.self) { names = ["deinit"] }
                 else if node.is(SubscriptDeclSyntax.self) { names = ["subscript"] }
+                else if let alias = node.as(TypeAliasDeclSyntax.self) { names = [alias.name.text] }
+                else if let actor = node.as(ActorDeclSyntax.self) { names = [actor.name.text] }
+                else if let cases = node.as(EnumCaseDeclSyntax.self) { names = cases.elements.map { $0.name.text } }
                 else if let variable = node.as(VariableDeclSyntax.self) {
                     names = variable.bindings.compactMap { $0.pattern.as(IdentifierPatternSyntax.self)?.identifier.text }
                 } else { names = [] }
+                declaredMembers = Set(names.map(SDKTestHelperSyntax.canonicalName))
                 result.dispatchMembers!.formUnion(names.map { scope.joined(separator: ".") + "." + $0 })
                 let modifiers = node.as(FunctionDeclSyntax.self)?.modifiers
                     ?? node.as(InitializerDeclSyntax.self)?.modifiers
@@ -380,6 +526,43 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     function.signature.parameterClause.parameters.allSatisfy { $0.defaultValue == nil && $0.ellipsis == nil } ? SDKTestHelperSyntax.signature(function) : nil
                 },
                 helperCallerSupported: node.as(FunctionDeclSyntax.self).map(SDKTestHelperSyntax.callerSupported),
+                helperBindingUses: HelperBindingUses(in: node),
+                helperDeclaredMembers: declaredMembers,
+                helperRegionEffectsComplete: regionEffectsComplete(node),
+                helperCallerStatementSignatures: node.as(FunctionDeclSyntax.self).flatMap { function in
+                    guard let body = function.body,
+                          !body.tokens(viewMode: .sourceAccurate).contains(where: { token in
+                              guard let declaration = token.parent?.as(DeclSyntax.self) else { return false }
+                              return !declaration.is(VariableDeclSyntax.self)
+                          }) else { return nil }
+                    return body.statements.map { fingerprint(Syntax($0.item)) }
+                },
+                helperInheritedTypes: (node.as(ClassDeclSyntax.self)?.inheritanceClause
+                    ?? node.as(StructDeclSyntax.self)?.inheritanceClause
+                    ?? node.as(EnumDeclSyntax.self)?.inheritanceClause
+                    ?? node.as(ProtocolDeclSyntax.self)?.inheritanceClause
+                    ?? node.as(ExtensionDeclSyntax.self)?.inheritanceClause)?.inheritedTypes.map { $0.type.trimmedDescription } ?? [],
+                helperGenericRequirements: (node.as(ClassDeclSyntax.self)?.genericWhereClause
+                    ?? node.as(StructDeclSyntax.self)?.genericWhereClause
+                    ?? node.as(EnumDeclSyntax.self)?.genericWhereClause
+                    ?? node.as(ProtocolDeclSyntax.self)?.genericWhereClause
+                    ?? node.as(ExtensionDeclSyntax.self)?.genericWhereClause)?.requirements.map { $0.requirement.trimmedDescription } ?? [],
+                helperStoredInitializer: node.as(VariableDeclSyntax.self)?.bindings.contains { $0.initializer != nil } ?? false,
+                helperEnumCaseWithoutDefaults: node.as(EnumCaseDeclSyntax.self).map { declaration in
+                    declaration.elements.allSatisfy { element in
+                        element.parameterClause?.parameters.allSatisfy { $0.defaultValue == nil } ?? true
+                    }
+                },
+                helperEnumCaseValueArguments: node.as(EnumCaseDeclSyntax.self).map { declaration in
+                    declaration.elements.allSatisfy { element in
+                        element.parameterClause?.parameters.allSatisfy { parameter in
+                            SDKReceiverContracts.typeNames(parameter.type.trimmedDescription)?.allSatisfy { name in
+                                SDKReceiverContracts.valueTypes.contains(name) ||
+                                    name.hasPrefix("Swift.") && SDKReceiverContracts.valueTypes.contains(String(name.dropFirst(6)))
+                            } == true
+                        } ?? true
+                    }
+                },
                 receiverCallShapes: receiverCalls.shapes,
                 receiverCallSites: physicalLocations ? receiverCalls.sites : nil,
                 receiverImportsSupported: callerImportsSupported,

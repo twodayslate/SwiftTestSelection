@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 10 resolves plain same-file extensions and primitive defaults.
-    static let currentProofVersion = 10
+    // Version 29 rejects assertion-configuration-dependent caller effects.
+    static let currentProofVersion = 29
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -29,6 +29,9 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     /// Call shapes across the checked transitive body. Ambiguous overload sets
     /// cannot prove a binding when SIL omits labels and source call-site identity.
     public var sdkCallShapes: [String: Set<[String]>]? = nil
+    /// Prefix, infix and postfix operators across the checked transitive body.
+    /// Nil is incomplete evidence; literal operands do not prove SDK ownership.
+    public var effectOperators: Set<String>? = nil
 
     public struct Statement: Codable, Sendable {
         public var signature: String
@@ -65,9 +68,25 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         }
     }
 
-    static let reservedNames: Set<String> = ["XCTestCase", "String", "Bool", "Int", "Double", "XCUIApplication", "XCUIElement", "NSPredicate", "XCTAttachment",
-        "XCTAssert", "XCTAssertTrue", "XCTAssertFalse", "XCTAssertEqual", "XCTAssertNotEqual", "XCTAssertNil", "XCTAssertNotNil",
-        "XCTAssertGreaterThan", "XCTAssertGreaterThanOrEqual", "XCTAssertLessThan", "XCTAssertLessThanOrEqual", "XCTFail"]
+    private static let allowedGlobals = assertions.union(["NSPredicate", "XCUIElement", "XCTAttachment", "CGRect", "CGVector", "max"])
+    private static let valueTypes: Set<String> = ["String", "Bool", "Int", "Double", "XCUIApplication", "XCUIElement",
+        "Swift.String", "Swift.Bool", "Swift.Int", "Swift.Double", "XCTest.XCUIApplication", "XCTest.XCUIElement"]
+    // Every accepted bare global must participate in the whole-source binding
+    // audit, including deleted/unowned base files. A head SDK binding cannot
+    // prove the effects of a project declaration that disappeared at head.
+    // Qualification alone does not prove identity: another source can alias
+    // Swift/XCTest to a foreign namespace or MainActor to a custom actor.
+    // Audit every component of accepted type spellings and every trusted SDK
+    // module name, not just the final type name or the helper file's imports.
+    // Caller/lifecycle proofs accept more types than helper bodies. Their full
+    // vocabulary must also be authenticated in base and unowned base sources.
+    static let reservedNames = allowedGlobals
+        .union(valueTypes.flatMap { $0.split(separator: ".").map(String.init) })
+        .union(SDKReceiverContracts.bindingNames)
+        .union(SDKTestHelperSyntax.trustedCallerModules)
+        .union(["CoreGraphics", "MainActor", "XCTestCase",
+        "IntegerLiteralType", "FloatLiteralType", "BooleanLiteralType", "StringLiteralType",
+        "UnicodeScalarLiteralType", "ExtendedGraphemeClusterLiteralType"])
 
     static func shadowsReservedName(_ token: TokenSyntax) -> Bool {
         guard let parent = token.parent else { return false }
@@ -85,8 +104,23 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             parent.as(AssociatedTypeDeclSyntax.self)?.name.id == token.id ||
             parent.as(FunctionDeclSyntax.self)?.name.id == token.id ||
             parent.as(ClassDeclSyntax.self)?.name.id == token.id || parent.as(StructDeclSyntax.self)?.name.id == token.id ||
+            parent.as(ActorDeclSyntax.self)?.name.id == token.id ||
             parent.as(EnumDeclSyntax.self)?.name.id == token.id || parent.as(ProtocolDeclSyntax.self)?.name.id == token.id ||
             parent.as(TypeAliasDeclSyntax.self)?.name.id == token.id || parent.is(IdentifierPatternSyntax.self)
+    }
+
+    static func shadowsNestedCallerType(_ token: TokenSyntax) -> Bool {
+        guard shadowsReservedName(token) else { return false }
+        // Names such as State and Result are qualified by an SDK owner. A
+        // project nominal with that owner is already rejected above. Extensions
+        // can add nested names without redeclaring the owner, including through
+        // aliases, so retain fallback for these names in any extension.
+        var ancestor = token.parent
+        while let node = ancestor {
+            if node.is(ExtensionDeclSyntax.self) { return true }
+            ancestor = node.parent
+        }
+        return false
     }
 
     static func shadowsAttachmentAdd(_ token: TokenSyntax) -> Bool {
@@ -160,7 +194,17 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
 
     private static func primitiveDefault(_ parameter: FunctionParameterSyntax) -> Bool {
         guard let value = parameter.defaultValue?.value else { return true }
-        switch parameter.type.trimmedDescription {
+        return primitiveValue(value, type: parameter.type.trimmedDescription)
+    }
+
+    /// Defaults may have separate SIL entry points from their owning declaration.
+    /// Only closed primitive literals are safe without visiting those thunks.
+    static func primitiveValue(_ value: ExprSyntax, type: String?) -> Bool {
+        switch type {
+        case nil:
+            return value.is(BooleanLiteralExprSyntax.self) || value.is(IntegerLiteralExprSyntax.self) ||
+                value.is(FloatLiteralExprSyntax.self) ||
+                value.as(StringLiteralExprSyntax.self)?.segments.allSatisfy { $0.is(StringSegmentSyntax.self) } == true
         case "Bool", "Swift.Bool": return value.is(BooleanLiteralExprSyntax.self)
         case "Int", "Swift.Int": return value.is(IntegerLiteralExprSyntax.self)
         case "Double", "Swift.Double": return value.is(FloatLiteralExprSyntax.self) || value.is(IntegerLiteralExprSyntax.self)
@@ -179,8 +223,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             return "Default argument is not a primitive literal"
         }
         guard let body = function.body else { return "Missing helper body" }
-        // Nested locals require control-flow/value provenance beyond the current
-        // straight-line private-helper effect language.
+        if let owner = owner(of: function), safeBody(function, methods: owner.methods) != nil { return nil }
+        // Report unsupported nested bindings without granting source-only isolation.
         for token in body.tokens(viewMode: .sourceAccurate) {
             if let declaration = token.parent?.as(VariableDeclSyntax.self), declaration.bindingSpecifier.id == token.id,
                declaration.parent?.parent?.id != body.statements.id && declaration.parent?.parent?.parent?.id != body.id {
@@ -235,13 +279,13 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         }
         guard !callers.isEmpty else { return nil }
         var effectCallees: [String: Int] = [:]
-        var attachmentMembers = Set<String>(), sdkMembers = Set<String>()
+        var attachmentMembers = Set<String>(), sdkMembers = Set<String>(), operators = Set<String>()
         var callShapes: [String: Set<[String]>] = [:]
         let effects = importsSupported ? safeCalleeEffects(function, methods: owner.methods, locations: locations,
-            proven: &effectCallees, attachmentMembers: &attachmentMembers, sdkMembers: &sdkMembers, callShapes: &callShapes) : nil
+            proven: &effectCallees, attachmentMembers: &attachmentMembers, sdkMembers: &sdkMembers, callShapes: &callShapes, operators: &operators) : nil
         return Self(name: name, callerLines: callers, proofVersion: currentProofVersion, statements: statements(in: function),
                     localAttachmentState: attachmentState || (effects ?? false), calleeEffectsSupported: effects != nil, effectCalleeLines: effects == nil ? nil : effectCallees,
-                    attachmentEffectMembers: effects == nil ? nil : attachmentMembers, sdkEffectMembers: effects == nil ? nil : sdkMembers, sdkCallShapes: effects == nil ? nil : callShapes)
+                    attachmentEffectMembers: effects == nil ? nil : attachmentMembers, sdkEffectMembers: effects == nil ? nil : sdkMembers, sdkCallShapes: effects == nil ? nil : callShapes, effectOperators: effects == nil ? nil : operators)
     }
 
     /// Added entries may be omitted only under an explicit separate-execution
@@ -264,7 +308,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     private static func safeCalleeEffects(_ function: FunctionDeclSyntax, methods allMethods: [FunctionDeclSyntax],
                                           locations: SourceLocationConverter, proven: inout [String: Int],
                                           attachmentMembers: inout Set<String>, sdkMembers: inout Set<String>,
-                                          callShapes: inout [String: Set<[String]>]) -> Bool? {
+                                          callShapes: inout [String: Set<[String]>], operators: inout Set<String>) -> Bool? {
         let methods = Dictionary(grouping: allMethods.filter { $0.modifiers.map(\.name.text) == ["private"] }, by: { $0.name.text })
         var usesAttachments = false, memberNames = Set<String>()
         var active = Set<SyntaxIdentifier>()
@@ -283,9 +327,20 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
                       candidate.genericParameterClause == nil, candidate.genericWhereClause == nil,
                       candidate.signature.effectSpecifiers == nil,
                       !candidate.name.text.hasPrefix("test"), !SDKTestHelperSyntax.lifecycle.contains(candidate.name.text),
-                      let attachments = safeBody(candidate, methods: allMethods, validateDynamicCallShapes: true), let body = candidate.body else { return nil }
+                      let attachments = safeBody(candidate, methods: allMethods, validateBindings: true), let body = candidate.body else { return nil }
                 var callees: [FunctionDeclSyntax] = [], seen = Set<SyntaxIdentifier>()
                 for token in body.tokens(viewMode: .sourceAccurate) {
+                    // Interpolation lowers to member calls absent from the
+                    // expression's spelling. A concrete project overload can
+                    // disappear at head just like an explicit SDK member.
+                    if token.parent?.as(ExpressionSegmentSyntax.self)?.backslash.id == token.id {
+                        memberNames.formUnion(["init", "appendLiteral", "appendInterpolation"])
+                    }
+                    if token.parent?.as(BinaryOperatorExprSyntax.self)?.operator.id == token.id ||
+                        token.parent?.as(PrefixOperatorExprSyntax.self)?.operator.id == token.id ||
+                        token.parent?.as(PostfixOperatorExprSyntax.self)?.operator.id == token.id {
+                        operators.insert(token.text)
+                    }
                     if let subscriptCall = token.parent?.as(SubscriptCallExprSyntax.self), subscriptCall.leftSquare.id == token.id {
                         memberNames.insert("subscript")
                     }
@@ -297,7 +352,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
                                let call = member.parent?.as(FunctionCallExprSyntax.self), call.calledExpression.id == member.id {
                                 callShapes[name, default: []].insert(call.arguments.map { SDKTestHelperSyntax.canonicalName($0.label?.text ?? "_") })
                             }
-                        } else if ["XCTAttachment", "NSPredicate", "XCUIElement"].contains(name) {
+                        } else if ["XCTAttachment", "NSPredicate", "XCUIElement", "CGRect", "CGVector"].contains(name) {
                             memberNames.insert("init")
                             if name == "XCTAttachment" { usesAttachments = true }
                         } else if name == "add" {
@@ -330,12 +385,13 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         return completed[function.id]
     }
 
-    private static func safeBody(_ function: FunctionDeclSyntax, methods: [FunctionDeclSyntax], validateDynamicCallShapes: Bool = false) -> Bool? {
+    // Keep the caller/escape proof when binding checks fail in the effect pass.
+    // A surviving helper must retain an explicit unproven-effect result instead
+    // of dropping to ordinary head-only dependency selection.
+    private static func safeBody(_ function: FunctionDeclSyntax, methods: [FunctionDeclSyntax], validateBindings: Bool = false) -> Bool? {
         guard let body = function.body else { return nil }
         // Query/assertion helpers receive their context as ordinary values. No
         // self/global captures, inout, function-valued arguments, or effectful defaults.
-        let valueTypes: Set<String> = ["String", "Bool", "Int", "Double", "XCUIApplication", "XCUIElement",
-                                        "Swift.String", "Swift.Bool", "Swift.Int", "Swift.Double", "XCTest.XCUIApplication", "XCTest.XCUIElement"]
         if let result = function.signature.returnClause?.type.trimmedDescription,
            !valueTypes.union(["Void", "()"]).contains(result) { return nil }
         var locals = Set<String>()
@@ -347,22 +403,46 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             locals.insert(name)
         }
         let helpers = Set(methods.filter { $0.modifiers.map(\.name.text) == ["private"] }.map { $0.name.text })
-        let allowedGlobals = assertions.union(["NSPredicate", "XCUIElement", "XCTAttachment"])
         var attachments = Set<String>(), writesAttachment = false
         func references(_ node: Syntax) -> Bool {
-            if validateDynamicCallShapes, let call = node.as(SubscriptCallExprSyntax.self) {
+            // A contextual type can invoke a project literal initializer even
+            // when its expression contains only a literal. The head graph
+            // cannot authenticate a base alias that later resolves to Int.
+            // Also cover casts, which supply context without a local annotation.
+            if validateBindings, let type = node.as(TypeSyntax.self) { return valueTypes.contains(type.trimmedDescription) }
+            if let block = node.as(CodeBlockSyntax.self) {
+                // Each branch/iteration inherits its enclosing values but cannot
+                // export local names or attachment provenance into another scope.
+                return statements(block.statements)
+            }
+            if let loop = node.as(ForStmtSyntax.self) {
+                // Only a fixed literal range with no bound value or pattern
+                // matching is admitted. Both revisions must exclude project
+                // operator bindings before the head compiler can authenticate
+                // the standard range and iterator implementations.
+                guard loop.pattern.is(WildcardPatternSyntax.self), loop.whereClause == nil,
+                      loop.tryKeyword == nil, loop.awaitKeyword == nil,
+                      let range = loop.sequence.as(SequenceExprSyntax.self), range.elements.count == 3,
+                      let lower = range.elements.first?.as(IntegerLiteralExprSyntax.self),
+                      let upper = range.elements.last?.as(IntegerLiteralExprSyntax.self),
+                      let low = Int(lower.literal.text), let high = Int(upper.literal.text), low <= high,
+                      let op = range.elements.dropFirst().first?.as(BinaryOperatorExprSyntax.self),
+                      ["..<", "..."].contains(op.operator.text) else { return false }
+                return references(Syntax(loop.sequence)) && statements(loop.body.statements)
+            }
+            if validateBindings, let call = node.as(SubscriptCallExprSyntax.self) {
                 // The SDK query subscript takes one unlabeled identifier. SIL
                 // erases labels, so a labeled external getter can look identical.
                 guard call.arguments.count == 1, call.arguments.first?.label == nil,
                       call.trailingClosure == nil, call.additionalTrailingClosures.isEmpty else { return false }
             }
-            if validateDynamicCallShapes, let member = node.as(MemberAccessExprSyntax.self),
+            if validateBindings, let member = node.as(MemberAccessExprSyntax.self),
                ExternalHelperEffects.sdkCallLabels[SDKTestHelperSyntax.canonicalName(member.declName.baseName.text)] != nil {
                 // A method value loses its labels at the eventual call site.
                 guard member.declName.argumentNames == nil,
                       let call = member.parent?.as(FunctionCallExprSyntax.self), call.calledExpression.id == member.id else { return false }
             }
-            if validateDynamicCallShapes, let call = node.as(FunctionCallExprSyntax.self) {
+            if validateBindings, let call = node.as(FunctionCallExprSyntax.self) {
                 if let member = call.calledExpression.as(MemberAccessExprSyntax.self),
                    let shapes = ExternalHelperEffects.sdkCallLabels[SDKTestHelperSyntax.canonicalName(member.declName.baseName.text)] {
                     if ExternalHelperEffects.sdkActions.contains(SDKTestHelperSyntax.canonicalName(member.declName.baseName.text)),
@@ -375,7 +455,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
                           call.trailingClosure == nil, call.additionalTrailingClosures.isEmpty else { return false }
                 }
             }
-            if node.is(ClosureExprSyntax.self) || node.is(DeclSyntax.self) || node.is(SuperExprSyntax.self) ||
+            if node.is(ClosureExprSyntax.self) || node.is(DeclSyntax.self) || node.is(PatternSyntax.self) || node.is(SuperExprSyntax.self) ||
                 node.is(KeyPathExprSyntax.self) || node.is(AssignmentExprSyntax.self) ||
                 node.is(InOutExprSyntax.self) || node.is(MacroExpansionExprSyntax.self) || node.is(IfConfigDeclSyntax.self) ||
                 node.is(VariableDeclSyntax.self) { return false }
@@ -396,32 +476,38 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         }
         // Add locals only after checking their initializer. Collecting every
         // binding up front could mistake `let value = value` for a local read.
-        // Nested bindings are outside this intentionally small proof language.
-        for statement in body.statements {
-            if let variable = statement.item.as(VariableDeclSyntax.self) {
-                guard variable.bindingSpecifier.text == "let", variable.attributes.isEmpty, variable.modifiers.isEmpty else { return nil }
-                for binding in variable.bindings {
-                    guard let name = binding.pattern.as(IdentifierPatternSyntax.self), binding.accessorBlock == nil,
-                          let initializer = binding.initializer, references(Syntax(initializer.value)) else { return nil }
-                    if let call = initializer.value.as(FunctionCallExprSyntax.self),
-                       call.calledExpression.as(DeclReferenceExprSyntax.self)?.baseName.text == "XCTAttachment",
-                       call.arguments.count == 1, call.arguments.first?.label?.text == "screenshot" {
-                        attachments.insert(name.identifier.text)
+        func statements(_ items: CodeBlockItemListSyntax) -> Bool {
+            let outerLocals = locals, outerAttachments = attachments
+            defer { locals = outerLocals; attachments = outerAttachments }
+            for statement in items {
+                if let variable = statement.item.as(VariableDeclSyntax.self) {
+                    guard variable.bindingSpecifier.text == "let", variable.attributes.isEmpty, variable.modifiers.isEmpty else { return false }
+                    for binding in variable.bindings {
+                        guard let name = binding.pattern.as(IdentifierPatternSyntax.self), binding.accessorBlock == nil,
+                              (!validateBindings || (binding.typeAnnotation.map({ valueTypes.contains($0.type.trimmedDescription) }) ?? true)),
+                              let initializer = binding.initializer, references(Syntax(initializer.value)) else { return false }
+                        if let call = initializer.value.as(FunctionCallExprSyntax.self),
+                           call.calledExpression.as(DeclReferenceExprSyntax.self)?.baseName.text == "XCTAttachment",
+                           call.arguments.count == 1, call.arguments.first?.label?.text == "screenshot" {
+                            attachments.insert(name.identifier.text)
+                        }
+                        // Shadowing could redirect an attachment mutation to other state.
+                        guard !locals.contains(name.identifier.text), !allowedGlobals.contains(name.identifier.text),
+                              !helpers.contains(name.identifier.text), name.identifier.text != "add" else { return false }
+                        locals.insert(name.identifier.text)
                     }
-                    // Shadowing could redirect an attachment mutation to other state.
-                    guard !locals.contains(name.identifier.text), !allowedGlobals.contains(name.identifier.text),
-                          !helpers.contains(name.identifier.text), name.identifier.text != "add" else { return nil }
-                    locals.insert(name.identifier.text)
-                }
-            } else if let sequence = statement.item.as(SequenceExprSyntax.self), sequence.elements.count == 3,
-                      sequence.elements[sequence.elements.index(after: sequence.elements.startIndex)].is(AssignmentExprSyntax.self),
-                      let member = sequence.elements.first?.as(MemberAccessExprSyntax.self),
-                      let local = member.base?.as(DeclReferenceExprSyntax.self), attachments.contains(local.baseName.text),
-                      ["name", "lifetime"].contains(member.declName.baseName.text),
-                      let value = sequence.elements.last, references(Syntax(value)) {
-                writesAttachment = true
-            } else if !references(Syntax(statement)) { return nil }
+                } else if let sequence = statement.item.as(SequenceExprSyntax.self), sequence.elements.count == 3,
+                          sequence.elements[sequence.elements.index(after: sequence.elements.startIndex)].is(AssignmentExprSyntax.self),
+                          let member = sequence.elements.first?.as(MemberAccessExprSyntax.self),
+                          let local = member.base?.as(DeclReferenceExprSyntax.self), attachments.contains(local.baseName.text),
+                          ["name", "lifetime"].contains(member.declName.baseName.text),
+                          let value = sequence.elements.last, references(Syntax(value)) {
+                    writesAttachment = true
+                } else if !references(Syntax(statement)) { return false }
+            }
+            return true
         }
+        guard statements(body.statements) else { return nil }
         return writesAttachment
     }
 }

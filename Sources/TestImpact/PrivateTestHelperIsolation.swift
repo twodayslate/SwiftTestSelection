@@ -17,6 +17,9 @@ enum PrivateTestHelperIsolation {
         fileprivate var callbacksChecked = false
         fileprivate var callbackBlocker: String?
         fileprivate var sdkEffectDeclarations: [String: [SourceUnit]] = [:]
+        // Source bindings and statement preservation are checked during prepare.
+        // A successful caller walk separately validates their current effects.
+        fileprivate var preservedHelperDeclarations: [String: [SourceUnit]] = [:]
         fileprivate var sdkEnvironmentRejections: [String: (ids: Set<String>, reason: String)] = [:]
         fileprivate(set) var receiverOriginBlocker: String?
         private(set) var evaluationCount = 0
@@ -60,13 +63,16 @@ enum PrivateTestHelperIsolation {
                     traversal.completed[candidate.key] = false
                     continue
                 }
+                if proof.sdkBindingsSupported {
+                    traversal.preservedHelperDeclarations[candidate.key] = [candidate] + (prior.map { [$0] } ?? [])
+                }
                 pending.append(.finish(proof))
                 for (caller, old) in proof.helpers.reversed() { pending.append(.enter(caller, old)) }
             case let .finish(proof):
                 let key = proof.unit.key
                 let callersProven = proof.helpers.allSatisfy { traversal.completed[$0.0.key] == true }
                 let result = traversal.completed[key] != false && callersProven &&
-                    finish(proof, current: current, graph: graph, index: index, traversal: &traversal)
+                    finish(proof, current: current, base: base, unownedBase: unownedBase, graph: graph, index: index, traversal: &traversal)
                 traversal.active.remove(key)
                 traversal.completed[key] = result
             }
@@ -98,10 +104,45 @@ enum PrivateTestHelperIsolation {
                   guard let roots = graph.tests[test], !roots.isEmpty, graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
                   return roots.allSatisfy { graph.functions[$0] != nil }
               }) else { return nil }
-        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules),
+        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules.union(["CoreGraphics"])),
               (Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)).allSatisfy({ $0.helperNamesUnshadowed == true }) else {
             traversal.hasUnprovenCalleeEffects = true
             return nil
+        }
+        // Imported project operators are already excluded by the source import
+        // proof. Within this module, a deleted overload (including a static or
+        // conditional one) can silently rebind to Swift at head. Unknown base
+        // ownership cannot establish that an operator belongs to another module.
+        let module = String(unit.key.prefix { $0 != ":" })
+        guard let operators = syntax.effectOperators,
+              previous == nil || previous?.privateTestHelper?.effectOperators != nil else {
+            traversal.hasUnprovenCalleeEffects = true
+            traversal.receiverOriginBlocker = "Missing helper operator binding evidence; refresh source proofs"
+            return nil
+        }
+        let usedOperators = operators.union(previous?.privateTestHelper?.effectOperators ?? [])
+        var operatorBindingsSupported = true
+        if !usedOperators.isEmpty {
+            let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
+                base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(unownedBase.values)
+            for source in sources {
+                guard source.diagnostics.isEmpty, let declarations = source.helperOperatorDeclarations else {
+                    traversal.hasUnprovenCalleeEffects = true
+                    traversal.receiverOriginBlocker = source.helperDeclarationsComplete == false
+                        ? "Incomplete source operator declarations from macros or unsupported attributes"
+                        : "Missing source operator declaration evidence; refresh source proofs"
+                    // Keep inspecting compiled effects for a more specific
+                    // blocker, but never grant isolation with this inventory.
+                    operatorBindingsSupported = false
+                    continue
+                }
+                let rebound = declarations.intersection(usedOperators)
+                if !rebound.isEmpty {
+                    traversal.hasUnprovenCalleeEffects = true
+                    traversal.receiverOriginBlocker = "Unproven helper operator binding at base or head: " + rebound.sorted().joined(separator: ", ")
+                    return nil
+                }
+            }
         }
         if !traversal.callbacksChecked {
             traversal.callbackBlocker = XCTestCallbackIsolation.blocker(current: current, base: base, unownedBase: unownedBase)
@@ -113,7 +154,6 @@ enum PrivateTestHelperIsolation {
             return nil
         }
         guard contextAllows(unit, name: syntax.name, existed: previous != nil, current: current, base: base) else { return nil }
-        let module = String(unit.key.prefix { $0 != ":" })
         let headUnits = current.sources.values.flatMap(\.units), baseUnits = base.values.flatMap(\.units)
         let ids = symbols(unit, graph: graph, index: index)
         guard !ids.isEmpty else { return nil }
@@ -177,14 +217,24 @@ enum PrivateTestHelperIsolation {
         }
         let historicalMembers = previous?.privateTestHelper?.sdkEffectMembers ?? []
         let sdkBindings = sdkMembers.union(historicalMembers)
-        var sdkBindingsSupported = true
+        // A macro in another source can synthesize globals, SDK members or
+        // XCTest callbacks without spelling their names in the source. Audit
+        // every source used by those binding checks, including base-only files.
+        // Continue the compiler effect walk to retain more specific diagnostics.
+        let declarationsComplete = (Array(current.sources.values) + Array(base.values) + Array(unownedBase.values))
+            .allSatisfy { $0.helperDeclarationsComplete == true }
+        if !declarationsComplete {
+            traversal.hasUnprovenCalleeEffects = true
+            traversal.receiverOriginBlocker = "Incomplete helper declaration inventories (macros, unsupported attributes or legacy evidence); refresh source proofs"
+        }
+        var sdkBindingsSupported = declarationsComplete && operatorBindingsSupported
         if !sdkBindings.isEmpty {
             // Preserving the old statements does not preserve their bindings:
             // a removed project initializer/member may now resolve to the SDK.
             let revisions = [Array(current.sources.values), Array(base.values) + Array(unownedBase.values)]
             let owners: Set<String> = ["XCTAttachment", "XCUIScreenshot", "XCUIElement", "XCUIApplication",
                                        "XCTestCase", "XCTest", "NSObject", "NSObjectProtocol", "XCUIElementQuery",
-                                       "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter"]
+                                       "NSPredicate", "XCTNSPredicateExpectation", "XCTWaiter", "XCUICoordinate", "CGRect", "CGVector", "CGFloat"]
             // Bare SDK construction cannot dynamically invoke a project
             // subclass's initializer. Ordinary member overrides can, so audit
             // those names even when an alias hides the superclass.
@@ -192,7 +242,7 @@ enum PrivateTestHelperIsolation {
             let bindingBlocker = SDKTestHelperIsolation.memberBindingBlocker(revisions: revisions,
                 members: sdkBindings, sdkOwners: owners, provenHelpers: traversal.sdkEffectDeclarations[module] ?? [])
             if let bindingBlocker { traversal.receiverOriginBlocker = bindingBlocker }
-            sdkBindingsSupported = SDKTestHelperIsolation.overridesUnshadowed(revisions: revisions,
+            sdkBindingsSupported = sdkBindingsSupported && SDKTestHelperIsolation.overridesUnshadowed(revisions: revisions,
                 members: dynamicMembers, sdkReceivers: owners.subtracting(["NSObject", "NSObjectProtocol"])) &&
                 bindingBlocker == nil
             // Still walk the head's compiler effects so existing shared-state
@@ -203,7 +253,8 @@ enum PrivateTestHelperIsolation {
         return Prepared(unit: unit, syntax: syntax, ids: ids, effectIDs: effectIDs, sdkBindingsSupported: sdkBindingsSupported, callers: callers, helpers: helpers)
     }
 
-    private static func finish(_ proof: Prepared, current: XcodeTestGraph, graph: DependencyGraph,
+    private static func finish(_ proof: Prepared, current: XcodeTestGraph, base: [String: SwiftSourceSnapshot],
+                               unownedBase: [String: SwiftSourceSnapshot], graph: DependencyGraph,
                                index: DependencyIndex, traversal: inout Traversal) -> Bool {
         let callers = proof.callers, syntax = proof.syntax, ids = proof.ids
         let paths = index.paths(to: ids)
@@ -256,7 +307,9 @@ enum PrivateTestHelperIsolation {
             }
             pending += node.dependencies
         }
-        if !traversal.externalEffects.allows(external) {
+        let unprovenExternal = traversal.externalEffects.unprovenEffects(external)
+        if !unprovenExternal.isEmpty {
+            traversal.receiverOriginBlocker = "Unproven external helper effects: " + unprovenExternal.sorted().joined(separator: ", ")
             traversal.hasUnprovenCalleeEffects = true
             effectsSupported = false
         }
@@ -266,8 +319,343 @@ enum PrivateTestHelperIsolation {
             traversal.receiverOriginBlocker = reason
             traversal.hasUnprovenCalleeEffects = true
             effectsSupported = false
+        } else if effectsSupported, let reason = historicalCallerBindingBlocker(
+            units: traversal.receiverOrigins.checkedSourceUnits(for: consumers), current: current, base: base,
+            unownedBase: unownedBase, provenHelpers: traversal.sdkEffectDeclarations.values.flatMap { $0 } +
+                traversal.preservedHelperDeclarations.values.flatMap { $0 }) {
+            traversal.receiverOriginBlocker = reason
+            traversal.hasUnprovenCalleeEffects = true
+            effectsSupported = false
         }
         return effectsSupported
+    }
+
+    private static func historicalCallerBindingBlocker(units: [SourceUnit]?, current: XcodeTestGraph,
+        base: [String: SwiftSourceSnapshot], unownedBase: [String: SwiftSourceSnapshot], provenHelpers: [SourceUnit]) -> String? {
+        guard let units, !units.isEmpty else { return "Missing compiler-bound caller source evidence" }
+        let checkedModules = Set(units.map { String($0.key.prefix { $0 != ":" }) })
+        let oldSources = Array(base.values) + Array(unownedBase.values)
+        let oldUnits = oldSources.flatMap(\.units)
+        var allUnits = units
+        for unit in units {
+            let module = String(unit.key.prefix { $0 != ":" })
+            // Match by header even after a source move. State-unit keys include
+            // their initializers, so include historical storage at this owner.
+            // Synthesized initializers can point only at the class header.
+            let historical = oldUnits.filter { old in
+                // Removed files have an empty module, not their former owner.
+                // They may supply this declaration; absence of ownership is
+                // not evidence that their historical expressions are unrelated.
+                old.key == unit.key || (old.key.hasPrefix(":") && old.key == String(unit.key.dropFirst(module.count))) ||
+                    ((old.key.hasPrefix(module + ":") || old.key.hasPrefix(":")) && old.scope == unit.scope &&
+                    (["state", "type"].contains(unit.kind) && old.kind == "state" ||
+                     unit.kind == "type" && old.helperCallableName.map(SDKTestHelperSyntax.lifecycle.contains) == true))
+            }
+            for old in historical where old.kind == "function" {
+                // Binding names alone say nothing about an SDK effect removed
+                // from a caller. Only unchanged statements at the start of the
+                // current body retain their execution and lexical context. The
+                // helper-specific proof separately permits inserted assertions.
+                let preservedHelper = provenHelpers.contains {
+                    $0.key == old.key && $0.region.path == old.region.path && $0.fingerprint == old.fingerprint
+                }
+                let counterparts = units.filter { checked in
+                    checked.key == old.key || (old.key.hasPrefix(":") &&
+                        old.key == String(checked.key.drop(while: { $0 != ":" })))
+                }
+                let preservedCaller = counterparts.count == 1 && counterparts.allSatisfy { checked in
+                    if checked.fingerprint == old.fingerprint { return true }
+                    guard let prior = old.helperCallerStatementSignatures,
+                          let head = checked.helperCallerStatementSignatures else { return false }
+                    return head.starts(with: prior)
+                }
+                guard preservedHelper || preservedCaller else {
+                    let boundary = old.helperCallableName.map(SDKTestHelperSyntax.lifecycle.contains) == true
+                        ? "lifecycle implementation" : "body effects"
+                    return "Unproven historical caller " + boundary + " at " + old.region.path + ":" + String(old.region.startLine)
+                }
+            }
+            allUnits += historical
+        }
+        var operatorsByModule: [String: Set<String>] = [:], globalsByModule: [String: Set<String>] = [:], members = Set<String>()
+        for unit in allUnits {
+            guard unit.helperRegionEffectsComplete == true else {
+                return "Unproven or missing historical caller declaration-body effects at " + unit.region.path + ":" + String(unit.region.startLine)
+            }
+            // Identical body text can bind to a different external overload
+            // after an import changes. Only the head has compiler evidence.
+            guard unit.receiverImportsSupported == true else {
+                return "Unproven historical caller imports at " + unit.region.path + ":" + String(unit.region.startLine)
+            }
+            guard let uses = unit.helperBindingUses, let qualified = uses.qualifiedMembers,
+                  let implicitOperators = uses.implicitOperators else {
+                return "Missing historical caller expression bindings; refresh source proofs"
+            }
+            let module = String(unit.key.prefix { $0 != ":" })
+            // Unknown ownership must consider every checked module's bindings.
+            for candidate in module.isEmpty ? checkedModules : [module] {
+                operatorsByModule[candidate, default: []].formUnion(uses.operators)
+                operatorsByModule[candidate, default: []].formUnion(implicitOperators)
+                globalsByModule[candidate, default: []].formUnion(uses.globals)
+                // UI.produce and UI.Worker are module globals/type roots, even
+                // though SwiftSyntax represents them as member references.
+                globalsByModule[candidate, default: []].formUnion(qualified[SDKTestHelperSyntax.canonicalName(candidate)] ?? [])
+            }
+            members.formUnion(uses.members)
+            // Bare references can be getters or method values as well as
+            // globals/locals. The head compiler cannot resolve their old binding.
+            members.formUnion(uses.globals)
+            guard let calls = unit.invocationNames else { return "Missing historical caller invocation names; refresh source proofs" }
+            // Bare calls may resolve to members, rather than global functions.
+            members.formUnion(calls)
+        }
+        for (module, operators) in operatorsByModule.sorted(by: { $0.key < $1.key }) where !operators.isEmpty {
+            let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
+                base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(unownedBase.values)
+            for source in sources {
+                guard let declarations = source.helperOperatorDeclarations else { return "Missing historical caller operator declarations; refresh source proofs" }
+                let rebound = declarations.intersection(operators)
+                if !rebound.isEmpty { return "Unproven caller operator binding at base or head: " + rebound.sorted().joined(separator: ", ") }
+            }
+        }
+        for (module, names) in globalsByModule.sorted(by: { $0.key < $1.key }) {
+            let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
+                base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(unownedBase.values)
+            for source in sources {
+                // @_exported imports make names visible in other files of this
+                // module. File-local import proofs cannot close that boundary.
+                guard source.helperImportsLocal == true else {
+                    return "Unproven module-wide caller imports or missing visibility evidence; refresh source proofs"
+                }
+                guard let declarations = source.helperGlobalDeclarations else { return "Missing historical caller global declarations; refresh source proofs" }
+                for name in Set(declarations.keys).intersection(names).sorted() {
+                    // Ordinary source producers are valid only when their exact
+                    // bodies occur in the compiler-checked closure. A base-only
+                    // overload or changed old body has no such head evidence.
+                    let functions = source.units.filter { $0.scope.isEmpty && $0.helperCallableName == name }
+                    guard declarations[name] == true, !functions.isEmpty, functions.allSatisfy({ declaration in units.contains {
+                        $0.key == declaration.key && $0.fingerprint == declaration.fingerprint
+                    } }) else { return "Unproven caller global binding at base or head: " + name }
+                }
+            }
+        }
+        let revisions = [Array(current.sources.values), oldSources]
+        let knownModules = Set(revisions.joined().flatMap(\.units).map {
+            SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }))
+        }).subtracting([""])
+        var ownerNames: [String: String] = [:]
+        func ownerName(_ unit: SourceUnit) -> String {
+            let spelling = String(unit.key.prefix { $0 != ":" }) + ":" + unit.scope
+            if let cached = ownerNames[spelling] { return cached }
+            let module = SDKTestHelperSyntax.canonicalName(String(unit.key.prefix { $0 != ":" }))
+            var scope = SDKTestHelperSyntax.canonicalName(SwiftSourceSnapshot.nominalTypeName(unit.scope) ?? unit.scope)
+            // Extension scopes retain their source spelling. A module-qualified
+            // scope must join the same audit as the nominal declaration. For
+            // unowned base files consider every known module qualification.
+            if !module.isEmpty, scope.hasPrefix(module + ".") { scope = String(scope.dropFirst(module.count + 1)) }
+            else if module.isEmpty, let qualifier = knownModules.first(where: { scope.hasPrefix($0 + ".") }) {
+                scope = String(scope.dropFirst(qualifier.count + 1))
+            }
+            let owner = module + "." + scope
+            ownerNames[spelling] = owner
+            return owner
+        }
+        var auditedOwners = Set(units.filter { !$0.scope.isEmpty }.map(ownerName))
+        // A receiver construction can disappear at head. Include project type
+        // roots mentioned in either revision, even without a current callee.
+        for source in revisions.joined() {
+            for type in source.units where type.kind == "type" {
+                let module = String(type.key.prefix { $0 != ":" })
+                let root = SDKTestHelperSyntax.canonicalName(String(type.scope.split(separator: ".").first ?? ""))
+                let leaf = SDKTestHelperSyntax.canonicalName(String(type.scope.split(separator: ".").last ?? ""))
+                // Nested types may be referenced lexically or through Self,
+                // without spelling their enclosing type or module at all.
+                let referenced = globalsByModule[module] ?? []
+                let unknownOwner = module.isEmpty && (globalsByModule.values.contains { $0.contains(root) || $0.contains(leaf) } ||
+                    members.contains(leaf) ||
+                    auditedOwners.contains { $0.hasSuffix("." + SDKTestHelperSyntax.canonicalName(type.scope)) })
+                if referenced.contains(root) || referenced.contains(leaf) ||
+                    checkedModules.contains(module) && members.contains(leaf) || unknownOwner {
+                    auditedOwners.insert(ownerName(type))
+                }
+            }
+        }
+        // Follow both superclass and protocol/default-implementation owners.
+        // The head closure cannot name a removed ancestor or a default witness
+        // displaced by an explicit implementation. Ambiguous names widen proof.
+        let typeUnits = revisions.joined().flatMap(\.units).filter { ["type", "extension"].contains($0.kind) }
+        // Aliases can hide an extension target, an inherited protocol, or a
+        // namespace containing either. Their targets are not resolved here;
+        // matching any path component therefore leaves default witnesses opaque.
+        let aliases = Set(revisions.joined().flatMap { $0.typeAliases ?? [] }.map(SDKTestHelperSyntax.canonicalName))
+        let aliasNames = Set(aliases.compactMap { $0.split(separator: ".").last.map(String.init) })
+        func usesAlias(_ name: String) -> Bool {
+            name.split(separator: ".").contains { aliasNames.contains(String($0)) }
+        }
+        let aliasedExtensions = typeUnits.filter { declaration in
+            guard declaration.kind == "extension" else { return false }
+            let scope = SDKTestHelperSyntax.canonicalName(SwiftSourceSnapshot.nominalTypeName(declaration.scope) ?? declaration.scope)
+            return usesAlias(scope)
+        }
+        if let declaration = aliasedExtensions.first(where: { $0.helperInheritedTypes?.isEmpty != true }) {
+            return "Unproven historical caller extension through a type alias at " + declaration.region.path + ":" + String(declaration.region.startLine)
+        }
+        let typeOwners = Set(typeUnits.map(ownerName))
+        let classOwners = Set(Dictionary(grouping: typeUnits.filter { $0.kind == "type" }, by: ownerName).compactMap { owner, declarations in
+            declarations.allSatisfy { $0.fingerprint.hasPrefix("classDecl[") } ? owner : nil
+        })
+        let sdkClasses: Set<String> = ["XCTestCase", "XCTest.XCTestCase", "NSObject", "Foundation.NSObject"]
+        var conformingOwners = Set<String>(), parentOwners: [String: Set<String>] = [:]
+        var pendingOwners = Array(auditedOwners), visitedOwners = Set<String>()
+        while let owner = pendingOwners.popLast() {
+            guard visitedOwners.insert(owner).inserted else { continue }
+            // A removed extension can lose ownership independently of its
+            // nominal type, including an ancestor discovered during this walk.
+            for candidate in typeOwners where candidate != owner &&
+                (candidate.hasPrefix(".") && owner.hasSuffix(candidate) ||
+                 owner.hasPrefix(".") && candidate.hasSuffix(owner)) {
+                if auditedOwners.insert(candidate).inserted { pendingOwners.append(candidate) }
+            }
+            for source in revisions.joined() {
+                for declaration in source.units where ["type", "extension"].contains(declaration.kind) && ownerName(declaration) == owner {
+                    let isClass = declaration.fingerprint.hasPrefix("classDecl[")
+                    if isClass, source.superclasses?.first(where: {
+                        SDKTestHelperSyntax.canonicalName($0.key) == owner ||
+                            SDKTestHelperSyntax.canonicalName($0.key) == String(declaration.key.prefix { $0 != ":" }) + "." + SDKTestHelperSyntax.canonicalName(declaration.scope)
+                    }) == nil {
+                        return "Missing historical caller superclass evidence; refresh source proofs"
+                    }
+                    guard let parents = declaration.helperInheritedTypes else {
+                        return "Missing historical caller conformance evidence; refresh source proofs"
+                    }
+                    // `protocol P where Self: Q` also supplies Q's defaults.
+                    // Conditional and same-type requirements need resolution
+                    // beyond the nominal ancestry inventory, at both revisions.
+                    guard declaration.helperGenericRequirements?.isEmpty == true else {
+                        return "Unproven or missing historical caller generic requirements at " + declaration.region.path + ":" + String(declaration.region.startLine)
+                    }
+                    for parent in parents {
+                        guard let nominal = SwiftSourceSnapshot.nominalTypeName(parent) else {
+                            return "Unproven historical caller inherited type: " + parent
+                        }
+                        let name = SDKTestHelperSyntax.canonicalName(nominal)
+                        guard !usesAlias(name) else {
+                            return "Unproven historical caller inherited type alias: " + parent
+                        }
+                        let candidates = typeOwners.filter { $0 == name || $0.hasSuffix("." + name) }
+                        // A class's known superclass does not supply protocol
+                        // defaults. Imported protocols still require checking
+                        // every project witness on their conforming owner.
+                        if !isClass || (!sdkClasses.contains(name) &&
+                            (candidates.isEmpty || !candidates.isSubset(of: classOwners))) {
+                            conformingOwners.insert(owner)
+                        }
+                        parentOwners[owner, default: []].formUnion(candidates)
+                        for ancestor in candidates {
+                            if auditedOwners.insert(ancestor).inserted { pendingOwners.append(ancestor) }
+                        }
+                    }
+                }
+            }
+        }
+        // Even without an inheritance clause an aliased extension can supply
+        // defaults or witnesses for any participating conformance. If there is
+        // none, ordinary member binding checks can still prove unused extensions.
+        if !conformingOwners.isEmpty, let declaration = aliasedExtensions.first {
+            return "Unproven historical caller extension through a type alias at " + declaration.region.path + ":" + String(declaration.region.startLine)
+        }
+        // Overrides on descendants can supply a conformance inherited from a
+        // source superclass or protocol, including one removed at head.
+        var expanded = true
+        while expanded {
+            expanded = false
+            for (owner, parents) in parentOwners where !parents.isDisjoint(with: conformingOwners) {
+                if conformingOwners.insert(owner).inserted { expanded = true }
+            }
+        }
+        // Synthesized initializers have no explicit member declaration. Their
+        // historical stored-property initializers must independently match the
+        // head body. SIL may locate a synthesized initializer only at its type
+        // header; that evidence is usable only while both revisions still have
+        // synthesized construction, without a competing explicit initializer.
+        let headUnits = current.sources.values.flatMap(\.units)
+        func storedInitializerIsProven(_ old: SourceUnit) -> Bool {
+            guard old.helperRegionEffectsComplete == true else { return false }
+            if units.contains(where: { $0.key == old.key && $0.fingerprint == old.fingerprint }) { return true }
+            guard old.helperStoredInitializer == true else { return false }
+            let module = String(old.key.prefix { $0 != ":" })
+            func sameOwner(_ unit: SourceUnit) -> Bool {
+                unit.key.hasPrefix(module + ":") && ownerName(unit) == ownerName(old)
+            }
+            guard headUnits.contains(where: { $0.key == old.key && $0.fingerprint == old.fingerprint }),
+                  units.contains(where: { sameOwner($0) && $0.kind == "type" }),
+                  !(headUnits + oldUnits).contains(where: {
+                      sameOwner($0) && $0.helperDeclaredMembers?.contains("init") == true
+                  }) else { return false }
+            return true
+        }
+        for (revision, sources) in revisions.enumerated() {
+            for unit in sources.flatMap(\.units) {
+                let owner = ownerName(unit)
+                guard auditedOwners.contains(owner) else { continue }
+                // Changed ancestry can also lead to an imported or aliased
+                // superclass without an auditable project body. Authenticate
+                // the header itself rather than trusting the head's ancestry.
+                if revision == 1, ["type", "extension"].contains(unit.kind),
+                   (unit.fingerprint.hasPrefix("classDecl[") || conformingOwners.contains(owner)),
+                   !headUnits.contains(where: { $0.key == unit.key && $0.fingerprint == unit.fingerprint }) {
+                    return "Unproven historical caller type or conformance header at " + unit.region.path + ":" + String(unit.region.startLine)
+                }
+                // XCTest invokes lifecycle hooks without spelling their names
+                // in a caller. Reading their old bindings does not prove an old
+                // body whose direct SDK effects disappeared from the head graph.
+                // Constructors, destructors and lifecycle properties are not
+                // FunctionDeclSyntax, but also execute implicitly.
+                guard let declarations = unit.helperDeclaredMembers else {
+                    return "Missing historical caller member declaration evidence; refresh source proofs"
+                }
+                // A default implementation can invoke any requirement without
+                // its name appearing at the call site (isEmpty, first, iteration,
+                // formatting, etc.). With no base compiler, every source member
+                // of a participating historical conformance needs exact head
+                // closure evidence. An unchanged spelling is not an effect proof.
+                if revision == 1, conformingOwners.contains(owner), !declarations.isEmpty,
+                   unit.bodylessProtocolRequirement == nil,
+                   !(unit.fingerprint.hasPrefix("typeAliasDecl[") &&
+                     headUnits.contains { $0.key == unit.key && $0.fingerprint == unit.fingerprint }),
+                   !(unit.helperEnumCaseWithoutDefaults == true && unit.helperEnumCaseValueArguments == true &&
+                     headUnits.contains { $0.key == unit.key && $0.fingerprint == unit.fingerprint }),
+                   !storedInitializerIsProven(unit) {
+                    return "Unproven historical caller conformance implementation at " + unit.region.path + ":" + String(unit.region.startLine)
+                }
+                if !declarations.isDisjoint(with: SDKTestHelperSyntax.lifecycle.union(["init", "deinit"])),
+                   !units.contains(where: { $0.key == unit.key && $0.fingerprint == unit.fingerprint }) {
+                    return "Unproven historical caller lifecycle implementation at " + unit.region.path + ":" + String(unit.region.startLine)
+                }
+                guard unit.kind == "state" else { continue }
+                guard let initialized = unit.helperStoredInitializer else {
+                    return "Missing historical caller storage initializer evidence; refresh source proofs"
+                }
+                if revision == 1, initialized, !storedInitializerIsProven(unit) {
+                    return "Unproven historical caller storage initializer at " + unit.region.path + ":" + String(unit.region.startLine)
+                }
+            }
+        }
+        let historicalDeclarations = oldUnits.filter { old in units.contains {
+            $0.key == old.key && $0.fingerprint == old.fingerprint
+        } }
+        let proven = provenHelpers + units + historicalDeclarations
+        let owners = SDKReceiverContracts.bindingNames.union(["NSObject", "NSObjectProtocol", "XCTest", "XCUIElementQuery", "XCUICoordinate", "CGRect", "CGVector"])
+        // The dispatch inventories keep raw source scopes. Preserve those
+        // aliases too when passing normalized owners into their binding audit.
+        let dispatchOwners = auditedOwners.union(revisions.joined().flatMap(\.units).filter {
+            auditedOwners.contains(ownerName($0))
+        }.map { SDKTestHelperSyntax.canonicalName(String($0.key.prefix { $0 != ":" }) + "." + $0.scope) })
+        if let reason = SDKTestHelperIsolation.memberBindingBlocker(revisions: revisions, members: members,
+            sdkOwners: owners, provenHelpers: proven, auditedProjectOwners: dispatchOwners) { return "Caller expression: " + reason }
+        guard SDKTestHelperIsolation.overridesUnshadowed(revisions: revisions, members: members.subtracting(["init"]),
+            sdkReceivers: owners.subtracting(["NSObject", "NSObjectProtocol", "XCTest"]), provenMethods: proven) else { return "Unproven historical caller member override" }
+        return nil
     }
 
     /// The source effect walk is deliberately not an overload resolver. Reject
