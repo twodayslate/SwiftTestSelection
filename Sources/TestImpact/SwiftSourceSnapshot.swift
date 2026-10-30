@@ -53,7 +53,8 @@ public struct SourceUnit: Codable, Sendable {
     /// Member declarations represented by this unit, including storage and initializers.
     public var helperDeclaredMembers: Set<String>? = nil
     /// A declaration location cannot prove separate defaults, lazy initializers,
-    /// setters or observers. Nil is legacy or incomplete effect evidence.
+    /// setters, observers or configuration-dependent bodies. Nil is legacy or
+    /// incomplete effect evidence.
     public var helperRegionEffectsComplete: Bool? = nil
     /// Whole top-level statements, usable for append-only caller changes. Local
     /// functions/types can rebind earlier expressions, so they provide no proof.
@@ -330,11 +331,24 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             guard let accessors = block?.accessors.as(AccessorDeclListSyntax.self) else { return true }
             return accessors.count == 1 && accessors.first?.accessorSpecifier.text == "get"
         }
+        let assertionConfigurationNames: Set<String> = [
+            "assert", "assertionFailure", "precondition", "preconditionFailure", "fatalError",
+            "_isDebugAssertConfiguration", "_isReleaseAssertConfiguration", "_isFastAssertConfiguration",
+            "_isStdlibDebugChecksEnabled"
+        ]
         func regionEffectsComplete(_ node: Syntax) -> Bool {
             // A head compiler visits only its active configuration. Identical
             // source text cannot authenticate effects in a historical branch.
             guard !node.tokens(viewMode: .sourceAccurate).contains(where: {
-                $0.parent?.is(IfConfigDeclSyntax.self) == true
+                if $0.parent?.is(IfConfigDeclSyntax.self) == true { return true }
+                // These standard-library bodies/queries can erase effects even
+                // under -Onone when -assert-config changes. Inspect references,
+                // not just calls: a query may be stored as a function value.
+                // Qualified and escaped spellings have the same boundary;
+                // source alone cannot prove a shadowing declaration is safe.
+                guard let reference = $0.parent?.as(DeclReferenceExprSyntax.self),
+                      reference.baseName.id == $0.id else { return false }
+                return assertionConfigurationNames.contains(SDKTestHelperSyntax.canonicalName($0.text))
             }) else { return false }
             let parameters = node.as(FunctionDeclSyntax.self)?.signature.parameterClause.parameters
                 ?? node.as(InitializerDeclSyntax.self)?.signature.parameterClause.parameters
