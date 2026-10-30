@@ -108,6 +108,15 @@ enum XcodeCompilerGraph {
             }
         }
         for index in 0..<(workers == 1 ? min(1, jobs.count) : jobs.count) { schedule(index) }
+        // Import ambiguity needs compiler type identities only when inline
+        // policies are present. Read already-built modules; never rebuild tests.
+        let annotatedModules = Set(ownership.compactMap { module, paths in
+            paths.contains { path in
+                (try? String(contentsOf: sourceRoot.appendingPathComponent(path), encoding: .utf8))?.contains(InlineMappingSyntax.prefix) == true
+            } ? module : nil
+        })
+        let requiredAncestryModules = ancestryModules(annotated: annotatedModules, jobs: jobs, directory: directory)
+        graph.compilerClassIdentities = [:]
         var definingSymbols = Set<String>()
         var dispatch: [String: Set<String>] = [:]
         var externalWitnesses: [String: Set<String>] = [:]
@@ -120,6 +129,17 @@ enum XcodeCompilerGraph {
                 defer { fragment.remove() }
                 let parsed = try fragment.load()
                 messages.forEach(progress)
+                if requiredAncestryModules.contains(job.module), let paths = ownership[job.module], !paths.isEmpty {
+                    do {
+                        let identities = try CompilerClassIdentities.extract(job: job, sourceRoot: sourceRoot,
+                            directory: directory, scratch: spool, ownership: paths)
+                        graph.compilerClassIdentities?.merge(identities) { first, _ in first }
+                    } catch {
+                        // Absence is explicit: the inline resolver retains its
+                        // conservative import diagnostics for this module.
+                        progress("Compiler ancestry unavailable for \(job.module): \(error)")
+                    }
+                }
                 if !hit, let identity = moduleCache?.identity(for: job.module) {
                     do { try moduleCache?.stage(parsed, identity: identity) }
                     catch { progress("Module cache publication bypass \(job.module): \(error)") }
@@ -127,9 +147,8 @@ enum XcodeCompilerGraph {
                 for (symbol, node) in parsed.functions {
                     // Imported bodies can point into files also compiled by this module.
                     let isDefinition = !(parsed.importedSymbols?.contains(symbol) ?? false) && node.regions.contains { ownership[job.module]?.contains($0.path) == true }
-                    if isDefinition || !definingSymbols.contains(symbol) && (graph.functions[symbol] == nil || !node.regions.isEmpty && graph.functions[symbol]!.regions.isEmpty) {
-                        graph.functions[symbol] = node
-                    }
+                    merge(node, into: &graph, isDefinition: isDefinition,
+                          existingIsDefinition: definingSymbols.contains(symbol))
                     if isDefinition { definingSymbols.insert(symbol) }
                 }
                 for (declaration, symbols) in parsed.dispatchTargets { dispatch[declaration, default: []].formUnion(symbols) }
@@ -158,6 +177,43 @@ enum XcodeCompilerGraph {
         return graph
     }
 
+    /// The explicit compiler map includes transitive project imports. Avoid
+    /// opening unrelated application modules merely because one UI file has a
+    /// directive. Missing/unsupported maps fall back to the full inventory.
+    static func ancestryModules(annotated: Set<String>, jobs: [XcodeModuleJob], directory: URL) -> Set<String> {
+        guard !annotated.isEmpty else { return [] }
+        let inventory = Set(jobs.map(\.module))
+        var result = annotated
+        for job in jobs where annotated.contains(job.module) {
+            guard let index = job.arguments.firstIndex(of: "-output-file-map"), index + 1 < job.arguments.count else { return inventory }
+            let folder = URL(fileURLWithPath: job.arguments[index + 1], relativeTo: directory).deletingLastPathComponent()
+            do {
+                let maps = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).filter {
+                    $0.lastPathComponent.hasPrefix(job.module + "-dependencies-") && $0.pathExtension == "json"
+                }
+                guard maps.count == 1 else { return inventory }
+                result.formUnion(try XcodeRuntimeInventory.projectImports(Data(contentsOf: maps[0]), inventory: inventory))
+            } catch { return inventory }
+        }
+        return result
+    }
+
+    static func merge(_ node: FunctionNode, into graph: inout DependencyGraph,
+                      isDefinition: Bool, existingIsDefinition: Bool) {
+        guard let old = graph.functions[node.id] else {
+            graph.functions[node.id] = node
+            return
+        }
+        // Source ownership remains authoritative. Ties use a stable identity,
+        // never compiler scheduling or build-log order. All effects survive.
+        let useNew = isDefinition != existingIsDefinition ? isDefinition :
+            (old.regions.isEmpty != node.regions.isEmpty ? !node.regions.isEmpty :
+                (node.module, node.name) > (old.module, old.name))
+        var merged = useNew ? node : old
+        merged.mergeEvidence(useNew ? old : node)
+        graph.functions[node.id] = merged
+    }
+
     static func resolveDispatch(_ graph: inout DependencyGraph, tables: [String: Set<String>],
                                 externalWitnesses: [String: Set<String>] = [:], projectModules: Set<String>? = nil) {
         let localModules = projectModules ?? Set(graph.functions.values.filter { !$0.regions.isEmpty }.map(\.module))
@@ -170,7 +226,11 @@ enum XcodeCompilerGraph {
                     let general = String(declaration[..<separator.lowerBound])
                     let requirement = general.split(separator: ".").dropLast().joined(separator: ".")
                     let key = requirement + declaration[separator.lowerBound...]
-                    if let owners = externalWitnesses[graph.functions[symbol]!.module + ":" + key], owners.count == 1, owners.isDisjoint(with: localModules) {
+                    let node = graph.functions[symbol]!
+                    let origins = node.dynamicDeclarationModules?[declaration] ?? node.captureModules ?? [node.module]
+                    let evidence = origins.map { externalWitnesses[$0 + ":" + key] }
+                    let owners = evidence.compactMap { $0 }.reduce(into: Set<String>()) { $0.formUnion($1) }
+                    if !origins.isEmpty, evidence.allSatisfy({ $0 != nil }), owners.count == 1, owners.isDisjoint(with: localModules) {
                         // The compiler, not a Foundation/type-name allowlist,
                         // establishes the concrete conformance's external owner.
                         // This resolves ownership, not the implementation body.
@@ -184,6 +244,9 @@ enum XcodeCompilerGraph {
                     // Never turn a missing concrete table into proof of no impact.
                     graph.functions[symbol]!.dependencies.formUnion(tables[general] ?? [])
                     graph.functions[symbol]!.uncertainties.insert("Unresolved project dispatch: " + declaration)
+                    if !node.hasProjectRuntimeContext {
+                        graph.functions[symbol]!.uncertainties.insert("Imported conformance: unresolved " + key)
+                    }
                 }
             }
         }

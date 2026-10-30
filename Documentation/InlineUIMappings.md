@@ -288,3 +288,28 @@ ln -s "$PWD/skills/ui-inline-mappings" "${CODEX_HOME:-$HOME/.codex}/skills/ui-in
 
 The CLI proposal and config-free Xcode tests exercise the skill's actual authoring,
 audit and selection workflow; packaging validation is separate from behavioral proof.
+
+### SDK-importing base classes
+
+A base class may import UIKit while a child in another file imports XCTest. Fresh
+inline captures extract superclass USRs and physical declaration locations from
+the already-built Swift modules. If every superclass edge matches the captured
+source hierarchy and ends at the compiler identity of `XCTestCase`/`NSObject`, an
+uncaptured SDK export inventory does not by itself reject that hierarchy. No
+blanket SDK-function purity or arbitrary-import trust is introduced. Alias,
+re-export, shadowing, conditional-declaration and source-completeness checks remain.
+
+The extractor uses `swift-symbolgraph-extract` beside the build's compiler, the
+recorded SDK/target/search paths and the module emitted by that build. It does not
+recompile source or execute tests. The module and its source/documentation sidecars
+are checked for changes during extraction. Evidence is refreshed from each build,
+including module-fragment cache hits, and travels with saved graphs. Cached graphs
+from older analyzers are invalidated.
+
+If the built module does not preserve private/internal declarations or their
+source locations, or the extractor cannot load its dependencies, ancestry remains
+unresolved. Diagnostics name the missing imported module(s) and compiler identity
+evidence. Recapture with the build's testable module output available; retaining
+those suite rules in central JSON remains a supported alternative. A legacy graph
+without this evidence cannot prove an SDK-importing ancestry merely by reparsing
+its source comments.

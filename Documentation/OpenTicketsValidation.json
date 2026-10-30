@@ -1,0 +1,384 @@
+{
+  "applicationTestBodiesExecuted": false,
+  "arrayAppendEvidence": {
+    "path": "/tmp/open-tickets-validation/array-append-final-evidence.json",
+    "sha256": "6d9ecad366635577c95330f3dc400f4c0c8f6f966e2ad331abd23708fcd53669"
+  },
+  "base": "065181089c5fa46b2fd50d41a84ad18fd068b418",
+  "baseBuilds": 0,
+  "captures": {
+    "inline": {
+      "diagnosticGraph": {
+        "path": "/tmp/open-tickets-validation/inline-refreshed-graph.bin",
+        "sha256": "014263aaa1c60779b1fa1f01d72932d8886f28bd400346f683ce2f631e7b0283"
+      },
+      "headBuilds": 1,
+      "inventory": 2055,
+      "modules": 10,
+      "retainedGraph": {
+        "path": "/tmp/open-tickets-validation/inline-retained/head-graph.json",
+        "sha256": "4c828ba2d2e98bc476df7ef9ccf445e423410b813dd51e8d67031196cfeef99a"
+      },
+      "revision": "ba703ce4ee237301c71b381d16eefb69a403863e",
+      "seal": {
+        "path": "/tmp/open-tickets-validation/inline-retained/SILCapture/build.json",
+        "sha256": "27a2f69b95163f429cf24a2f32c85cf8e0105128cbf22da9d141a033849ec75d"
+      },
+      "sourceExport": {
+        "path": "/tmp/open-tickets-validation/inline-retained/source-export.json",
+        "sha256": "051fa628b92bea0ad847d5e3c26b97ca5f507f474946099b2ab6066f410dc2ca"
+      },
+      "toolchain": "Xcode 27.1\nBuild version 27A9275\nApple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx26.0\n",
+      "uiMethods": 409,
+      "verification": {
+        "path": "/tmp/open-tickets-validation/inline-final-verify.json",
+        "sha256": "b695db7b8d8df20fb2d64307b6cfa70b74dd90aae4bffdd4b50caf5072bd8df9"
+      },
+      "verifiedNoOpSelected": [],
+      "verifiedShouldRun": false
+    },
+    "json": {
+      "diagnosticGraph": {
+        "path": "/tmp/open-tickets-validation/json-refreshed-graph.bin",
+        "sha256": "67b5e7b518bd768ce218a2e0bd627fc5784f3f896db6bdf0b1a98cb245f7ae78"
+      },
+      "headBuilds": 1,
+      "inventory": 2055,
+      "modules": 10,
+      "retainedGraph": {
+        "path": "/tmp/open-tickets-validation/json-retained/head-graph.json",
+        "sha256": "83939594f186598d8fcec6e6fbb44f28ed665af2adc9dc34fdd737d50b15c240"
+      },
+      "revision": "f617353f1b84425a7ae89cd5e2f452b4333386a3",
+      "seal": {
+        "path": "/tmp/open-tickets-validation/json-retained/SILCapture/build.json",
+        "sha256": "f59f7c6a1770f7ce64b5158210e02fce03e9a4ff1438374519949fb4a847dce8"
+      },
+      "sourceExport": {
+        "path": "/tmp/open-tickets-validation/json-retained/source-export.json",
+        "sha256": "f0e2ebc21ae01a6177c0b7bf179fa0b949b02de0ed0634169d74d7933dde42af"
+      },
+      "toolchain": "Xcode 27.1\nBuild version 27A9275\nApple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx26.0\n",
+      "uiMethods": 409,
+      "verification": {
+        "path": "/tmp/open-tickets-validation/json-final-verify.json",
+        "sha256": "712f3cf61934bf05632368f5ca130252a4d820f9f8d2ebf65236e5f9739b1714"
+      },
+      "verifiedNoOpSelected": [],
+      "verifiedShouldRun": false
+    }
+  },
+  "comparison": {
+    "mappedMethods": 409,
+    "probes": {
+      "documentation": {
+        "mediansSeconds": {
+          "inline": 7.467759013175964,
+          "json": 0.4235100746154785
+        },
+        "selected": 0,
+        "selectedIdentifiersSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "empty": {
+        "mediansSeconds": {
+          "inline": 7.536108016967773,
+          "json": 0.4067959785461426
+        },
+        "selected": 0,
+        "selectedIdentifiersSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "helper": {
+        "mediansSeconds": {
+          "inline": 7.519876956939697,
+          "json": 0.49340999126434326
+        },
+        "selected": 1982,
+        "selectedIdentifiersSHA256": "9ae4233340c27f7dc3857d6132ab3726241704726c866f00f0ee047d778fff69"
+      },
+      "mixed": {
+        "mediansSeconds": {
+          "inline": 7.5743629932403564,
+          "json": 0.5229669809341431
+        },
+        "selected": 1613,
+        "selectedIdentifiersSHA256": "1e4821761bc0177ce73097642628b4f57ca2ac7acef01af815ca1f63c9b092f0"
+      },
+      "production": {
+        "mediansSeconds": {
+          "inline": 7.587026000022888,
+          "json": 0.46899592876434326
+        },
+        "selected": 1613,
+        "selectedIdentifiersSHA256": "1e4821761bc0177ce73097642628b4f57ca2ac7acef01af815ca1f63c9b092f0"
+      }
+    },
+    "result": {
+      "path": "/tmp/open-tickets-validation/comparison-refreshed-results.json",
+      "sha256": "a9d43ad78b008563530afe73db47c4e38e224b9637af35e9d21e766ba2e0db78"
+    }
+  },
+  "compilerReplay": false,
+  "completedIssues": [
+    67,
+    75,
+    76,
+    77
+  ],
+  "date": "2026-10-30",
+  "finalTool": {
+    "path": ".build/release/swift-test-impact",
+    "sha256": "2cc389afab0ecd54b1bc3e7d1a3bf5b4a866c24cc49c9a45a0ee68d011bbf0e6"
+  },
+  "fiveDirectiveBenchmark": {
+    "decodeExcluded": true,
+    "dedicatedBenchmarkMachine": false,
+    "discardedWarmupSamples": 2,
+    "issue76ReportedBaselineValidateSeconds": 5.233,
+    "mediansSeconds": {
+      "audit": 0.6104938983917236,
+      "resolve": 0.20975995063781738,
+      "validate": 0.5937819480895996
+    },
+    "result": {
+      "path": "/tmp/open-tickets-validation/inline-benchmark-final.json",
+      "sha256": "ef360d3a780ed84352a98807bf5f17052f1cab4b5d0f71c8dfa298dcf32951af"
+    },
+    "samples": 7
+  },
+  "historicalScopes": [
+    {
+      "blockers": [
+        "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: ChainOfCustodyUITests/NotificationUITests.swift",
+        "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NotificationUITests.swift:331; Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String> in ChainOfCustodyUITests.NotificationHubUITests.testFiltersAndBulkReadClearOnlyAffectVisibleSelection() at ChainOfCustodyUITests/NotificationUITests.swift:354; Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances"
+      ],
+      "knownConsumers": 1,
+      "report": {
+        "path": "/tmp/open-tickets-validation/precision-0/scope.json",
+        "sha256": "0ad9ad338808e3901182addbc539381e990127f3ecd360022165f41bb6d2b496"
+      },
+      "seconds": 28.594441056251526,
+      "selected": 1961,
+      "ui": 384
+    },
+    {
+      "blockers": [
+        "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: ChainOfCustodyUITests/NotificationUITests.swift",
+        "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NotificationUITests.swift:331; Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String> in ChainOfCustodyUITests.NotificationHubUITests.testFiltersAndBulkReadClearOnlyAffectVisibleSelection() at ChainOfCustodyUITests/NotificationUITests.swift:354; Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances"
+      ],
+      "knownConsumers": 1,
+      "report": {
+        "path": "/tmp/open-tickets-validation/precision-1/scope.json",
+        "sha256": "b9a78238793561067577d59b3233934ee9bd5bbe43bd7b5b0f0d398fe0fb6f38"
+      },
+      "seconds": 28.523942947387695,
+      "selected": 1981,
+      "ui": 397
+    },
+    {
+      "blockers": [
+        "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; String in ChainOfCustodyUITests.TabBarBadgeUITests.testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently() at ChainOfCustodyUITests/TabBarBadgeUITests.swift:5; Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)"
+      ],
+      "knownConsumers": 125,
+      "report": {
+        "path": "/tmp/open-tickets-validation/precision-2/scope.json",
+        "sha256": "adcb7dc7cb325e6adb3a6da96049983ecc3baf229d9c51ff89a8be5fad3c8fa8"
+      },
+      "seconds": 37.35521101951599,
+      "selected": 2000,
+      "ui": 403
+    },
+    {
+      "blockers": [
+        "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; String in ChainOfCustodyUITests.TabBarBadgeUITests.testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently() at ChainOfCustodyUITests/TabBarBadgeUITests.swift:5; Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282)"
+      ],
+      "knownConsumers": 125,
+      "report": {
+        "path": "/tmp/open-tickets-validation/precision-3/scope.json",
+        "sha256": "7790542899f18bf3baf22dd6dd88f9c3e36541b41300a5b35813a8bd104f0479"
+      },
+      "seconds": 36.88188600540161,
+      "selected": 2000,
+      "ui": 403
+    }
+  ],
+  "hybridRepeatedQueries": {
+    "mappedMethods": 409,
+    "probes": {
+      "documentation": {
+        "mediansSeconds": {
+          "hybrid-0": 1.2767459154129028,
+          "hybrid-1": 1.2170939445495605
+        },
+        "selected": 0,
+        "selectedIdentifiersSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "empty": {
+        "mediansSeconds": {
+          "hybrid-0": 1.177738070487976,
+          "hybrid-1": 1.2218040227890015
+        },
+        "selected": 0,
+        "selectedIdentifiersSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "helper": {
+        "mediansSeconds": {
+          "hybrid-0": 1.3037710189819336,
+          "hybrid-1": 1.2569990158081055
+        },
+        "selected": 1982,
+        "selectedIdentifiersSHA256": "9ae4233340c27f7dc3857d6132ab3726241704726c866f00f0ee047d778fff69"
+      },
+      "mixed": {
+        "mediansSeconds": {
+          "hybrid-0": 1.2460449934005737,
+          "hybrid-1": 1.280377984046936
+        },
+        "selected": 1613,
+        "selectedIdentifiersSHA256": "1e4821761bc0177ce73097642628b4f57ca2ac7acef01af815ca1f63c9b092f0"
+      },
+      "production": {
+        "mediansSeconds": {
+          "hybrid-0": 1.216096043586731,
+          "hybrid-1": 1.3371319770812988
+        },
+        "selected": 1613,
+        "selectedIdentifiersSHA256": "1e4821761bc0177ce73097642628b4f57ca2ac7acef01af815ca1f63c9b092f0"
+      }
+    },
+    "result": {
+      "path": "/tmp/open-tickets-validation/hybrid-query-benchmark.json",
+      "sha256": "20afc3ead300a75c1b002e7091674518a93631fcd18102e898e41083c8f3dc7e"
+    }
+  },
+  "initialCaptureTool": {
+    "path": "/tmp/open-tickets-validation/initial-tool",
+    "sha256": "85f23abe3fe7b3dcded81d8f757e7f83d30f5ee51e61f209e22aa8b7fca302f3"
+  },
+  "initialComparison": {
+    "mappedMethods": 409,
+    "probes": {
+      "documentation": {
+        "mediansSeconds": {
+          "inline": 7.320115089416504,
+          "json": 0.444303035736084
+        },
+        "selected": 0,
+        "selectedIdentifiersSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "empty": {
+        "mediansSeconds": {
+          "inline": 7.327855110168457,
+          "json": 0.5036540031433105
+        },
+        "selected": 0,
+        "selectedIdentifiersSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "helper": {
+        "mediansSeconds": {
+          "inline": 7.352496981620789,
+          "json": 0.5060200691223145
+        },
+        "selected": 1982,
+        "selectedIdentifiersSHA256": "9ae4233340c27f7dc3857d6132ab3726241704726c866f00f0ee047d778fff69"
+      },
+      "mixed": {
+        "mediansSeconds": {
+          "inline": 7.427579045295715,
+          "json": 0.4723780155181885
+        },
+        "selected": 1613,
+        "selectedIdentifiersSHA256": "1e4821761bc0177ce73097642628b4f57ca2ac7acef01af815ca1f63c9b092f0"
+      },
+      "production": {
+        "mediansSeconds": {
+          "inline": 7.4186670780181885,
+          "json": 0.4840439558029175
+        },
+        "selected": 1613,
+        "selectedIdentifiersSHA256": "1e4821761bc0177ce73097642628b4f57ca2ac7acef01af815ca1f63c9b092f0"
+      }
+    },
+    "result": {
+      "path": "/tmp/open-tickets-validation/comparison-results.json",
+      "sha256": "9fea40a573b7588426c26244e727958ef767e9dabd177b1a2f710b5bdcdb3fcd"
+    }
+  },
+  "json-controlRepeatedQueries": {
+    "mappedMethods": 409,
+    "probes": {
+      "documentation": {
+        "mediansSeconds": {
+          "json-control-0": 0.5442399978637695,
+          "json-control-1": 0.6119650602340698
+        },
+        "selected": 0,
+        "selectedIdentifiersSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "empty": {
+        "mediansSeconds": {
+          "json-control-0": 0.5771080255508423,
+          "json-control-1": 0.5782240629196167
+        },
+        "selected": 0,
+        "selectedIdentifiersSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "helper": {
+        "mediansSeconds": {
+          "json-control-0": 0.65323805809021,
+          "json-control-1": 0.6616629362106323
+        },
+        "selected": 1980,
+        "selectedIdentifiersSHA256": "a0129b9af8d51e9957fc2cbb9ad19cd501e9807fed24740b43d891359b46e808"
+      },
+      "mixed": {
+        "mediansSeconds": {
+          "json-control-0": 0.5810459852218628,
+          "json-control-1": 0.6683089733123779
+        },
+        "selected": 1611,
+        "selectedIdentifiersSHA256": "b30b8968b63b74a58d74125c8d877e008dcd7949fcbfc352273a9cf45e586be3"
+      },
+      "production": {
+        "mediansSeconds": {
+          "json-control-0": 0.5686860084533691,
+          "json-control-1": 0.6356509923934937
+        },
+        "selected": 1611,
+        "selectedIdentifiersSHA256": "b30b8968b63b74a58d74125c8d877e008dcd7949fcbfc352273a9cf45e586be3"
+      }
+    },
+    "result": {
+      "path": "/tmp/open-tickets-validation/json-control-query-benchmark.json",
+      "sha256": "0b90cd46de23f45035ae37633a6ff885a4985e82ec814526a8660947b0a52ce4"
+    }
+  },
+  "precisionTargetsUnproven": [
+    58,
+    61
+  ],
+  "tests": {
+    "captureHelper": {
+      "passed": 6
+    },
+    "coverageCLI": "passed",
+    "distribution": {
+      "passed": 5,
+      "skipped": 1
+    },
+    "inlineMappingCLI": "passed",
+    "mappingMaintenanceCLI": "passed",
+    "releaseSuite": {
+      "count": 514,
+      "log": {
+        "path": "/tmp/open-tickets-complete-final.log",
+        "sha256": "8cd833cd126fd553761bde6c67b0be55e46252d750ecfe6c3d94438391a189b2"
+      },
+      "seconds": 359.527
+    },
+    "sealedReplay": {
+      "path": "/tmp/open-tickets-sealed-final.log",
+      "sha256": "60e629d2b13a6438d7d8e01a5325e299bc18c23f5eb57d7a9122043a9b306890"
+    },
+    "skillValidation": "passed"
+  }
+}

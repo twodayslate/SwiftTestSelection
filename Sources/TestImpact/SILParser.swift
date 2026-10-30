@@ -224,6 +224,7 @@ public enum SILParser {
                     }
                     if line.split(separator: " ", maxSplits: 2)[1] == "shared" { sharedSymbols.insert(match[0]) }
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
+                    current!.captureModules = [module]
                     current!.dynamicCallSignatures = []
                     current!.dynamicCallSites = []
                     current!.receiverErrorEffects = []
@@ -266,6 +267,7 @@ public enum SILParser {
                 for (type, values) in metatypeInputs where values.count == headerMetatypeCounts[type] && values.isDisjoint(with: usedMetatypeInputs) {
                     current!.receiverTypeOrigins?.remove("input:" + type)
                 }
+                current!.dynamicDeclarationModules = Dictionary(uniqueKeysWithValues: current!.dynamicDeclarations.map { ($0, [module]) })
                 current!.compilerReferences = current!.dependencies
                 functions[current!.id] = current!
                 current = nil

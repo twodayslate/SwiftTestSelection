@@ -13,6 +13,8 @@ private let usage = """
 swift-test-impact — compiler-derived test selection for Swift and Xcode
 
 USAGE
+  swift-test-impact mapping-review --graph FILE [--mappings PROPOSED.json]
+                           [--base-graph FILE --changes FILE.json] [--output FILE]
   swift-test-impact inline-audit --graph FILE [--output FILE]
   swift-test-impact inline-proposal --source FILE --module MODULE --suite CLASS
                            [--method 'testName()'] --payload FILE.json [--output FILE]
@@ -360,6 +362,34 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
     }
 } else {
     do {
+        if arguments.first == "mapping-review" {
+            var values: [String: String] = [:]
+            var cursor = 1
+            while cursor < arguments.count {
+                let key = arguments[cursor]
+                guard ["--graph", "--mappings", "--base-graph", "--changes", "--output"].contains(key),
+                      values[key] == nil, cursor + 1 < arguments.count else { throw ImpactError("Invalid mapping-review option: " + key) }
+                values[key] = arguments[cursor + 1]; cursor += 2
+            }
+            guard let path = values["--graph"], (values["--base-graph"] == nil) == (values["--changes"] == nil) else {
+                throw ImpactError("mapping-review requires --graph and both --base-graph/--changes for a comparison")
+            }
+            if let output = values["--output"] {
+                let destination = URL(fileURLWithPath: output).standardizedFileURL.resolvingSymlinksInPath()
+                guard values.filter({ $0.key != "--output" }).values.allSatisfy({ URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath() != destination }) else {
+                    throw ImpactError("Review output must differ from every input")
+                }
+            }
+            func data(_ path: String) throws -> Data { try Data(contentsOf: URL(fileURLWithPath: path)) }
+            let graph = try GraphArchive.decode(data(path))
+            let proposed = try values["--mappings"].map { try JSONDecoder().decode(UIFeatureMappings.self, from: data($0)) }
+            let base = try values["--base-graph"].map { try GraphArchive.decode(data($0)) }
+            let changes = try values["--changes"].map { try JSONDecoder().decode([FileChange].self, from: data($0)) }
+            let review = MappingMaintenance.review(current: graph, proposed: proposed, previous: base, changes: changes)
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            try write(encoder.encode(review), to: values["--output"])
+            exit(0)
+        }
         if arguments.first == "inline-audit" {
             var values: [String: String] = [:]
             var cursor = 1

@@ -76,3 +76,15 @@ that a conservatively retained test has no dependency explanation.
 
 This validation reuses retained application products. It does not execute
 application test bodies or establish full-run equivalence.
+
+## More specific remaining-effect diagnostics
+
+The receiver checker now separates supported equality from unproven assertion
+failure formatting. For `XCTAssertEqual` on `Optional<String>`, `XCTWaiter.Result`
+and similar values, it reports the containing compiler function/source location
+and the runtime formatting protocols whose absence/effects are not proven.
+`TextOutputStreamable`, `CustomStringConvertible`, `CustomDebugStringConvertible`
+and `CustomReflectable` can introduce additional code beyond Equatable. Existing
+compiled retroactive-conformance controls demonstrate why accepting nominal SDK
+names alone would be unsound. The diagnostic does not establish a new dependency
+edge or remove a known consumer. The 153-test target remains unproven.

@@ -27,6 +27,11 @@ public struct FunctionNode: Codable, Sendable {
     /// Compiler-demangled nominal context, including the original module of an
     /// extended type. Nil is legacy/missing evidence; empty means unsupported.
     public var nominalTypeContext: String? = nil
+    /// Modules contributing compiler evidence, independent of display/definition ownership.
+    public var captureModules: Set<String>? = nil
+    /// Emitting modules for each dynamic declaration. Empty stubs contribute no
+    /// witness ownership; nil means legacy or incomplete provenance.
+    public var dynamicDeclarationModules: [String: Set<String>]? = nil
     /// Includes function values passed as callbacks, not only immediate calls.
     public var dependencies: Set<String>
     /// Exact SIL function_ref and key-path function edges (including escaped
@@ -55,6 +60,34 @@ public struct FunctionNode: Codable, Sendable {
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>
+
+    /// Combine evidence rather than choosing one imported implementation. Missing
+    /// optional proof stays missing; an empty body never establishes purity.
+    mutating func mergeEvidence(_ other: FunctionNode) {
+        dependencies.formUnion(other.dependencies)
+        uncertainties.formUnion(other.uncertainties)
+        dynamicDeclarations.formUnion(other.dynamicDeclarations)
+        resolvedDynamicDeclarations.formUnion(other.resolvedDynamicDeclarations)
+        captureModules = (captureModules ?? [module]).union(other.captureModules ?? [other.module])
+        if var provenance = dynamicDeclarationModules, let incoming = other.dynamicDeclarationModules {
+            provenance.merge(incoming) { $0.union($1) }
+            dynamicDeclarationModules = provenance
+        } else {
+            dynamicDeclarationModules = nil
+        }
+        func union(_ lhs: Set<String>?, _ rhs: Set<String>?) -> Set<String>? {
+            guard let lhs, let rhs else { return nil }
+            return lhs.union(rhs)
+        }
+        compilerReferences = union(compilerReferences, other.compilerReferences)
+        dynamicCallSignatures = union(dynamicCallSignatures, other.dynamicCallSignatures)
+        stateAccesses = union(stateAccesses, other.stateAccesses)
+        receiverTypeOrigins = union(receiverTypeOrigins, other.receiverTypeOrigins)
+        receiverGenericCalls = union(receiverGenericCalls, other.receiverGenericCalls)
+        dynamicCallSites = union(dynamicCallSites, other.dynamicCallSites)
+        receiverErrorEffects = union(receiverErrorEffects, other.receiverErrorEffects)
+        receiverIndirectErrorEffects = union(receiverIndirectErrorEffects, other.receiverIndirectErrorEffects)
+    }
 
     /// SILOwnership gives emitted adapters a persistent per-module identity but
     /// removes conversion-site locations, which are not source declarations.
@@ -97,6 +130,8 @@ public struct DependencyGraph: Codable, Sendable {
     public var tests: [String: Set<String>]
     public var diagnostics: [String]
     public var testDiagnostics: [String: [String]] = [:]
+    /// Compiler-authenticated class identities from the matching built modules.
+    public var compilerClassIdentities: [String: CompilerClassIdentity]? = nil
     /// Imports injected by compiler options, including binary modules absent
     /// from project inventories. Each captured module has an entry, even when
     /// empty. Nil or a missing module entry denotes absent compiler-option proof.
