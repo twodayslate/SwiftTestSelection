@@ -97,7 +97,9 @@ try:
         value=json.loads(report.read_text())
         assert row['buildCount']==1 and value['baseRevision']==expected_base and value['headRevision']==head
         assert value['analysisMode']=='head-only-git-syntax'
-        assert not any(e['revision']!=head and e['phase']!='baseSourceSyntax' for e in value['analysisEvents'])
+        # Historical source syntax and cache metrics belong to the base revision;
+        # only compiler work must be confined to the head.
+        assert not any(e['revision']!=head and e['phase'] in ['build', 'enumeration', 'extraction'] for e in value['analysisEvents'])
         assert all(Path(c[c.index('-derivedDataPath')+1]).resolve().parent==bundle for c in calls if 'build-for-testing' in c and '-showBuildSettings' not in c)
         row.update(selectedTests=value['selectedTests'],totalTests=value['totalTests'],diagnostics=value['diagnostics'],phases=value['analysisEvents'],base=value['baseRevision'],head=head)
         print('PASS',label,len(value['selectedTests']),row['seconds'],flush=True)

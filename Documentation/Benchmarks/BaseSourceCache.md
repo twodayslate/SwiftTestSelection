@@ -42,7 +42,8 @@ The opt-in release benchmark consumes a JSON array with `name`, `root`, `graph`,
 `head-graph.json`; `report` is its complete primary report with selection scopes.
 The repository must still contain both report revisions. Each repetition runs
 the old independent loader and the shared cache, alternating their order, and
-asserts exact primary and scoped identifiers and diagnostics against the report.
+asserts exact primary and scoped identifiers against the report and complete
+diagnostics against the uncached loader on the same in-memory graph.
 It uses identical captured compiler evidence without rebuilding or replaying the
 compiler. Graph decoding and Git diff construction occur outside measured totals.
 
