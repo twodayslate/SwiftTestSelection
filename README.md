@@ -288,6 +288,13 @@ missing UI coverage retain their conservative fallbacks. Mixed production and
 resolved test-entry edits can use the declared contract; ambiguous test changes
 cannot. Reports disclose this assumption in `limitations`.
 
+For an independently reviewed helper assertion-formatting boundary, head-only
+selection also supports exact `helperFormattingContracts` declarations in central
+JSON or native Swift comments. These discharge only the named formatting
+uncertainty, retain known callers and all other effects, and report exact
+before/after selected IDs. See [reviewed helper formatting contracts](Documentation/HelperFormattingContracts.md)
+for the schema, trust boundary, revision rules and actionable fallback fields.
+
 Optionally add `"ignoredDocumentation": ["README.md", "AGENTS.md", "Documentation/**.md"]`
 to exclude explicitly reviewed Markdown paths in mixed changes as well as
 standalone documentation changes. Patterns must be repository-relative and end

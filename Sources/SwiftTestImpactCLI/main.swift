@@ -333,7 +333,24 @@ private func render(_ report: ImpactReport) -> String {
         }
         describe(decision.result, indent: "  ")
     }
-    for diagnostic in report.diagnostics { lines.append("Diagnostic [\(diagnostic.code)]: \(diagnostic.message)") }
+    for diagnostic in report.diagnostics {
+        lines.append("Diagnostic [\(diagnostic.code)]: \(diagnostic.message)")
+        if let fallback = diagnostic.fallback {
+            if !diagnostic.message.contains(fallback.requiredEvidence) { lines.append("  " + fallback.requiredEvidence) }
+            lines.append("  Uncertainty-only tests: \(fallback.uncertaintyOnlyTests.count); overlapping positive reasons: \(fallback.overlappingPositiveTests.count)")
+            if !fallback.path.isEmpty { lines.append("  Boundary: " + fallback.path.joined(separator: " → ")) }
+        }
+    }
+    for decision in report.helperContractDecisions ?? [] {
+        lines.append("Reviewed formatting declaration [\(decision.contractID)]: \(decision.status)")
+        for failure in decision.failures { lines.append("  " + failure) }
+        for boundary in decision.dischargedBoundaries {
+            lines.append("  Discharged formatting only: \(boundary.producerSymbol) → \(boundary.assertionSymbol)<\(boundary.substitutions)>")
+        }
+    }
+    if let preview = report.helperContractPreview {
+        lines.append("Contract-dependent selection: \(preview.withoutDeclarations.count) → \(preview.withDeclarations.count); \(preview.removed.count) removed, \(preview.added.count) added. This relies on reviewed declarations, not compiler-proven isolation or observed coverage.")
+    }
     for reason in report.fullRunReasons { lines.append("Full-suite fallback: \(reason)") }
     for test in report.selectedTests {
         lines.append("\n\(test)")

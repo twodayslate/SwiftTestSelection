@@ -35,6 +35,10 @@ public struct ImpactReport: Codable, Sendable {
     public var ignoredChanges: [String] = []
     public var uiMappingCoverage: UIMappingCoverage?
     public var uiConditionDecisions: [UIConditionDecision]? = nil
+    public var helperContractDecisions: [HelperContractDecision]? = nil
+    public var formattingBoundaries: [FormattingBoundary]? = nil
+    public var helperContractReviewContext: HelperContractReviewContext? = nil
+    public var helperContractPreview: HelperContractPreview? = nil
     public var runtimeBoundaryDecisions: [RuntimeBoundaryDecision]? = nil
 
     public var filter: String? {
@@ -152,6 +156,7 @@ public enum StaticSelector {
 }
 
 public struct SelectionDiagnostic: Codable, Sendable {
+    public var fallback: SelectionFallback? = nil
     public var code: String
     public var message: String
     public var tests: [String]

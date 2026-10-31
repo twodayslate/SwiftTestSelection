@@ -1,0 +1,23 @@
+[
+  {
+    "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+    "producer": "ChainOfCustodyUITests:TabBarBadgeUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently\"):58:testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+    "producerSymbol": "$s21ChainOfCustodyUITests011TabBarBadgeD0C012testCalendarG41MirrorsInboxAndCanBeDisabledIndependentlyyyF",
+    "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+    "substitutions": "Optional<String>",
+    "baseRevision": "ebcda2a339c9077c447397123a0cd3d3ab80aa1f",
+    "baseSources": "f1a6b339e386fa8096c070314cc07fafe075c68389ff78e777e0c57342201a89",
+    "headSources": "5314b1899e5cf1bec5dcc9d7016fe9f4e296ca408ff5a761e95daec88b0cdd30",
+    "toolchain": "Xcode 27.0\nBuild version 27A266a\nApple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx26.0\n",
+    "buildContext": "a921045dce794de7b0956bb74e0f4ded98fb2c14927447ad61e807eebd5a0e61",
+    "version": 1,
+    "id": "coc-299-formatting-1",
+    "helperSymbol": "$sSo11XCUIElementC21ChainOfCustodyUITestsE12waitForValue_7timeoutSbSS_SdtF",
+    "guarantees": [
+      "formatting-has-no-shared-state-or-resource-effects",
+      "formatting-does-not-register-or-escape-callbacks",
+      "formatting-does-not-inject-test-or-sdk-receivers"
+    ],
+    "rationale": "Reviewed for issue #81 against the recorded base/head sources and captured Xcode 27.0 / Swift 6.4 runtime. This producer compares XCUIElement.value cast to Optional<String> with string literals. Formatting receives only nil or a concrete Swift.String value, not the original XCUIElement/Any object. Project source at both revisions has no formatting/reflection conformance for these types. The captured SnapshotTesting/IssueReporting dependency extensions were inspected; their snapshotDescription/placeholder protocols do not supply XCTest runtime formatting witnesses. This review explicitly trusts Apple's built-in formatting/reflection for these concrete values to have no shared/resource mutation, callback registration/escape or test/SDK receiver injection. It does not claim binary purity was compiler-proven. XCTest failure recording and evaluation of assertion expressions remain under their existing analysis; no helper, caller, lifecycle or general SDK effects are authorized by this declaration."
+  }
+]

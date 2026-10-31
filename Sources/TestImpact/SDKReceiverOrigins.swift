@@ -13,6 +13,7 @@ struct SDKReceiverOrigins {
     private struct Proof { var blocker: String?; var units: [SourceUnit] }
     private var results: [Set<String>: Proof] = [:]
     private var effects = ExternalHelperEffects()
+    var formattingReview: HelperContractEvaluation? = nil
     // Public immutable constants from the SDK's gesture, keyboard and content-size headers.
     // Exact names only: a similarly named project global is not an SDK contract.
     private static let sdkConstants: Set<String> = {
@@ -304,8 +305,7 @@ struct SDKReceiverOrigins {
                     guard let calls = node.receiverGenericCalls else { return "Missing generic receiver-call evidence; recapture sealed SIL" }
                     for symbol in generic.sorted() {
                         let arguments = calls.filter { $0.hasPrefix(symbol + "\t") }.map { String($0.dropFirst(symbol.count + 1)) }
-                        guard !arguments.isEmpty, arguments.allSatisfy({ SDKReceiverContracts.allows($0, for: symbol) }),
-                              !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }),
+                        guard !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }),
                               arguments.allSatisfy({ argument in
                                   guard let names = SDKReceiverContracts.requiredTypeIdentities(argument, for: symbol) else { return false }
                                   let roots = Set(names.map { String($0.split(separator: ".")[0]) })
@@ -314,6 +314,11 @@ struct SDKReceiverOrigins {
                                       !$0.1.units.contains(where: { $0.kind == "type" && roots.contains(SDKTestHelperSyntax.canonicalName(String($0.scope.split(separator: ".").last ?? ""))) })
                                   }
                               }) else {
+                            return "Unproven generic receiver contract for " + symbol + " in " + node.module + "." + node.name +
+                                "; missing or ambiguous source type identities/imports; no formatting declaration resolves this binding"
+                        }
+                        guard !arguments.isEmpty, arguments.allSatisfy({ SDKReceiverContracts.allows($0, for: symbol) ||
+                            formattingReview?.allows(node: node, owners: owners, symbol: symbol, arguments: $0) == true }) else {
                             let missing = arguments.sorted().compactMap { SDKReceiverContracts.missingWitnessProof($0, for: symbol) }
                             let location = node.regions.first.map { " at " + $0.path + ":" + String($0.startLine) } ?? ""
                             return "Unproven generic receiver contract for " + symbol + " with substitutions " + arguments.sorted().joined(separator: "; ") +

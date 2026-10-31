@@ -1023,6 +1023,7 @@ func headOnlyNestedOpaqueResultsRequireFallback(result: String) throws {
         headRevision: head, root: root, mappingPath: ".swift-test-selection.json", documentation: [], buildEvidenceFailure: nil)
     #expect(uncertain[0].report.selectedTests.contains("UI/Notes/testNotes()"))
     #expect(uncertain[0].report.diagnostics.contains { $0.code == "head_only_runtime_uncertainty" })
+    #expect(uncertain[0].report.diagnostics.allSatisfy { $0.fallback?.selectionScope == request.scopes[0].name })
 }
 
 @Test func headOnlyScopeDoesNotExcludeTestEntriesUsedAsHelpers() {

@@ -8,7 +8,7 @@ import Foundation
 enum SDKTestHelperIsolation {
     static func blocker(_ unit: SourceUnit, previous: SourceUnit?, current: XcodeTestGraph,
                         base: [String: SwiftSourceSnapshot], graph: DependencyGraph, index: DependencyIndex,
-                        unownedBase: [String: SwiftSourceSnapshot] = [:]) -> String? {
+                        unownedBase: [String: SwiftSourceSnapshot] = [:], formattingReview: HelperContractEvaluation? = nil) -> String? {
         guard let evidence = unit.sdkTestHelper, let old = previous?.sdkTestHelper,
               evidence.version == SDKTestHelperSyntax.currentVersion, old.version == evidence.version else { return "Missing supported base/head SDK helper evidence; recapture the head graph" }
         if let reason = evidence.blocker ?? old.blocker { return reason }
@@ -144,6 +144,7 @@ enum SDKTestHelperIsolation {
             guard !units.isEmpty, units.allSatisfy({ accepted.contains($0.key) }) else { return "Compiler caller has no verified source owner: \(node.name)" }
         }
         var receiverOrigins = SDKReceiverOrigins()
+        receiverOrigins.formattingReview = formattingReview
         if let reason = receiverOrigins.blocker(tests: consumers, current: current, graph: graph) {
             return "Unproven SDK receiver origin: " + reason
         }

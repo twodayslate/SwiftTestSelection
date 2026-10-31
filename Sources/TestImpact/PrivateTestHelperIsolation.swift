@@ -22,9 +22,14 @@ enum PrivateTestHelperIsolation {
         fileprivate var preservedHelperDeclarations: [String: [SourceUnit]] = [:]
         fileprivate var sdkEnvironmentRejections: [String: (ids: Set<String>, reason: String)] = [:]
         fileprivate(set) var receiverOriginBlocker: String?
+        fileprivate(set) var isolationBlocker: String?
         private(set) var evaluationCount = 0
         fileprivate(set) var sharedStateSymbols = Set<String>()
         fileprivate(set) var hasUnprovenCalleeEffects = false
+
+        init(formattingReview: HelperContractEvaluation? = nil) {
+            receiverOrigins.formattingReview = formattingReview
+        }
 
         fileprivate mutating func begin(_ key: String) {
             active.insert(key)
@@ -53,6 +58,7 @@ enum PrivateTestHelperIsolation {
             case let .enter(candidate, prior):
                 if traversal.completed[candidate.key] != nil { continue }
                 guard !traversal.active.contains(candidate.key) else {
+                    traversal.isolationBlocker = "Recursive helper caller: " + candidate.key
                     traversal.completed[candidate.key] = false
                     continue
                 }
@@ -97,13 +103,29 @@ enum PrivateTestHelperIsolation {
             $0.proofVersion == PrivateTestHelperSyntax.currentProofVersion && $0.calleeEffectsSupported != true
         }) { traversal.hasUnprovenCalleeEffects = true }
         guard let syntax = unit.privateTestHelper, syntax.proofVersion == PrivateTestHelperSyntax.currentProofVersion,
-              syntax.statements != nil, syntax.calleeEffectsSupported == true, unit.headOnlyBodySupported == true,
-              previous == nil || (previous?.headOnlyBodySupported == true &&
-                  previous?.privateTestHelper.map { $0.proofVersion == PrivateTestHelperSyntax.currentProofVersion && $0.calleeEffectsSupported == true && syntax.preservesEffects(of: $0) } == true),
-              current.tests.allSatisfy({ test in
-                  guard let roots = graph.tests[test], !roots.isEmpty, graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
-                  return roots.allSatisfy { graph.functions[$0] != nil }
-              }) else { return nil }
+              syntax.statements != nil, syntax.calleeEffectsSupported == true, unit.headOnlyBodySupported == true else {
+            traversal.isolationBlocker = unit.privateTestHelperBlocker ?? "Missing supported head helper syntax/statements for " + unit.key
+            return nil
+        }
+        if let previous {
+            guard previous.headOnlyBodySupported == true, let old = previous.privateTestHelper,
+                  old.proofVersion == PrivateTestHelperSyntax.currentProofVersion, old.calleeEffectsSupported == true else {
+                traversal.isolationBlocker = previous.privateTestHelperBlocker ?? "Base helper lacks supported nonescaping source/callee evidence: " + previous.key
+                return nil
+            }
+            guard syntax.preservesEffects(of: old) else {
+                traversal.isolationBlocker = "Changed helper does not preserve base effect statements: " + previous.key
+                return nil
+            }
+        }
+        let missingTests = current.tests.filter { test in
+            guard let roots = graph.tests[test], !roots.isEmpty, graph.testDiagnostics[test]?.isEmpty ?? true else { return true }
+            return roots.contains { graph.functions[$0] == nil }
+        }
+        guard missingTests.isEmpty else {
+            traversal.isolationBlocker = "Incomplete test/lifecycle compiler roots: " + missingTests.sorted().joined(separator: ", ")
+            return nil
+        }
         guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules.union(["CoreGraphics"])),
               (Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)).allSatisfy({ $0.helperNamesUnshadowed == true }) else {
             traversal.hasUnprovenCalleeEffects = true
@@ -153,35 +175,47 @@ enum PrivateTestHelperIsolation {
             traversal.hasUnprovenCalleeEffects = true
             return nil
         }
-        guard contextAllows(unit, name: syntax.name, existed: previous != nil, current: current, base: base) else { return nil }
+        guard contextAllows(unit, name: syntax.name, existed: previous != nil, current: current, base: base) else {
+            traversal.isolationBlocker = "Unsupported base/head helper accessibility, ownership or type context: " + unit.key
+            return nil
+        }
         let headUnits = current.sources.values.flatMap(\.units), baseUnits = base.values.flatMap(\.units)
         let ids = symbols(unit, graph: graph, index: index)
-        guard !ids.isEmpty else { return nil }
+        guard !ids.isEmpty else { traversal.isolationBlocker = "Missing compiled helper body: " + unit.key; return nil }
         var callers = headUnits.filter { $0.region.path == unit.region.path && $0.key.hasPrefix(module + ":") &&
             $0.kind == "function" && syntax.callerLines.contains($0.region.startLine) }
-        guard callers.count == syntax.callerLines.count else { return nil }
+        guard callers.count == syntax.callerLines.count else {
+            traversal.isolationBlocker = "Missing or ambiguous head source callers at " + unit.region.path + ": " + syntax.callerLines.sorted().map(String.init).joined(separator: ", ")
+            return nil
+        }
         if let previous, let oldSyntax = previous.privateTestHelper {
             let oldCallers = baseUnits.filter { $0.region.path == previous.region.path && $0.key.hasPrefix(module + ":") &&
                 $0.kind == "function" && oldSyntax.callerLines.contains($0.region.startLine) }
-            guard oldCallers.count == oldSyntax.callerLines.count else { return nil }
+            guard oldCallers.count == oldSyntax.callerLines.count else {
+                traversal.isolationBlocker = "Missing or ambiguous base source callers at " + previous.region.path + ": " + oldSyntax.callerLines.sorted().map(String.init).joined(separator: ", ")
+                return nil
+            }
             // Changed/deleted headers have no historical graph proof. Even old
             // callers which stopped calling the helper must survive as entries.
             for old in oldCallers {
                 let surviving = headUnits.filter { $0.key == old.key && $0.region.path == old.region.path }
-                guard surviving.count == 1 else { return nil }
+                guard surviving.count == 1 else { traversal.isolationBlocker = "Removed or ambiguous base caller: " + old.key; return nil }
                 callers += surviving
             }
         }
         callers = Dictionary(grouping: callers, by: \.key).values.compactMap(\.first)
         var helpers: [(SourceUnit, SourceUnit)] = []
         for caller in callers {
-            guard caller.headOnlyBodySupported == true else { return nil }
+            guard caller.headOnlyBodySupported == true else { traversal.isolationBlocker = "Unsupported caller attributes/body: " + caller.key; return nil }
             if XcodeFineSelector.isTestEntry(caller, in: current) { continue }
             let old = baseUnits.filter { $0.key == caller.key && $0.region.path == caller.region.path }
             // Only unchanged intermediate helpers may extend the inbound proof.
             // In particular, a head graph says nothing about removed old effects.
             guard old.count == 1, let prior = old.first,
-                  caller.privateTestHelper?.statements?.map(\.signature) == prior.privateTestHelper?.statements?.map(\.signature) else { return nil }
+                  caller.privateTestHelper?.statements?.map(\.signature) == prior.privateTestHelper?.statements?.map(\.signature) else {
+                traversal.isolationBlocker = "Missing, changed or ambiguous intermediate base helper: " + caller.key
+                return nil
+            }
             helpers.append((caller, prior))
         }
         guard let effectUnits = effectDeclarations(unit, syntax: syntax, sources: current.sources),
@@ -221,11 +255,20 @@ enum PrivateTestHelperIsolation {
         // XCTest callbacks without spelling their names in the source. Audit
         // every source used by those binding checks, including base-only files.
         // Continue the compiler effect walk to retain more specific diagnostics.
-        let declarationsComplete = (Array(current.sources.values) + Array(base.values) + Array(unownedBase.values))
-            .allSatisfy { $0.helperDeclarationsComplete == true }
+        let incompleteInventories = [("head", current.sources), ("base", base), ("unowned base", unownedBase)].flatMap { revision, sources in
+            sources.keys.sorted().compactMap { key -> String? in
+                guard sources[key]?.helperDeclarationsComplete != true else { return nil }
+                let reason = sources[key]?.helperDeclarationsComplete == nil ? "missing source metadata" : "macros or unsupported attributes"
+                return revision + ":" + key + " (" + reason + ")"
+            }
+        }
+        let declarationsComplete = incompleteInventories.isEmpty
         if !declarationsComplete {
             traversal.hasUnprovenCalleeEffects = true
-            traversal.receiverOriginBlocker = "Incomplete helper declaration inventories (macros, unsupported attributes or legacy evidence); refresh source proofs"
+            let remaining = incompleteInventories.count - 1
+            traversal.receiverOriginBlocker = "Incomplete helper declaration inventories: " + incompleteInventories[0] +
+                (remaining > 0 ? "; \(remaining) additional source inventories are incomplete" : "") +
+                ". Missing metadata requires refreshed source proofs; macros/attributes require supported expansion analysis. A formatting declaration cannot supply this evidence."
         }
         var sdkBindingsSupported = declarationsComplete && operatorBindingsSupported
         if !sdkBindings.isEmpty {
@@ -272,7 +315,10 @@ enum PrivateTestHelperIsolation {
         guard !consumers.isEmpty, consumers.isSubset(of: expectedTests),
               callers.filter({ syntax.callerLines.contains($0.region.startLine) }).allSatisfy({
                   paths.path(from: symbols($0, graph: graph, index: index)) != nil
-              }) else { return false }
+              }) else {
+            traversal.isolationBlocker = "Source/compiler caller mismatch for " + proof.unit.key + "; unexpected compiler consumers: " + consumers.subtracting(expectedTests).sorted().joined(separator: ", ") + "; each source caller requires a surviving compiled edge"
+            return false
+        }
         // Reject compiler-observed state/pointer effects in project callees too,
         // including extension helpers reached from the changed body. SDK runtime
         // uncertainty alone is not a route into this private, nonescaping method.
