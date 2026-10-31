@@ -36918,9 +36918,11 @@
   ],
   "removed": [],
   "reviewBuildInputs": {
-    "buildContext": "3aa5044301d2460f6b2884c4f8fe0e74c07de900511a287b4107ab82bfb409ca",
+    "buildContext": "8fe2a288c68ad8de77665c7de5c0d598cb573a86fc37de415093ba5af7c25bb5",
     "buildLogDigest": "2809f0d2e36fdd1fda473285554c3f594aca9fc0a2fc4d0e4020ff3153928bd2",
-    "buildSettingsDigest": "ff715d693f70f6df99d33345fbd134954a94c6e589d482b9c7437479125fa6ed"
+    "buildSettingsDigest": "ff715d693f70f6df99d33345fbd134954a94c6e589d482b9c7437479125fa6ed",
+    "captureFrontendDigest": "91455ce04f82251e0c20dec50b54664a72ba45e13d2264d104913920b0a3a9e1",
+    "captureHelperIdentity": "5a4da5ca0abb2c29136b38936b27f3c543678f520f55a2bfe2b51a615cfdb4dc"
   },
   "run": "40159996488",
   "scope": "regression-support",

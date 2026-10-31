@@ -126,7 +126,7 @@ extension XcodeAnalysis {
             buildLogDigest: logDigest, buildSettingsDigest: settingsDigest,
             productsDirectory: products.path, xctestrun: inputs.xctestrun.lastPathComponent, products: fingerprints)
         graph.buildArtifact?.simulatorRuntimes = try ArtifactFiles.runtimeFingerprint(options: options, at: root)
-        graph.buildArtifact?.helperFormattingBuild = try? .capture(log: Data(log.utf8), settings: data, source: root, derived: inputs.derivedData)
+        graph.buildArtifact?.helperFormattingBuild = try? .capture(log: Data(log.utf8), settings: data, source: root, derived: inputs.derivedData, captured: captured)
         return graph
     }
 

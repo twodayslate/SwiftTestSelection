@@ -6,17 +6,17 @@ import Foundation
 /// Keeping raw digests outside the review fingerprint permits equivalent
 /// recaptures without accepting changed flags or stale derived evidence.
 public struct HelperFormattingBuildEvidence: Codable, Sendable {
-    public var version = 1
+    public var version = 2
     public var fingerprint: String
     public var buildLogDigest: String
     public var buildSettingsDigest: String
 
     func matches(_ artifact: XcodeBuildArtifact) -> Bool {
-        version == 1 && !fingerprint.isEmpty && !buildLogDigest.isEmpty && !buildSettingsDigest.isEmpty &&
+        version == 2 && !fingerprint.isEmpty && !buildLogDigest.isEmpty && !buildSettingsDigest.isEmpty &&
             buildLogDigest == artifact.buildLogDigest && buildSettingsDigest == artifact.buildSettingsDigest
     }
 
-    static func capture(log: Data, settings: Data, source: URL, derived: URL) throws -> Self {
+    static func capture(log: Data, settings: Data, source: URL, derived: URL, captured: CapturedSIL? = nil) throws -> Self {
         guard let text = String(data: log, encoding: .utf8), !settings.isEmpty else {
             throw ImpactError("Missing formatting review build inputs")
         }
@@ -25,7 +25,16 @@ public struct HelperFormattingBuildEvidence: Codable, Sendable {
             throw ImpactError("Missing effective build settings for formatting review")
         }
         var directory = source
-        var commands = Set<Data>()
+        var commands: [Data] = []
+        var frontendAliases: [URL] = []
+        var captureIdentity: [String: String] = [:]
+        let frontend = captured?.frontendPath.map { URL(fileURLWithPath: $0) }
+        if let frontend {
+            guard let helper = captured?.helperIdentity, !helper.isEmpty else {
+                throw ImpactError("Missing sealed capture-helper identity for formatting review")
+            }
+            captureIdentity = ["helper": helper, "frontend": try ArtifactFiles.digest(frontend)]
+        }
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
         func absolute(_ path: String, at directory: URL) -> URL {
             URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: directory.path, isDirectory: true)).standardizedFileURL
@@ -42,6 +51,14 @@ public struct HelperFormattingBuildEvidence: Codable, Sendable {
             return result
         }
         func normalize(_ data: Data) throws -> Data {
+            // Only a frontend identified by the validated SIL capture may lose
+            // its session-specific pathname. Keep its bytes and the complete
+            // capture-helper identity in the review fingerprint instead.
+            var data = data
+            if let frontend {
+                let normalized = try XcodeGraphCache.normalizedSettings(data, workspace: frontend, aliases: frontendAliases, isFile: true)
+                data = Data(String(decoding: normalized, as: UTF8.self).replacingOccurrences(of: "<CACHE-WORK>", with: "<FORMATTING-CAPTURE-FRONTEND>").utf8)
+            }
             // Distinct tokens preserve source-vs-product path identity. Only
             // proven root paths are rewritten, using existing boundary rules.
             let first = try XcodeGraphCache.normalizedSettings(data, workspace: derived)
@@ -58,6 +75,13 @@ public struct HelperFormattingBuildEvidence: Codable, Sendable {
             }
             guard let marker = line.range(of: "builtin-SwiftDriver -- ") else { continue }
             let args = try expand(XcodeSourceFileList.parse(String(line[marker.upperBound...])), at: directory)
+            for i in args.indices where args[i] == "-driver-use-frontend-path" {
+                guard i + 1 < args.count else { throw ImpactError("Missing compiler frontend path") }
+                let path = absolute(args[i + 1], at: directory)
+                if let frontend, path.resolvingSymlinksInPath() == frontend.resolvingSymlinksInPath() {
+                    frontendAliases.append(path)
+                }
+            }
             guard let module = args.firstIndex(of: "-module-name"), module + 1 < args.count else {
                 throw ImpactError("Missing compiler module identity for formatting review")
             }
@@ -78,11 +102,12 @@ public struct HelperFormattingBuildEvidence: Codable, Sendable {
                     row[String(format: "list%08d-%08d", i, offset)] = absolute(String(path), at: working).path
                 }
             }
-            commands.insert(try normalize(encoder.encode(row)))
+            commands.append(try encoder.encode(row))
         }
         guard !commands.isEmpty else { throw ImpactError("Missing compiler invocations for formatting review") }
-        let commandDigests = commands.map(XcodeGraphCache.digest).sorted().joined(separator: "\n")
-        let fingerprint = try XcodeGraphCache.key(["version": "1", "settings": XcodeGraphCache.digest(normalize(settings)), "compilerInvocations": commandDigests])
+        let commandDigests = try Set(commands.map { XcodeGraphCache.digest(try normalize($0)) }).sorted().joined(separator: "\n")
+        let fingerprint = try XcodeGraphCache.key(["version": "2", "settings": XcodeGraphCache.digest(normalize(settings)), "compilerInvocations": commandDigests,
+            "captureHelper": XcodeGraphCache.key(captureIdentity)])
         return .init(fingerprint: fingerprint, buildLogDigest: XcodeGraphCache.digest(log), buildSettingsDigest: XcodeGraphCache.digest(settings))
     }
 }

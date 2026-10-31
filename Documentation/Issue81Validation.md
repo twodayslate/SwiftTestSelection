@@ -186,3 +186,26 @@ except the intentional `selectionScope` label. The test now supplies the same
 expected scope to its reference; production selection was unchanged.
 The final focused rerun passed 13 tests in 20.730 seconds, including all three
 scenarios of that corrected parity test and the formatting/build-input regressions.
+
+## Retained-capture relocation
+
+Build-input evidence v2 normalizes the exact frontend wrapper identified by a
+validated SIL capture, including its path inside `OTHER_SWIFT_FLAGS` when more
+flags follow. The fingerprint still includes the frontend bytes and sealed helper
+identity. Unsealed/unrelated frontend paths remain semantic, and v1 evidence is
+rejected until refreshed. Both production capture paths pass the validated SIL
+metadata through to this binding.
+
+The focused helper/capture checks passed 29 tests in 21.166 seconds; the two
+existing workspace-normalization tests also passed. The new regression compares
+separate retained directory layouts, alias paths, changed frontend contents,
+changed helper identities and missing metadata. Both original real captures
+passed seal/product/helper verification, and rewriting their paths through a
+relocated directory alias produced identical fingerprints. Their declarations
+were rebound to v2 without changing the reviewed guarantees.
+
+The release replay passed in 98.366 seconds. Both before/after reports for each
+capture passed strict mapping and retained-product verification. Exact selected
+IDs, declaration decisions and all 12/125 known consumers were unchanged. The
+evidence files now include the frontend digest and sealed helper identity. No
+new consumer app build, base compiler replay or consumer test execution was used.

@@ -377,7 +377,7 @@ func formattingContractsRejectAliasedSDKConformances(spelling: String, revision:
     }
 }
 
-@Test(arguments: ["settings", "compilerLog", "missingArtifact", "missingSettings", "missingLog", "missingAliases", "missingConformances", "missingBuildInputs", "unchanged"])
+@Test(arguments: ["settings", "compilerLog", "missingArtifact", "missingSettings", "missingLog", "missingAliases", "missingConformances", "missingBuildInputs", "legacyBuildInputs", "unchanged"])
 func formattingContractsRequireCompleteBuildAndConformanceEvidence(change: String) throws {
     let (root, fixture, source, contract) = try formattingFixture()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -390,6 +390,7 @@ func formattingContractsRequireCompleteBuildAndConformanceEvidence(change: Strin
     case "compilerLog": current.buildArtifact!.buildLogDigest = "different-compiler-invocations"
     case "missingArtifact": current.buildArtifact = nil
     case "missingBuildInputs": current.buildArtifact!.helperFormattingBuild = nil
+    case "legacyBuildInputs": current.buildArtifact!.helperFormattingBuild!.version = 1
     case "missingSettings": current.buildArtifact!.buildSettingsDigest = ""
     case "missingLog": current.buildArtifact!.buildLogDigest = ""
     case "missingAliases": current.sources["UI:UI.swift"]!.typeAliases = nil

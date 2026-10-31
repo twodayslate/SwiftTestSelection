@@ -49,3 +49,43 @@ import Testing
         _ = try HelperFormattingBuildEvidence.capture(log: Data("builtin-SwiftDriver -- swiftc @recursive.rsp".utf8), settings: settings, source: root, derived: root)
     }
 }
+
+@Test func formattingBuildInputsRelocateSealedCaptureFrontendsWithoutLosingIdentity() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("formatting-capture-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    func capture(_ name: String, helper: String? = "sealed-helper", contents: String = "frontend implementation",
+                 sealed: Bool = true, unrelated: Bool = false, alias: Bool = false) throws -> HelperFormattingBuildEvidence {
+        let workspace = root.appendingPathComponent(name)
+        let source = workspace.appendingPathComponent("source"), derived = workspace.appendingPathComponent("DerivedData")
+        let wrapper = workspace.appendingPathComponent("SILCapture/wrapper/bin/swift-frontend")
+        for folder in [source, derived, wrapper.deletingLastPathComponent()] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        try Data(contents.utf8).write(to: wrapper)
+        var argument = wrapper
+        if unrelated {
+            argument = workspace.appendingPathComponent("other-frontend")
+            try Data(contents.utf8).write(to: argument)
+        } else if alias {
+            argument = workspace.appendingPathComponent("frontend-alias")
+            try FileManager.default.createSymbolicLink(at: argument, withDestinationURL: wrapper)
+        }
+        let flag = "-driver-use-frontend-path \(argument.path) -plugin-path /toolchain/plugins"
+        let log = Data("cd \(source.path)\nbuiltin-SwiftDriver -- /toolchain/swiftc -module-name Tests \(flag) -o \(derived.path)/Tests.o\n".utf8)
+        // Xcode writes the capture flag into settings as well as driver commands.
+        let settings = try JSONSerialization.data(withJSONObject: [["target": "Tests", "buildSettings": [
+            "SOURCE_ROOT": source.path, "BUILD_DIR": derived.path, "OTHER_SWIFT_FLAGS": flag]]])
+        let captured = CapturedSIL(modules: [:], fingerprints: [:], diagnostics: [], frontendPath: wrapper.path, helperIdentity: helper)
+        return try .capture(log: log, settings: settings, source: source, derived: derived, captured: sealed ? captured : nil)
+    }
+    let original = try capture("first"), relocated = try capture("second")
+    #expect(original.fingerprint == relocated.fingerprint)
+    #expect(original.buildLogDigest != relocated.buildLogDigest)
+    #expect(original.buildSettingsDigest != relocated.buildSettingsDigest)
+    #expect(try capture("alias", alias: true).fingerprint == original.fingerprint)
+    #expect(try capture("changed-helper", helper: "new-helper").fingerprint != original.fingerprint)
+    #expect(try capture("changed-frontend", contents: "different implementation").fingerprint != original.fingerprint)
+    #expect(try capture("unsealed-first", sealed: false).fingerprint != capture("unsealed-second", sealed: false).fingerprint)
+    #expect(try capture("unrelated-first", unrelated: true).fingerprint != capture("unrelated-second", unrelated: true).fingerprint)
+    #expect(throws: ImpactError.self) { _ = try capture("missing-identity", helper: nil) }
+}

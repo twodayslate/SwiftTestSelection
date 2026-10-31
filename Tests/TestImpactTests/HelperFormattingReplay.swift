@@ -100,8 +100,19 @@ private func runFormattingReview() throws {
             let artifact = try #require(current.buildArtifact)
             try #require(XcodeGraphCache.digest(log) == artifact.buildLogDigest)
             try #require(XcodeGraphCache.digest(settings) == artifact.buildSettingsDigest)
+            let captureRoot = retained.appendingPathComponent("SILCapture")
+            let seal = try JSONDecoder().decode(CapturedSIL.Seal.self, from: Data(contentsOf: captureRoot.appendingPathComponent("build.json")))
+            let frontend = captureRoot.appendingPathComponent("wrapper/bin/swift-frontend")
+            let helper = frontend.resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("capture-build.py")
+            let inputs = XcodeBuildInputs(derivedData: retained.appendingPathComponent("DerivedData"),
+                buildLog: retained.appendingPathComponent("build.log"), buildSettings: retained.appendingPathComponent("build-settings.json"),
+                xctestrun: URL(fileURLWithPath: artifact.productsDirectory).appendingPathComponent(artifact.xctestrun), revision: artifact.revision)
+            let captured = try CapturedSIL.load(at: captureRoot, root: retained.appendingPathComponent("source"), inputs: inputs,
+                logDigest: artifact.buildLogDigest, settingsDigest: artifact.buildSettingsDigest, products: artifact.products,
+                toolchain: artifact.toolchain, exportedRevision: artifact.revision, sourceExportDigest: seal.sourceExportDigest,
+                expectedHelper: XcodeBuildTimeCapture(helper: helper).identity)
             current.buildArtifact!.helperFormattingBuild = try .capture(log: log, settings: settings,
-                source: retained.appendingPathComponent("source"), derived: retained.appendingPathComponent("DerivedData"))
+                source: retained.appendingPathComponent("source"), derived: retained.appendingPathComponent("DerivedData"), captured: captured)
         }
         if let declarations = fixture.contracts {
             current.mappings!.helperFormattingContracts = try JSONDecoder().decode([HelperFormattingContract].self, from: Data(contentsOf: URL(fileURLWithPath: declarations)))

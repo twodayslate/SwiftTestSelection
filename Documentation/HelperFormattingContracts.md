@@ -104,10 +104,14 @@ consumer policies requiring full toolchain coverage remain in force.
 Build-input evidence is captured with the head artifact. It includes normalized
 build settings and the ordered Swift compiler arguments, expanding response files
 and source-file lists. Only known source/DerivedData roots and irrelevant log
-progress are normalized; compiler flags remain semantic. Equivalent captures can
+progress are normalized; compiler flags remain semantic. For validated build-time
+SIL captures, the exact frontend-wrapper path is also normalized, including its
+appearance inside settings flags. The wrapper contents and sealed capture-helper
+identity remain bound, so moving the capture does not invalidate a declaration
+but changing the capture helper does. Unrelated frontend paths remain semantic. Equivalent captures can
 therefore retain the review binding even when paths or log timestamps differ.
 The derived evidence must match the artifact's raw settings/log digests. Missing,
-stale or legacy evidence invalidates declarations; an empty digest cannot bless an
+stale or legacy evidence (including build-input evidence v1) invalidates declarations; an empty digest cannot bless an
 incomplete capture. Retained captures can be refreshed from their authenticated
 original files without invoking the compiler. This is separate from reviewing
 new guarantees and does not automatically authorize a declaration.
