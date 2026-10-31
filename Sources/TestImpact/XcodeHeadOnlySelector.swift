@@ -13,7 +13,9 @@ struct XcodeHeadOnlySources {
     /// Git sources absent from the captured head inventory have unknown base ownership.
     var unownedBaseSources: [String: SwiftSourceSnapshot] = [:]
 
-    static func read(current: XcodeTestGraph, changes: [FileChange], base: String, root: URL, mappingPath: String) throws -> Self {
+    static func read(current: XcodeTestGraph, changes: [FileChange], base: String, root: URL, mappingPath: String, cache: XcodeBaseSourceCache? = nil) throws -> Self {
+        let cache = try cache ?? XcodeBaseSourceCache(root: root, base: base)
+        try cache.validate(root: root, base: base)
         var result = Self(base: current.sources)
         let paths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
         // Internal SDK extensions are visible throughout their test module. A
@@ -27,9 +29,8 @@ struct XcodeHeadOnlySources {
         })
         var basePaths: Set<String>?
         if !callerModules.isEmpty {
-            let listing = try CommandRunner.run("git", ["ls-tree", "-r", "--name-only", "-z", base, "--"], at: root, allowFailure: true)
-            if listing.status == 0 { basePaths = Set(listing.stdout.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }) }
-            else { result.diagnostics.append("Cannot enumerate base sources at \(base)") }
+            basePaths = try cache.paths()
+            if basePaths == nil { result.diagnostics.append("Cannot enumerate base sources at \(base)") }
         }
         for key in current.sources.keys.sorted() {
             guard let colon = key.firstIndex(of: ":") else { result.diagnostics.append("Invalid source snapshot key: \(key)"); continue }
@@ -41,9 +42,8 @@ struct XcodeHeadOnlySources {
                 result.base.removeValue(forKey: key)
                 continue
             }
-            let data = try CommandRunner.run("git", ["show", base + ":" + path], at: root, allowFailure: true)
-            if data.status == 0, let text = String(data: data.stdout, encoding: .utf8) {
-                result.base[key] = SwiftSourceSnapshot.parse(text, path: path, module: module)
+            if let snapshot = try cache.snapshot(path: path, module: module) {
+                result.base[key] = snapshot
             } else {
                 result.base.removeValue(forKey: key)
                 result.diagnostics.append("No base source boundary for \(path) at \(base)")
@@ -55,17 +55,15 @@ struct XcodeHeadOnlySources {
             let captured = Set(current.sources.keys.compactMap { key in key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) } })
             if let basePaths {
                 for path in basePaths.sorted() where path.hasSuffix(".swift") && !captured.contains(path) {
-                    let data = try CommandRunner.run("git", ["show", base + ":" + path], at: root, allowFailure: true)
-                    if data.status == 0, let text = String(data: data.stdout, encoding: .utf8) {
-                        result.unownedBaseSources[path] = .parse(text, path: path, module: "")
+                    if let snapshot = try cache.snapshot(path: path, module: "") {
+                        result.unownedBaseSources[path] = snapshot
                     } else { result.diagnostics.append("Cannot read unowned base source \(path) at \(base)") }
                 }
             }
         }
-        let mapping = try CommandRunner.run("git", ["show", base + ":" + mappingPath], at: root, allowFailure: true)
-        if mapping.status == 0 {
+        if let mapping = try cache.content(path: mappingPath) {
             do {
-                result.mappings = try JSONDecoder().decode(UIFeatureMappings.self, from: mapping.stdout)
+                result.mappings = try JSONDecoder().decode(UIFeatureMappings.self, from: mapping)
                 try result.mappings?.validate()
             } catch { result.diagnostics.append("Invalid base mapping policy: \(error)") }
         }

@@ -985,12 +985,26 @@ func headOnlyNestedOpaqueResultsRequireFallback(result: String) throws {
                        "App:App/New.swift": SwiftSourceSnapshot.parse("struct AddedProduction {}", path: "App/New.swift", module: "App")]
     current.targets[1].sourceFiles.insert("App/New.swift")
     let changes = try GitChanges.readComparison(base: base, head: head, at: root)
-    let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: base, root: root, mappingPath: ".swift-test-selection.json")
+    let cache = try XcodeBaseSourceCache(root: root, base: base)
+    let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: base, root: root, mappingPath: ".swift-test-selection.json", cache: cache)
     let primary = XcodeHeadOnlySelector.select(current: current, source: source, changes: changes, baseRevision: base)
     #expect(primary.selectedTests == current.tests)
-    let request = SelectionScopes(scopes: [.init(name: "helpers", paths: ["Tests/UI.swift"], excludedTestEntries: ["UI/Sharing/testIndependent()"]), .init(name: "empty", paths: [])])
+    let request = SelectionScopes(scopes: [.init(name: "helpers", paths: ["Tests/UI.swift"], excludedTestEntries: ["UI/Sharing/testIndependent()"]), .init(name: "empty", paths: []), .init(name: "overlap", paths: ["Tests/UI.swift"])])
+    let initialCounts = cache.counts
+    var events: [XcodeAnalysisEvent] = []
     let reports = try XcodeHeadOnlySelector.scopedReports(current: current, requests: request, changes: changes, baseRevision: base,
-        headRevision: head, root: root, mappingPath: ".swift-test-selection.json", documentation: [], buildEvidenceFailure: nil)
+        headRevision: head, root: root, mappingPath: ".swift-test-selection.json", documentation: [], buildEvidenceFailure: nil, sourceCache: cache, measurement: { events.append($0) })
+    #expect(cache.counts.blobReads == initialCounts.blobReads)
+    #expect(cache.counts.parses == initialCounts.parses)
+    #expect(cache.counts.parseHits > 0)
+    #expect(events.map(\.phase) == Array(repeating: ["scopeSourceSyntax", "scopeSelection"], count: 3).flatMap { $0 })
+    for result in reports {
+        let filtered = changes.filter { result.scope.paths.contains($0.path) }
+        let oldSource = try uncachedHeadOnlySources(current: current, changes: filtered, base: base, root: root, mappingPath: ".swift-test-selection.json")
+        let oldReport = XcodeHeadOnlySelector.select(current: current, source: oldSource, changes: filtered, baseRevision: base, excludedTestEntries: Set(result.scope.excludedTestEntries))
+        #expect(result.report.selectedTests == oldReport.selectedTests)
+        #expect(try diagnosticJSON(result.report) == diagnosticJSON(oldReport))
+    }
     #expect(reports[0].report.selectedTests == ["UI/Sharing/testOne()", "UI/Sharing/testThree()", "UI/Sharing/testTwo()"])
     #expect(reports[0].report.changedFiles == ["Tests/UI.swift"])
     #expect(reports[0].report.fullRunReasons.isEmpty)

@@ -1,0 +1,717 @@
+{
+  "environment": {
+    "analyzerBaseRevision": "532857dfba3bf502218dab2d47e7d5e6bf13e064",
+    "analyzerCompiler": "Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+    "buildToolchain": "Xcode 27.1\nBuild version 27A9275"
+  },
+  "date": "2026-10-31",
+  "scope": "One invocation; immutable Git source evidence only",
+  "cases": [
+    {
+      "pr": 293,
+      "historicalRun": "40058859478",
+      "base": "143c0be82c134d0d07345c29b42136af3d850a7b",
+      "head": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+      "scopes": [
+        {
+          "excludedTestEntries": [
+            "ChainOfCustodyUITests/NoteLinksUITests/testMessageCardIsOfferedWhenCompositionIsAvailable()",
+            "ChainOfCustodyUITests/NoteLinksUITests/testUnavailableMessagesStillOffersLinkSharing()",
+            "ChainOfCustodyUITests/PairingNotesMediaUITests/testBackButtonDismissesMediaPreviewToItsListBlock()"
+          ],
+          "name": "regression-support",
+          "paths": [
+            "ChainOfCustodyUITests/NoteLinksUITests.swift"
+          ]
+        }
+      ],
+      "exactHistoricalParity": [
+        {
+          "name": "primary",
+          "selected": 1972,
+          "diagnostics": 1937,
+          "selectedIdentifiersSHA256": "f58339b0a292dc0e79aa88b1fceae7a3fe57d5462f8a47d8bb3a2782f6669ab7",
+          "diagnosticsSHA256": "7c7d5b575b086b8097ad5447d88e349f81fe49210c9dedf412cbf9fb60b1caf9"
+        },
+        {
+          "name": "regression-support",
+          "selected": 1972,
+          "diagnostics": 1903,
+          "selectedIdentifiersSHA256": "f58339b0a292dc0e79aa88b1fceae7a3fe57d5462f8a47d8bb3a2782f6669ab7",
+          "diagnosticsSHA256": "f5ef28af32f77f484e471ef73a56f848bb714d356d69153ec88945a802dc6b08"
+        }
+      ],
+      "captures": [
+        {
+          "repetition": 1,
+          "seconds": 355.630056042,
+          "oneHeadBuild": true,
+          "consumedModules": 10,
+          "compilerReplay": false,
+          "strictMappings": true,
+          "verified": {
+            "primary": {
+              "selected": 1972,
+              "buildArtifactID": "DF4411E7-360F-41F5-A0C7-562C5BF4B55D"
+            },
+            "regression-support": {
+              "selected": 1972,
+              "buildArtifactID": "DF4411E7-360F-41F5-A0C7-562C5BF4B55D"
+            },
+            "consumer-policy": {
+              "selected": 1972,
+              "buildArtifactID": "DF4411E7-360F-41F5-A0C7-562C5BF4B55D"
+            }
+          },
+          "historicalComparison": [
+            {
+              "name": "primary",
+              "identifiersMatch": true,
+              "diagnosticsMatch": true,
+              "removed": [],
+              "added": []
+            },
+            {
+              "name": "regression-support",
+              "identifiersMatch": true,
+              "diagnosticsMatch": true,
+              "removed": [],
+              "added": []
+            }
+          ],
+          "phases": [
+            {
+              "detail": "build-for-testing with supplementary SIL",
+              "phase": "build",
+              "revision": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+              "seconds": 107.390504958
+            },
+            {
+              "detail": "Git syntax only; no baseline build or compiler graph",
+              "phase": "baseSourceSyntax",
+              "revision": "143c0be82c134d0d07345c29b42136af3d850a7b",
+              "seconds": 36.64971697330475
+            },
+            {
+              "detail": "",
+              "phase": "selection",
+              "revision": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+              "seconds": 2.630321979522705
+            },
+            {
+              "detail": "regression-support",
+              "phase": "scopeSourceSyntax",
+              "revision": "143c0be82c134d0d07345c29b42136af3d850a7b",
+              "seconds": 0.0007779598236083984
+            },
+            {
+              "detail": "regression-support",
+              "phase": "scopeSelection",
+              "revision": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+              "seconds": 2.89868700504303
+            },
+            {
+              "detail": "Additional queries over the same captured head graph; no build or extraction",
+              "phase": "selectionScopes",
+              "revision": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+              "seconds": 2.8996399641036987
+            },
+            {
+              "detail": "blobReads=353, blobHits=3, treeReads=1, treeHits=1, parses=353, parseHits=353",
+              "phase": "baseSourceCache",
+              "revision": "143c0be82c134d0d07345c29b42136af3d850a7b",
+              "seconds": 0
+            }
+          ]
+        },
+        {
+          "repetition": 2,
+          "seconds": 334.36646246910095,
+          "secondsSource": "report and command timestamps; resumed after parity audit",
+          "oneHeadBuild": true,
+          "consumedModules": 10,
+          "compilerReplay": false,
+          "strictMappings": true,
+          "verified": {
+            "primary": {
+              "selected": 1972,
+              "buildArtifactID": "40CBE75C-6D8B-4FC7-9B9C-0A69DC541179"
+            },
+            "regression-support": {
+              "selected": 1972,
+              "buildArtifactID": "40CBE75C-6D8B-4FC7-9B9C-0A69DC541179"
+            },
+            "consumer-policy": {
+              "selected": 1972,
+              "buildArtifactID": "40CBE75C-6D8B-4FC7-9B9C-0A69DC541179"
+            }
+          },
+          "historicalComparison": [
+            {
+              "name": "primary",
+              "identifiersMatch": true,
+              "diagnosticsMatch": false,
+              "removed": [
+                {
+                  "code": "head_only_declaration_change",
+                  "message": "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: ChainOfCustody/Features/Notes/NoteSharing.swift",
+                  "testsSHA256": "f58339b0a292dc0e79aa88b1fceae7a3fe57d5462f8a47d8bb3a2782f6669ab7",
+                  "count": 1
+                }
+              ],
+              "added": [
+                {
+                  "code": "head_only_declaration_change",
+                  "message": "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: ChainOfCustody/Features/Notes/NoteBlockCollectionCoordinator.swift",
+                  "testsSHA256": "f58339b0a292dc0e79aa88b1fceae7a3fe57d5462f8a47d8bb3a2782f6669ab7",
+                  "count": 1
+                }
+              ]
+            },
+            {
+              "name": "regression-support",
+              "identifiersMatch": true,
+              "diagnosticsMatch": true,
+              "removed": [],
+              "added": []
+            }
+          ],
+          "phases": [
+            {
+              "detail": "build-for-testing with supplementary SIL",
+              "phase": "build",
+              "revision": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+              "seconds": 108.33659300000001
+            },
+            {
+              "detail": "Git syntax only; no baseline build or compiler graph",
+              "phase": "baseSourceSyntax",
+              "revision": "143c0be82c134d0d07345c29b42136af3d850a7b",
+              "seconds": 37.6800400018692
+            },
+            {
+              "detail": "",
+              "phase": "selection",
+              "revision": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+              "seconds": 2.727176070213318
+            },
+            {
+              "detail": "regression-support",
+              "phase": "scopeSourceSyntax",
+              "revision": "143c0be82c134d0d07345c29b42136af3d850a7b",
+              "seconds": 0.0008360147476196289
+            },
+            {
+              "detail": "regression-support",
+              "phase": "scopeSelection",
+              "revision": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+              "seconds": 3.0575640201568604
+            },
+            {
+              "detail": "Additional queries over the same captured head graph; no build or extraction",
+              "phase": "selectionScopes",
+              "revision": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+              "seconds": 3.0585670471191406
+            },
+            {
+              "detail": "blobReads=353, blobHits=3, treeReads=1, treeHits=1, parses=353, parseHits=353",
+              "phase": "baseSourceCache",
+              "revision": "143c0be82c134d0d07345c29b42136af3d850a7b",
+              "seconds": 0
+            }
+          ]
+        }
+      ],
+      "pairedSelection": {
+        "base": "143c0be82c134d0d07345c29b42136af3d850a7b",
+        "case": "ChainOfCustody #293",
+        "exactIdentifiersAndDiagnosticsMatch": true,
+        "head": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+        "measurements": [
+          {
+            "cached": false,
+            "counts": {
+              "blobReads": 709,
+              "parses": 706,
+              "treeReads": 2
+            },
+            "queries": [
+              {
+                "diagnostics": 1937,
+                "name": "primary",
+                "selected": 1972,
+                "selectionSeconds": 1.7912969589233398,
+                "sourceSeconds": 15.43455708026886
+              },
+              {
+                "diagnostics": 1903,
+                "name": "regression-support",
+                "selected": 1972,
+                "selectionSeconds": 2.198878049850464,
+                "sourceSeconds": 15.190523028373718
+              }
+            ],
+            "repetition": 1,
+            "seconds": 34.720266938209534
+          },
+          {
+            "cached": true,
+            "counts": {
+              "blobHits": 3,
+              "blobReads": 353,
+              "parseHits": 353,
+              "parses": 353,
+              "treeHits": 1,
+              "treeReads": 1
+            },
+            "queries": [
+              {
+                "diagnostics": 1937,
+                "name": "primary",
+                "selected": 1972,
+                "selectionSeconds": 1.7448710203170776,
+                "sourceSeconds": 15.224995970726013
+              },
+              {
+                "diagnostics": 1903,
+                "name": "regression-support",
+                "selected": 1972,
+                "selectionSeconds": 2.0538549423217773,
+                "sourceSeconds": 0.0007790327072143555
+              }
+            ],
+            "repetition": 1,
+            "seconds": 19.09641695022583
+          },
+          {
+            "cached": true,
+            "counts": {
+              "blobHits": 3,
+              "blobReads": 353,
+              "parseHits": 353,
+              "parses": 353,
+              "treeHits": 1,
+              "treeReads": 1
+            },
+            "queries": [
+              {
+                "diagnostics": 1937,
+                "name": "primary",
+                "selected": 1972,
+                "selectionSeconds": 1.7283599376678467,
+                "sourceSeconds": 15.063112020492554
+              },
+              {
+                "diagnostics": 1903,
+                "name": "regression-support",
+                "selected": 1972,
+                "selectionSeconds": 2.1015729904174805,
+                "sourceSeconds": 0.000780940055847168
+              }
+            ],
+            "repetition": 2,
+            "seconds": 18.96301805973053
+          },
+          {
+            "cached": false,
+            "counts": {
+              "blobReads": 709,
+              "parses": 706,
+              "treeReads": 2
+            },
+            "queries": [
+              {
+                "diagnostics": 1937,
+                "name": "primary",
+                "selected": 1972,
+                "selectionSeconds": 1.7379040718078613,
+                "sourceSeconds": 15.107396006584167
+              },
+              {
+                "diagnostics": 1903,
+                "name": "regression-support",
+                "selected": 1972,
+                "selectionSeconds": 1.9963629245758057,
+                "sourceSeconds": 15.301679015159607
+              }
+            ],
+            "repetition": 2,
+            "seconds": 34.23152506351471
+          }
+        ]
+      },
+      "historicalPhases": [
+        {
+          "detail": "Git syntax only; no baseline build or compiler graph",
+          "phase": "baseSourceSyntax",
+          "revision": "143c0be82c134d0d07345c29b42136af3d850a7b",
+          "seconds": 38.15986502170563
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+          "seconds": 2.7630929946899414
+        },
+        {
+          "detail": "Additional queries over the same captured head graph; no build or extraction",
+          "phase": "selectionScopes",
+          "revision": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+          "seconds": 40.78623402118683
+        }
+      ]
+    },
+    {
+      "pr": 299,
+      "historicalRun": "40159996488",
+      "base": "67936a2ca3bfb173542cecf40121490fe8bace29",
+      "head": "de7249daf287e676d59a48a28a597e7112f92eca",
+      "scopes": [
+        {
+          "excludedTestEntries": [
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesCollapsedUntimedPanel()",
+            "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesUntimedCategoryAndScrollPosition()"
+          ],
+          "name": "regression-support",
+          "paths": [
+            "ChainOfCustodyUITests/XCUIElement+Waiting.swift"
+          ]
+        }
+      ],
+      "exactHistoricalParity": [
+        {
+          "name": "primary",
+          "selected": 2000,
+          "diagnostics": 1933,
+          "selectedIdentifiersSHA256": "0d267cdeccb45f26660adfb3a3f13273ab4ed21439269b4b864eb1977d13b566",
+          "diagnosticsSHA256": "65633b16a71d943af909f3ffe9179730d99cb17e20be4e90757509dda842ab12"
+        },
+        {
+          "name": "regression-support",
+          "selected": 2000,
+          "diagnostics": 1931,
+          "selectedIdentifiersSHA256": "0d267cdeccb45f26660adfb3a3f13273ab4ed21439269b4b864eb1977d13b566",
+          "diagnosticsSHA256": "2ac59b83f3efbf4fd206ef066315f7a084d516b243aa7239c68e1c3ac7c6d64e"
+        }
+      ],
+      "captures": [
+        {
+          "repetition": 1,
+          "seconds": 346.24619462500004,
+          "oneHeadBuild": true,
+          "consumedModules": 10,
+          "compilerReplay": false,
+          "strictMappings": true,
+          "verified": {
+            "primary": {
+              "selected": 2000,
+              "buildArtifactID": "51E3C6EF-4046-4A61-A0F7-5CF718BE3FBD"
+            },
+            "regression-support": {
+              "selected": 2000,
+              "buildArtifactID": "51E3C6EF-4046-4A61-A0F7-5CF718BE3FBD"
+            },
+            "consumer-policy": {
+              "selected": 2000,
+              "buildArtifactID": "51E3C6EF-4046-4A61-A0F7-5CF718BE3FBD"
+            }
+          },
+          "historicalComparison": [
+            {
+              "name": "primary",
+              "identifiersMatch": true,
+              "diagnosticsMatch": true,
+              "removed": [],
+              "added": []
+            },
+            {
+              "name": "regression-support",
+              "identifiersMatch": true,
+              "diagnosticsMatch": true,
+              "removed": [],
+              "added": []
+            }
+          ],
+          "phases": [
+            {
+              "detail": "build-for-testing with supplementary SIL",
+              "phase": "build",
+              "revision": "de7249daf287e676d59a48a28a597e7112f92eca",
+              "seconds": 111.252348875
+            },
+            {
+              "detail": "Git syntax only; no baseline build or compiler graph",
+              "phase": "baseSourceSyntax",
+              "revision": "67936a2ca3bfb173542cecf40121490fe8bace29",
+              "seconds": 39.78003203868866
+            },
+            {
+              "detail": "",
+              "phase": "selection",
+              "revision": "de7249daf287e676d59a48a28a597e7112f92eca",
+              "seconds": 3.674093008041382
+            },
+            {
+              "detail": "regression-support",
+              "phase": "scopeSourceSyntax",
+              "revision": "67936a2ca3bfb173542cecf40121490fe8bace29",
+              "seconds": 0.0008519887924194336
+            },
+            {
+              "detail": "regression-support",
+              "phase": "scopeSelection",
+              "revision": "de7249daf287e676d59a48a28a597e7112f92eca",
+              "seconds": 3.845981001853943
+            },
+            {
+              "detail": "Additional queries over the same captured head graph; no build or extraction",
+              "phase": "selectionScopes",
+              "revision": "de7249daf287e676d59a48a28a597e7112f92eca",
+              "seconds": 3.847018003463745
+            },
+            {
+              "detail": "blobReads=360, blobHits=4, treeReads=1, treeHits=1, parses=362, parseHits=362",
+              "phase": "baseSourceCache",
+              "revision": "67936a2ca3bfb173542cecf40121490fe8bace29",
+              "seconds": 0
+            }
+          ]
+        },
+        {
+          "repetition": 2,
+          "seconds": 336.711568791,
+          "secondsSource": "monotonic elapsed time",
+          "oneHeadBuild": true,
+          "consumedModules": 10,
+          "compilerReplay": false,
+          "strictMappings": true,
+          "verified": {
+            "primary": {
+              "selected": 2000,
+              "buildArtifactID": "0B7BF095-75B7-4C7F-9023-6639F9C335F9"
+            },
+            "regression-support": {
+              "selected": 2000,
+              "buildArtifactID": "0B7BF095-75B7-4C7F-9023-6639F9C335F9"
+            },
+            "consumer-policy": {
+              "selected": 2000,
+              "buildArtifactID": "0B7BF095-75B7-4C7F-9023-6639F9C335F9"
+            }
+          },
+          "historicalComparison": [
+            {
+              "name": "primary",
+              "identifiersMatch": true,
+              "diagnosticsMatch": true,
+              "removed": [],
+              "added": []
+            },
+            {
+              "name": "regression-support",
+              "identifiersMatch": true,
+              "diagnosticsMatch": true,
+              "removed": [],
+              "added": []
+            }
+          ],
+          "phases": [
+            {
+              "detail": "build-for-testing with supplementary SIL",
+              "phase": "build",
+              "revision": "de7249daf287e676d59a48a28a597e7112f92eca",
+              "seconds": 109.842335458
+            },
+            {
+              "detail": "Git syntax only; no baseline build or compiler graph",
+              "phase": "baseSourceSyntax",
+              "revision": "67936a2ca3bfb173542cecf40121490fe8bace29",
+              "seconds": 38.556391954422
+            },
+            {
+              "detail": "",
+              "phase": "selection",
+              "revision": "de7249daf287e676d59a48a28a597e7112f92eca",
+              "seconds": 3.3723829984664917
+            },
+            {
+              "detail": "regression-support",
+              "phase": "scopeSourceSyntax",
+              "revision": "67936a2ca3bfb173542cecf40121490fe8bace29",
+              "seconds": 0.0007929801940917969
+            },
+            {
+              "detail": "regression-support",
+              "phase": "scopeSelection",
+              "revision": "de7249daf287e676d59a48a28a597e7112f92eca",
+              "seconds": 3.549988031387329
+            },
+            {
+              "detail": "Additional queries over the same captured head graph; no build or extraction",
+              "phase": "selectionScopes",
+              "revision": "de7249daf287e676d59a48a28a597e7112f92eca",
+              "seconds": 3.550943970680237
+            },
+            {
+              "detail": "blobReads=360, blobHits=4, treeReads=1, treeHits=1, parses=362, parseHits=362",
+              "phase": "baseSourceCache",
+              "revision": "67936a2ca3bfb173542cecf40121490fe8bace29",
+              "seconds": 0
+            }
+          ]
+        }
+      ],
+      "pairedSelection": {
+        "base": "67936a2ca3bfb173542cecf40121490fe8bace29",
+        "case": "ChainOfCustody #299",
+        "exactIdentifiersAndDiagnosticsMatch": true,
+        "head": "de7249daf287e676d59a48a28a597e7112f92eca",
+        "measurements": [
+          {
+            "cached": false,
+            "counts": {
+              "blobReads": 726,
+              "parses": 724,
+              "treeReads": 2
+            },
+            "queries": [
+              {
+                "diagnostics": 1933,
+                "name": "primary",
+                "selected": 2000,
+                "selectionSeconds": 2.779184937477112,
+                "sourceSeconds": 15.480594038963318
+              },
+              {
+                "diagnostics": 1931,
+                "name": "regression-support",
+                "selected": 2000,
+                "selectionSeconds": 3.065954089164734,
+                "sourceSeconds": 15.355499982833862
+              }
+            ],
+            "repetition": 1,
+            "seconds": 36.72991704940796
+          },
+          {
+            "cached": true,
+            "counts": {
+              "blobHits": 4,
+              "blobReads": 360,
+              "parseHits": 362,
+              "parses": 362,
+              "treeHits": 1,
+              "treeReads": 1
+            },
+            "queries": [
+              {
+                "diagnostics": 1933,
+                "name": "primary",
+                "selected": 2000,
+                "selectionSeconds": 2.81823194026947,
+                "sourceSeconds": 15.634739995002747
+              },
+              {
+                "diagnostics": 1931,
+                "name": "regression-support",
+                "selected": 2000,
+                "selectionSeconds": 3.131438970565796,
+                "sourceSeconds": 0.0007899999618530273
+              }
+            ],
+            "repetition": 1,
+            "seconds": 21.616677045822144
+          },
+          {
+            "cached": true,
+            "counts": {
+              "blobHits": 4,
+              "blobReads": 360,
+              "parseHits": 362,
+              "parses": 362,
+              "treeHits": 1,
+              "treeReads": 1
+            },
+            "queries": [
+              {
+                "diagnostics": 1933,
+                "name": "primary",
+                "selected": 2000,
+                "selectionSeconds": 2.871479034423828,
+                "sourceSeconds": 15.299876928329468
+              },
+              {
+                "diagnostics": 1931,
+                "name": "regression-support",
+                "selected": 2000,
+                "selectionSeconds": 3.04743492603302,
+                "sourceSeconds": 0.0007870197296142578
+              }
+            ],
+            "repetition": 2,
+            "seconds": 21.247155904769897
+          },
+          {
+            "cached": false,
+            "counts": {
+              "blobReads": 726,
+              "parses": 724,
+              "treeReads": 2
+            },
+            "queries": [
+              {
+                "diagnostics": 1933,
+                "name": "primary",
+                "selected": 2000,
+                "selectionSeconds": 2.777830958366394,
+                "sourceSeconds": 15.429871082305908
+              },
+              {
+                "diagnostics": 1931,
+                "name": "regression-support",
+                "selected": 2000,
+                "selectionSeconds": 3.1278860569000244,
+                "sourceSeconds": 15.526924967765808
+              }
+            ],
+            "repetition": 2,
+            "seconds": 36.91725206375122
+          }
+        ]
+      },
+      "historicalPhases": [
+        {
+          "detail": "Git syntax only; no baseline build or compiler graph",
+          "phase": "baseSourceSyntax",
+          "revision": "67936a2ca3bfb173542cecf40121490fe8bace29",
+          "seconds": 38.84369897842407
+        },
+        {
+          "detail": "",
+          "phase": "selection",
+          "revision": "de7249daf287e676d59a48a28a597e7112f92eca",
+          "seconds": 3.063823938369751
+        },
+        {
+          "detail": "Additional queries over the same captured head graph; no build or extraction",
+          "phase": "selectionScopes",
+          "revision": "de7249daf287e676d59a48a28a597e7112f92eca",
+          "seconds": 42.2544869184494
+        }
+      ]
+    }
+  ],
+  "validation": {
+    "swiftSuite": "518 tests passed; swift test --jobs 3 --no-parallel",
+    "releaseFocused": "4 test functions passed, including parameterized scenarios",
+    "pairedBenchmark": "Exact identifiers and complete diagnostics compared against the frozen uncached loader on the same graph"
+  },
+  "captureAnalyzerSHA256": "9bba0b1ed98309ec7e70de22c90bf87f31e575cdd696a331603c04787c453b9f",
+  "captureHelperSHA256": "5a4da5ca0abb2c29136b38936b27f3c543678f520f55a2bfe2b51a615cfdb4dc",
+  "implementationSHA256": {
+    "Sources/TestImpact/XcodeBaseSourceCache.swift": "1935ba4dc2849e4cbbab2f578997e5279c518d05d99efc2bb2f5a6b811257ed2",
+    "Sources/TestImpact/XcodeHeadOnlySelector.swift": "50d51eaeb83468e8aa95729362db24eb166d71e3f78dcee2d45259daff66dc33",
+    "Sources/TestImpact/SelectionScopes.swift": "a6da50bfbc5dcb209b3ac19ed172da399600b9b9a20930ae61dd92dd99d97253",
+    "Sources/TestImpact/XcodeAnalysisCache.swift": "11e599b137b5faad9b1f9d874c00cf2486254dc5f98396cb4bce6640889a0e43"
+  }
+}

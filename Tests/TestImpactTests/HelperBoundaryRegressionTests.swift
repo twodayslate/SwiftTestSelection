@@ -85,14 +85,22 @@ func sdkHelperScopesAuditBaseOnlySources(scenario: String) throws {
     _ = try CommandRunner.run("git", ["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "base"], at: root)
     for (path, text) in files { try Data(text.utf8).write(to: root.appendingPathComponent(path)) }
     if scenario != "removedFromTarget" { try FileManager.default.removeItem(at: root.appendingPathComponent("Deleted.swift")) }
-    let source = try XcodeHeadOnlySources.read(current: current, changes: [.init(path: "Waiting.swift")], base: "HEAD", root: root, mappingPath: ".swift-test-selection.json")
+    let cache = try XcodeBaseSourceCache(root: root, base: "HEAD")
+    let source = try XcodeHeadOnlySources.read(current: current, changes: [.init(path: "Waiting.swift")], base: "HEAD", root: root, mappingPath: ".swift-test-selection.json", cache: cache)
     #expect(source.unownedBaseSources["Deleted.swift"] != nil)
+    let before = cache.counts
     let scopes = try XcodeHeadOnlySelector.scopedReports(current: current,
         requests: .init(scopes: [.init(name: "waiting", paths: ["Waiting.swift"])]),
         changes: [.init(path: "Waiting.swift"), .init(path: "Tests.swift"), .init(path: "Deleted.swift")],
         baseRevision: "HEAD", headRevision: "head", root: root, mappingPath: ".swift-test-selection.json",
-        documentation: [], buildEvidenceFailure: nil)
+        documentation: [], buildEvidenceFailure: nil, sourceCache: cache)
     let report = try #require(scopes.first?.report)
+    #expect(cache.counts.blobReads == before.blobReads)
+    #expect(cache.counts.parses == before.parses)
+    let original = try uncachedHeadOnlySources(current: current, changes: [.init(path: "Waiting.swift")], base: "HEAD", root: root, mappingPath: ".swift-test-selection.json")
+    let reference = XcodeHeadOnlySelector.select(current: current, source: original, changes: [.init(path: "Waiting.swift")], baseRevision: "HEAD")
+    #expect(report.selectedTests == reference.selectedTests)
+    #expect(try diagnosticJSON(report) == diagnosticJSON(reference))
     if scenario == "unrelated" {
         #expect(report.selectedTests == tests.prefix(2).sorted())
         #expect(report.diagnostics.isEmpty)

@@ -37,8 +37,12 @@ public struct ScopedImpactReport: Codable, Sendable {
 extension XcodeHeadOnlySelector {
     static func scopedReports(current: XcodeTestGraph, requests: SelectionScopes, changes: [FileChange],
                               baseRevision: String, headRevision: String, root: URL, mappingPath: String,
-                              documentation: Set<String>, buildEvidenceFailure: String?, retainedGraphPath: String? = nil) throws -> [ScopedImpactReport] {
+                              documentation: Set<String>, buildEvidenceFailure: String?, retainedGraphPath: String? = nil,
+                              sourceCache: XcodeBaseSourceCache? = nil,
+                              measurement: (XcodeAnalysisEvent) -> Void = { _ in }) throws -> [ScopedImpactReport] {
         try requests.validate()
+        let sourceCache = try sourceCache ?? XcodeBaseSourceCache(root: root, base: baseRevision)
+        try sourceCache.validate(root: root, base: baseRevision)
         let changedPaths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
         return try requests.scopes.map { scope in
             guard Set(scope.paths).isSubset(of: changedPaths), Set(scope.excludedTestEntries).isSubset(of: Set(current.tests)) else {
@@ -46,12 +50,15 @@ extension XcodeHeadOnlySelector {
             }
             let paths = Set(scope.paths)
             let filtered = changes.filter { paths.contains($0.path) || ($0.previousPath.map(paths.contains) ?? false) }
-            // Read base syntax for this scope, never reuse source diagnostics
-            // from unrelated whole-review additions/deletions.
-            let source = try XcodeHeadOnlySources.read(current: current, changes: filtered, base: baseRevision, root: root, mappingPath: mappingPath)
+            // Derive evidence independently, sharing only immutable reads/parses.
+            let sourceStart = Date()
+            let source = try XcodeHeadOnlySources.read(current: current, changes: filtered, base: baseRevision, root: root, mappingPath: mappingPath, cache: sourceCache)
+            measurement(.init(phase: "scopeSourceSyntax", revision: baseRevision, seconds: Date().timeIntervalSince(sourceStart), detail: scope.name))
+            let selectionStart = Date()
             var report = select(current: current, source: source, changes: filtered, baseRevision: baseRevision,
                                 documentation: documentation, buildEvidenceFailure: buildEvidenceFailure,
                                 excludedTestEntries: Set(scope.excludedTestEntries))
+            measurement(.init(phase: "scopeSelection", revision: headRevision, seconds: Date().timeIntervalSince(selectionStart), detail: scope.name))
             report.headRevision = headRevision
             report.buildArtifactID = current.buildArtifact?.id
             report.buildArtifactPath = retainedGraphPath

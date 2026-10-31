@@ -491,8 +491,9 @@ extension XcodeAnalysis {
                     inputIdentity: pendingCapture.identity, capture: pendingCapture.capture)
             }.path
         }
+        let sourceCache = try headOnly ? XcodeBaseSourceCache(root: root, base: comparison.base) : nil
         let baseSources = try headOnly ? timed("baseSourceSyntax", revision: comparison.base, detail: "Git syntax only; no baseline build or compiler graph") {
-            try XcodeHeadOnlySources.read(current: current, changes: changes, base: comparison.base, root: root, mappingPath: options.mappingsPath)
+            try XcodeHeadOnlySources.read(current: current, changes: changes, base: comparison.base, root: root, mappingPath: options.mappingsPath, cache: sourceCache)
         } : nil
         var report = timed("selection", revision: comparison.head!) {
             if let baseSources {
@@ -505,8 +506,13 @@ extension XcodeAnalysis {
             report.selectionScopes = try timed("selectionScopes", revision: comparison.head!, detail: "Additional queries over the same captured head graph; no build or extraction") {
                 try XcodeHeadOnlySelector.scopedReports(current: current, requests: selectionScopes, changes: changes,
                     baseRevision: comparison.base, headRevision: comparison.head!, root: root, mappingPath: options.mappingsPath,
-                    documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty, retainedGraphPath: retainedGraphPath)
+                    documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty, retainedGraphPath: retainedGraphPath,
+                    sourceCache: sourceCache, measurement: { events.append($0) })
             }
+        }
+        if let sourceCache {
+            events.append(.init(phase: "baseSourceCache", revision: comparison.base, seconds: 0, detail: sourceCache.counts.detail))
+            progress("Base source cache: " + sourceCache.counts.detail)
         }
         report.headRevision = comparison.head; report.comparisonMode = comparison.mode
         report.buildArtifactID = current.buildArtifact?.id

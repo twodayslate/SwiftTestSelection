@@ -1860,6 +1860,21 @@ Head-only selection accepts `--selection-scopes /absolute/path/scopes.json`:
 
 Each scope queries the **same captured head graph** against Git base syntax for
 only those changed paths. It adds no build, SIL extraction, or baseline graph.
+Within one invocation, the primary report and scopes share immutable Git content
+and native base syntax. The cache is bound to the repository and resolved base
+commit; parses also distinguish logical path and module, including unknown
+ownership. It is discarded after selection. Each scope still derives its own
+historical caller evidence, mappings and diagnostics, including callers outside
+its changed paths. Missing evidence remains conservative.
+
+`analysisEvents` separates `baseSourceSyntax` and `selection` for the primary
+report, and `scopeSourceSyntax` and `scopeSelection` for each named scope.
+`selectionScopes` remains the inclusive aggregate; do not add its child timings
+to it. The `baseSourceCache` event records actual Git blob/tree read counts,
+native parse counts and cache hits in `detail` (its duration is zero). Blob reads
+include mapping content and failed reads; revision resolution occurs once per
+invocation. See [the measured comparison](Documentation/Benchmarks/BaseSourceCache.md).
+
 The primary report still describes the complete review diff. Additional results
 appear in `selectionScopes`, each with its request, ordinary report diagnostics,
 resolved revisions, and the same retained build identity and graph path. The public
