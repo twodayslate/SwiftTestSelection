@@ -16,7 +16,8 @@ switch, or observed-coverage prerequisite.
 ## Review and authoring
 
 1. Run the ordinary head-only selection with the captured head build. Keep
-   `--build-time-sil`, `--strict-mappings`, and retained-product verification.
+   `--build-time-sil`, `--strict-mappings`, `--retain-build`, and retained-product
+   verification. Declarations require captured build-input provenance.
 2. Inspect `formattingBoundaries` and the associated diagnostic's `fallback`.
    `helperContractReviewContext` provides exact source digests, the actual base
    revision, captured toolchain and candidate helper symbols. These are binding
@@ -51,7 +52,7 @@ switch, or observed-coverage prerequisite.
 | `baseSources` | Report's semantic digest of owned and unowned historical sources |
 | `headSources` | Report's semantic digest of captured head sources |
 | `toolchain` | Exact captured toolchain string, including newlines |
-| `buildContext` | Report's fingerprint of captured scheme, configuration, SDK, architecture, destination and runtimes |
+| `buildContext` | Report's fingerprint of captured scheme, configuration, SDK, architecture, destination, runtimes, effective build settings and ordered compiler invocations |
 | `guarantees` | All three strings below, each exactly once |
 | `rationale` | Nonempty explanation of the human review |
 
@@ -100,6 +101,17 @@ ownership, an absent compiled overload or missing generic substitutions cannot
 be repaired by a formatting assertion. Toolchain, SDK, architecture, build-context and simulator-runtime changes invalidate declarations;
 consumer policies requiring full toolchain coverage remain in force.
 
+Build-input evidence is captured with the head artifact. It includes normalized
+build settings and the ordered Swift compiler arguments, expanding response files
+and source-file lists. Only known source/DerivedData roots and irrelevant log
+progress are normalized; compiler flags remain semantic. Equivalent captures can
+therefore retain the review binding even when paths or log timestamps differ.
+The derived evidence must match the artifact's raw settings/log digests. Missing,
+stale or legacy evidence invalidates declarations; an empty digest cannot bless an
+incomplete capture. Retained captures can be refreshed from their authenticated
+original files without invoking the compiler. This is separate from reviewing
+new guarantees and does not automatically authorize a declaration.
+
 Ordinary prose comments and permitted Markdown edits remain nonsemantic.
 Directive adoption, removal or editing participates in selection: affected helpers
 become change roots even if their Swift bodies did not change. A central mapping
@@ -119,8 +131,14 @@ these contracts; directive edits there select conservatively.
 Structural validation authenticates the declared source/compiler identities,
 review revisions, substitutions and toolchain. It conservatively rejects project
 conformances on the substituted types, including protocols that could inherit or
-alias a formatting protocol; analyzing their effects is not supported by version 1. It does not prove a maintainer's claims about arbitrary
-binary/runtime formatting implementations.
+alias a formatting protocol; analyzing their effects is not supported by version 1.
+It also rejects conformance extensions whose owner contains an unresolved type
+alias, including qualified, nested, inherited or chained aliases at head or base.
+A declaration such as `extension Maybe: CustomStringConvertible`, where `Maybe`
+aliases `Optional`, cannot evade the contradiction check. Missing alias/conformance
+inventories fail closed. Unused aliases and conformances on independently named,
+unrelated nominal types remain supported. These checks do not prove a maintainer's
+claims about arbitrary binary/runtime formatting implementations.
 
 The declaration discharges only the missing formatting effect check. It does not
 remove any dependency edge or bypass error formatting, thrown/escaping callbacks,

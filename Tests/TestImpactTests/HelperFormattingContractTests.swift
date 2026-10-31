@@ -38,11 +38,22 @@ func reviewedFormattingContract(_ boundary: FormattingBoundary, current: XcodeTe
         rationale: "Reviewed fixture: Optional<String> contains only a literal string; no project formatting/reflection conformances, state mutation, resources, callback registration or receiver production. XCTest reports failure only to the invoking test.")
 }
 
+// Synthetic provenance for compiled selector fixtures; product verification is
+// covered separately by retained-build tests and the real-capture replay.
+private func formattingArtifact(toolchain: String) -> XcodeBuildArtifact {
+    var artifact = XcodeBuildArtifact(revision: "head", context: ["configuration": "Debug", "sdkAndArchitecture": "macosx|arm64"],
+          toolchain: toolchain, buildLogDigest: "fixture-compiler-invocations", buildSettingsDigest: "fixture-settings",
+          productsDirectory: "/tmp/formatting-fixture", xctestrun: "Tests.xctestrun", products: [:])
+    artifact.helperFormattingBuild = .init(fingerprint: "fixture-effective-build-inputs", buildLogDigest: artifact.buildLogDigest, buildSettingsDigest: artifact.buildSettingsDigest)
+    return artifact
+}
+
 private func formattingFixture() throws -> (URL, XcodeTestGraph, XcodeHeadOnlySources, HelperFormattingContract) {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("formatting-contract-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     var current = try boundaryGraph(["UI.swift": formattingAfter], tests: formattingTests, root: root)
     current.dependencies!.toolchain = try CommandRunner.run("xcrun", ["swiftc", "--version"], at: root).text
+    current.buildArtifact = formattingArtifact(toolchain: current.dependencies!.toolchain)
     let source = XcodeHeadOnlySources(base: ["UI:UI.swift": .parse(formattingBefore, path: "UI.swift", module: "UI")], mappings: current.mappings)
     let baseline = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base")
     try #require(baseline.selectedTests == formattingTests.sorted())
@@ -195,6 +206,7 @@ private func formattingFixture() throws -> (URL, XcodeTestGraph, XcodeHeadOnlySo
     """
     var current = try boundaryGraph(["UI.swift": formattingAfter, "Conformance.swift": conformance], tests: formattingTests, root: root)
     current.dependencies!.toolchain = fixture.dependencies!.toolchain
+    current.buildArtifact = fixture.buildArtifact
     var source = originalSource
     source.base["UI:Conformance.swift"] = .parse(conformance, path: "Conformance.swift", module: "UI")
     var declaration = contract
@@ -214,6 +226,7 @@ private func formattingFixture() throws -> (URL, XcodeTestGraph, XcodeHeadOnlySo
     let secondTests = formattingTests.map { $0.replacingOccurrences(of: "Suite", with: "Second").replacingOccurrences(of: "Other", with: "Unrelated") }
     var current = try boundaryGraph(["UI.swift": formattingAfter, "Second.swift": secondAfter], tests: formattingTests + secondTests, root: root)
     current.dependencies!.toolchain = fixture.dependencies!.toolchain
+    current.buildArtifact = fixture.buildArtifact
     var source = originalSource
     source.base["UI:Second.swift"] = .parse(secondBefore, path: "Second.swift", module: "UI")
     var declaration = contract
@@ -279,4 +292,122 @@ private func formattingFixture() throws -> (URL, XcodeTestGraph, XcodeHeadOnlySo
     let helper = XcodeHeadOnlySelector.select(current: current, source: source,
         changes: [.init(path: "UI.swift")], baseRevision: "base")
     #expect(helper.selectedTests == Array(formattingTests.prefix(2)).sorted())
+}
+
+@Test(arguments: ["plain", "qualified", "nested", "namespace", "chained", "escaped", "unrelated"], ["head", "base", "unownedBase"])
+func formattingContractsRejectAliasedSDKConformances(spelling: String, revision: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("review82-sdk-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import XCTest
+    @MainActor extension XCUIElement {
+        func checkValue(_ expected: String, timeout: TimeInterval = 3) -> Bool {
+            if value as? String == expected { return true }
+            let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: self)
+            return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+        }
+    }
+    """
+    let after = """
+    import XCTest
+    @MainActor extension XCUIElement {
+        func checkValue(_ expected: String, timeout: TimeInterval = 3) -> Bool {
+            let matches = NSPredicate { _, _ in self.exists && self.value as? String == expected }
+            if matches.evaluate(with: self) { return true }
+            let expectation = XCTNSPredicateExpectation(predicate: matches, object: self)
+            return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+        }
+    }
+    """
+    let callers = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testConsumer() { let value: String? = "ready"; XCTAssertEqual(value, "ready"); XCTAssertTrue(XCUIApplication().buttons["toggle"].checkValue("1")) }
+    }
+    @MainActor final class Other: XCTestCase {
+        func testOther() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "formatting-effect")) }
+    }
+    """
+    let declaration: String, owner: String
+    switch spelling {
+    case "nested": declaration = "enum Namespace { typealias Maybe<Wrapped> = Optional<Wrapped> }"; owner = "Namespace.Maybe"
+    case "namespace": declaration = "enum Namespace { typealias Maybe<Wrapped> = Optional<Wrapped> }; typealias Scope = Namespace"; owner = "Scope.Maybe"
+    case "chained": declaration = "typealias Maybe<Wrapped> = Optional<Wrapped>; typealias OtherMaybe<Wrapped> = Maybe<Wrapped>"; owner = "OtherMaybe"
+    case "unrelated": declaration = "typealias Maybe<Wrapped> = Optional<Wrapped>; struct Marker {}"; owner = "Marker"
+    default: declaration = "typealias Maybe<Wrapped> = Optional<Wrapped>"; owner = spelling == "qualified" ? "UI.Maybe" : spelling == "escaped" ? "`Maybe`" : "Maybe"
+    }
+    let conformance = """
+    import Foundation
+    \(declaration)
+    extension \(owner): CustomStringConvertible {
+        public var description: String {
+            UserDefaults.standard.set(true, forKey: "formatting-effect")
+            return "formatted"
+        }
+    }
+    """
+    let tests = ["UI/Suite/testConsumer()", "UI/Other/testOther()"]
+    var files = ["Waiting.swift": after, "UI.swift": callers]
+    if revision == "head" { files["Conformance.swift"] = conformance }
+    var current = try boundaryGraph(files, tests: tests, root: root)
+    current.dependencies!.toolchain = "compiled-fixture"
+    current.buildArtifact = formattingArtifact(toolchain: current.dependencies!.toolchain)
+    var source = XcodeHeadOnlySources(base: ["UI:Waiting.swift": .parse(before, path: "Waiting.swift", module: "UI"), "UI:UI.swift": .parse(callers, path: "UI.swift", module: "UI")], mappings: current.mappings)
+    if revision == "head" {
+        source.base["UI:Conformance.swift"] = .parse(conformance, path: "Conformance.swift", module: "UI")
+    }
+    let baseline = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    let boundary = try #require(baseline.formattingBoundaries?.first)
+    if revision == "base" {
+        source.base["UI:Conformance.swift"] = .parse(conformance, path: "Conformance.swift", module: "UI")
+    } else if revision == "unownedBase" {
+        source.unownedBaseSources["Conformance.swift"] = .parse(conformance, path: "Conformance.swift", module: "")
+    }
+    let contract = try reviewedFormattingContract(boundary, current: current, source: source)
+    current.mappings!.helperFormattingContracts = [contract]
+    let report = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    if spelling == "unrelated" {
+        #expect(report.helperContractDecisions?.first?.status == (revision == "base" ? "valid-unused" : "discharged"))
+        if revision == "head" { #expect(report.selectedTests == ["UI/Suite/testConsumer()"]) }
+    } else {
+        #expect(report.selectedTests == tests.sorted())
+        #expect(report.helperContractDecisions?.first?.status == "invalid")
+        #expect(report.helperContractDecisions?.first?.failures.contains { $0.contains("aliased conformance owner") } == true)
+    }
+}
+
+@Test(arguments: ["settings", "compilerLog", "missingArtifact", "missingSettings", "missingLog", "missingAliases", "missingConformances", "missingBuildInputs", "unchanged"])
+func formattingContractsRequireCompleteBuildAndConformanceEvidence(change: String) throws {
+    let (root, fixture, source, contract) = try formattingFixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var current = fixture, declaration = contract
+    switch change {
+    case "settings":
+        current.buildArtifact!.buildSettingsDigest = "different-effective-flags"
+        current.buildArtifact!.helperFormattingBuild!.buildSettingsDigest = "different-effective-flags"
+        current.buildArtifact!.helperFormattingBuild!.fingerprint = "different-effective-inputs"
+    case "compilerLog": current.buildArtifact!.buildLogDigest = "different-compiler-invocations"
+    case "missingArtifact": current.buildArtifact = nil
+    case "missingBuildInputs": current.buildArtifact!.helperFormattingBuild = nil
+    case "missingSettings": current.buildArtifact!.buildSettingsDigest = ""
+    case "missingLog": current.buildArtifact!.buildLogDigest = ""
+    case "missingAliases": current.sources["UI:UI.swift"]!.typeAliases = nil
+    case "missingConformances":
+        let i = try #require(current.sources["UI:UI.swift"]!.units.firstIndex { $0.kind == "type" })
+        current.sources["UI:UI.swift"]!.units[i].helperInheritedTypes = nil
+    default: break
+    }
+    // A newly authored digest cannot bless missing evidence either.
+    if change.hasPrefix("missing") { declaration.buildContext = HelperFormattingContracts.buildContext(current) }
+    current.mappings!.helperFormattingContracts = [declaration]
+    let report = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base")
+    if change == "unchanged" {
+        #expect(report.helperContractDecisions?.first?.status == "discharged")
+        #expect(report.selectedTests == Array(formattingTests.prefix(2)).sorted())
+    } else {
+        #expect(report.helperContractDecisions?.first?.status == "invalid")
+        #expect(report.selectedTests == formattingTests.sorted())
+        #expect(report.helperContractPreview?.removed.isEmpty == true)
+    }
 }

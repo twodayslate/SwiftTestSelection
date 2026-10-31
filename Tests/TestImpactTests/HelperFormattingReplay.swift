@@ -11,6 +11,7 @@ private struct FormattingReplay: Decodable {
     var output: String
     var contracts: String?
     var refreshIndirectErrorEvidence: Bool?
+    var refreshFormattingBuildEvidence: Bool?
 }
 
 /// Explicitly supplied reviewed declarations only. Never generates guarantees
@@ -91,6 +92,16 @@ private func runFormattingReview() throws {
             }
             try #require(refreshed > 0)
             print("Refreshed indirect error evidence from sealed SIL:", refreshed)
+        }
+        if fixture.refreshFormattingBuildEvidence == true {
+            let retained = graphPath.deletingLastPathComponent()
+            let log = try Data(contentsOf: retained.appendingPathComponent("build.log"))
+            let settings = try Data(contentsOf: retained.appendingPathComponent("build-settings.json"))
+            let artifact = try #require(current.buildArtifact)
+            try #require(XcodeGraphCache.digest(log) == artifact.buildLogDigest)
+            try #require(XcodeGraphCache.digest(settings) == artifact.buildSettingsDigest)
+            current.buildArtifact!.helperFormattingBuild = try .capture(log: log, settings: settings,
+                source: retained.appendingPathComponent("source"), derived: retained.appendingPathComponent("DerivedData"))
         }
         if let declarations = fixture.contracts {
             current.mappings!.helperFormattingContracts = try JSONDecoder().decode([HelperFormattingContract].self, from: Data(contentsOf: URL(fileURLWithPath: declarations)))

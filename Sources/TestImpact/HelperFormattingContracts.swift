@@ -183,6 +183,7 @@ enum HelperFormattingContracts {
         var context = current.buildArtifact?.context ?? [:]
         context["simulatorRuntimes"] = current.buildArtifact?.simulatorRuntimes ?? ""
         context["toolchain"] = current.buildArtifact?.toolchain ?? current.dependencies?.toolchain ?? ""
+        context["reviewBuildInputs"] = current.buildArtifact?.helperFormattingBuild?.fingerprint ?? ""
         return try! XcodeGraphCache.key(context)
     }
 
@@ -196,8 +197,27 @@ enum HelperFormattingContracts {
         // A protocol alias or inherited protocol can hide a formatting witness.
         // Version 1 therefore declines every project conformance on a formatted
         // type, rather than trying to infer purity from protocol spellings.
-        let conformances = (head + base + source.unownedBaseSources.values.flatMap(\.units)).filter {
-            $0.helperInheritedTypes?.isEmpty == false
+        let revisions = [("head", Array(current.sources.values)),
+                         ("base", Array(source.base.values) + Array(source.unownedBaseSources.values))]
+        let missingConformanceEvidence = revisions.contains { _, snapshots in
+            snapshots.contains { snapshot in
+                snapshot.typeAliases == nil || snapshot.units.contains {
+                    ["type", "extension"].contains($0.kind) && $0.helperInheritedTypes == nil
+                }
+            }
+        }
+        let conformances = revisions.flatMap { revision, snapshots in
+            // Alias targets are intentionally not inferred from spelling. Any
+            // component can be an alias (including inherited nested aliases).
+            // Version 1 rejects such extension owners until they are resolved.
+            let aliases = Set(snapshots.flatMap { $0.typeAliases ?? [] }.compactMap {
+                SDKTestHelperSyntax.canonicalName($0).split(separator: ".").last.map(String.init)
+            })
+            return snapshots.flatMap(\.units).filter { $0.helperInheritedTypes?.isEmpty == false }.map { unit in
+                let owner = SwiftSourceSnapshot.nominalTypeName(unit.scope).map(SDKTestHelperSyntax.canonicalName)
+                let ambiguous = unit.kind == "extension" && (owner == nil || owner!.split(separator: ".").contains { aliases.contains(String($0)) })
+                return (revision: revision, unit: unit, owner: owner, ambiguous: ambiguous)
+            }
         }
         for contract in contracts.sorted(by: { $0.id < $1.id }) {
             var failures: [String] = []
@@ -207,7 +227,13 @@ enum HelperFormattingContracts {
             if contract.baseSources != oldDigest { failures.append("Base source binding is stale or incomplete") }
             if contract.headSources != newDigest { failures.append("Head source binding is stale (body, signature, ownership, conformance or callback changes require review)") }
             if contract.toolchain != (current.buildArtifact?.toolchain ?? current.dependencies?.toolchain ?? "") { failures.append("Toolchain differs from the reviewed contract") }
-            if contract.buildContext != buildContext(current) { failures.append("Captured build context, SDK, architecture or simulator runtime differs from the reviewed contract") }
+            if let artifact = current.buildArtifact, artifact.helperFormattingBuild?.matches(artifact) == true {
+                // Derived review inputs authenticate against this exact capture.
+            } else {
+                failures.append("Missing or stale captured build settings/compiler invocation evidence; refresh the capture before reviewing a declaration")
+            }
+            if contract.buildContext != buildContext(current) { failures.append("Captured build settings, compiler invocations, context, SDK, architecture or simulator runtime differs from the reviewed contract") }
+            if missingConformanceEvidence { failures.append("Missing source conformance/alias inventory; refresh source proofs before reviewing formatting") }
             if !source.diagnostics.isEmpty || !current.diagnostics.isEmpty || !(current.dependencies?.diagnostics.isEmpty ?? false) {
                 failures.append("Incomplete source/compiler evidence")
             }
@@ -229,11 +255,14 @@ enum HelperFormattingContracts {
                 failures.append("Missing exact compiled assertion overload/substitutions")
             }
             let typeNames = SDKReceiverContracts.requiredTypeIdentities(contract.substitutions, for: contract.assertionSymbol) ?? []
-            let relevantConformances = conformances.filter { unit in
-                typeNames.contains(unit.scope) || typeNames.contains { $0.hasSuffix("." + unit.scope) || unit.scope.hasSuffix("." + $0) }
+            let relevantConformances = conformances.filter { candidate in
+                guard !candidate.ambiguous, let owner = candidate.owner else { return true }
+                return typeNames.contains(owner) || typeNames.contains { $0.hasSuffix("." + owner) || owner.hasSuffix("." + $0) }
             }
             if !relevantConformances.isEmpty {
-                failures.append("Project formatting conformance (or other conformance on a formatted type) requires unsupported effect analysis: " + Set(relevantConformances.map { $0.region.path + ":" + String($0.region.startLine) }).sorted().joined(separator: ", "))
+                failures.append("Project formatting conformance or unresolved aliased conformance owner requires unsupported effect analysis: " + Set(relevantConformances.map {
+                    $0.revision + ":" + $0.unit.region.path + ":" + String($0.unit.region.startLine) + " (" + $0.unit.scope + ")"
+                }).sorted().joined(separator: ", "))
             }
             decisions.append(.init(contractID: contract.id, helper: contract.helper,
                 status: failures.isEmpty ? "valid-unused" : "invalid", failures: failures))

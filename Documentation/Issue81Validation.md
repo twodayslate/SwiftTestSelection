@@ -105,12 +105,15 @@ the UI module's sealed SIL, requires unchanged compiler references and existing
 error effects, and refreshes only indirect-call error metadata (9,901 / 10,144
 functions). It neither changes dependency edges nor invokes a compiler. It writes
 a separate `reviewed-head-graph.stigraph`; the original capture remains intact.
-The separate graph is needed because strict mapping validation correctly rejects
+The replay also authenticates the original settings/log digests before deriving
+normalized effective-build evidence. The declarations were rebound to that
+stronger fingerprint with unchanged guarantees, source digests and captured
+inputs. The separate graph is needed because strict mapping validation correctly rejects
 the old archive's missing inline-source metadata.
 
 A replay configuration is an array with `graph`, `root`, `report`, `output`,
 optional `contracts` (one of the declaration JSON files), and
-`refreshIndirectErrorEvidence: true`. `report` is the original captured impact
+`refreshIndirectErrorEvidence: true` and `refreshFormattingBuildEvidence: true`. `report` is the original captured impact
 report containing `selectionScopes`. Omitting `contracts` produces the baseline;
 each declared run also computes an exact no-declaration preview internally.
 
@@ -150,3 +153,36 @@ lifecycle changes, project formatting conformances, declaration changes, and
 incomplete source inventories. Mixed production/helper changes retain mapping and
 compiler reasons. Separate helper scopes, central/comment equivalence, policy
 adoption/removal, and inert prose/Markdown are also checked.
+
+## PR #82 review fixes
+
+Aliased formatting conformances now invalidate declarations before either private
+or SDK helper isolation can use them. A compiled SDK regression includes a
+state-mutating `Optional` conformance spelled through an alias and an unrelated
+test reading that state. Qualified, nested, namespace, chained and escaped aliases
+are exercised at head, base and in unowned historical source. Unrelated nominal
+conformance controls retain valid declarations.
+
+Build declarations now bind normalized effective settings and ordered compiler
+invocations. Captured raw settings/log digests authenticate that derived evidence.
+Changed flags, response-file arguments, stale derived metadata, missing artifact
+metadata and missing conformance inventories retain conservative selection.
+Equivalent captures with relocated source/DerivedData roots and changed log
+progress preserve the fingerprint, avoiding an authoring cycle when adding a
+review comment. New capture paths save this evidence; old caches are invalidated.
+
+The focused review-fix run passed 28 tests (19.478 seconds), including parameterized
+alias/build-input cases and retained-artifact checks. The refreshed release replay
+passed in 101.805 seconds. Both before/after reports passed strict mapping and
+retained-product verification for each consumer capture. The selections and all
+known consumers remain unchanged; the evidence files now record the authenticated
+build-input binding. No additional app build, base compiler replay or consumer
+test execution was used.
+
+The updated full serial suite executed 531 tests in 530.227 seconds. Its only
+failures were two cases of the existing cached/uncached parity test comparing a
+scoped diagnostic with an unscoped reference. All diagnostic fields matched
+except the intentional `selectionScope` label. The test now supplies the same
+expected scope to its reference; production selection was unchanged.
+The final focused rerun passed 13 tests in 20.730 seconds, including all three
+scenarios of that corrected parity test and the formatting/build-input regressions.
