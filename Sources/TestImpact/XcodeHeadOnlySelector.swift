@@ -12,11 +12,20 @@ struct XcodeHeadOnlySources {
     var diagnostics: [String] = []
     /// Git sources absent from the captured head inventory have unknown base ownership.
     var unownedBaseSources: [String: SwiftSourceSnapshot] = [:]
+    var mappingPath: String = ".swift-test-selection.json"
 
     static func read(current: XcodeTestGraph, changes: [FileChange], base: String, root: URL, mappingPath: String, cache: XcodeBaseSourceCache? = nil) throws -> Self {
         let cache = try cache ?? XcodeBaseSourceCache(root: root, base: base)
         try cache.validate(root: root, base: base)
         var result = Self(base: current.sources)
+        result.mappingPath = mappingPath
+        var mappingDiagnostics: [String] = []
+        if let mapping = try cache.content(path: mappingPath) {
+            do {
+                result.mappings = try JSONDecoder().decode(UIFeatureMappings.self, from: mapping)
+                try result.mappings?.validate()
+            } catch { mappingDiagnostics.append("Invalid base mapping policy: \(error)") }
+        }
         let paths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
         // Internal SDK extensions are visible throughout their test module. A
         // scoped diff cannot substitute head syntax for changed base callers in
@@ -27,15 +36,17 @@ struct XcodeHeadOnlySources {
                   snapshot.units.contains(where: { $0.sdkTestHelper != nil || $0.privateTestHelper != nil }) else { return nil }
             return String(key[..<colon])
         })
+        let hasContracts = !HelperFormattingContracts.declarations(current.sources, current.mappings).isEmpty || !(result.mappings?.helperFormattingContracts?.isEmpty ?? true)
+        let auditCallers = !callerModules.isEmpty || hasContracts
         var basePaths: Set<String>?
-        if !callerModules.isEmpty {
+        if auditCallers {
             basePaths = try cache.paths()
             if basePaths == nil { result.diagnostics.append("Cannot enumerate base sources at \(base)") }
         }
         for key in current.sources.keys.sorted() {
             guard let colon = key.firstIndex(of: ":") else { result.diagnostics.append("Invalid source snapshot key: \(key)"); continue }
             let module = String(key[..<colon]), path = String(key[key.index(after: colon)...])
-            guard paths.contains(path) || !callerModules.isEmpty else { continue }
+            guard paths.contains(path) || auditCallers else { continue }
             // New files outside the scope have no old callers to audit. Do not
             // turn a proven absence into an unrelated scope diagnostic.
             if !paths.contains(path), let basePaths, !basePaths.contains(path) {
@@ -49,7 +60,7 @@ struct XcodeHeadOnlySources {
                 result.diagnostics.append("No base source boundary for \(path) at \(base)")
             }
         }
-        if !callerModules.isEmpty {
+        if auditCallers {
             // Deleted/out-of-target files cannot be found by iterating the head
             // inventory. Inspect their base syntax without inventing module ownership.
             let captured = Set(current.sources.keys.compactMap { key in key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) } })
@@ -61,12 +72,7 @@ struct XcodeHeadOnlySources {
                 }
             }
         }
-        if let mapping = try cache.content(path: mappingPath) {
-            do {
-                result.mappings = try JSONDecoder().decode(UIFeatureMappings.self, from: mapping)
-                try result.mappings?.validate()
-            } catch { result.diagnostics.append("Invalid base mapping policy: \(error)") }
-        }
+        result.diagnostics += mappingDiagnostics
         return result
     }
 }
@@ -77,7 +83,8 @@ struct XcodeHeadOnlySources {
 /// This does not delegate to the two-graph selector with a synthetic previous.
 enum XcodeHeadOnlySelector {
     static func select(current: XcodeTestGraph, source: XcodeHeadOnlySources, changes: [FileChange],
-                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = []) -> ImpactReport {
+                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = [], applyHelperContracts: Bool = true) -> ImpactReport {
+        let originalCurrent = current
         let mappingFilePresent = current.mappings != nil
         let inline = InlineUIMappings.resolve(current)
         let current = inline.applying(to: current)
@@ -87,17 +94,50 @@ enum XcodeHeadOnlySelector {
         let uiTests = inventory.filter { uiTargets.contains(target($0)) }
         var selected = Set<String>(), ignored = Set<String>(), fullReasons = Set<String>()
         var explanations: [TestExplanation] = [], diagnostics: [SelectionDiagnostic] = []
+        var fallbackUnits: [SourceUnit] = []
+        let review = HelperFormattingContracts.validate(current: current, source: source, baseRevision: baseRevision)
+        var contractDecisions = review.decisions
+        var evaluations: [HelperContractEvaluation] = []
+        let oldContracts = HelperFormattingContracts.declarations(source.base, source.mappings)
+        let newContracts = HelperFormattingContracts.declarations(current.sources, current.mappings)
+        let changedPaths = Set(changes.map(\.path))
+        let directiveIDs = Set((Array(current.sources) + Array(source.base)).filter { key, _ in
+            guard let colon = key.firstIndex(of: ":") else { return false }
+            return changedPaths.contains(String(key[key.index(after: colon)...]))
+        }.flatMap { $0.value.helperContracts?.contracts.map(\.id) ?? [] })
+        let policyHelpers = Set((oldContracts + newContracts).filter { contract in
+            (changedPaths.contains(source.mappingPath) || directiveIDs.contains(contract.id)) &&
+            oldContracts.filter { $0.id == contract.id } != newContracts.filter { $0.id == contract.id }
+        }.map(\.helper))
         func include(_ tests: Set<String>, kind: String, reason: String, path: [String] = []) {
             let tests = tests.intersection(inventory)
             selected.formUnion(tests)
             explanations += tests.sorted().map { TestExplanation(test: $0, reason: reason, revision: "head", path: path, kind: kind) }
         }
-        func fallback(_ code: String, _ reason: String, tests: Set<String>? = nil) {
+        func fallback(_ code: String, _ reason: String, tests: Set<String>? = nil, path: [String] = []) {
             let tests = (tests ?? inventory).intersection(inventory)
             guard !tests.isEmpty else { return }
-            diagnostics.append(.init(code: code, message: reason, tests: tests.sorted()))
+            let boundary = reason.contains("runtime formatting conformances") ? evaluations.last?.encountered.last : nil
+            let boundaryPath = boundary.map { [$0.helper, $0.producerSymbol, $0.assertionSymbol, $0.substitutions] } ?? path
+            let detail = SelectionFallback.explain(code: code, message: reason, units: fallbackUnits, path: boundaryPath, allTests: tests == inventory)
+            diagnostics.append(.init(fallback: detail, code: code, message: reason + " " + detail.requiredEvidence, tests: tests.sorted()))
             include(tests, kind: "fallback", reason: reason)
             if tests == inventory { fullReasons.insert(reason) }
+        }
+        for (key, snapshot) in Array(current.sources) + Array(source.base) {
+            for error in snapshot.helperContracts?.diagnostics ?? [] {
+                fallback("helper_contract_invalid", key + ": " + error)
+            }
+        }
+        for decision in contractDecisions where decision.status == "invalid" {
+            // An invalid declaration cannot expand a no-op into an execution request,
+            // but remains auditable and never participates in narrowing.
+            let message = decision.contractID + ": " + decision.failures.joined(separator: "; ")
+            var detail = SelectionFallback.explain(code: "helper_contract_invalid", message: message,
+                units: current.sources.values.flatMap(\.units).filter { $0.key == decision.helper })
+            detail.supportedDeclaration = "helperFormattingContracts v1"
+            detail.validationFailures = decision.failures
+            diagnostics.append(.init(fallback: detail, code: "helper_contract_invalid", message: message, tests: []))
         }
         for diagnostic in inline.diagnostics {
             fallback(diagnostic.code, diagnostic.message, tests: Set(diagnostic.tests))
@@ -149,23 +189,27 @@ enum XcodeHeadOnlySelector {
                 locationPolicy != .diagnosticLineColumn || !["line", "column"].contains(key)
             }.sorted { $0.key < $1.key }.map { "@\($0.key)=\($0.value)" }.joined()
         }
-        let paths = Set(changes.map(\.path))
+        let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
         let old = Dictionary(grouping: source.base.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
         let new = Dictionary(grouping: current.sources.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
         let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries)
         let dependencyIndex = current.dependencies.map(DependencyIndex.init)
         var isolatedHelpers = Set<String>(), isolatedSDKHelpers = Set<String>()
         var changed: [SourceUnit] = []
-        var semanticPaths = policyPaths
+        var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
         for key in Set(old.keys).union(new.keys).sorted() {
             let before = old[key] ?? [], after = new[key] ?? []
-            guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() else { continue }
+            guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() || policyHelpers.contains(key) else { continue }
+            fallbackUnits = before + after
+            let evaluation = HelperContractEvaluation(helper: key, contracts: applyHelperContracts ? review.contracts : [],
+                diagnosticCode: after.first?.sdkTestHelper != nil ? "head_only_sdk_helper_boundary" : "head_only_helper_callee_effects")
+            evaluations.append(evaluation)
             semanticPaths.formUnion((before + after).map { $0.region.path })
             if PrivateTestHelperIsolation.provesExtensionHeaders(before + after, current: current, base: source.base) { continue }
             if after.count == 1, let unit = after.first, (unit.sdkTestHelper != nil || ["XCUIElement", "XCTest.XCUIElement"].contains(unit.scope)),
                let graph = current.dependencies, let index = dependencyIndex {
                 if let blocker = SDKTestHelperIsolation.blocker(unit, previous: before.count == 1 ? before.first : nil,
-                                                               current: current, base: source.base, graph: graph, index: index, unownedBase: source.unownedBaseSources) {
+                                                               current: current, base: source.base, graph: graph, index: index, unownedBase: source.unownedBaseSources, formattingReview: evaluation) {
                     fallback("head_only_sdk_helper_boundary", "SDK test helper isolation is unproven: \(blocker) (\(unit.region.path):\(unit.region.startLine))")
                 } else {
                     isolatedHelpers.insert(key)
@@ -193,7 +237,7 @@ enum XcodeHeadOnlySelector {
                     fallback("head_only_helper_callee_effects", "Private helper reaches an unproven callee effect boundary: \(unit.region.path):\(unit.region.startLine)")
                     continue
                 }
-                var traversal = PrivateTestHelperIsolation.Traversal()
+                var traversal = PrivateTestHelperIsolation.Traversal(formattingReview: evaluation)
                 if PrivateTestHelperIsolation.proves(unit, previous: before.first, current: current, base: source.base,
                                                      graph: graph, index: index, traversal: &traversal, unownedBase: source.unownedBaseSources) {
                     isolatedHelpers.insert(key)
@@ -210,6 +254,9 @@ enum XcodeHeadOnlySelector {
                 }
                 if !traversal.sharedStateSymbols.isEmpty {
                     fallback("head_only_helper_shared_state", "Shared state in private helper callers or callees cannot be isolated: \(unit.region.path):\(unit.region.startLine)")
+                }
+                if unit.privateTestHelper != nil, !traversal.hasUnprovenCalleeEffects, traversal.sharedStateSymbols.isEmpty {
+                    fallback("head_only_helper_isolation", (traversal.isolationBlocker ?? "Unproven source/compiler caller isolation for " + unit.key) + " at \(unit.region.path):\(unit.region.startLine). No formatting declaration supplies missing historical caller evidence.")
                 }
             }
             // New independent entries are covered only by an explicit separate
@@ -230,12 +277,23 @@ enum XcodeHeadOnlySelector {
             if excludedKeys.contains(key) { continue }
             changed.append(b)
         }
+        fallbackUnits = []
         let owned = Set(current.targets.flatMap(\.sourceFiles))
+        func onlyContractMappingChange() -> Bool {
+            guard var before = source.mappings, var after = originalCurrent.mappings else { return false }
+            before.helperFormattingContracts = nil; after.helperFormattingContracts = nil
+            let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+            return (try? encoder.encode(before)) == (try? encoder.encode(after))
+        }
         let analyzed = Set(current.sources.keys.map { key in
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) } ?? key
         })
         for change in changes {
-            if change.previousPath != nil {
+            if change.path == source.mappingPath, onlyContractMappingChange(), oldContracts != newContracts {
+                // The affected helpers above are semantic change roots, even if
+                // only the directive changed. Never ignore a mapping dependency edit.
+                continue
+            } else if change.previousPath != nil {
                 fallback("head_only_move", "Moved source/file identity lacks old compiler ownership: \(change.previousPath!) → \(change.path)")
             } else if change.path.hasSuffix(".swift"), owned.contains(change.path), analyzed.contains(change.path) {
                 if !semanticPaths.contains(change.path) { ignored.insert(change.path) }
@@ -259,6 +317,7 @@ enum XcodeHeadOnlySelector {
             if let mappings = current.mappings { mappingIndex = MappingIndex(mappings, snapshot: current, graph: graph, index: index) }
             var affected = Set<String>(), isolatedSymbols = Set<String>(), sdkSymbols = Set<String>(), production: [SourceUnit] = []
             for unit in changed {
+                fallbackUnits = [unit]
                 let module = String(unit.key.prefix { $0 != ":" })
                 let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
                 guard !owners.isEmpty, owners.allSatisfy({ current.modules[$0.name] == module && ($0.isTest || $0.hasProductionRole) }) else {
@@ -283,10 +342,24 @@ enum XcodeHeadOnlySelector {
                 if isolatedSDKHelpers.contains(unit.key) { sdkSymbols.formUnion(ids) }
                 if owners.contains(where: { !$0.isTest }) { production.append(unit) }
             }
+            // Positive compiler paths survive every failed isolation gate. A
+            // broad fallback is an additional reason, not a replacement for
+            // already observed helper/fixture dependencies.
+            for (key, units) in new where !excludedKeys.contains(key) &&
+                ((old[key] ?? []).map(fingerprint).sorted() != units.map(fingerprint).sorted() || policyHelpers.contains(key)) {
+                for unit in units where unit.kind == "function" {
+                    let module = String(unit.key.prefix { $0 != ":" })
+                    affected.formUnion((index.byFile[unit.region.path] ?? []).filter { id in
+                        let node = graph.functions[id]!
+                        return node.module == module && node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }
+                    })
+                }
+            }
+            fallbackUnits = changed
             let affectedPaths = index.paths(to: affected)
             for test in inventory.sorted() {
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
-                    include([test], kind: "dependency", reason: path.last.map(sdkSymbols.contains) == true ? "Head compiler dependencies reach a changed SDK test helper; base/head read-only query effects and closed source/compiled callers are verified" : path.last.map(isolatedSymbols.contains) == true ? "Head compiler dependencies reach a changed body; private helper isolation is verified from base/head syntax and compiled consumers" : "Head compiler dependencies reach a surviving body with an unchanged declaration header", path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
+                    include([test], kind: "dependency", reason: path.last.map(sdkSymbols.contains) == true ? "Head compiler dependencies reach a changed SDK test helper; source/compiler query and caller checks passed; consult helperContractDecisions for any reviewed formatting assumptions" : path.last.map(isolatedSymbols.contains) == true ? "Head compiler dependencies reach a changed body; private helper isolation passed source/compiler checks; consult helperContractDecisions for any reviewed formatting assumptions" : "Head compiler dependencies reach a surviving body with an unchanged declaration header", path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
                 if !changed.isEmpty {
                     let roots = graph.tests[test] ?? []
@@ -306,8 +379,8 @@ enum XcodeHeadOnlySelector {
                     changed.allSatisfy { productionKeys.contains($0.key) || isolatedHelpers.contains($0.key) || XcodeFineSelector.isTestEntry($0, in: current) }
                 for test in inventory.sorted() {
                     if !production.isEmpty, uiTests.contains(test), declaredUI { continue }
-                    if opaque.path(from: graph.tests[test] ?? []) != nil {
-                        fallback("head_only_runtime_uncertainty", "Opaque head runtime dependency may reach the change; no base compiler evidence validates isolation for \(test)", tests: [test])
+                    if let path = opaque.path(from: graph.tests[test] ?? []) {
+                        fallback("head_only_runtime_uncertainty", "Opaque head runtime dependency may reach the change; no base compiler evidence validates isolation for \(test)", tests: [test], path: path)
                     }
                 }
             }
@@ -381,6 +454,44 @@ enum XcodeHeadOnlySelector {
                 (!($0.sources ?? []).isEmpty || !($0.symbols ?? []).isEmpty) && (mi.roots[$0.name]?.isEmpty ?? true)
             }.map(\.name).sorted()
             report.uiMappingCoverage?.unmatchedSelectors = mi.unmatched.flatMap { name, selectors in selectors.map { name + ": " + $0 } }.sorted()
+        }
+        for i in contractDecisions.indices {
+            let discharged = evaluations.flatMap { $0.discharged[contractDecisions[i].contractID] ?? [] }
+            if !discharged.isEmpty {
+                contractDecisions[i].status = "discharged"
+                contractDecisions[i].dischargedBoundaries = discharged
+            }
+        }
+        report.helperContractDecisions = contractDecisions.isEmpty ? nil : contractDecisions
+        if contractDecisions.contains(where: { $0.status == "discharged" }) {
+            report.limitations.append("Exact XCTest failure-formatting boundaries were discharged by reviewed declarations. This trust is separate from compiler-proven isolation and observed coverage; all remaining diagnostics still apply.")
+        }
+        let boundaries = evaluations.flatMap(\.encountered)
+        report.formattingBoundaries = boundaries.isEmpty ? nil : boundaries
+        report.finishFallbackEvidence()
+        if !boundaries.isEmpty || !newContracts.isEmpty {
+            var helperSymbols: [String: [String]] = [:]
+            for key in Set(boundaries.map(\.helper)).union(newContracts.map(\.helper)) {
+                let units = current.sources.values.flatMap(\.units).filter { $0.key == key }
+                helperSymbols[key] = (current.dependencies?.functions.values.filter { node in
+                    node.module == String(key.prefix { $0 != ":" }) && units.contains { unit in
+                        node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.endLine <= unit.region.endLine }
+                    }
+                }.map(\.id) ?? []).sorted()
+            }
+            report.helperContractReviewContext = .init(baseRevision: baseRevision,
+                baseSources: HelperFormattingContracts.fingerprint(source.base, unowned: source.unownedBaseSources),
+                headSources: HelperFormattingContracts.fingerprint(current.sources),
+                toolchain: current.buildArtifact?.toolchain ?? current.dependencies?.toolchain ?? "",
+                buildContext: HelperFormattingContracts.buildContext(current), helperSymbols: helperSymbols)
+        }
+        if applyHelperContracts, !newContracts.isEmpty {
+            let baseline = select(current: originalCurrent, source: source, changes: changes, baseRevision: baseRevision,
+                documentation: documentation, buildEvidenceFailure: buildEvidenceFailure,
+                excludedTestEntries: excludedTestEntries, applyHelperContracts: false)
+            report.helperContractPreview = .init(withoutDeclarations: baseline.selectedTests, withDeclarations: report.selectedTests,
+                added: Set(report.selectedTests).subtracting(baseline.selectedTests).sorted(),
+                removed: Set(baseline.selectedTests).subtracting(report.selectedTests).sorted())
         }
         return report
     }

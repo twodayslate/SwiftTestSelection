@@ -1,0 +1,128 @@
+[
+  {
+    "helper": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertShareOptions\"):18:assertShareOptions|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+    "producer": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testNoteToolbarSharesLink\"):25:testNoteToolbarSharesLink|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+    "producerSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C04testE17ToolbarSharesLinkyyF",
+    "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+    "substitutions": "XCTWaiter.Result",
+    "baseRevision": "fe70b820b0c6c71a255ac2764e80c131481314e4",
+    "baseSources": "e4f3019d2eedfa40fed9a0cad1432e21f527c8d85e95bdab5cb24af936657654",
+    "headSources": "a9c8ae220f26e9b756b094b27aa542b0b132e6e1963f6721a6cf42da0d1ff150",
+    "toolchain": "Xcode 27.0\nBuild version 27A266a\nApple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx26.0\n",
+    "buildContext": "66fea1ca2feafeb1b5dae6ee417d422c9dd96b0d37df094e3669010289ab134c",
+    "version": 1,
+    "id": "coc-293-formatting-1",
+    "helperSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C18assertShareOptions33_3728959CD97011FA65426A5D0D395948LL2inySo15XCUIApplicationC_tF",
+    "guarantees": [
+      "formatting-has-no-shared-state-or-resource-effects",
+      "formatting-does-not-register-or-escape-callbacks",
+      "formatting-does-not-inject-test-or-sdk-receivers"
+    ],
+    "rationale": "Reviewed for issue #81 against the recorded base/head sources and captured Xcode 27.0 / Swift 6.4 runtime. This producer compares the scalar XCTest XCTWaiter.Result enum with .completed. The reviewed XCTest header defines integer-valued cases with no receiver payload. Project source at both revisions has no formatting/reflection conformance for these types. The captured SnapshotTesting/IssueReporting dependency extensions were inspected; their snapshotDescription/placeholder protocols do not supply XCTest runtime formatting witnesses. This review explicitly trusts Apple's built-in formatting/reflection for these concrete values to have no shared/resource mutation, callback registration/escape or test/SDK receiver injection. It does not claim binary purity was compiler-proven. XCTest failure recording and evaluation of assertion expressions remain under their existing analysis; no helper, caller, lifecycle or general SDK effects are authorized by this declaration."
+  },
+  {
+    "helper": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertShareOptions\"):18:assertShareOptions|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+    "producer": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testNoteContextMenuSharesLink\"):29:testNoteContextMenuSharesLink|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+    "producerSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C04testE21ContextMenuSharesLinkyyF",
+    "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+    "substitutions": "XCTWaiter.Result",
+    "baseRevision": "fe70b820b0c6c71a255ac2764e80c131481314e4",
+    "baseSources": "e4f3019d2eedfa40fed9a0cad1432e21f527c8d85e95bdab5cb24af936657654",
+    "headSources": "a9c8ae220f26e9b756b094b27aa542b0b132e6e1963f6721a6cf42da0d1ff150",
+    "toolchain": "Xcode 27.0\nBuild version 27A266a\nApple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx26.0\n",
+    "buildContext": "66fea1ca2feafeb1b5dae6ee417d422c9dd96b0d37df094e3669010289ab134c",
+    "version": 1,
+    "id": "coc-293-formatting-2",
+    "helperSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C18assertShareOptions33_3728959CD97011FA65426A5D0D395948LL2inySo15XCUIApplicationC_tF",
+    "guarantees": [
+      "formatting-has-no-shared-state-or-resource-effects",
+      "formatting-does-not-register-or-escape-callbacks",
+      "formatting-does-not-inject-test-or-sdk-receivers"
+    ],
+    "rationale": "Reviewed for issue #81 against the recorded base/head sources and captured Xcode 27.0 / Swift 6.4 runtime. This producer compares the scalar XCTest XCTWaiter.Result enum with .completed. The reviewed XCTest header defines integer-valued cases with no receiver payload. Project source at both revisions has no formatting/reflection conformance for these types. The captured SnapshotTesting/IssueReporting dependency extensions were inspected; their snapshotDescription/placeholder protocols do not supply XCTest runtime formatting witnesses. This review explicitly trusts Apple's built-in formatting/reflection for these concrete values to have no shared/resource mutation, callback registration/escape or test/SDK receiver injection. It does not claim binary purity was compiler-proven. XCTest failure recording and evaluation of assertion expressions remain under their existing analysis; no helper, caller, lifecycle or general SDK effects are authorized by this declaration."
+  },
+  {
+    "helper": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertShareOptions\"):18:assertShareOptions|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+    "producer": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testNoteContextMenuSharesContent\"):32:testNoteContextMenuSharesContent|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+    "producerSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C04testE24ContextMenuSharesContentyyF",
+    "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+    "substitutions": "XCTWaiter.Result",
+    "baseRevision": "fe70b820b0c6c71a255ac2764e80c131481314e4",
+    "baseSources": "e4f3019d2eedfa40fed9a0cad1432e21f527c8d85e95bdab5cb24af936657654",
+    "headSources": "a9c8ae220f26e9b756b094b27aa542b0b132e6e1963f6721a6cf42da0d1ff150",
+    "toolchain": "Xcode 27.0\nBuild version 27A266a\nApple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx26.0\n",
+    "buildContext": "66fea1ca2feafeb1b5dae6ee417d422c9dd96b0d37df094e3669010289ab134c",
+    "version": 1,
+    "id": "coc-293-formatting-3",
+    "helperSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C18assertShareOptions33_3728959CD97011FA65426A5D0D395948LL2inySo15XCUIApplicationC_tF",
+    "guarantees": [
+      "formatting-has-no-shared-state-or-resource-effects",
+      "formatting-does-not-register-or-escape-callbacks",
+      "formatting-does-not-inject-test-or-sdk-receivers"
+    ],
+    "rationale": "Reviewed for issue #81 against the recorded base/head sources and captured Xcode 27.0 / Swift 6.4 runtime. This producer compares the scalar XCTest XCTWaiter.Result enum with .completed. The reviewed XCTest header defines integer-valued cases with no receiver payload. Project source at both revisions has no formatting/reflection conformance for these types. The captured SnapshotTesting/IssueReporting dependency extensions were inspected; their snapshotDescription/placeholder protocols do not supply XCTest runtime formatting witnesses. This review explicitly trusts Apple's built-in formatting/reflection for these concrete values to have no shared/resource mutation, callback registration/escape or test/SDK receiver injection. It does not claim binary purity was compiler-proven. XCTest failure recording and evaluation of assertion expressions remain under their existing analysis; no helper, caller, lifecycle or general SDK effects are authorized by this declaration."
+  },
+  {
+    "helper": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertShareOptions\"):18:assertShareOptions|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+    "producer": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"disablePrivacyVeil\"):18:disablePrivacyVeil|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+    "producerSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C18disablePrivacyVeil33_3728959CD97011FA65426A5D0D395948LL2inySo15XCUIApplicationC_tF",
+    "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+    "substitutions": "XCTWaiter.Result",
+    "baseRevision": "fe70b820b0c6c71a255ac2764e80c131481314e4",
+    "baseSources": "e4f3019d2eedfa40fed9a0cad1432e21f527c8d85e95bdab5cb24af936657654",
+    "headSources": "a9c8ae220f26e9b756b094b27aa542b0b132e6e1963f6721a6cf42da0d1ff150",
+    "toolchain": "Xcode 27.0\nBuild version 27A266a\nApple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx26.0\n",
+    "buildContext": "66fea1ca2feafeb1b5dae6ee417d422c9dd96b0d37df094e3669010289ab134c",
+    "version": 1,
+    "id": "coc-293-formatting-4",
+    "helperSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C18assertShareOptions33_3728959CD97011FA65426A5D0D395948LL2inySo15XCUIApplicationC_tF",
+    "guarantees": [
+      "formatting-has-no-shared-state-or-resource-effects",
+      "formatting-does-not-register-or-escape-callbacks",
+      "formatting-does-not-inject-test-or-sdk-receivers"
+    ],
+    "rationale": "Reviewed for issue #81 against the recorded base/head sources and captured Xcode 27.0 / Swift 6.4 runtime. This producer compares the scalar XCTest XCTWaiter.Result enum with .completed. The reviewed XCTest header defines integer-valued cases with no receiver payload. Project source at both revisions has no formatting/reflection conformance for these types. The captured SnapshotTesting/IssueReporting dependency extensions were inspected; their snapshotDescription/placeholder protocols do not supply XCTest runtime formatting witnesses. This review explicitly trusts Apple's built-in formatting/reflection for these concrete values to have no shared/resource mutation, callback registration/escape or test/SDK receiver injection. It does not claim binary purity was compiler-proven. XCTest failure recording and evaluation of assertion expressions remain under their existing analysis; no helper, caller, lifecycle or general SDK effects are authorized by this declaration."
+  },
+  {
+    "helper": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertShareOptions\"):18:assertShareOptions|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+    "producer": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertLinkShareSheet\"):20:assertLinkShareSheet|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"expectedTitle\"):13:expectedTitle|colon:1::|optionalType[identifierType[identifier(\"String\"):6:String]|postfixQuestionMark:1:?]|initializerClause[equal:1:=|nilLiteralExpr[keyword(SwiftSyntax.Keyword.nil):3:nil]]]]|rightParen:1:)]]]",
+    "producerSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C20assertLinkShareSheet33_3728959CD97011FA65426A5D0D395948LL2in13expectedTitleySo15XCUIApplicationC_SSSgtF",
+    "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+    "substitutions": "XCTWaiter.Result",
+    "baseRevision": "fe70b820b0c6c71a255ac2764e80c131481314e4",
+    "baseSources": "e4f3019d2eedfa40fed9a0cad1432e21f527c8d85e95bdab5cb24af936657654",
+    "headSources": "a9c8ae220f26e9b756b094b27aa542b0b132e6e1963f6721a6cf42da0d1ff150",
+    "toolchain": "Xcode 27.0\nBuild version 27A266a\nApple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx26.0\n",
+    "buildContext": "66fea1ca2feafeb1b5dae6ee417d422c9dd96b0d37df094e3669010289ab134c",
+    "version": 1,
+    "id": "coc-293-formatting-5",
+    "helperSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C18assertShareOptions33_3728959CD97011FA65426A5D0D395948LL2inySo15XCUIApplicationC_tF",
+    "guarantees": [
+      "formatting-has-no-shared-state-or-resource-effects",
+      "formatting-does-not-register-or-escape-callbacks",
+      "formatting-does-not-inject-test-or-sdk-receivers"
+    ],
+    "rationale": "Reviewed for issue #81 against the recorded base/head sources and captured Xcode 27.0 / Swift 6.4 runtime. This producer compares the scalar XCTest XCTWaiter.Result enum with .completed. The reviewed XCTest header defines integer-valued cases with no receiver payload. Project source at both revisions has no formatting/reflection conformance for these types. The captured SnapshotTesting/IssueReporting dependency extensions were inspected; their snapshotDescription/placeholder protocols do not supply XCTest runtime formatting witnesses. This review explicitly trusts Apple's built-in formatting/reflection for these concrete values to have no shared/resource mutation, callback registration/escape or test/SDK receiver injection. It does not claim binary purity was compiler-proven. XCTest failure recording and evaluation of assertion expressions remain under their existing analysis; no helper, caller, lifecycle or general SDK effects are authorized by this declaration."
+  },
+  {
+    "helper": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertShareOptions\"):18:assertShareOptions|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+    "producer": "ChainOfCustodyUITests:PortraitRestoringUITestCase:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"restorePortraitOrientation\"):26:restorePortraitOrientation|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"file\"):4:file|colon:1::|identifierType[identifier(\"StaticString\"):12:StaticString]|initializerClause[equal:1:=|macroExpansionExpr[pound:1:#|identifier(\"filePath\"):8:filePath|labeledExprList[]|multipleTrailingClosureElementList[]]]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"line\"):4:line|colon:1::|identifierType[identifier(\"UInt\"):4:UInt]|initializerClause[equal:1:=|macroExpansionExpr[pound:1:#|identifier(\"line\"):4:line|labeledExprList[]|multipleTrailingClosureElementList[]]]]]|rightParen:1:)]]]",
+    "producerSymbol": "$s21ChainOfCustodyUITests27PortraitRestoringUITestCaseC07restoreE11Orientation33_8D9B024C3636F99AE8078B700CE292C6LL4file4lineys12StaticStringV_SutF",
+    "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+    "substitutions": "XCTWaiter.Result",
+    "baseRevision": "fe70b820b0c6c71a255ac2764e80c131481314e4",
+    "baseSources": "e4f3019d2eedfa40fed9a0cad1432e21f527c8d85e95bdab5cb24af936657654",
+    "headSources": "a9c8ae220f26e9b756b094b27aa542b0b132e6e1963f6721a6cf42da0d1ff150",
+    "toolchain": "Xcode 27.0\nBuild version 27A266a\nApple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx26.0\n",
+    "buildContext": "66fea1ca2feafeb1b5dae6ee417d422c9dd96b0d37df094e3669010289ab134c",
+    "version": 1,
+    "id": "coc-293-formatting-6",
+    "helperSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C18assertShareOptions33_3728959CD97011FA65426A5D0D395948LL2inySo15XCUIApplicationC_tF",
+    "guarantees": [
+      "formatting-has-no-shared-state-or-resource-effects",
+      "formatting-does-not-register-or-escape-callbacks",
+      "formatting-does-not-inject-test-or-sdk-receivers"
+    ],
+    "rationale": "Reviewed for issue #81 against the recorded base/head sources and captured Xcode 27.0 / Swift 6.4 runtime. This producer compares the scalar XCTest XCTWaiter.Result enum with .completed. The reviewed XCTest header defines integer-valued cases with no receiver payload. Project source at both revisions has no formatting/reflection conformance for these types. The captured SnapshotTesting/IssueReporting dependency extensions were inspected; their snapshotDescription/placeholder protocols do not supply XCTest runtime formatting witnesses. This review explicitly trusts Apple's built-in formatting/reflection for these concrete values to have no shared/resource mutation, callback registration/escape or test/SDK receiver injection. It does not claim binary purity was compiler-proven. XCTest failure recording and evaluation of assertion expressions remain under their existing analysis; no helper, caller, lifecycle or general SDK effects are authorized by this declaration. The unchanged restorePortraitOrientation producer is reached from lifecycle roots; only its scalar Result formatting is covered. Orientation writes, predicate capture, setUp and tearDown effects still require their independent source/compiler checks."
+  }
+]

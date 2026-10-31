@@ -152,7 +152,7 @@ final class XcodeGraphCache {
 
     /// Rewrite only known spellings of this exact workspace, at path boundaries.
     /// Settings can contain /tmp even when the exported workspace uses /private/tmp.
-    static func normalizedSettings(_ data: Data, workspace: URL, aliases: [URL] = []) throws -> Data {
+    static func normalizedSettings(_ data: Data, workspace: URL, aliases: [URL] = [], isFile: Bool = false) throws -> Data {
         func physical(_ url: URL) -> String {
             if let path = realpath(url.path, nil) { defer { free(path) }; return String(cString: path) }
             return url.standardizedFileURL.resolvingSymlinksInPath().path
@@ -173,8 +173,11 @@ final class XcodeGraphCache {
             }
         }
         paths.formUnion(paths.map { $0.replacingOccurrences(of: " ", with: "\\ ") })
+        // A file may be followed by another flag in a settings string; unlike
+        // directory roots, a slash after it must not normalize a different path.
+        let end = isFile ? #"(?=$|[\s"'=,:;])"# : #"(?=$|[/"'=,:;])"#
         let expressions = try paths.sorted { $0.count > $1.count }.map { path in
-            try NSRegularExpression(pattern: #"(^|[\s"'=,:;@])(-[IFL])?"# + NSRegularExpression.escapedPattern(for: path) + #"(?=$|[/"'=,:;])"#)
+            try NSRegularExpression(pattern: #"(^|[\s"'=,:;@])(-[IFL])?"# + NSRegularExpression.escapedPattern(for: path) + end)
         }
         func normalize(_ value: Any) -> Any {
             if let values = value as? [String: Any] { return values.mapValues(normalize) }
@@ -359,7 +362,7 @@ extension XcodeAnalysis {
             guard !decoded.isEmpty else { throw ImpactError("Cannot cache empty build settings.") }
             let normalized = try XcodeGraphCache.normalizedSettings(settings, workspace: workspace, aliases: keepBuild ? retained.map { [$0] } ?? [] : [])
             var identity = context
-            identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-5"
+            identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-5-helper-contract-3"
             identity["repository"] = XcodeGraphCache.digest(Data(repository.utf8))
             identity["revision"] = revision
             identity["analyzerExecutable"] = analyzer

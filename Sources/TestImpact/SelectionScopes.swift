@@ -59,6 +59,9 @@ extension XcodeHeadOnlySelector {
                                 documentation: documentation, buildEvidenceFailure: buildEvidenceFailure,
                                 excludedTestEntries: Set(scope.excludedTestEntries))
             measurement(.init(phase: "scopeSelection", revision: headRevision, seconds: Date().timeIntervalSince(selectionStart), detail: scope.name))
+            for i in report.diagnostics.indices {
+                report.diagnostics[i].fallback?.selectionScope = scope.name
+            }
             report.headRevision = headRevision
             report.buildArtifactID = current.buildArtifact?.id
             report.buildArtifactPath = retainedGraphPath

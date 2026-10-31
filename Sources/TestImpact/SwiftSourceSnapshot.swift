@@ -91,6 +91,7 @@ public struct SourceUnit: Codable, Sendable {
 
 public struct SwiftSourceSnapshot: Codable, Sendable {
     public var inlineMappings: InlineMappingSyntax? = nil
+    public var helperContracts: HelperContractSyntax? = nil
     public var units: [SourceUnit]
     public var inheritance: [String: [String]]
     public var diagnostics: [String]
@@ -156,6 +157,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         let tree = Parser.parse(source: text)
         let locations = SourceLocationConverter(fileName: path, tree: tree)
         var result = Self(units: [], inheritance: [:], diagnostics: [])
+        result.helperContracts = text.contains(HelperContractSyntax.prefix) ? HelperContractSyntax.parse(tree) : HelperContractSyntax()
         result.inlineMappings = InlineMappingSyntax.parse(tree, path: path, module: module, hasDirectives: text.contains(InlineMappingSyntax.prefix))
         result.dispatchMembers = []
         result.helperGlobalDeclarations = [:]

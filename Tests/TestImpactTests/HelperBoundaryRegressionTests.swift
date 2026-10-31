@@ -98,7 +98,10 @@ func sdkHelperScopesAuditBaseOnlySources(scenario: String) throws {
     #expect(cache.counts.blobReads == before.blobReads)
     #expect(cache.counts.parses == before.parses)
     let original = try uncachedHeadOnlySources(current: current, changes: [.init(path: "Waiting.swift")], base: "HEAD", root: root, mappingPath: ".swift-test-selection.json")
-    let reference = XcodeHeadOnlySelector.select(current: current, source: original, changes: [.init(path: "Waiting.swift")], baseRevision: "HEAD")
+    var reference = XcodeHeadOnlySelector.select(current: current, source: original, changes: [.init(path: "Waiting.swift")], baseRevision: "HEAD")
+    // The scoped wrapper labels fallback diagnostics; the uncached selector
+    // has no scope argument. Compare both with the same expected label.
+    for i in reference.diagnostics.indices { reference.diagnostics[i].fallback?.selectionScope = "waiting" }
     #expect(report.selectedTests == reference.selectedTests)
     #expect(try diagnosticJSON(report) == diagnosticJSON(reference))
     if scenario == "unrelated" {

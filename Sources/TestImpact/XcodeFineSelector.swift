@@ -37,14 +37,22 @@ public enum XcodeFineSelector {
                 fallback(diagnostic.code, diagnostic.message, tests: Set(diagnostic.tests))
             }
         }
-        var policyPaths = Set<String>()
+        let oldHelperContracts = HelperFormattingContracts.declarations(previous?.sources ?? [:], previous?.mappings)
+        let newHelperContracts = HelperFormattingContracts.declarations(current.sources, current.mappings)
+        if oldHelperContracts != newHelperContracts {
+            fallback("helper_contract_policy_changed", "Helper formatting declaration changed; this declaration is supported only by head-only helper analysis.")
+        }
+        for error in (Array(current.sources.values) + Array(previous?.sources.values ?? [:].values)).flatMap({ $0.helperContracts?.diagnostics ?? [] }) {
+            fallback("helper_contract_invalid", error)
+        }
+        var policyPaths = HelperFormattingContracts.changedPolicyPaths(base: previous?.sources ?? [:], head: current.sources)
         if let baseInline {
             for test in Set(headInline.policies.keys).union(baseInline.policies.keys) where headInline.policies[test] != baseInline.policies[test] {
                 include([test], kind: "inlineMappingChanged", reason: "Inline UI dependency policy changed", revision: "base/head",
                         path: (headInline.features + baseInline.features).filter { $0.tests?.contains(test) == true }.map(\.name).sorted())
             }
             let before = InlineUIMappings.policyPaths(previous!.sources), after = InlineUIMappings.policyPaths(current.sources)
-            policyPaths = Set(before.keys).union(after.keys).filter { before[$0] != after[$0] }
+            policyPaths.formUnion(Set(before.keys).union(after.keys).filter { before[$0] != after[$0] })
         }
         for (snapshot, resolution) in [(Optional(current), Optional(headInline)), (previous, baseInline)] {
             guard let snapshot, let resolution, !resolution.features.isEmpty, let graph = snapshot.dependencies else { continue }
@@ -568,6 +576,7 @@ public enum XcodeFineSelector {
             report.uiMappingCoverage!.unresolvedBoundaries.sort()
             report.uiMappingCoverage!.unmatchedSelectors.sort()
         }
+        report.finishFallbackEvidence()
         return report
     }
 
