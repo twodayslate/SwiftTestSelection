@@ -5,7 +5,7 @@ import SwiftSyntax
 
 /// Uses, not declarations: a current SDK call does not authenticate the same
 /// expression when a competing project overload existed in the base revision.
-public struct HelperBindingUses: Codable, Sendable {
+public struct HelperBindingUses: Codable, Sendable, Equatable {
     public var operators: Set<String> = []
     /// Operators invoked by syntax without an operator token. Nil means the
     /// capture predates this inventory and cannot authenticate historical uses.

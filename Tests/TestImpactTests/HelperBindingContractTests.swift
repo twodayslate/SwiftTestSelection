@@ -66,7 +66,19 @@ import XCTest
     current.mappings!.helperBindingContracts = try ["head", "base"].map {
         try bindingContract("App:Screen.swift", revision: $0, helper: helper, current: current, source: source)
     }
-    let reviewed = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base")
+    let cache = HelperBindingDigestCache(current: current)
+    let reviewed = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base", digestCache: cache)
+    let computations = cache.bindingComputations
+    let repeated = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base", digestCache: cache)
+    #expect(cache.bindingComputations == computations)
+    #expect(HelperBindingContracts.digest(reviewed) == HelperBindingContracts.digest(repeated))
+    for excluded in [Set<String>(), Set([tests[0]])] {
+        let cached = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base", excludedTestEntries: excluded, digestCache: cache)
+        let uncached = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base", excludedTestEntries: excluded)
+        #expect(HelperBindingContracts.digest(cached) == HelperBindingContracts.digest(uncached))
+    }
+    let stale = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "different-base", digestCache: cache)
+    #expect(stale.helperBindingDecisions?.allSatisfy { $0.status == "invalid" } == true)
     #expect(reviewed.selectedTests == [tests[0]], "\(reviewed.diagnostics)")
     #expect(reviewed.helperBindingDecisions?.contains { $0.status == "discharged" } == true)
     #expect(reviewed.helperDeclarationInventories?.count == 2)
@@ -302,4 +314,102 @@ import XCTest
     let rejectedReport = try JSONDecoder().decode(ImpactReport.self, from: rejected.stdout)
     #expect(rejectedReport.selectedTests == tests.sorted())
     #expect(rejectedReport.helperBindingDecisions?.contains { $0.status == "invalid" } == true)
+}
+
+@Test func bindingIdentityReviewExcludesOnlyProvenCrossFilePrivateNames() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let tests = ["UI/Suite/testConsumer()", "UI/Other/testOther()"]
+    var current = try boundaryGraph(["UI.swift": bindingBefore], tests: tests, root: root)
+    bindingArtifact(&current)
+    let wrapper = "import SwiftUI\nstruct Screen { @State var count = 0 }"
+    current.sources["App:Screen.swift"] = .parse(wrapper, path: "Screen.swift", module: "App")
+    let helper = try #require(current.sources["UI:UI.swift"]!.units.first { $0.helperCallableName == "candidate" })
+    let cases: [(String, Bool)] = [
+        ("private final class Coordinator { private struct State {} }", true),
+        ("private final class Coordinator { struct State {} }", true),
+        ("class Coordinator { private struct State {} }", true),
+        ("fileprivate typealias State = Int", true),
+        ("private struct State {}", true),
+        ("struct State {}", false),
+        ("typealias State = Int", false),
+        ("class Coordinator { struct State {} }", false),
+        ("class Coordinator {}\nextension Coordinator { struct State {} }", false),
+        ("class Coordinator {}\nprivate extension Coordinator { struct State {} }", false),
+        ("public class Coordinator {}\nprivate extension Coordinator { public struct State {} }", false),
+        ("private struct State {}\n#if FLAG\nstruct State {}\n#endif", false)
+    ]
+    for (text, accepted) in cases {
+        var graph = current
+        graph.sources["App:Store.swift"] = .parse(text, path: "Store.swift", module: "App")
+        var source = XcodeHeadOnlySources(base: graph.sources, mappings: graph.mappings)
+        func review() throws -> [HelperBindingDecision] {
+            graph.mappings!.helperBindingContracts = try ["head", "base"].map {
+                try bindingContract("App:Screen.swift", revision: $0, helper: helper, current: graph, source: source)
+            }
+            return HelperBindingContracts.validate(current: graph, source: source, baseRevision: "base").decisions
+        }
+        #expect(try review().allSatisfy { $0.status == "valid-unused" } == accepted, "\(text)")
+        if accepted {
+            graph.sources["App:Store.swift"]!.helperFileRestrictedIdentityNames = nil
+            #expect(try review().allSatisfy { $0.status == "invalid" })
+            graph.sources["App:Store.swift"] = .parse(text, path: "Store.swift", module: "App")
+            // A public historical declaration cannot be excused by private head visibility.
+            source.base["App:Store.swift"] = .parse("struct State {}", path: "Store.swift", module: "App")
+            #expect(try review().allSatisfy { $0.status == "invalid" })
+        }
+    }
+    // The shadow answer must not be cached just by module/identity. The second
+    // review uses State inside its declaring scope in the very same file.
+    current.sources["App:Store.swift"] = .parse("import SwiftUI\nprivate struct Owner { private struct State {}; @State var count = 0 }", path: "Store.swift", module: "App")
+    let source = XcodeHeadOnlySources(base: current.sources, mappings: current.mappings)
+    current.mappings!.helperBindingContracts = try ["App:Screen.swift", "App:Store.swift"].map {
+        try bindingContract($0, revision: "head", helper: helper, current: current, source: source)
+    }
+    let decisions = HelperBindingContracts.validate(current: current, source: source, baseRevision: "base").decisions
+    #expect(decisions[0].status == "valid-unused")
+    #expect(decisions[1].status == "invalid")
+    // Compiler control for the actual inaccessible nested declaration case.
+    try Data("private final class Coordinator { private struct State { var count = 0 } }".utf8).write(to: root.appendingPathComponent("Store.swift"))
+    try Data("import SwiftUI\nstruct Screen: View { @State private var count = 0; var body: some View { Text(String(count)) }; func check() { let _: SwiftUI.State<Int> = _count } }".utf8).write(to: root.appendingPathComponent("Screen.swift"))
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-typecheck", "-module-name", "BindingScopeProbe", "Store.swift", "Screen.swift"], at: root)
+}
+
+@Test func bindingDigestCacheRequiresExactSourceAndCompilerEvidence() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let current = try boundaryGraph(["UI.swift": bindingBefore], tests: ["UI/Suite/testConsumer()", "UI/Other/testOther()"], root: root)
+    let snapshot = try #require(current.sources["UI:UI.swift"])
+    let cache = HelperBindingDigestCache(current: current)
+    let reference = HelperBindingContracts.bindingDigest(key: "UI:UI.swift", snapshot: snapshot, current: current)
+    #expect(cache.bindingDigest(key: "UI:UI.swift", snapshot: snapshot) == reference)
+    let nodes = cache.nodeComputations
+    let copy = try JSONDecoder().decode(SwiftSourceSnapshot.self, from: JSONEncoder().encode(snapshot))
+    #expect(cache.bindingDigest(key: "UI:UI.swift", snapshot: copy) == reference)
+    #expect(cache.snapshotComputations == 1 && cache.snapshotHits == 1 && cache.nodeComputations == nodes)
+    let mutations: [(inout SwiftSourceSnapshot) -> Void] = [
+        { $0.units[0].key += "changed" }, { $0.units[0].region.startLine += 1 },
+        { $0.units[0].syntaxFingerprint = "changed" }, { $0.units[0].receiverUnsupportedImports = ["import Changed"] },
+        { $0.units[0].receiverImportsSupported = false }, { $0.units[0].helperBindingUses = nil },
+        { $0.helperDeclarationIssues = nil }, { $0.helperDeclarationsComplete = false },
+        { $0.helperNamesUnshadowed = false }, { $0.helperImportsLocal = false },
+        { $0.helperWrittenOperators = ["changed"] }, { $0.helperReferences = nil },
+        { $0.helperReferencesWithReviewedImports = ["new": .init()] }, { $0.diagnostics = ["changed"] }
+    ]
+    for mutate in mutations {
+        var changed = snapshot; mutate(&changed)
+        let expected = HelperBindingContracts.bindingDigest(key: "UI:UI.swift", snapshot: changed, current: current)
+        #expect(expected != reference)
+        #expect(cache.bindingDigest(key: "UI:UI.swift", snapshot: changed) == expected)
+    }
+    #expect(cache.nodeComputations == nodes)
+    #expect(cache.bindingDigest(key: "Other:UI.swift", snapshot: snapshot) == HelperBindingContracts.bindingDigest(key: "Other:UI.swift", snapshot: snapshot, current: current))
+    var changed = current
+    let symbol = try #require(changed.dependencies!.functions.keys.first)
+    changed.dependencies!.functions[symbol]!.uncertainties.insert("Changed compiler evidence")
+    let replacement = cache.matching(changed)
+    #expect(replacement !== cache)
+    #expect(replacement.bindingDigest(key: "UI:UI.swift", snapshot: snapshot) == HelperBindingContracts.bindingDigest(key: "UI:UI.swift", snapshot: snapshot, current: changed))
 }

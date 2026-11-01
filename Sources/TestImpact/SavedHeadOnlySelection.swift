@@ -41,13 +41,14 @@ extension XcodeAnalysis {
         let cache = try XcodeBaseSourceCache(root: root, base: comparison.base)
         let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: comparison.base,
             root: root, mappingPath: options.mappingsPath, cache: cache)
+        let digestCache = HelperBindingDigestCache(current: current)
         var report = XcodeHeadOnlySelector.select(current: current, source: source, changes: changes,
-            baseRevision: comparison.base, documentation: Set(proof.documentation), buildEvidenceFailure: proof.uncertainty)
+            baseRevision: comparison.base, documentation: Set(proof.documentation), buildEvidenceFailure: proof.uncertainty, digestCache: digestCache)
         if let selectionScopes {
             report.selectionScopes = try XcodeHeadOnlySelector.scopedReports(current: current, requests: selectionScopes,
                 changes: changes, baseRevision: comparison.base, headRevision: artifact.revision, root: root,
                 mappingPath: options.mappingsPath, documentation: Set(proof.documentation), buildEvidenceFailure: proof.uncertainty,
-                retainedGraphPath: retainedGraphPath, sourceCache: cache)
+                retainedGraphPath: retainedGraphPath, sourceCache: cache, digestCache: digestCache)
         }
         report.headRevision = artifact.revision
         report.comparisonMode = comparison.mode

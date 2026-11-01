@@ -84,7 +84,8 @@ struct XcodeHeadOnlySources {
 /// This does not delegate to the two-graph selector with a synthetic previous.
 enum XcodeHeadOnlySelector {
     static func select(current: XcodeTestGraph, source: XcodeHeadOnlySources, changes: [FileChange],
-                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = [], applyHelperContracts: Bool = true) -> ImpactReport {
+                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = [], applyHelperContracts: Bool = true, digestCache: HelperBindingDigestCache? = nil) -> ImpactReport {
+        let digestCache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
         let originalCurrent = current
         let mappingFilePresent = current.mappings != nil
         let inline = InlineUIMappings.resolve(current)
@@ -97,7 +98,7 @@ enum XcodeHeadOnlySelector {
         var explanations: [TestExplanation] = [], diagnostics: [SelectionDiagnostic] = []
         var fallbackUnits: [SourceUnit] = []
         let review = HelperFormattingContracts.validate(current: current, source: source, baseRevision: baseRevision)
-        let bindings = HelperBindingContracts.validate(current: current, source: source, baseRevision: baseRevision)
+        let bindings = HelperBindingContracts.validate(current: current, source: source, baseRevision: baseRevision, digestCache: digestCache)
         var bindingDecisions = bindings.decisions
         var contractDecisions = review.decisions
         var evaluations: [HelperContractEvaluation] = []
@@ -213,7 +214,7 @@ enum XcodeHeadOnlySelector {
             fallbackUnits = before + after
             let evaluation = HelperContractEvaluation(helper: key, contracts: applyHelperContracts ? review.contracts : [],
                 diagnosticCode: after.first?.sdkTestHelper != nil ? "head_only_sdk_helper_boundary" : "head_only_helper_callee_effects")
-            evaluation.bindingReview = HelperBindingEvaluation(contracts: applyHelperContracts ? bindings.contracts.filter { $0.helper == key } : [], current: current, source: source)
+            evaluation.bindingReview = HelperBindingEvaluation(contracts: applyHelperContracts ? bindings.contracts.filter { $0.helper == key } : [], current: current, source: source, digestCache: digestCache)
             evaluations.append(evaluation)
             semanticPaths.formUnion((before + after).map { $0.region.path })
             if PrivateTestHelperIsolation.provesExtensionHeaders(before + after, current: current, base: source.base) { continue }
@@ -491,8 +492,8 @@ enum XcodeHeadOnlySelector {
         }
         let boundaries = evaluations.flatMap(\.encountered)
         report.formattingBoundaries = boundaries.isEmpty ? nil : boundaries
-        if !declarationAudits.isEmpty || diagnostics.contains(where: { $0.code == "head_only_sdk_helper_boundary" }) || !newBindings.isEmpty {
-            report.helperBindingReviewContext = HelperBindingContracts.context(current: current, source: source, baseRevision: baseRevision, helpers: Set(evaluations.map(\.helper)))
+        if applyHelperContracts && (!declarationAudits.isEmpty || diagnostics.contains(where: { $0.code == "head_only_sdk_helper_boundary" }) || !newBindings.isEmpty) {
+            report.helperBindingReviewContext = HelperBindingContracts.context(current: current, source: source, baseRevision: baseRevision, helpers: Set(evaluations.map(\.helper)), digestCache: digestCache)
         }
         if !declarationAudits.isEmpty || !newBindings.isEmpty {
             let inventories = HelperDeclarationInventory.boundaries(current: current.sources, base: source.base, unownedBase: source.unownedBaseSources)
@@ -521,7 +522,7 @@ enum XcodeHeadOnlySelector {
         if applyHelperContracts, !newContracts.isEmpty || !newBindings.isEmpty {
             let baseline = select(current: originalCurrent, source: source, changes: changes, baseRevision: baseRevision,
                 documentation: documentation, buildEvidenceFailure: buildEvidenceFailure,
-                excludedTestEntries: excludedTestEntries, applyHelperContracts: false)
+                excludedTestEntries: excludedTestEntries, applyHelperContracts: false, digestCache: digestCache)
             report.helperContractPreview = .init(withoutDeclarations: baseline.selectedTests, withDeclarations: report.selectedTests,
                 added: Set(report.selectedTests).subtracting(baseline.selectedTests).sorted(),
                 removed: Set(baseline.selectedTests).subtracting(report.selectedTests).sorted())

@@ -115,3 +115,32 @@ The real-app inventories contain Testing/Observation and other macro expansions;
 SDK wrapper reviews cannot establish those expansion boundaries.
 See [validation results](HelperBindingValidation.md) for compiled regressions,
 fresh consumer captures, exact selection differences and remaining blockers.
+
+## Evidence reuse and private names
+
+Head-only selection shares an in-memory digest cache across its primary query,
+independent scopes, review validation and internal previews. It compares the
+exact source metadata used by each digest and binds compiler observations to an
+immutable function graph, indexed by module and source path. A changed graph
+gets a separate cache. Scope exclusions, helper identities, contract validation,
+revision/input checks and discharge decisions are always evaluated per query.
+The cache is neither serialized nor reused by another invocation. Public reports
+retain their authoring context and raw inventories; the internal no-contract
+preview skips authoring context because its caller consumes only selected IDs.
+Digest formats and review fingerprints are unchanged.
+
+New source captures record names whose written type, alias or macro declarations
+are all restricted to their file by `private`/`fileprivate` access, including a
+private enclosing type. Such a name in a different file no longer rejects an SDK
+identity review. The validator checks both revisions and all declarations of the
+name. Visibility is derived from the same captured syntax whose declaration
+headers, bodies and ownership are already bound by the review's source digests.
+Older captures without this metadata retain their previous conservative result;
+refresh source capture to use this precision improvement.
+
+This is a bounded accessibility proof, not a complete Swift name resolver.
+Same-file lexical names, accessible nested or inherited names, unknown metadata,
+and extension-default access remain conservative. In particular, a `private
+extension` can contain an explicitly public member, so the extension modifier
+alone does not prove inaccessibility. Aliases, macro expansion uncertainty and
+other independent helper checks still apply.

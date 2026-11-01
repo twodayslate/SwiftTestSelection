@@ -18,7 +18,7 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
     // These SDKs do not replace XCTest assertions or Swift's Bool negation.
     static let trustedCallerModules = trustedModules.union(["UIKit"])
 
-    public struct References: Codable, Sendable {
+    public struct References: Codable, Sendable, Equatable {
         public var declarations: Set<Int> = []
         public var callers: Set<Int> = []
         public var unsupported = false

@@ -363,7 +363,7 @@ extension XcodeAnalysis {
             guard !decoded.isEmpty else { throw ImpactError("Cannot cache empty build settings.") }
             let normalized = try XcodeGraphCache.normalizedSettings(settings, workspace: workspace, aliases: keepBuild ? retained.map { [$0] } ?? [] : [])
             var identity = context
-            identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-5-helper-contract-6"
+            identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-5-helper-contract-7"
             identity["repository"] = XcodeGraphCache.digest(Data(repository.utf8))
             identity["revision"] = revision
             identity["analyzerExecutable"] = analyzer
@@ -501,10 +501,11 @@ extension XcodeAnalysis {
         let baseSources = try headOnly ? timed("baseSourceSyntax", revision: comparison.base, detail: "Git syntax only; no baseline build or compiler graph") {
             try XcodeHeadOnlySources.read(current: current, changes: changes, base: comparison.base, root: root, mappingPath: options.mappingsPath, cache: sourceCache)
         } : nil
+        let digestCache = headOnly ? HelperBindingDigestCache(current: current) : nil
         var report = timed("selection", revision: comparison.head!) {
             if let baseSources {
                 return XcodeHeadOnlySelector.select(current: current, source: baseSources, changes: changes,
-                    baseRevision: comparison.base, documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty)
+                    baseRevision: comparison.base, documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty, digestCache: digestCache)
             }
             return XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base, additionalFallbacks: fallbacks)
         }
@@ -513,7 +514,7 @@ extension XcodeAnalysis {
                 try XcodeHeadOnlySelector.scopedReports(current: current, requests: selectionScopes, changes: changes,
                     baseRevision: comparison.base, headRevision: comparison.head!, root: root, mappingPath: options.mappingsPath,
                     documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty, retainedGraphPath: retainedGraphPath,
-                    sourceCache: sourceCache, measurement: { events.append($0) })
+                    sourceCache: sourceCache, digestCache: digestCache, measurement: { events.append($0) })
             }
         }
         if let sourceCache {
