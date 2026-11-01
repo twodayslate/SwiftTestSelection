@@ -195,6 +195,7 @@ enum XcodeHeadOnlySelector {
         let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries)
         let dependencyIndex = current.dependencies.map(DependencyIndex.init)
         var isolatedHelpers = Set<String>(), isolatedSDKHelpers = Set<String>()
+        var declarationAudits: [HelperDeclarationAudit] = []
         var changed: [SourceUnit] = []
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
         for key in Set(old.keys).union(new.keys).sorted() {
@@ -229,6 +230,11 @@ enum XcodeHeadOnlySelector {
                     continue
                 }
                 let proofs = [unit.privateTestHelper, before.first?.privateTestHelper].compactMap { $0 }
+                if !proofs.isEmpty {
+                    declarationAudits.append(.init(helper: key,
+                        sdkMembers: Set(proofs.flatMap { $0.sdkEffectMembers ?? [] }).sorted(),
+                        operators: Set(proofs.flatMap { $0.effectOperators ?? [] }).sorted()))
+                }
                 if proofs.contains(where: { $0.proofVersion != PrivateTestHelperSyntax.currentProofVersion }) {
                     fallback("head_only_helper_proof_version", "Private helper proof is missing or uses an unsupported version; recapture the head graph: \(unit.region.path)")
                     continue
@@ -468,6 +474,13 @@ enum XcodeHeadOnlySelector {
         }
         let boundaries = evaluations.flatMap(\.encountered)
         report.formattingBoundaries = boundaries.isEmpty ? nil : boundaries
+        if !declarationAudits.isEmpty {
+            let inventories = HelperDeclarationInventory.boundaries(current: current.sources, base: source.base, unownedBase: source.unownedBaseSources)
+            if !inventories.isEmpty {
+                report.helperDeclarationInventories = inventories
+                report.helperDeclarationAudits = declarationAudits
+            }
+        }
         report.finishFallbackEvidence()
         if !boundaries.isEmpty || !newContracts.isEmpty {
             var helperSymbols: [String: [String]] = [:]

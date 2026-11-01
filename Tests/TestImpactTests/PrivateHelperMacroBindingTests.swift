@@ -108,6 +108,7 @@ func compiledPrivateHelperMacrosRequireCompleteInventories(scenario: String) thr
     #expect(old.sources["UI:Extra.swift"]?.helperOperatorDeclarations == nil)
     let archivedOld = try GraphArchive.decode(GraphArchive.encode(old))
     #expect(archivedOld.sources["UI:Extra.swift"]?.helperDeclarationsComplete == false)
+    #expect(archivedOld.sources["UI:Extra.swift"]?.helperDeclarationIssues?.contains { $0.spelling == "makeBindings" && $0.kind == "macro-declaration" } == true)
     let roundTripped = try GraphArchive.decode(GraphArchive.encode(current))
     for unowned in [false, true] {
         var source = XcodeHeadOnlySources(base: archivedOld.sources, mappings: current.mappings)
@@ -118,7 +119,10 @@ func compiledPrivateHelperMacrosRequireCompleteInventories(scenario: String) thr
         let report = XcodeHeadOnlySelector.select(current: roundTripped, source: source,
             changes: [.init(path: "UI.swift")], baseRevision: "base")
         #expect(report.selectedTests == tests.sorted(), "\(report.diagnostics)")
-        #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" && $0.message.contains("macros") })
+        #expect(report.diagnostics.contains { $0.code == "head_only_helper_callee_effects" && ($0.message.contains("macros") || $0.message.contains("attribute/macro")) })
+        #expect(report.helperDeclarationInventories?.contains {
+            $0.revision == (unowned ? "unowned base" : "base") && $0.issues.contains { $0.spelling == "makeBindings" }
+        } == true)
     }
     let cleanBase = ["UI:UI.swift": SwiftSourceSnapshot.parse(before, path: "UI.swift", module: "UI")]
     let clean = XcodeHeadOnlySelector.select(current: current, source: .init(base: cleanBase, mappings: current.mappings),

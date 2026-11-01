@@ -1,10 +1,16 @@
 # Reviewed helper formatting contracts
 
 `helperFormattingContracts` is an opt-in, review-scoped addition to the existing
-mapping file. Version 1 supports one boundary: the runtime failure formatting of
-an exact generic `XCTest.XCTAssertEqual` call whose equality witness is already
-supported by the analyzer. Examples include `XCTWaiter.Result` and
-`Optional<String>`. It is available in head-only helper analysis.
+mapping file. Version 1 supports the runtime failure formatting of an exact generic
+`XCTest.XCTAssertEqual` call whose equality witness is already supported, or an
+exact scalar `XCTAssertGreaterThan`, `XCTAssertGreaterThanOrEqual`,
+`XCTAssertLessThan`, or `XCTAssertLessThanOrEqual` call whose SDK comparison witness
+is supported. Examples include equality on `XCTWaiter.Result` or
+`Optional<String>`, and relational comparisons on `CGFloat` or `Int`. It is
+available in head-only helper analysis. A relational declaration does not authorize
+an equality/accuracy overload, a different producer, a container or a project
+`Comparable` witness. SDK scalar identity still requires the ordinary source,
+import, alias and compiler binding checks.
 
 This is a maintainer assertion, not proof that an arbitrary implementation is
 pure. The analyzer still proves helper accessibility, nonescaping callers,
@@ -178,5 +184,32 @@ The preview is an audit of selection, not a CI speed measurement. Measure build,
 selection, product verification and actual execution end to end before claiming
 savings. Full runs remain useful for validating maintainer assumptions.
 
+### Incomplete declaration inventories
+
+`helperDeclarationInventories` lists **every** incomplete head, base and unowned
+historical source inventory participating in a private-helper audit. Each entry
+names the source key and revision, then every unsupported attribute/macro with
+its physical line/column, possible synthesized declarations/effects, and required
+evidence. `helperDeclarationAudits` identifies the affected helper keys, SDK
+member/operator names, and protected lifecycle/global/member binding categories.
+These are possible conflicts under the current whole-inventory audit, not claims
+that a particular attribute actually creates a colliding declaration.
+
+The list is preserved even when an earlier compiler, formatting, callback or
+historical binding check stops the proof. Ordinary diagnostic messages stay
+compact and point to these fields. Legacy snapshots without construct metadata
+explicitly request refreshed source proofs instead of inventing a location or
+attribute identity (line/column 1 denotes the whole-file missing-evidence entry).
+
+SwiftUI wrapper/result-builder spellings and actors imported through unsupported
+module contexts still require authenticated declaration/expansion and module
+export/host evidence at both revisions. A head SIL source location does not prove
+historical macro expansion or exclude generated globals, operators, SDK members,
+aliases, conformances or lifecycle hooks. Neither feature mappings nor a formatting
+contract supplies that evidence. The report does not discard other targets or
+base-only files merely because their source imports appear unrelated.
+
+See [open precision issue validation](OpenPrecisionIssuesValidation.md) for the
+relational fixtures, complete-inventory diagnostics and fresh consumer captures.
 See [issue #81 validation](Issue81Validation.md) for compiled negative fixtures,
 reviewed real-app declarations, exact selection IDs, and remaining blockers.

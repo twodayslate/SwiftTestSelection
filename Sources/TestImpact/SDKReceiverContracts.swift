@@ -211,6 +211,12 @@ enum SDKReceiverContracts {
     // an Int's existing CustomStringConvertible alone is insufficient there.
     private static let textOutputScalars: Set<String> = ["String", "Substring", "Character", "Float", "Double"]
     private static let descriptionScalars = integers.union(textOutputScalars).union(["Bool"])
+    private static let relationalAssertions: Set<String> = [
+        "$s6XCTest20XCTAssertGreaterThan___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF",
+        "$s6XCTest17XCTAssertLessThan___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF",
+        "$s6XCTest24XCTAssertLessThanOrEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF",
+        "$s6XCTest27XCTAssertGreaterThanOrEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF"
+    ]
 
     /// Keep nesting and argument roles: a flat set of builtin names cannot prove
     /// a conditional conformance (or distinguish Optional<Int> from Int).
@@ -370,13 +376,22 @@ enum SDKReceiverContracts {
         return types.names
     }
 
-    /// Explain the missing effect proof separately from a known equality
+    /// Explain the missing effect proof separately from a known comparison
     /// witness. Nominal SDK type identity does not close runtime formatting.
     static func missingWitnessProof(_ arguments: String, for symbol: String) -> String? {
-        guard symbol == "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
-              let types = parsedTypes(arguments), types.parameters.count == 1,
-              closedEquality(types.parameters[0]), !allows(arguments, for: symbol) else { return nil }
-        return "Even with a supported Equatable witness, XCTest assertion failure formatting for " + arguments +
+        guard let types = parsedTypes(arguments), types.parameters.count == 1,
+              !allows(arguments, for: symbol) else { return nil }
+        let witness: String
+        if symbol == "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+           closedEquality(types.parameters[0]) {
+            witness = "Equatable"
+        } else if relationalAssertions.contains(symbol), types.parameters[0].scalar(in: comparableScalars) {
+            // A scalar SDK Comparable conformance is known, but its failure
+            // printing can still dispatch through project/runtime protocols.
+            // Containers and arbitrary project Comparable witnesses stay opaque.
+            witness = "Comparable"
+        } else { return nil }
+        return "Even with a supported \(witness) witness, XCTest assertion failure formatting for " + arguments +
             " may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; " +
             "the capture does not prove absence or effects of project/foreign runtime formatting conformances"
     }

@@ -37,7 +37,7 @@ public struct HelperFormattingContract: Codable, Sendable, Equatable {
               guarantees.count == Self.requiredGuarantees.count,
               !rationale.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               SDKReceiverContracts.missingWitnessProof(substitutions, for: assertionSymbol) != nil else {
-            throw ImpactError("Formatting contract requires exact helper/producer/overload identities, review fingerprints, toolchain, all formatting guarantees, and a review rationale; only XCTest equality failure formatting with a proven equality witness is supported")
+            throw ImpactError("Formatting contract requires exact helper/producer/overload identities, review fingerprints, toolchain, all formatting guarantees, and a review rationale; only XCTest equality or scalar relational failure formatting with a proven comparison witness is supported")
         }
     }
 }

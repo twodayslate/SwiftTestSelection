@@ -255,20 +255,11 @@ enum PrivateTestHelperIsolation {
         // XCTest callbacks without spelling their names in the source. Audit
         // every source used by those binding checks, including base-only files.
         // Continue the compiler effect walk to retain more specific diagnostics.
-        let incompleteInventories = [("head", current.sources), ("base", base), ("unowned base", unownedBase)].flatMap { revision, sources in
-            sources.keys.sorted().compactMap { key -> String? in
-                guard sources[key]?.helperDeclarationsComplete != true else { return nil }
-                let reason = sources[key]?.helperDeclarationsComplete == nil ? "missing source metadata" : "macros or unsupported attributes"
-                return revision + ":" + key + " (" + reason + ")"
-            }
-        }
+        let incompleteInventories = HelperDeclarationInventory.boundaries(current: current.sources, base: base, unownedBase: unownedBase)
         let declarationsComplete = incompleteInventories.isEmpty
         if !declarationsComplete {
             traversal.hasUnprovenCalleeEffects = true
-            let remaining = incompleteInventories.count - 1
-            traversal.receiverOriginBlocker = "Incomplete helper declaration inventories: " + incompleteInventories[0] +
-                (remaining > 0 ? "; \(remaining) additional source inventories are incomplete" : "") +
-                ". Missing metadata requires refreshed source proofs; macros/attributes require supported expansion analysis. A formatting declaration cannot supply this evidence."
+            traversal.receiverOriginBlocker = HelperDeclarationInventory.summary(incompleteInventories)
         }
         var sdkBindingsSupported = declarationsComplete && operatorBindingsSupported
         if !sdkBindings.isEmpty {
