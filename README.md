@@ -295,8 +295,8 @@ uncertainty, retain known callers and all other effects, and report exact
 before/after selected IDs. Supported boundaries include scalar relational assertions
 such as `XCTAssertGreaterThanOrEqual` on `CGFloat`. Incomplete private-helper
 declaration inventories list every unsupported attribute/macro, its source location,
-and the missing evidence in `helperDeclarationInventories`. See [reviewed helper formatting contracts](Documentation/HelperFormattingContracts.md)
-for the schema, trust boundary, revision rules and actionable fallback fields.
+and the missing evidence in `helperDeclarationInventories`. See
+[reviewed helper formatting contracts](Documentation/HelperFormattingContracts.md) for the schema, trust boundary, revision rules and actionable fallback fields.
 
 Optionally add `"ignoredDocumentation": ["README.md", "AGENTS.md", "Documentation/**.md"]`
 to exclude explicitly reviewed Markdown paths in mixed changes as well as

@@ -1,0 +1,574 @@
+{
+  "analyzerCommit": "3d9bf7f",
+  "analyzerSHA256": "55fea3fbace6870d188f795e348fcd3cecad205cfcff4b75c5b06c1153d854a2",
+  "toolchain": "Xcode 27.1 / iOS 26.2 Simulator",
+  "consumerTestBodiesExecuted": false,
+  "baseCompilerBuilds": 0,
+  "compilerReplays": 0,
+  "selectedIDDigestFormat": "SHA-256 of lexicographically sorted IDs joined by newline with a trailing newline",
+  "comparisons": [
+    {
+      "run": "40058859478",
+      "base": "143c0be82c134d0d07345c29b42136af3d850a7b",
+      "head": "82b91d0c474b287215ff272e5e1afcea12dd2c21",
+      "selected": 1972,
+      "ui": 394,
+      "knownConsumers": [
+        "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesContent()",
+        "ChainOfCustodyUITests/NoteLinksUITests/testBlockContextMenuSharesLink()",
+        "ChainOfCustodyUITests/NoteLinksUITests/testHolderLinkPreservesLockedContents()",
+        "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerOffersLinkAndContentSharing()",
+        "ChainOfCustodyUITests/NoteLinksUITests/testMediaViewerSharesContent()",
+        "ChainOfCustodyUITests/NoteLinksUITests/testMessageCardIsOfferedWhenCompositionIsAvailable()",
+        "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesContent()",
+        "ChainOfCustodyUITests/NoteLinksUITests/testNoteContextMenuSharesLink()",
+        "ChainOfCustodyUITests/NoteLinksUITests/testNoteToolbarSharesLink()",
+        "ChainOfCustodyUITests/NoteLinksUITests/testOutlineCanShareContainerLink()",
+        "ChainOfCustodyUITests/NoteLinksUITests/testUnavailableMessagesStillOffersLinkSharing()",
+        "ChainOfCustodyUITests/NoteLinksUITests/testVeiledNoteLinkHasProtectedPreview()"
+      ],
+      "consumerEvidence": "positive scoped dependency explanations",
+      "added": [],
+      "removed": [],
+      "beforeSelectedIDsSHA256": "303dd3f4502a046ad7214ba76417f06dfcd9dee27b66acf6f6e21443a04d9182",
+      "afterSelectedIDsSHA256": "303dd3f4502a046ad7214ba76417f06dfcd9dee27b66acf6f6e21443a04d9182",
+      "buildCount": 1,
+      "consumedSILModules": 10,
+      "extractionDiagnostics": [],
+      "rawAndScopedProductsVerified": true,
+      "incompleteInventories": 513,
+      "unsupportedConstructLocations": 27190,
+      "inventoryEvidence": "OpenPrecisionEvidence/40058859478-inventories.json.gz",
+      "remainingDiagnostics": [
+        {
+          "code": "head_only_helper_callee_effects",
+          "message": "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NoteLinksUITests.swift:387; Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions XCTWaiter.Result in ChainOfCustodyUITests.NoteLinksUITests.testNoteToolbarSharesLink() at ChainOfCustodyUITests/NoteLinksUITests.swift:275; Even with a supported Equatable witness, XCTest assertion failure formatting for XCTWaiter.Result may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances Review the exact helper, producer, XCTest overload and substitutions in formattingBoundaries. Bind both source digests, actual base revision and toolchain; establish all three formatting guarantees. Feature mappings cannot resolve this boundary."
+        }
+      ]
+    },
+    {
+      "run": "40159996488",
+      "base": "67936a2ca3bfb173542cecf40121490fe8bace29",
+      "head": "de7249daf287e676d59a48a28a597e7112f92eca",
+      "selected": 2000,
+      "ui": 403,
+      "knownConsumers": [
+        "ChainOfCustodyUITests/CalendarContentUITests/testEventOnlyCalendarUsesEventPresentationAndCreation()",
+        "ChainOfCustodyUITests/CalendarContentUITests/testTodayButtonPutsCurrentDateAtTopOfList()",
+        "ChainOfCustodyUITests/CalendarCustomIconUITests/testAssignmentIconPickerCancelAndSave()",
+        "ChainOfCustodyUITests/CalendarCustomIconUITests/testEventCustomSymbolValidationPersistenceAndReset()",
+        "ChainOfCustodyUITests/CalendarCustomIconUITests/testNotificationEventUsesSavedCategoryColor()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testAllDayEventSurvivesDraggingThroughBothLayouts()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCalendarDetentsRemainInteractive()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitExpansionPreservesVisibleRow()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledSplitTimelinePreviewPreservesVisibleRow()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineExpansionPreservesVisibleTime()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelineListPreviewPreservesVisibleTime()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesCollapsedUntimedPanel()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testCancelledTimelinePreviewPreservesUntimedCategoryAndScrollPosition()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testContinuousLayoutReversalsRetainAllDayEvent()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testDenseActivityHeldDragReversesThroughLayouts()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testPopulatedListDragOpensAnchoredTimelineAndReturnsToList()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testSlowListToTimelineHoldsBeforeRelease()",
+        "ChainOfCustodyUITests/CalendarDetentTransitionUITests/testSparseDateHeldReversalRetainsSectionSpacing()",
+        "ChainOfCustodyUITests/CalendarFilterUITests/testCalendarCanSwitchCalendarAndActivityViews()",
+        "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testActivityReasonSearchRespectsCategorySelection()",
+        "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testCalendarAndNotificationSettingsShareSubgroupPreferences()",
+        "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testCombinedCategoriesAffectCalendarAndSearchAndCanBeCleared()",
+        "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testFiltersRemainReachableWithAccessibilityTextAndLandscape()",
+        "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testHiddenCategoriesPersistAndShowAllRestoresCalendar()",
+        "ChainOfCustodyUITests/CalendarGroupedFilterUITests/testSubgroupColorAndNotificationSettingsSaveAndCancel()",
+        "ChainOfCustodyUITests/CalendarModeTransitionUITests/testCalendarModesKeepTheirNavigationInteractive()",
+        "ChainOfCustodyUITests/CalendarPermissionUITests/testHolderCanCreateEventWhenEventsAreFilteredOut()",
+        "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testCalendarTabReselectionReturnsListToToday()",
+        "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesAtClampedLateNightDestination()",
+        "ChainOfCustodyUITests/CalendarReturnToTodayUITests/testTodayPulsesOnlyWhenAlreadyAtTodayInTimelineAndSplit()",
+        "ChainOfCustodyUITests/CalendarSearchRegressionUITests/testSplitSearchThenDraggingThroughTimelineToListKeepsContentVisible()",
+        "ChainOfCustodyUITests/CalendarSnapshotUITests/testDenseActivityTimeline()",
+        "ChainOfCustodyUITests/CalendarSnapshotUITests/testLandscapeCalendarSplit()",
+        "ChainOfCustodyUITests/CalendarSnapshotUITests/testLandscapeList()",
+        "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitCalendarSplit()",
+        "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitDayTimeline()",
+        "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitDayTimelineAtTopHour()",
+        "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitList()",
+        "ChainOfCustodyUITests/CalendarSnapshotUITests/testPortraitSearchResults()",
+        "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAllDayEventFromSearch()",
+        "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAssignmentTitle()",
+        "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllEditsAssignmentTitleFromSearch()",
+        "ChainOfCustodyUITests/CalendarUntimedEditingUITests/testUntimedViewAllSearchesBothCategoriesAndRestoresTimeline()",
+        "ChainOfCustodyUITests/CalendarUntimedHeaderUITests/testDenseUntimedHeaderCapsHeightAndScrollsIndependently()",
+        "ChainOfCustodyUITests/DepotAndDurationUITests/testDepotRecognitionEditorSupportsDirectAmountEntry()",
+        "ChainOfCustodyUITests/HolderRequestUITests/testHolderCanEditPauseScheduleAndSeeEvidenceRequirements()",
+        "ChainOfCustodyUITests/HolderRequestUITests/testNewPauseReusesApprovedSettingsWithoutChangingExistingRequests()",
+        "ChainOfCustodyUITests/HolderRequestUITests/testReleaseOptionsPersistAndEvidenceStartsApprovedRelease()",
+        "ChainOfCustodyUITests/NoteConversionUITests/testCancelStopsWorkAndKeepsSourceBlock()",
+        "ChainOfCustodyUITests/NoteConversionUITests/testExistingLinkConversionValidatesURLAndSavesPlayableVideo()",
+        "ChainOfCustodyUITests/NoteConversionUITests/testFailureKeepsConversionAvailableForRetry()",
+        "ChainOfCustodyUITests/NoteConversionUITests/testSavingContinuesWhenNavigatingAwayAndBack()",
+        "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConversionCountsAsOneBlockAfterReopeningAndReverting()",
+        "ChainOfCustodyUITests/NoteConvertedBlockUITests/testConverterDetailsReversionKeepsRestoredLinkSelected()",
+        "ChainOfCustodyUITests/NoteEromeConversionUITests/testAutomaticallyConvertsEromeAlbumAfterSignIn()",
+        "ChainOfCustodyUITests/NoteEromeConversionUITests/testCancellingEromeSignInKeepsSourceForRetry()",
+        "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumOffersEveryVideoInsteadOfQualityVariants()",
+        "ChainOfCustodyUITests/NoteEromeConversionUITests/testEromeAlbumWithoutVideoKeepsBrowserAvailableForRetry()",
+        "ChainOfCustodyUITests/NoteRedditConversionUITests/testAutomaticallyConvertsRedditShareAfterSignIn()",
+        "ChainOfCustodyUITests/NoteRedditConversionUITests/testAutomaticallyUsesAvailableRedditMediaWithoutSignIn()",
+        "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditExternalFinderPreservesShareURLForRetry()",
+        "ChainOfCustodyUITests/NoteRedditConversionUITests/testCancellingRedditSignInKeepsSourceForRetry()",
+        "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditBrowserOffersMultipleAnimatedVideos()",
+        "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditEmbeddedPostStaysOnRedditUntilUserChoosesTheVideoSite()",
+        "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditExternalPostHandsOffToGenericFinderAndSavesChosenVideo()",
+        "ChainOfCustodyUITests/NoteRedditConversionUITests/testRedditPostWithoutMediaKeepsBrowserAvailableForRetry()",
+        "ChainOfCustodyUITests/NoteWebConversionUITests/testCancellingGenericPickerPreservesSourceAndAllowsRetry()",
+        "ChainOfCustodyUITests/NoteWebConversionUITests/testDirectVideoLinkConvertsWithoutChoosingFromAWebpage()",
+        "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversNewShadowPlayersAndSavesTheSelection()",
+        "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderDiscoversVideosAfterSignIn()",
+        "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderPreviewsAndDownloadsSelectedVideo()",
+        "ChainOfCustodyUITests/NoteWebConversionUITests/testGenericFinderWithoutVideoKeepsPageAndRetryAvailable()",
+        "ChainOfCustodyUITests/NoteXConversionUITests/testAutomaticallyConvertsXPostAfterSignIn()",
+        "ChainOfCustodyUITests/NoteXConversionUITests/testCancellingXSignInKeepsSourceForRetry()",
+        "ChainOfCustodyUITests/NoteXConversionUITests/testXPostOffersAllVideosWhileSkippingPhotoAttachments()",
+        "ChainOfCustodyUITests/NoteXConversionUITests/testXPostWithoutMediaKeepsBrowserAvailableForRetry()",
+        "ChainOfCustodyUITests/NotificationSettingsUITests/testPermissionAndPreferencesSurviveRelaunch()",
+        "ChainOfCustodyUITests/NotificationSettingsUITests/testQuietHoursControlsAndPairingPreference()",
+        "ChainOfCustodyUITests/PairingNoteActivityUITests/testActivityShowsAuthorsSettingChangesAndJumpsToChangedBlock()",
+        "ChainOfCustodyUITests/PairingNoteRichTextUITests/testDoneFromNameFieldKeepsBothTextAndName()",
+        "ChainOfCustodyUITests/PairingNoteRichTextUITests/testEmptyTextAndDiscardingChanges()",
+        "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelStaysOpenAndSavesFormatting()",
+        "ChainOfCustodyUITests/PairingNoteRichTextUITests/testNativeFormattingPanelWithSelectAllStaysOpenAndSavesFormatting()",
+        "ChainOfCustodyUITests/PairingNotesEditingUITests/testCreatesTaggedFolderAndShowsItInNotes()",
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testBlockDetailsActionOpensTheInspector()",
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testDetailSwipesPreserveCarouselSelection()",
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testEnteringVideoRestoresChromeAfterHidingImageControls()",
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testFullScreenPagerAndSafariTabBarStaySynchronized()",
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testHoldingVideoTemporarilyDoublesPlaybackSpeed()",
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testImagePreviewCanZoomPanAndReset()",
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testPagingWithVisibleVideoControlsKeepsPagerAndCarouselsAligned()",
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testThumbnailFadeTracksScrollAndReversal()",
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoAutoHideDoesNotInterruptTitleDragging()",
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoControlsToggleTogetherAboveCarousel()",
+        "ChainOfCustodyUITests/PairingNotesMediaUITests/testVideoScrubbingLocksOrientationUntilTouchEnds()",
+        "ChainOfCustodyUITests/PairingNotesNavigationUITests/testNotesSearchFindsTagAssignedOnlyToABlock()",
+        "ChainOfCustodyUITests/PairingNotesTagManagementUITests/testRenamesTagWhileThumbnailAssetIsUnavailable()",
+        "ChainOfCustodyUITests/RecurringEventUITests/testAssignmentStatusIconsSaveAndCancelIndependently()",
+        "ChainOfCustodyUITests/RecurringEventUITests/testCommonAssignmentReusesAnUndatedOneOffAndSharesItsFilter()",
+        "ChainOfCustodyUITests/RecurringEventUITests/testCommonEventPrefillsRecurringSeries()",
+        "ChainOfCustodyUITests/RecurringEventUITests/testCommonGroupCanBeRestoredFromItsRecurringSeriesFilter()",
+        "ChainOfCustodyUITests/RecurringEventUITests/testCommonIconEditsFollowExistingOccurrencesUnlessCustomized()",
+        "ChainOfCustodyUITests/RecurringEventUITests/testCommonOneOffEventCanBeFilteredWithoutRepeat()",
+        "ChainOfCustodyUITests/RecurringEventUITests/testOccurrenceNotesRemainSeparateFromSeriesAndFilterControls()",
+        "ChainOfCustodyUITests/RecurringEventUITests/testPointPresetClearsPreviousAllDaySchedule()",
+        "ChainOfCustodyUITests/ScheduleDraftUITests/testAssignmentCancelKeepsOrDiscardsScheduleChanges()",
+        "ChainOfCustodyUITests/ScheduleDraftUITests/testEntryTypeSwitchKeepsDraftUntilDiscardIsConfirmed()",
+        "ChainOfCustodyUITests/ScheduleDraftUITests/testEventEndOfDayPersistsAndCancelDiscardsChanges()",
+        "ChainOfCustodyUITests/ScheduleDraftUITests/testNewDraftCancellationConfirmsOnlyAfterEditing()",
+        "ChainOfCustodyUITests/ScheduleDraftUITests/testRevertedScheduleChangesCancelWithoutConfirmation()",
+        "ChainOfCustodyUITests/ScheduleDraftUITests/testUnscheduledAssignmentAndInstantEventRemainAvailable()",
+        "ChainOfCustodyUITests/ScheduleEditorUITests/testAllDayCustomBoundaryDoesNotSpillIntoTheFollowingDay()",
+        "ChainOfCustodyUITests/ScheduleEditorUITests/testAllDayEventCanBecomeAnInstantThenATimedEventOnAnotherDate()",
+        "ChainOfCustodyUITests/ScheduleEditorUITests/testAssignmentAllDayPersistsAndHidesTimeControls()",
+        "ChainOfCustodyUITests/ScheduleEditorUITests/testDisablingAllDayRetainsEditedAndSavedMultiDayRanges()",
+        "ChainOfCustodyUITests/ScheduleEditorUITests/testEndOfDayConvertsToOneAllDayAssignmentAtCustomBoundary()",
+        "ChainOfCustodyUITests/ScheduleEditorUITests/testSchedulingAnExistingUndatedAssignmentPreservesItsDisplayedStart()",
+        "ChainOfCustodyUITests/ScheduleEditorUITests/testStartEditsPreserveExtendedEndOfDayRanges()",
+        "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testAllDayDatePersistsWhenPairingAndDeviceUseDifferentTimeZones()",
+        "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testAllDayEditorsKeepTheirDatesAfterPairingTimeZoneChanges()",
+        "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testCustomEndsAndDurationsPreserveTheSavedEditingTimeZone()",
+        "ChainOfCustodyUITests/ScheduleTimeZoneUITests/testEndOfDayEditorsKeepTheirBoundaryAfterPairingTimeZoneChanges()",
+        "ChainOfCustodyUITests/SharingPeopleUITests/testRolesLeadSharingDetailsAndOwnerCanChangeRole()",
+        "ChainOfCustodyUITests/TabBarBadgeUITests/testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently()",
+        "ChainOfCustodyUITests/TabBarBadgeUITests/testNotesBadgeCanBeDisabledAndPreferencesSurviveRelaunch()"
+      ],
+      "consumerEvidence": "positive scoped dependency explanations",
+      "added": [],
+      "removed": [],
+      "beforeSelectedIDsSHA256": "bb3a3716002303bdc2db4d21605a62508976107645fcacda5520d6022f5d3072",
+      "afterSelectedIDsSHA256": "bb3a3716002303bdc2db4d21605a62508976107645fcacda5520d6022f5d3072",
+      "buildCount": 1,
+      "consumedSILModules": 10,
+      "extractionDiagnostics": [],
+      "rawAndScopedProductsVerified": true,
+      "incompleteInventories": 0,
+      "unsupportedConstructLocations": 0,
+      "inventoryEvidence": null,
+      "remainingDiagnostics": [
+        {
+          "code": "head_only_sdk_helper_boundary",
+          "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String>; String in ChainOfCustodyUITests.TabBarBadgeUITests.testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently() at ChainOfCustodyUITests/TabBarBadgeUITests.swift:5; Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282) Review the exact helper, producer, XCTest overload and substitutions in formattingBoundaries. Bind both source digests, actual base revision and toolchain; establish all three formatting guarantees. Feature mappings cannot resolve this boundary."
+        }
+      ]
+    },
+    {
+      "run": "40031610717",
+      "base": "a55be509f4f46833964e72448b35ac3338939e1e",
+      "head": "17d634a66a045db0437016977e1c27d60876a901",
+      "selected": 1961,
+      "ui": 384,
+      "knownConsumers": [
+        "ChainOfCustodyUITests/NotificationHubUITests/testFiltersAndBulkReadClearOnlyAffectVisibleSelection()"
+      ],
+      "consumerEvidence": "fresh reverse compiler traversal from helper, default thunk and named closures; declaration fallback prevents a scoped positive explanation",
+      "added": [],
+      "removed": [],
+      "beforeSelectedIDsSHA256": "9f04622c24855a46cd19fac8d30c4870557951fc6c6db9afa4784042fb24da7d",
+      "afterSelectedIDsSHA256": "9f04622c24855a46cd19fac8d30c4870557951fc6c6db9afa4784042fb24da7d",
+      "buildCount": 1,
+      "consumedSILModules": 10,
+      "extractionDiagnostics": [],
+      "rawAndScopedProductsVerified": true,
+      "incompleteInventories": 511,
+      "unsupportedConstructLocations": 27138,
+      "inventoryEvidence": "OpenPrecisionEvidence/40031610717-inventories.json.gz",
+      "remainingDiagnostics": [
+        {
+          "code": "head_only_declaration_change",
+          "message": "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: ChainOfCustodyUITests/NotificationUITests.swift Capture base compiler ownership and callers for the named declaration (two-graph mode), or separate the structural edit. No supported helper formatting declaration resolves missing historical edges."
+        },
+        {
+          "code": "head_only_helper_callee_effects",
+          "message": "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NotificationUITests.swift:331; Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String> in ChainOfCustodyUITests.NotificationHubUITests.testFiltersAndBulkReadClearOnlyAffectVisibleSelection() at ChainOfCustodyUITests/NotificationUITests.swift:354; Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances Review the exact helper, producer, XCTest overload and substitutions in formattingBoundaries. Bind both source digests, actual base revision and toolchain; establish all three formatting guarantees. Feature mappings cannot resolve this boundary."
+        }
+      ]
+    },
+    {
+      "run": "40035642452",
+      "base": "ba6795e8db6b41e7e58e752858f5855fd254a5bf",
+      "head": "ffead14c366b9581e0da2626fcdc294aad97b7e9",
+      "selected": 1981,
+      "ui": 397,
+      "knownConsumers": [
+        "ChainOfCustodyUITests/NotificationHubUITests/testFiltersAndBulkReadClearOnlyAffectVisibleSelection()"
+      ],
+      "consumerEvidence": "fresh reverse compiler traversal from helper, default thunk and named closures; declaration fallback prevents a scoped positive explanation",
+      "added": [],
+      "removed": [],
+      "beforeSelectedIDsSHA256": "d0402867f6ce596b3cc59a0c5d95c17bff899ed6cceb5ab5e858ace996a4cea1",
+      "afterSelectedIDsSHA256": "d0402867f6ce596b3cc59a0c5d95c17bff899ed6cceb5ab5e858ace996a4cea1",
+      "buildCount": 1,
+      "consumedSILModules": 10,
+      "extractionDiagnostics": [],
+      "rawAndScopedProductsVerified": true,
+      "incompleteInventories": 515,
+      "unsupportedConstructLocations": 27256,
+      "inventoryEvidence": "OpenPrecisionEvidence/40035642452-inventories.json.gz",
+      "remainingDiagnostics": [
+        {
+          "code": "head_only_declaration_change",
+          "message": "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: ChainOfCustodyUITests/NotificationUITests.swift Capture base compiler ownership and callers for the named declaration (two-graph mode), or separate the structural edit. No supported helper formatting declaration resolves missing historical edges."
+        },
+        {
+          "code": "head_only_helper_callee_effects",
+          "message": "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NotificationUITests.swift:331; Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String> in ChainOfCustodyUITests.NotificationHubUITests.testFiltersAndBulkReadClearOnlyAffectVisibleSelection() at ChainOfCustodyUITests/NotificationUITests.swift:354; Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances Review the exact helper, producer, XCTest overload and substitutions in formattingBoundaries. Bind both source digests, actual base revision and toolchain; establish all three formatting guarantees. Feature mappings cannot resolve this boundary."
+        }
+      ]
+    }
+  ],
+  "reviewComparisons": [
+    {
+      "run": "40058859478",
+      "mode": "review-contracts",
+      "reviewedPolicy": true,
+      "contractCounts": {
+        "discharged": 4,
+        "valid-unused": 2
+      },
+      "selected": 1972,
+      "ui": 394,
+      "added": [],
+      "removed": [],
+      "productsVerified": true,
+      "remainingDiagnostics": [
+        {
+          "code": "head_only_helper_callee_effects",
+          "message": "Private helper caller chain reaches an unproven callee effect boundary: ChainOfCustodyUITests/NoteLinksUITests.swift:387; Incomplete helper declaration inventories: head:ChainOfCustody:ChainOfCustody/App/AppView.swift:123:5 @MainActor (unresolved-global-actor); 513 source inventories are incomplete. See helperDeclarationInventories for every source, attribute/macro, possible effect and required evidence, and helperDeclarationAudits for the affected helper bindings. A formatting declaration cannot supply this evidence. Inspect the named base/head source inventory. Refresh missing metadata; unsupported macros or attributes require expansion/ownership analysis. No formatting declaration overrides this requirement."
+        }
+      ],
+      "formattingBoundaries": [
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_helper_callee_effects",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for XCTWaiter.Result may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertShareOptions\"):18:assertShareOptions|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+          "producer": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testNoteToolbarSharesLink\"):25:testNoteToolbarSharesLink|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C04testE17ToolbarSharesLinkyyF",
+          "region": {
+            "endLine": 296,
+            "path": "ChainOfCustodyUITests/NoteLinksUITests.swift",
+            "startLine": 275
+          },
+          "substitutions": "XCTWaiter.Result"
+        },
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_helper_callee_effects",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for XCTWaiter.Result may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertShareOptions\"):18:assertShareOptions|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+          "producer": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"disablePrivacyVeil\"):18:disablePrivacyVeil|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C18disablePrivacyVeil33_3728959CD97011FA65426A5D0D395948LL2inySo15XCUIApplicationC_tF",
+          "region": {
+            "endLine": 359,
+            "path": "ChainOfCustodyUITests/NoteLinksUITests.swift",
+            "startLine": 341
+          },
+          "substitutions": "XCTWaiter.Result"
+        },
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_helper_callee_effects",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for XCTWaiter.Result may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertShareOptions\"):18:assertShareOptions|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+          "producer": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertLinkShareSheet\"):20:assertLinkShareSheet|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"expectedTitle\"):13:expectedTitle|colon:1::|optionalType[identifierType[identifier(\"String\"):6:String]|postfixQuestionMark:1:?]|initializerClause[equal:1:=|nilLiteralExpr[keyword(SwiftSyntax.Keyword.nil):3:nil]]]]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests09NoteLinksD0C20assertLinkShareSheet33_3728959CD97011FA65426A5D0D395948LL2in13expectedTitleySo15XCUIApplicationC_SSSgtF",
+          "region": {
+            "endLine": 424,
+            "path": "ChainOfCustodyUITests/NoteLinksUITests.swift",
+            "startLine": 394
+          },
+          "substitutions": "XCTWaiter.Result"
+        },
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_helper_callee_effects",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for XCTWaiter.Result may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:NoteLinksUITests:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"assertShareOptions\"):18:assertShareOptions|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"in\"):2:in|identifier(\"app\"):3:app|colon:1::|identifierType[identifier(\"XCUIApplication\"):15:XCUIApplication]]]|rightParen:1:)]]]",
+          "producer": "ChainOfCustodyUITests:PortraitRestoringUITestCase:functionDecl[attributeList[]|declModifierList[declModifier[keyword(SwiftSyntax.Keyword.private):7:private]]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"restorePortraitOrientation\"):26:restorePortraitOrientation|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|identifier(\"file\"):4:file|colon:1::|identifierType[identifier(\"StaticString\"):12:StaticString]|initializerClause[equal:1:=|macroExpansionExpr[pound:1:#|identifier(\"filePath\"):8:filePath|labeledExprList[]|multipleTrailingClosureElementList[]]]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"line\"):4:line|colon:1::|identifierType[identifier(\"UInt\"):4:UInt]|initializerClause[equal:1:=|macroExpansionExpr[pound:1:#|identifier(\"line\"):4:line|labeledExprList[]|multipleTrailingClosureElementList[]]]]]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests27PortraitRestoringUITestCaseC07restoreE11Orientation33_8D9B024C3636F99AE8078B700CE292C6LL4file4lineys12StaticStringV_SutF",
+          "region": {
+            "endLine": 193,
+            "path": "ChainOfCustodyUITests/CalendarUITestSupport.swift",
+            "startLine": 168
+          },
+          "substitutions": "XCTWaiter.Result"
+        }
+      ]
+    },
+    {
+      "run": "40159996488",
+      "mode": "review-contracts",
+      "reviewedPolicy": true,
+      "contractCounts": {
+        "discharged": 1
+      },
+      "selected": 2000,
+      "ui": 403,
+      "added": [],
+      "removed": [],
+      "productsVerified": true,
+      "remainingDiagnostics": [
+        {
+          "code": "head_only_sdk_helper_boundary",
+          "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven generic receiver contract for $s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF with substitutions Optional<String> in ChainOfCustodyUITests.TabBarBadgeUITests.testNotesBadgeCanBeDisabledAndPreferencesSurviveRelaunch() at ChainOfCustodyUITests/TabBarBadgeUITests.swift:53; Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282) Review the exact helper, producer, XCTest overload and substitutions in formattingBoundaries. Bind both source digests, actual base revision and toolchain; establish all three formatting guarantees. Feature mappings cannot resolve this boundary."
+        }
+      ],
+      "formattingBoundaries": [
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_sdk_helper_boundary",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+          "producer": "ChainOfCustodyUITests:TabBarBadgeUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently\"):58:testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests011TabBarBadgeD0C012testCalendarG41MirrorsInboxAndCanBeDisabledIndependentlyyyF",
+          "region": {
+            "endLine": 28,
+            "path": "ChainOfCustodyUITests/TabBarBadgeUITests.swift",
+            "startLine": 5
+          },
+          "substitutions": "Optional<String>"
+        },
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_sdk_helper_boundary",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+          "producer": "ChainOfCustodyUITests:TabBarBadgeUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testNotesBadgeCanBeDisabledAndPreferencesSurviveRelaunch\"):56:testNotesBadgeCanBeDisabledAndPreferencesSurviveRelaunch|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests011TabBarBadgeD0C09testNotesG42CanBeDisabledAndPreferencesSurviveRelaunchyyF",
+          "region": {
+            "endLine": 82,
+            "path": "ChainOfCustodyUITests/TabBarBadgeUITests.swift",
+            "startLine": 53
+          },
+          "substitutions": "Optional<String>"
+        }
+      ]
+    },
+    {
+      "run": "40159996488",
+      "mode": "hypothetical-equality",
+      "reviewedPolicy": false,
+      "contractCounts": {
+        "discharged": 8,
+        "valid-unused": 98
+      },
+      "selected": 2000,
+      "ui": 403,
+      "added": [],
+      "removed": [],
+      "productsVerified": true,
+      "remainingDiagnostics": [
+        {
+          "code": "head_only_sdk_helper_boundary",
+          "message": "SDK test helper isolation is unproven: Unproven SDK receiver origin: Unproven generic receiver contract for $s6XCTest27XCTAssertGreaterThanOrEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF with substitutions CGFloat in ChainOfCustodyUITests.SharingPeopleUITests.testRolesLeadSharingDetailsAndOwnerCanChangeRole() at ChainOfCustodyUITests/SharingPeopleUITests.swift:81; Even with a supported Comparable witness, XCTest assertion failure formatting for CGFloat may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances (ChainOfCustodyUITests/XCUIElement+Waiting.swift:282) Review the exact helper, producer, XCTest overload and substitutions in formattingBoundaries. Bind both source digests, actual base revision and toolchain; establish all three formatting guarantees. Feature mappings cannot resolve this boundary."
+        }
+      ],
+      "formattingBoundaries": [
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_sdk_helper_boundary",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+          "producer": "ChainOfCustodyUITests:TabBarBadgeUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently\"):58:testCalendarBadgeMirrorsInboxAndCanBeDisabledIndependently|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests011TabBarBadgeD0C012testCalendarG41MirrorsInboxAndCanBeDisabledIndependentlyyyF",
+          "region": {
+            "endLine": 28,
+            "path": "ChainOfCustodyUITests/TabBarBadgeUITests.swift",
+            "startLine": 5
+          },
+          "substitutions": "Optional<String>"
+        },
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_sdk_helper_boundary",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+          "producer": "ChainOfCustodyUITests:TabBarBadgeUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testNotesBadgeCanBeDisabledAndPreferencesSurviveRelaunch\"):56:testNotesBadgeCanBeDisabledAndPreferencesSurviveRelaunch|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests011TabBarBadgeD0C09testNotesG42CanBeDisabledAndPreferencesSurviveRelaunchyyF",
+          "region": {
+            "endLine": 82,
+            "path": "ChainOfCustodyUITests/TabBarBadgeUITests.swift",
+            "startLine": 53
+          },
+          "substitutions": "Optional<String>"
+        },
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_sdk_helper_boundary",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for Int may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+          "producer": "ChainOfCustodyUITests:HolderRequestUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testHolderCanEditPauseScheduleAndSeeEvidenceRequirements\"):56:testHolderCanEditPauseScheduleAndSeeEvidenceRequirements|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests013HolderRequestD0C04testE46CanEditPauseScheduleAndSeeEvidenceRequirementsyyF",
+          "region": {
+            "endLine": 1599,
+            "path": "ChainOfCustodyUITests/ChainOfCustodyUITests.swift",
+            "startLine": 1571
+          },
+          "substitutions": "Int"
+        },
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_sdk_helper_boundary",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+          "producer": "ChainOfCustodyUITests:HolderRequestUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testReleaseOptionsPersistAndEvidenceStartsApprovedRelease\"):57:testReleaseOptionsPersistAndEvidenceStartsApprovedRelease|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests013HolderRequestD0C050testReleaseOptionsPersistAndEvidenceStartsApprovedH0yyF",
+          "region": {
+            "endLine": 1657,
+            "path": "ChainOfCustodyUITests/ChainOfCustodyUITests.swift",
+            "startLine": 1601
+          },
+          "substitutions": "Optional<String>"
+        },
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_sdk_helper_boundary",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+          "producer": "ChainOfCustodyUITests:HolderRequestUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testNewPauseReusesApprovedSettingsWithoutChangingExistingRequests\"):65:testNewPauseReusesApprovedSettingsWithoutChangingExistingRequests|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests013HolderRequestD0C65testNewPauseReusesApprovedSettingsWithoutChangingExistingRequestsyyF",
+          "region": {
+            "endLine": 1688,
+            "path": "ChainOfCustodyUITests/ChainOfCustodyUITests.swift",
+            "startLine": 1659
+          },
+          "substitutions": "Optional<String>"
+        },
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_sdk_helper_boundary",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for Int may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+          "producer": "ChainOfCustodyUITests:HolderRequestUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testNewPauseReusesApprovedSettingsWithoutChangingExistingRequests\"):65:testNewPauseReusesApprovedSettingsWithoutChangingExistingRequests|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests013HolderRequestD0C65testNewPauseReusesApprovedSettingsWithoutChangingExistingRequestsyyF",
+          "region": {
+            "endLine": 1688,
+            "path": "ChainOfCustodyUITests/ChainOfCustodyUITests.swift",
+            "startLine": 1659
+          },
+          "substitutions": "Int"
+        },
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_sdk_helper_boundary",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for XCTWaiter.Result may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+          "producer": "ChainOfCustodyUITests:ScheduleDraftUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testEntryTypeSwitchKeepsDraftUntilDiscardIsConfirmed\"):52:testEntryTypeSwitchKeepsDraftUntilDiscardIsConfirmed|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests013ScheduleDraftD0C024testEntryTypeSwitchKeepsF23UntilDiscardIsConfirmedyyF",
+          "region": {
+            "endLine": 563,
+            "path": "ChainOfCustodyUITests/ScheduleEditorUITests.swift",
+            "startLine": 527
+          },
+          "substitutions": "XCTWaiter.Result"
+        },
+        {
+          "assertionSymbol": "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF",
+          "diagnosticCode": "head_only_sdk_helper_boundary",
+          "explanation": "Even with a supported Equatable witness, XCTest assertion failure formatting for Optional<String> may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+          "producer": "ChainOfCustodyUITests:SharingPeopleUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testRolesLeadSharingDetailsAndOwnerCanChangeRole\"):48:testRolesLeadSharingDetailsAndOwnerCanChangeRole|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests013SharingPeopleD0C013testRolesLeadE28DetailsAndOwnerCanChangeRoleyyF",
+          "region": {
+            "endLine": 112,
+            "path": "ChainOfCustodyUITests/SharingPeopleUITests.swift",
+            "startLine": 81
+          },
+          "substitutions": "Optional<String>"
+        },
+        {
+          "assertionSymbol": "$s6XCTest27XCTAssertGreaterThanOrEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSLRzlF",
+          "diagnosticCode": "head_only_sdk_helper_boundary",
+          "explanation": "Even with a supported Comparable witness, XCTest assertion failure formatting for CGFloat may invoke TextOutputStreamable, CustomStringConvertible, CustomDebugStringConvertible or CustomReflectable; the capture does not prove absence or effects of project/foreign runtime formatting conformances",
+          "helper": "ChainOfCustodyUITests:XCUIElement:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"waitForValue\"):12:waitForValue|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[functionParameter[attributeList[]|declModifierList[]|wildcard:1:_|identifier(\"expectedValue\"):13:expectedValue|colon:1::|identifierType[identifier(\"String\"):6:String]|comma:1:,]|functionParameter[attributeList[]|declModifierList[]|identifier(\"timeout\"):7:timeout|colon:1::|identifierType[identifier(\"TimeInterval\"):12:TimeInterval]|initializerClause[equal:1:=|integerLiteralExpr[integerLiteral(\"3\"):1:3]]]]|rightParen:1:)]|returnClause[arrow:2:->|identifierType[identifier(\"Bool\"):4:Bool]]]]",
+          "producer": "ChainOfCustodyUITests:SharingPeopleUITests:functionDecl[attributeList[]|declModifierList[]|keyword(SwiftSyntax.Keyword.func):4:func|identifier(\"testRolesLeadSharingDetailsAndOwnerCanChangeRole\"):48:testRolesLeadSharingDetailsAndOwnerCanChangeRole|functionSignature[functionParameterClause[leftParen:1:(|functionParameterList[]|rightParen:1:)]]]",
+          "producerSymbol": "$s21ChainOfCustodyUITests013SharingPeopleD0C013testRolesLeadE28DetailsAndOwnerCanChangeRoleyyF",
+          "region": {
+            "endLine": 112,
+            "path": "ChainOfCustodyUITests/SharingPeopleUITests.swift",
+            "startLine": 81
+          },
+          "substitutions": "CGFloat"
+        }
+      ],
+      "warning": "Diagnostic experiment reusing the previously hypothetical equality declarations; not per-producer safety review, consumer policy or permission to narrow."
+    }
+  ],
+  "sourceParity": [
+    {
+      "run": "40058859478",
+      "sourceCount": 352,
+      "sourceUnitsUnchanged": true,
+      "declarationCompletenessUnchanged": true,
+      "extractionDiagnostics": []
+    },
+    {
+      "run": "40159996488",
+      "sourceCount": 360,
+      "sourceUnitsUnchanged": true,
+      "declarationCompletenessUnchanged": true,
+      "extractionDiagnostics": []
+    }
+  ],
+  "validation": {
+    "swiftTests": 539,
+    "swiftTestsPassed": true,
+    "swiftSeconds": 442.787,
+    "reviewReplayPassed": true,
+    "reviewReplaySeconds": 149.066,
+    "pythonChecks": [
+      "capture_build_test.py: 6 passed",
+      "release_distribution_test.py: 5 passed, 1 platform skip",
+      "coverage_cli_test.py: passed",
+      "inline_mapping_cli_test.py: passed",
+      "mapping_maintenance_cli_test.py: passed"
+    ]
+  }
+}
