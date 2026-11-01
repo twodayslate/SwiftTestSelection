@@ -571,3 +571,94 @@ func relationalFormattingContractsRequireExactReviewedBoundaries(assertion: Stri
         #expect(report.helperContractPreview?.removed.isEmpty == true)
     }
 }
+
+@Test func sdkHelperRelationalFormattingRejectsHistoricalComparableRebinding() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("relational-sdk-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import XCTest
+    @MainActor extension XCUIElement {
+        func checkValue(_ expected: String, timeout: TimeInterval = 3) -> Bool {
+            if value as? String == expected { return true }
+            let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: self)
+            return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+        }
+    }
+    """
+    let after = """
+    import XCTest
+    @MainActor extension XCUIElement {
+        func checkValue(_ expected: String, timeout: TimeInterval = 3) -> Bool {
+            let matches = NSPredicate { _, _ in self.exists && self.value as? String == expected }
+            if matches.evaluate(with: self) { return true }
+            let expectation = XCTNSPredicateExpectation(predicate: matches, object: self)
+            return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+        }
+    }
+    """
+    let callers = """
+    import XCTest
+    @MainActor final class Suite: XCTestCase {
+        func testConsumer() {
+            let app = XCUIApplication()
+            let left: CGFloat = 1; let right: CGFloat = 0; XCTAssertGreaterThanOrEqual(left, right)
+            XCTAssertTrue(app.buttons["toggle"].checkValue("1"))
+        }
+    }
+    @MainActor final class Other: XCTestCase {
+        func testOther() { XCTAssertFalse(UserDefaults.standard.bool(forKey: "comparison-effect")) }
+    }
+    """
+    let tests = ["UI/Suite/testConsumer()", "UI/Other/testOther()"]
+    var current = try boundaryGraph(["Waiting.swift": after, "UI.swift": callers], tests: tests, root: root)
+    current.dependencies!.toolchain = try CommandRunner.run("xcrun", ["swiftc", "--version"], at: root).text
+    current.buildArtifact = formattingArtifact(toolchain: current.dependencies!.toolchain)
+    var source = XcodeHeadOnlySources(base: current.sources, mappings: current.mappings)
+    source.base["UI:Waiting.swift"] = .parse(before, path: "Waiting.swift", module: "UI")
+    let baseline = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    let boundary = try #require(baseline.formattingBoundaries?.first, "\(baseline.diagnostics)")
+    #expect(boundary.substitutions == "CGFloat")
+    #expect(boundary.diagnosticCode == "head_only_sdk_helper_boundary")
+    var contract = try reviewedFormattingContract(boundary, current: current, source: source)
+    contract.rationale = "Fixture review: SDK CGFloat values have no formatting side effects."
+    current.mappings!.helperFormattingContracts = [contract]
+    let reviewed = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+    #expect(reviewed.selectedTests == [tests[0]], "\(reviewed.diagnostics)")
+    #expect(reviewed.helperContractDecisions?.first?.status == "discharged")
+    let aliasSource = """
+    import Foundation
+    typealias CGFloat = ForeignScalar
+    struct ForeignScalar: Comparable, ExpressibleByIntegerLiteral {
+        var value: Int
+        init(integerLiteral value: Int) { self.value = value }
+        static func < (a: Self, b: Self) -> Bool {
+            UserDefaults.standard.set(true, forKey: "comparison-effect")
+            return a.value < b.value
+        }
+    }
+    """
+    let historicalGraph = try boundaryGraph(["Waiting.swift": before, "UI.swift": callers, "Alias.swift": aliasSource], tests: tests, root: root)
+    let effect = Set(historicalGraph.dependencies!.functions.values.filter { $0.name.contains("ForeignScalar") && $0.name.contains("<") }.map(\.id))
+    try #require(!effect.isEmpty)
+    let historicalCalls = historicalGraph.dependencies!.functions.values.flatMap { $0.receiverGenericCalls ?? [] }
+    try #require(historicalCalls.contains { $0.contains("ForeignScalar") && $0.contains("GreaterThanOrEqual") })
+    // A scoped helper diff still audits aliases outside that diff. Neither a
+    // renewed digest nor a formatting guarantee proves comparison purity.
+    for unowned in [false, true] {
+        var historical = source, renewed = contract
+        if unowned {
+            historical.unownedBaseSources["Alias.swift"] = .parse(aliasSource, path: "Alias.swift", module: "")
+        } else {
+            historical.base["UI:UI.swift"] = .parse(callers + "\n" + aliasSource, path: "UI.swift", module: "UI")
+        }
+        renewed.baseSources = HelperFormattingContracts.fingerprint(historical.base, unowned: historical.unownedBaseSources)
+        renewed.rationale = "Formatting only: scalar values have no formatting side effects. No guarantee about comparison witnesses."
+        current.mappings!.helperFormattingContracts = [renewed]
+        let report = XcodeHeadOnlySelector.select(current: current, source: historical, changes: [.init(path: "Waiting.swift")], baseRevision: "base")
+        #expect(report.selectedTests == tests.sorted())
+        #expect(report.helperContractDecisions?.first?.status == "invalid")
+        #expect(report.helperContractDecisions?.first?.failures.contains { $0.contains("Unproven comparison type binding") } == true)
+        #expect(report.helperContractPreview?.removed.isEmpty == true)
+    }
+}

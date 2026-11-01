@@ -102,7 +102,10 @@ module/file ownership keys, declaration signatures, bodies, imports and
 conformances across the complete source inventory. A change to any of these,
 including callbacks or apparently unrelated declarations, requires a new review
 and new digests. Unknown/unowned historical source is included in the base digest
-and still undergoes the existing binding checks. Rename/deletion, ambiguous source
+and still undergoes the existing binding checks. Comparison type aliases and
+project namesakes are rejected in the producer's module at both revisions and in
+unowned historical sources. A head SDK substitution and a fresh source digest do
+not prove the historical comparison witness. Rename/deletion, ambiguous source
 ownership, an absent compiled overload or missing generic substitutions cannot
 be repaired by a formatting assertion. Toolchain, SDK, architecture, build-context and simulator-runtime changes invalidate declarations;
 consumer policies requiring full toolchain coverage remain in force.
