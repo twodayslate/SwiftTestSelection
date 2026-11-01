@@ -340,6 +340,7 @@ extension XcodeAnalysis {
         var retainedGraphPath: String?
         var headDocumentation = Set<String>()
         var headBuildUncertainty: String?
+        var headOnlyEvidence: HeadOnlyBuildEvidence?
         func graph(_ revision: String, keepBuild: Bool = false, cacheOnly: Bool = false) throws -> XcodeTestGraph {
             try extractionCancellation.check()
             try cache.resetWork()
@@ -362,7 +363,7 @@ extension XcodeAnalysis {
             guard !decoded.isEmpty else { throw ImpactError("Cannot cache empty build settings.") }
             let normalized = try XcodeGraphCache.normalizedSettings(settings, workspace: workspace, aliases: keepBuild ? retained.map { [$0] } ?? [] : [])
             var identity = context
-            identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-5-helper-contract-5"
+            identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-5-helper-contract-6"
             identity["repository"] = XcodeGraphCache.digest(Data(repository.utf8))
             identity["revision"] = revision
             identity["analyzerExecutable"] = analyzer
@@ -435,6 +436,8 @@ extension XcodeAnalysis {
                     let proof = evidence.documentationEvidence(files: files, compiler: compiler)
                     headDocumentation = Set(proof.allowed)
                     if !proof.uncertainty.isEmpty { headBuildUncertainty = proof.uncertainty.joined(separator: "; ") }
+                    headOnlyEvidence = .init(buildLogDigest: XcodeGraphCache.digest(Data(buildText.utf8)),
+                        buildSettingsDigest: XcodeGraphCache.digest(settings), documentation: proof.allowed, uncertainty: headBuildUncertainty)
                 }
             }
             if keepBuild, let captured {
@@ -446,7 +449,7 @@ extension XcodeAnalysis {
                 retainedGraphPath = try timed("retainBuild", revision: revision) {
                     try RetainedXcodeBuild.publish(graph: &result, revision: revision, context: context,
                         toolchain: toolchain, workspace: workspace, settings: settings,
-                        inputIdentity: identity)
+                        inputIdentity: identity, headOnlyEvidence: headOnlyEvidence)
                 }.path
             }
             graphSucceeded = true
@@ -491,7 +494,7 @@ extension XcodeAnalysis {
             retainedGraphPath = try timed("retainBuild", revision: comparison.head!) {
                 try RetainedXcodeBuild.publish(graph: &current, revision: comparison.head!, context: context,
                     toolchain: toolchain, workspace: pendingCapture.workspace, settings: pendingCapture.settings,
-                    inputIdentity: pendingCapture.identity, capture: pendingCapture.capture)
+                    inputIdentity: pendingCapture.identity, capture: pendingCapture.capture, headOnlyEvidence: headOnlyEvidence)
             }.path
         }
         let sourceCache = try headOnly ? XcodeBaseSourceCache(root: root, base: comparison.base) : nil

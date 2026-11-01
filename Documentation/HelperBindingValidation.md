@@ -7,6 +7,36 @@ precision issue. See [the contract schema](HelperBindingContracts.md) for the
 trust boundary and [the machine-readable results](HelperBindingValidation.json)
 for exact positive dependencies, selection differences, and remaining boundaries.
 
+## PR #85 review fixes
+
+Saved head-only selection now supports a separate `--helper-binding-reviews`
+JSON array. A compiled regression commits the reviewed policy after the code
+revision, then exercises the public CLI against that earlier immutable capture:
+two selected tests narrow to the one known consumer without an Xcode project or
+a rebuild. The original graph remains byte-for-byte unchanged. Stale reviews
+retain fallback; mismatched revisions and missing/stale build audits are rejected.
+Both full and scoped reports retain the original script-input uncertainty and
+record the full applied declarations. Retained publication preserves the audit's
+documentation allowances and uncertainty alongside its raw-log/settings digests.
+
+Input evidence version 2 recursively expands compiler response files before
+validating plugin arguments. Tests cover direct/nested hidden flags, both flag
+spellings, quoted response paths, missing/cyclic files, standard plugin roots,
+response-file sealing, and ambiguous working directories. Version 1 evidence is
+rejected rather than silently inheriting the stronger validation.
+
+After these fixes, all **550 serial release tests passed in 369.791 seconds**.
+The focused run passed 52 tests. The original standalone response-file probe now
+rejects the hidden custom plugin. Python capture/distribution tests and coverage,
+inline-mapping and mapping-maintenance CLI checks also passed (one existing
+distribution platform skip).
+
+The consumer measurements below were produced at `fb147a2`, before these review
+fixes. They document observed selections; their version 1 seals and hypothetical
+policies cannot authorize reviews with the current analyzer. A fresh capture is
+required for current policy adoption. The fixes do not establish the remaining
+macro or snapshot-callback effect proofs.
+
 ## Compiled regressions
 
 A reviewed SwiftUI `@State` declaration in an unrelated app source allows a

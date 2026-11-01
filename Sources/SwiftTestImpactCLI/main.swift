@@ -80,6 +80,9 @@ build-for-testing log. Keep original source/DerivedData paths until capture fini
 Build-time SIL input must be sealed by Scripts/capture-build.py; incomplete modules
 replay explicitly. Discovery reuse requires stable runner initialization inputs.
 Cached selection uses Git history and saved graphs only; head defaults to HEAD.
+Saved head-only selection accepts --head-only --head REV --head-graph FILE
+instead of a new build. --helper-binding-reviews FILE applies a reviewed JSON
+array to that exact capture without modifying the graph or rebuilding its head.
 --run with cached graphs uses test-without-building and fingerprinted products.
 --test-products relocates the intact Build/Products directory for execution.
 
@@ -120,6 +123,7 @@ private struct Options {
     var buildInputs: XcodeBuildInputs?
     var baseGraph: String?
     var headGraph: String?
+    var helperBindingReviews: String?
     var testProducts: String?
     var retainedBuild: String?
     var reportPath: String?
@@ -165,7 +169,7 @@ private struct Options {
             if flag == "--head-only" { headOnly = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
             if flag == "--strict-mappings" { strictMappings = true; continue }
-            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--cached-base-policy", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture", "--build-time-sil", "--selection-scopes"].contains(flag), index < arguments.count else {
+            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--cached-base-policy", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture", "--build-time-sil", "--selection-scopes", "--helper-binding-reviews"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
             let value = arguments[index]
@@ -204,6 +208,7 @@ private struct Options {
             case "--revision": revision = value
             case "--base-graph": baseGraph = value
             case "--head-graph": headGraph = value
+            case "--helper-binding-reviews": helperBindingReviews = value
             case "--test-products": testProducts = value
             case "--project": project = value
             case "--workspace": workspace = value
@@ -223,10 +228,21 @@ private struct Options {
         if selectionScopes != nil && !headOnly { throw ImpactError("--selection-scopes requires --head-only") }
         try selectionScopes?.validate()
         if headOnly {
-            guard command == "select", head != nil, buildTimeSIL != nil, retainedBuild != nil || run,
-                  project != nil || workspace != nil, baseGraph == nil, headGraph == nil, cachedBasePolicy == .build else {
-                throw ImpactError("--head-only requires Xcode select, --head, --build-time-sil, and --retain-build or --run; cannot combine with saved graphs or --cached-base-policy.")
+            let saved = headGraph != nil && buildTimeSIL == nil && retainedBuild == nil
+            let fresh = headGraph == nil && buildTimeSIL != nil && (retainedBuild != nil || run)
+            guard command == "select", head != nil, saved || fresh,
+                  project != nil || workspace != nil, baseGraph == nil, cachedBasePolicy == .build else {
+                throw ImpactError("--head-only requires Xcode select and --head, with either --head-graph or --build-time-sil plus --retain-build/--run; no base graph or cached-base policy.")
             }
+        }
+        if helperBindingReviews != nil && !(headOnly && headGraph != nil && command == "select") {
+            throw ImpactError("--helper-binding-reviews requires saved --head-only selection with --head-graph")
+        }
+        if headOnly, headGraph != nil, let output {
+            let destination = URL(fileURLWithPath: output).standardizedFileURL.resolvingSymlinksInPath()
+            guard ![headGraph, helperBindingReviews].compactMap({ $0 }).contains(where: {
+                URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath() == destination
+            }) else { throw ImpactError("Report output must differ from the captured graph and review policy") }
         }
         let captureCount = [derivedData, buildLog, buildSettings, xctestrun, revision].compactMap { $0 }.count
         if captureCount > 0 {
@@ -268,12 +284,12 @@ private struct Options {
                 throw ImpactError("--retain-build requires Xcode select with an explicit --head and no saved graph inputs.")
             }
         }
-        if !savedExecution && (baseGraph != nil || headGraph != nil) {
+        if !savedExecution && !headOnly && (baseGraph != nil || headGraph != nil) {
             guard command == "select", baseGraph != nil, headGraph != nil, project != nil || workspace != nil else {
                 throw ImpactError("Cached selection requires Xcode select mode and both --base-graph and --head-graph.")
             }
         }
-        if testProducts != nil && !savedExecution && (baseGraph == nil || !run) {
+        if testProducts != nil && !savedExecution && (!(baseGraph != nil || headOnly && headGraph != nil) || !run) {
             throw ImpactError("--test-products requires cached selection with --run.")
         }
         if strictMappings && (command == "graph" || project == nil && workspace == nil) {
@@ -483,7 +499,14 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                 defer { if let temporaryRetention { try? FileManager.default.removeItem(at: temporaryRetention) } }
                 let retained = options.retainedBuild.map { URL(fileURLWithPath: $0) } ?? temporaryRetention
                 let report: ImpactReport
-                if let headGraph, let basePath = options.baseGraph {
+                if let headGraph, options.headOnly {
+                    let reviews = try options.helperBindingReviews.map {
+                        try JSONDecoder().decode([HelperBindingContract].self, from: Data(contentsOf: URL(fileURLWithPath: $0)))
+                    }
+                    report = try analysis.selectHeadOnly(base: options.base!, head: options.head!, mergeBase: options.mergeBase,
+                        fullSuite: options.fullSuite, headGraph: headGraph, bindingReviews: reviews,
+                        selectionScopes: options.selectionScopes, retainedGraphPath: options.headGraph)
+                } else if let headGraph, let basePath = options.baseGraph {
                     let baseGraph = try XcodeAnalysis.executionGraph(at: URL(fileURLWithPath: basePath))
                     report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase,
                         fullSuite: options.fullSuite, baseGraph: baseGraph, headGraph: headGraph)

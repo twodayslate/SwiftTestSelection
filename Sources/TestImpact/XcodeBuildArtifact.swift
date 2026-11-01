@@ -20,6 +20,7 @@ public struct XcodeBuildArtifact: Codable, Sendable {
     public var xctestrun: String
     public var products: [String: String]
     public var helperBindingBuildFailure: String? = nil
+    public var headOnlyBuildEvidence: HeadOnlyBuildEvidence? = nil
     public var helperBindingBuild: HelperBindingBuildEvidence? = nil
     public var helperBindingInputs: String? = nil
     public var helperFormattingBuild: HelperFormattingBuildEvidence? = nil

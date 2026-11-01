@@ -307,5 +307,8 @@
         }
       ]
     }
-  ]
+  ],
+  "analyzerRevision": "fb147a2cfd63be758c6467026b8231cf9b0d4875",
+  "bindingInputEvidenceVersion": 1,
+  "reusableWithCurrentAnalyzer": false
 }

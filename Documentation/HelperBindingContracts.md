@@ -1,6 +1,6 @@
 # Scoped helper binding reviews
 
-`helperBindingContracts` in the mapping file can discharge two identity gates:
+Scoped helper binding reviews can discharge two identity gates:
 
 * Declaration inventories containing supported SDK property wrappers, result
   builders or global actors. Each construct needs its exact source location,
@@ -25,7 +25,42 @@ and required guarantees. Its `helperSymbols` supplies the exact helper source/co
 identities. Only sources eligible for this review appear as candidates; unsupported
 macros remain in the complete raw declaration inventory.
 
-Each mapping entry has these fields (all are required):
+Use the saved-capture workflow to author reviews without a self-referential Git
+commit or a new build:
+
+1. Capture the exact code revision with the usual `select --head-only --head`
+   command, `--build-time-sil`, and `--retain-build`. Keep the report and graph.
+2. Inspect `helperBindingReviewContext` and perform the identity review described
+   above. Save the reviewed records as a JSON **array** in a separate file, such
+   as `reviews/helper-bindings.json`. The file may be committed after the code
+   revision; `headRevision` continues to identify the captured code revision.
+3. Re-select the saved capture, using the original project, scheme, destination,
+   configuration, plan, mapping path and exact base/head revisions:
+
+   ```sh
+   swift-test-impact select --project App.xcodeproj --scheme App \
+     --destination 'platform=iOS Simulator,id=SIMULATOR_ID' \
+     --head-only --base BASE_SHA --head CAPTURED_HEAD_SHA \
+     --head-graph /path/to/retained/head-graph.json \
+     --helper-binding-reviews reviews/helper-bindings.json \
+     --strict-mappings --format json --output reviewed-report.json
+   ```
+
+   `--selection-scopes` also works with this saved capture. No compiler, build,
+   discovery or test execution is needed. The original graph stays unchanged.
+4. Inspect the decisions, exact selection preview and remaining diagnostics.
+   Verify or execute with the original graph and products using `verify-build`
+   or `run`. The report retains the full applied records in
+   `appliedHelperBindingReviews`, including their guarantees and evidence.
+
+The overlay replaces only the capture's binding review array; it cannot alter UI
+mappings, compiler edges or source snapshots. `helperBindingContracts` remains
+the internal mapping representation, but committing a record into the captured
+head itself cannot satisfy its own `headRevision`. Use the separate policy file.
+Saved selection requires the persisted head-only build audit; old captures must
+be refreshed, and script/generated-input uncertainty is never discarded.
+
+Each review record has these fields (all are required):
 
 | Field | Meaning |
 | --- | --- |
@@ -48,11 +83,15 @@ the applicable declaration. Captured input seals include the completed build's e
 Swift/Clang module bytes, module maps, compiler and standard plugin bytes, source
 input digests and retained products. Unknown import-map fields, missing binaries
 and custom plugin resource paths leave the evidence unavailable, with the reason
-in `captureFailure`. No additional compiler invocation is needed.
+in `captureFailure`. Compiler response files are recursively expanded before
+plugin checks; missing, cyclic or excessively nested response files fail closed.
+Their bytes are included in the input seal. No additional compiler invocation is needed.
 
 Captured input seals include paths and build metadata;
 a new capture generally requires a new review. Legacy captures lack the necessary
-input and conditional reference inventories and cannot opt in.
+input and conditional reference inventories and cannot opt in. Input evidence
+version 1 predates response-file validation and is rejected; version 2 requires
+a fresh capture and review.
 
 Raw completeness/import flags are never changed. Reports keep the raw declaration
 inventories and expose `helperBindingDecisions` (`invalid`, `valid-unused`, or

@@ -200,3 +200,106 @@ import XCTest
     #expect(HelperBindingContracts.identities["@MakeMembers"] == nil)
     #expect(HelperBindingContracts.identities["#makeCallbacks"] == nil)
 }
+
+@Test func committedBindingOverlayReusesExactHeadWithoutRebuilding() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("binding-overlay-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    func git(_ args: [String]) throws -> String {
+        try CommandRunner.run("git", args, at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    func commit(_ message: String) throws -> String {
+        _ = try git(["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", message])
+        return try git(["rev-parse", "HEAD"])
+    }
+    let tests = ["UI/Suite/testConsumer()", "UI/Other/testOther()"]
+    let after = bindingBefore.replacingOccurrences(of: "private func candidate() { XCTAssertTrue(true) }", with: "private func candidate() { XCTAssertTrue(true); XCTAssertFalse(false) }")
+    var current = try boundaryGraph(["UI.swift": after], tests: tests, root: root)
+    bindingArtifact(&current)
+    let wrapperText = "import SwiftUI\nstruct Screen { @State var count = 0 }"
+    current.sources["App:Screen.swift"] = .parse(wrapperText, path: "Screen.swift", module: "App")
+    let encoder = JSONEncoder()
+    try encoder.encode(current.mappings).write(to: root.appendingPathComponent(".swift-test-selection.json"))
+    try Data(wrapperText.utf8).write(to: root.appendingPathComponent("Screen.swift"))
+    try Data(bindingBefore.utf8).write(to: root.appendingPathComponent("UI.swift"))
+    _ = try git(["init", "-q"])
+    _ = try git(["add", "UI.swift", "Screen.swift", ".swift-test-selection.json"])
+    let base = try commit("base")
+    try Data(after.utf8).write(to: root.appendingPathComponent("UI.swift"))
+    _ = try git(["add", "UI.swift"])
+    let head = try commit("helper change")
+    let configuration = XcodeConfiguration(container: .project, path: root.appendingPathComponent("Fixture.xcodeproj"), scheme: "Fixture", destination: "fixture")
+    let analysis = XcodeAnalysis(options: configuration)
+    current.buildArtifact!.revision = head
+    current.buildArtifact!.context = try analysis.artifactContext(root: root)
+    current.buildArtifact!.context["sdkAndArchitecture"] = "fixture"
+    current.buildArtifact!.products = ["Tests.xctestrun": "fixture"]
+    current.buildArtifact!.helperBindingBuild!.productsDigest = try XcodeGraphCache.key(current.buildArtifact!.products)
+    current.buildArtifact!.helperBindingInputs = current.buildArtifact!.helperBindingBuild!.fingerprint
+    current.buildArtifact!.headOnlyBuildEvidence = .init(buildLogDigest: "log", buildSettingsDigest: "settings", documentation: [], uncertainty: nil)
+    let source = try XcodeHeadOnlySources.read(current: current, changes: [.init(path: "UI.swift")], base: base, root: root, mappingPath: configuration.mappingsPath)
+    let helper = try #require(current.sources["UI:UI.swift"]!.units.first { $0.helperCallableName == "candidate" })
+    var contracts = try ["head", "base"].map { try bindingContract("App:Screen.swift", revision: $0, helper: helper, current: current, source: source) }
+    for i in contracts.indices { contracts[i].baseRevision = base; contracts[i].headRevision = head }
+    let graphPath = root.appendingPathComponent("capture.stigraph"), policyPath = root.appendingPathComponent("reviews.json")
+    let original = try GraphArchive.encode(current)
+    try original.write(to: graphPath)
+    try encoder.encode(contracts).write(to: policyPath)
+    _ = try git(["add", "reviews.json"])
+    let policyCommit = try commit("review captured helper bindings")
+    #expect(policyCommit != head)
+    let loaded = try XcodeAnalysis.executionGraph(at: graphPath)
+    let scopes = SelectionScopes(scopes: [.init(name: "helper", paths: ["UI.swift"])])
+    let baseline = try analysis.selectHeadOnly(base: base, head: head, headGraph: loaded)
+    #expect(baseline.selectedTests == tests.sorted())
+    let reviewed = try analysis.selectHeadOnly(base: base, head: head, headGraph: loaded, bindingReviews: contracts, selectionScopes: scopes)
+    #expect(reviewed.selectedTests == [tests[0]], "\(reviewed.diagnostics)")
+    #expect(reviewed.selectionScopes?.first?.report.selectedTests == [tests[0]])
+    #expect(reviewed.appliedHelperBindingReviews == contracts)
+    #expect(loaded.mappings!.helperBindingContracts == nil)
+    #expect(try Data(contentsOf: graphPath) == original)
+    #expect(throws: ImpactError.self) { try analysis.selectHeadOnly(base: base, head: policyCommit, headGraph: loaded, bindingReviews: contracts) }
+    for mutation in ["missing", "log", "settings", "uncertainty"] {
+        var changed = loaded
+        switch mutation {
+        case "missing": changed.buildArtifact!.headOnlyBuildEvidence = nil
+        case "log": changed.buildArtifact!.headOnlyBuildEvidence!.buildLogDigest = "stale"
+        case "settings": changed.buildArtifact!.headOnlyBuildEvidence!.buildSettingsDigest = "stale"
+        default: changed.buildArtifact!.headOnlyBuildEvidence!.uncertainty = "Unbounded script inputs"
+        }
+        if mutation == "uncertainty" {
+            let fallback = try analysis.selectHeadOnly(base: base, head: head, headGraph: changed, bindingReviews: contracts, selectionScopes: scopes)
+            #expect(fallback.selectedTests == tests.sorted())
+            #expect(fallback.selectionScopes?.first?.report.selectedTests == tests.sorted())
+            #expect(fallback.diagnostics.contains { $0.code == "head_only_build_evidence" })
+        } else {
+            #expect(throws: ImpactError.self) { try analysis.selectHeadOnly(base: base, head: head, headGraph: changed, bindingReviews: contracts) }
+        }
+    }
+    // Exercise the public CLI with the policy committed *after* the captured
+    // head. No Xcode project/build is available in this fixture.
+    let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    #if DEBUG
+    let tool = repository.appendingPathComponent(".build/debug/swift-test-impact")
+    #else
+    let tool = repository.appendingPathComponent(".build/release/swift-test-impact")
+    #endif
+    let args = ["select", "--project", configuration.path.path, "--scheme", "Fixture", "--destination", "fixture", "--head-only", "--base", base, "--head", head,
+        "--head-graph", graphPath.path, "--helper-binding-reviews", policyPath.path, "--format", "json", "--strict-mappings"]
+    let output = try CommandRunner.run(tool.path, args, at: root)
+    let report = try JSONDecoder().decode(ImpactReport.self, from: output.stdout)
+    #expect(report.selectedTests == [tests[0]])
+    #expect(report.headRevision == head)
+    #expect(report.appliedHelperBindingReviews == contracts)
+    #expect(try Data(contentsOf: graphPath) == original)
+    for path in [graphPath, policyPath] {
+        let invalid = try CommandRunner.run(tool.path, args + ["--output", path.path], at: root, allowFailure: true)
+        #expect(invalid.status != 0)
+    }
+    var stale = contracts; stale[0].capturedInputs = "stale"
+    try encoder.encode(stale).write(to: policyPath)
+    let rejected = try CommandRunner.run(tool.path, args, at: root)
+    let rejectedReport = try JSONDecoder().decode(ImpactReport.self, from: rejected.stdout)
+    #expect(rejectedReport.selectedTests == tests.sorted())
+    #expect(rejectedReport.helperBindingDecisions?.contains { $0.status == "invalid" } == true)
+}

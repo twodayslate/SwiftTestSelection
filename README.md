@@ -303,6 +303,9 @@ exact SDK wrapper/actor declaration identities and source-local dependency impor
 They bind to compiler import maps, module/plugin bytes, retained products and both
 source revisions. Raw uncertainty and independent effect checks remain intact;
 arbitrary macros, namesakes, reexports and unowned historical sources still fall back.
+Apply a separately reviewed JSON array with `select --head-only --head-graph`
+and `--helper-binding-reviews`. This reuses the exact captured code revision;
+the review file can be committed later without rebuilding or editing the graph.
 
 Optionally add `"ignoredDocumentation": ["README.md", "AGENTS.md", "Documentation/**.md"]`
 to exclude explicitly reviewed Markdown paths in mixed changes as well as

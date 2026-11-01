@@ -5,7 +5,7 @@ import Foundation
 /// Exact input identities from the completed build's explicit import maps. No
 /// dependency scan, compiler replay, base build, or inferred import ownership.
 public struct HelperBindingBuildEvidence: Codable, Sendable {
-    public var version = 1
+    public var version = 2
     public var sourceInputs: String
     public var inputFiles: [String: String]
     public var importedModules: [String: [String]]
@@ -15,7 +15,7 @@ public struct HelperBindingBuildEvidence: Codable, Sendable {
 
     var fingerprint: String { HelperBindingContracts.digest(self) }
     func matches(_ artifact: XcodeBuildArtifact) -> Bool {
-        version == 1 && !sourceInputs.isEmpty && !inputFiles.isEmpty && inputFiles.values.allSatisfy { !$0.isEmpty } &&
+        version == 2 && !sourceInputs.isEmpty && !inputFiles.isEmpty && inputFiles.values.allSatisfy { !$0.isEmpty } &&
             !importedModules.isEmpty && importedModules.values.allSatisfy { !$0.isEmpty } &&
             buildLogDigest == artifact.buildLogDigest && buildSettingsDigest == artifact.buildSettingsDigest &&
             productsDigest == (try? XcodeGraphCache.key(artifact.products))
@@ -45,24 +45,39 @@ public struct HelperBindingBuildEvidence: Codable, Sendable {
                 working = URL(fileURLWithPath: paths[0], relativeTo: source).standardizedFileURL
             }
             guard let marker = line.range(of: "builtin-SwiftDriver -- ") else { continue }
-            let args = try XcodeSourceFileList.parse(String(line[marker.upperBound...]))
+            var responseFiles = Set<URL>()
+            func expand(_ arguments: [String], visiting: Set<String> = []) throws -> [String] {
+                var expanded: [String] = []
+                for argument in arguments {
+                    guard argument.hasPrefix("@") else { expanded.append(argument); continue }
+                    let file = URL(fileURLWithPath: String(argument.dropFirst()), relativeTo: working).standardizedFileURL
+                    let canonical = file.resolvingSymlinksInPath().path
+                    guard visiting.count < 64, !visiting.contains(canonical) else { throw ImpactError("Recursive binding-review response file") }
+                    responseFiles.insert(file)
+                    try record(file)
+                    expanded += try expand(XcodeSourceFileList.parse(String(contentsOf: file, encoding: .utf8)), visiting: visiting.union([canonical]))
+                }
+                return expanded
+            }
+            let args = try expand(XcodeSourceFileList.parse(String(line[marker.upperBound...])))
             guard let i = args.firstIndex(of: "-module-name"), i + 1 < args.count,
                   args.contains("-explicit-module-build"), let compiler = args.first, compiler.hasPrefix("/") else {
                 throw ImpactError("Missing explicit compiler import inventory for binding review")
             }
             let module = args[i + 1]
-            guard invocations[module] == nil || invocations[module] == args else { throw ImpactError("Ambiguous binding-review module invocation") }
+            let invocation = [working.path] + args
+            guard invocations[module] == nil || invocations[module] == invocation else { throw ImpactError("Ambiguous binding-review module invocation") }
             if invocations[module] != nil { continue }
-            invocations[module] = args
+            invocations[module] = invocation
             guard !args.contains(where: { argument in
                 ["-load-plugin-executable", "-load-plugin-library", "-external-plugin-path"].contains { argument == $0 || argument.hasPrefix($0 + "=") }
             }), !args.contains(where: { $0.hasPrefix("-plugin-path=") }) else {
                 throw ImpactError("Custom macro plugin resource inputs are unsupported for binding review")
             }
             try record(URL(fileURLWithPath: compiler))
-            let lists = args.filter { $0.hasPrefix("@") }
+            let lists = responseFiles.filter { $0.pathExtension == "SwiftFileList" }
             guard lists.count == 1 else { throw ImpactError("Missing unique compiler source list for binding review") }
-            let list = URL(fileURLWithPath: String(lists[0].dropFirst()), relativeTo: working).standardizedFileURL
+            let list = lists.first!
             let maps = try FileManager.default.contentsOfDirectory(at: list.deletingLastPathComponent(), includingPropertiesForKeys: nil)
                 .filter { $0.lastPathComponent.hasPrefix(module + "-dependencies-") && $0.pathExtension == "json" }
             guard maps.count == 1, let map = maps.first,
@@ -90,8 +105,13 @@ public struct HelperBindingBuildEvidence: Codable, Sendable {
             try directory(plugins)
             for i in args.indices where args[i] == "-plugin-path" {
                 guard i + 1 < args.count else { throw ImpactError("Missing macro plugin search path") }
-                let path = URL(fileURLWithPath: args[i + 1]).resolvingSymlinksInPath()
-                guard path.path.hasPrefix(plugins.resolvingSymlinksInPath().path + "/") else { throw ImpactError("Unbounded custom plugin search path") }
+                let directory: URL
+                if let index = args.lastIndex(of: "-working-directory"), index + 1 < args.count {
+                    directory = URL(fileURLWithPath: args[index + 1], relativeTo: working)
+                } else { directory = working }
+                let path = URL(fileURLWithPath: args[i + 1], relativeTo: directory).resolvingSymlinksInPath()
+                let pluginRoot = plugins.resolvingSymlinksInPath().path
+                guard path.path == pluginRoot || path.path.hasPrefix(pluginRoot + "/") else { throw ImpactError("Unbounded custom plugin search path") }
                 // The default plugin-root manifest above already covers this subtree.
             }
         }

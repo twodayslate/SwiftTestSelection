@@ -64,10 +64,15 @@ import Testing
     try Data(log.utf8).write(to: retained.appendingPathComponent("build.log"))
     var graph = XcodeTestGraph(targets: [], tests: [])
     let settings = Data(#"[{"buildSettings":{"CONFIGURATION":"Debug","SDK_NAME":"sdk","PLATFORM_NAME":"simulator","ARCHS":"arm64"}}]"#.utf8)
-    let published = try RetainedXcodeBuild.publish(graph: &graph, revision: "head", context: ["testPlan": "All"], toolchain: "fixture", workspace: retained, settings: settings, inputIdentity: [:])
+    let audit = HeadOnlyBuildEvidence(buildLogDigest: artifact.buildLogDigest, buildSettingsDigest: XcodeGraphCache.digest(settings),
+        documentation: ["README.md"], uncertainty: "Unbounded script inputs")
+    let published = try RetainedXcodeBuild.publish(graph: &graph, revision: "head", context: ["testPlan": "All"], toolchain: "fixture", workspace: retained, settings: settings, inputIdentity: [:], headOnlyEvidence: audit)
     let archived = try #require(RetainedXcodeBuild.load(from: published).buildArtifact)
     #expect(archived.helperBindingBuild?.matches(archived) == true, "\(archived.helperBindingBuildFailure ?? "no failure")")
     #expect(archived.helperBindingInputs == archived.helperBindingBuild?.fingerprint)
+    #expect(archived.headOnlyBuildEvidence?.matches(archived) == true)
+    #expect(archived.headOnlyBuildEvidence?.documentation == ["README.md"])
+    #expect(archived.headOnlyBuildEvidence?.uncertainty == "Unbounded script inputs")
     for flag in ["-load-plugin-executable", "-load-plugin-library", "-external-plugin-path", "-plugin-path"] {
         for separator in [" ", "="] {
             let customLog = log + " " + flag + separator + "/unbounded/custom/plugin"
@@ -85,6 +90,48 @@ import Testing
     try Data("changed-module-exports".utf8).write(to: root.appendingPathComponent("Dependency.swiftmodule"))
     let changed = try HelperBindingBuildEvidence.capture(log: log, source: root, sourceInputs: inputs, artifact: artifact)
     #expect(changed.fingerprint != valid.fingerprint)
+    // Arguments in @files have the same meaning as outer driver arguments.
+    // A custom binary must never disappear from the input trust boundary.
+    let nested = root.appendingPathComponent("nested response.rsp")
+    let originalList = try Data(contentsOf: list)
+    for flag in ["-load-plugin-executable", "-load-plugin-library", "-external-plugin-path", "-plugin-path"] {
+        for suffix in [" /unbounded/plugin", "=/unbounded/plugin"] {
+            for depth in [0, 1] {
+                let argument = flag + suffix
+                try Data(argument.utf8).write(to: nested)
+                let contents = root.appendingPathComponent("UI.swift").path + " " + (depth == 0 ? argument : "@\"" + nested.path + "\"")
+                try Data(contents.utf8).write(to: list)
+                let updatedInputs = try ArtifactFiles.sourceInputs(log: log, directory: root)
+                do {
+                    _ = try HelperBindingBuildEvidence.capture(log: log, source: root, sourceInputs: updatedInputs, artifact: artifact)
+                    Issue.record("Accepted hidden plugin flag: \(argument), depth \(depth)")
+                } catch {
+                    #expect(String(describing: error).contains("plugin"))
+                }
+            }
+        }
+    }
+    try Data(("@" + list.path).utf8).write(to: list)
+    #expect(throws: (any Error).self) { try HelperBindingBuildEvidence.capture(log: log, source: root, sourceInputs: inputs, artifact: artifact) }
+    try Data("@missing-response-file".utf8).write(to: list)
+    #expect(throws: (any Error).self) { try HelperBindingBuildEvidence.capture(log: log, source: root, sourceInputs: inputs, artifact: artifact) }
+    try Data(("-plugin-path " + plugins.path).utf8).write(to: nested)
+    try Data((String(decoding: originalList, as: UTF8.self) + " @\"" + nested.path + "\"").utf8).write(to: list)
+    let nestedInputs = try ArtifactFiles.sourceInputs(log: log, directory: root)
+    let nestedEvidence = try HelperBindingBuildEvidence.capture(log: log, source: root, sourceInputs: nestedInputs, artifact: artifact)
+    #expect(nestedEvidence.inputFiles[nested.resolvingSymlinksInPath().path] != nil)
+    let otherDirectory = root.appendingPathComponent("another-directory")
+    try FileManager.default.createDirectory(at: otherDirectory, withIntermediateDirectories: true)
+    let repeated = "cd " + root.path + "\n" + log + "\ncd " + otherDirectory.path + "\n" + log
+    var repeatedArtifact = artifact
+    repeatedArtifact.buildLogDigest = XcodeGraphCache.digest(Data(repeated.utf8))
+    #expect(throws: (any Error).self) {
+        try HelperBindingBuildEvidence.capture(log: repeated, source: root,
+            sourceInputs: ArtifactFiles.sourceInputs(log: repeated, directory: root), artifact: repeatedArtifact)
+    }
+    var legacy = nestedEvidence; legacy.version = 1
+    #expect(!legacy.matches(artifact))
+    try originalList.write(to: list)
     var unknown = entry; unknown["futureResourceInputs"] = "unaccounted"
     try JSONSerialization.data(withJSONObject: [unknown]).write(to: map)
     #expect(throws: (any Error).self) { try HelperBindingBuildEvidence.capture(log: log, source: root, sourceInputs: inputs, artifact: artifact) }
