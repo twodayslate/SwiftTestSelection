@@ -21,7 +21,7 @@ public struct SelectionFallback: Codable, Sendable {
     static func explain(code: String, message: String, units: [SourceUnit] = [], path: [String] = [], allTests: Bool = true) -> Self {
         let category: String, resolution: String, evidence: String
         var declaration: String?
-        if code.contains("helper_contract") {
+        if code.contains("helper_contract") || code.contains("helper_binding_contract") {
             category = "declarationValidation"; resolution = "reviewedDeclaration"
             evidence = "Correct the reported binding or revision failure and review the declaration again. Invalid or stale declarations cannot narrow selection."
         } else if message.contains("runtime formatting conformances") {
@@ -30,7 +30,7 @@ public struct SelectionFallback: Codable, Sendable {
             evidence = "Review the exact helper, producer, XCTest overload and substitutions in formattingBoundaries. Bind both source digests, actual base revision and toolchain; establish all three formatting guarantees. Feature mappings cannot resolve this boundary."
         } else if message.contains("Incomplete helper declaration inventories") {
             category = "sourceOrBuildEvidence"; resolution = "compilerEvidence"
-            evidence = "Inspect the named base/head source inventory. Refresh missing metadata; unsupported macros or attributes require expansion/ownership analysis. No formatting declaration overrides this requirement."
+            evidence = "Inspect the named base/head source inventory and helperBindingReviewContext. Supported SDK identities require a scoped binding review; arbitrary macros require expansion/ownership analysis and missing metadata requires recapture. No formatting declaration overrides this requirement."
         } else if code.contains("mapping") || code.contains("unmapped") || code.contains("ui_runtime") {
             category = "productionOwnership"; resolution = "dependencyMapping"
             evidence = "Resolve the named production/UI source and test selectors in both revisions and review the cross-process runtime policy. This does not establish helper isolation."
@@ -48,7 +48,7 @@ public struct SelectionFallback: Codable, Sendable {
             evidence = "Resolve test host, setup/teardown and inherited lifecycle roots in the captured inventory. No supported helper formatting declaration overrides lifecycle effects."
         } else if code.contains("helper") || code.contains("runtime") {
             category = "helperOrRuntimeEffect"; resolution = "unsupported"
-            evidence = "Resolve the first named producer/effect with complete compiler and historical source evidence. Only the exact XCTest failure-formatting boundary supports a reviewed declaration; no general helper/runtime isolation declaration is supported."
+            evidence = "Resolve the first named producer/effect with complete compiler and historical source evidence. Formatting and supported source identity boundaries have separate scoped review declarations; neither grants general helper/runtime isolation."
         } else {
             category = "sourceOrBuildEvidence"; resolution = "compilerEvidence"
             evidence = "Restore matching source, ownership, build inputs and complete compiler evidence for the named boundary; recapture the affected build. No helper formatting declaration resolves this fallback."

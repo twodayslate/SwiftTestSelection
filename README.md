@@ -298,6 +298,12 @@ declaration inventories list every unsupported attribute/macro, its source locat
 and the missing evidence in `helperDeclarationInventories`. See
 [reviewed helper formatting contracts](Documentation/HelperFormattingContracts.md) for the schema, trust boundary, revision rules and actionable fallback fields.
 
+[Scoped helper binding reviews](Documentation/HelperBindingContracts.md) support
+exact SDK wrapper/actor declaration identities and source-local dependency imports.
+They bind to compiler import maps, module/plugin bytes, retained products and both
+source revisions. Raw uncertainty and independent effect checks remain intact;
+arbitrary macros, namesakes, reexports and unowned historical sources still fall back.
+
 Optionally add `"ignoredDocumentation": ["README.md", "AGENTS.md", "Documentation/**.md"]`
 to exclude explicitly reviewed Markdown paths in mixed changes as well as
 standalone documentation changes. Patterns must be repository-relative and end

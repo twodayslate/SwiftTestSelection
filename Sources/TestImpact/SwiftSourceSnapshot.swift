@@ -125,6 +125,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// declaration is a function; false also includes storage or aliases.
     public var helperGlobalDeclarations: [String: Bool]? = nil
     public var attachmentAddUnshadowed: Bool? = nil
+    public var helperWrittenOperators: Set<String>? = nil
+    public var helperReferencesWithReviewedImports: [String: SDKTestHelperSyntax.References]? = nil
     public var helperReferences: [String: SDKTestHelperSyntax.References]? = nil
     public var sdkHelperNamesUnshadowed: Bool? = nil
     /// Stored properties proven to be immutable, inferred string literals.
@@ -186,12 +188,13 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         let declarationIssues = HelperDeclarationInventory.issues(tree, locations: locations, unsupportedImports: unsupportedCallerImports)
         result.helperDeclarationIssues = declarationIssues
         result.helperDeclarationsComplete = declarationIssues.isEmpty
-        result.helperOperatorDeclarations = result.helperDeclarationsComplete == true ? Set(tree.tokens(viewMode: .sourceAccurate).compactMap { token in
+        result.helperWrittenOperators = Set(tree.tokens(viewMode: .sourceAccurate).compactMap { token in
             if let function = token.parent?.as(FunctionDeclSyntax.self), function.name.id == token.id,
                token.identifier == nil { return token.text }
             if let declaration = token.parent?.as(OperatorDeclSyntax.self), declaration.name.id == token.id { return token.text }
             return nil
-        }) : nil
+        })
+        result.helperOperatorDeclarations = result.helperDeclarationsComplete == true ? result.helperWrittenOperators : nil
         result.attachmentAddUnshadowed = !(identifiers["add"] ?? []).contains(where: PrivateTestHelperSyntax.shadowsAttachmentAdd)
         let physicalLocations = !tree.tokens(viewMode: .sourceAccurate).contains { $0.tokenKind == .poundSourceLocation }
         result.receiverPhysicalLocations = physicalLocations
@@ -200,6 +203,17 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         for tokens in identifiers.values {
             for signature in Set(tokens.compactMap(SDKTestHelperSyntax.referenceKey)) {
                 result.helperReferences![signature] = referenceAnalysis.references(tokens, matching: signature)
+            }
+        }
+        if !callerImportsSupported {
+            // Conditional syntax evidence only. The raw references above keep
+            // their uncertainty until a scoped, authenticated identity review.
+            let reviewed = SDKHelperReferenceAnalysis(identifiers: identifiers, locations: locations, callerImportsSupported: true)
+            result.helperReferencesWithReviewedImports = identifiers.mapValues { reviewed.references($0) }
+            for tokens in identifiers.values {
+                for signature in Set(tokens.compactMap(SDKTestHelperSyntax.referenceKey)) {
+                    result.helperReferencesWithReviewedImports![signature] = reviewed.references(tokens, matching: signature)
+                }
             }
         }
         result.sdkHelperNamesUnshadowed = SDKTestHelperSyntax.names.allSatisfy { name in

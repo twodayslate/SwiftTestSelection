@@ -63,6 +63,16 @@ enum RetainedXcodeBuild {
         graph.buildArtifact?.simulatorRuntimes = inputIdentity["simulatorRuntimes"]
         graph.buildArtifact?.helperFormattingBuild = try? .capture(log: Data(contentsOf: logFile), settings: settings,
             source: workspace.appendingPathComponent("source"), derived: workspace.appendingPathComponent("DerivedData"), captured: capture)
+        do {
+            let log = try String(contentsOf: logFile, encoding: .utf8)
+            let source = workspace.appendingPathComponent("source")
+            let evidence = try HelperBindingBuildEvidence.capture(log: log, source: source,
+                sourceInputs: ArtifactFiles.sourceInputs(log: log, directory: source), artifact: graph.buildArtifact!)
+            graph.buildArtifact?.helperBindingBuild = evidence
+            graph.buildArtifact?.helperBindingInputs = evidence.fingerprint
+        } catch {
+            graph.buildArtifact?.helperBindingBuildFailure = String(describing: error)
+        }
         let graphFile = workspace.appendingPathComponent("head-graph.json")
         let encoder = JSONEncoder()
         try encoder.encode(graph).write(to: graphFile, options: .atomic)

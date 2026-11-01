@@ -19,6 +19,9 @@ public struct XcodeBuildArtifact: Codable, Sendable {
     public var productsDirectory: String
     public var xctestrun: String
     public var products: [String: String]
+    public var helperBindingBuildFailure: String? = nil
+    public var helperBindingBuild: HelperBindingBuildEvidence? = nil
+    public var helperBindingInputs: String? = nil
     public var helperFormattingBuild: HelperFormattingBuildEvidence? = nil
 }
 
@@ -127,6 +130,13 @@ extension XcodeAnalysis {
             productsDirectory: products.path, xctestrun: inputs.xctestrun.lastPathComponent, products: fingerprints)
         graph.buildArtifact?.simulatorRuntimes = try ArtifactFiles.runtimeFingerprint(options: options, at: root)
         graph.buildArtifact?.helperFormattingBuild = try? .capture(log: Data(log.utf8), settings: data, source: root, derived: inputs.derivedData, captured: captured)
+        do {
+            let evidence = try HelperBindingBuildEvidence.capture(log: log, source: root, sourceInputs: sourceInputs, artifact: graph.buildArtifact!)
+            graph.buildArtifact?.helperBindingBuild = evidence
+            graph.buildArtifact?.helperBindingInputs = evidence.fingerprint
+        } catch {
+            graph.buildArtifact?.helperBindingBuildFailure = String(describing: error)
+        }
         return graph
     }
 

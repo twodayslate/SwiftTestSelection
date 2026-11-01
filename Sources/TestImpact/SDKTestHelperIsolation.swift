@@ -32,8 +32,8 @@ enum SDKTestHelperIsolation {
         if let reason = environmentBlocker(current: current, base: base, unownedBase: unownedBase,
                                            queriedMembers: evidence.queriedMembers.union(old.queriedMembers)) { return reason }
         if let reason = effectBindingBlocker(unit, previous: previous, current: current, base: base, unownedBase: unownedBase) { return reason }
-        let headReferences = headSources.mapValues { SDKTestHelperSyntax.canonicalReferences($0.helperReferences!) }
-        let baseReferences = baseSources.mapValues { SDKTestHelperSyntax.canonicalReferences($0.helperReferences!) }
+        let headReferences = headSources.mapValues { SDKTestHelperSyntax.canonicalReferences(formattingReview?.bindingReview?.references($0) ?? $0.helperReferences!) }
+        let baseReferences = baseSources.mapValues { SDKTestHelperSyntax.canonicalReferences(formattingReview?.bindingReview?.references($0) ?? $0.helperReferences!) }
         let headUnits = headSources.values.flatMap(\.units), oldUnits = baseSources.values.flatMap(\.units)
         let byKey = Dictionary(grouping: headUnits, by: \.key), oldByKey = Dictionary(grouping: oldUnits, by: \.key)
         let headByFile = Dictionary(grouping: headUnits.filter { $0.kind == "function" }, by: { $0.region.path })
@@ -156,7 +156,7 @@ enum SDKTestHelperIsolation {
         let callerUnits = receiverOrigins.checkedSourceUnits(for: consumers)?.filter { $0.key != unit.key }
         return PrivateTestHelperIsolation.historicalCallerBindingBlocker(
             units: callerUnits, current: current, base: base,
-            unownedBase: unownedBase, provenHelpers: [unit] + (previous.map { [$0] } ?? []))
+            unownedBase: unownedBase, provenHelpers: [unit] + (previous.map { [$0] } ?? []), bindingReview: formattingReview?.bindingReview)
     }
 
     /// A head binding does not identify its old overload. Reject competing
