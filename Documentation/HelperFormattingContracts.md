@@ -108,7 +108,11 @@ unowned historical sources. A head SDK substitution and a fresh source digest do
 not prove the historical comparison witness. SDK helpers also audit historical
 caller bodies and transitive producers outside the requested diff. Replacing or
 removing an old comparison or effect cannot be justified by a formatting review
-of the head assertion. Rename/deletion, ambiguous source
+of the head assertion. Both helper paths also require unshadowed reserved names
+in head, base and unowned historical sources, including implicit literal types
+such as `IntegerLiteralType`. Unchanged literal syntax does not prove an unchanged
+comparison type, and missing binding metadata cannot grant isolation.
+Rename/deletion, ambiguous source
 ownership, an absent compiled overload or missing generic substitutions cannot
 be repaired by a formatting assertion. Toolchain, SDK, architecture, build-context and simulator-runtime changes invalidate declarations;
 consumer policies requiring full toolchain coverage remain in force.

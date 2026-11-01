@@ -369,6 +369,17 @@ enum PrivateTestHelperIsolation {
 
     static func historicalCallerBindingBlocker(units: [SourceUnit]?, current: XcodeTestGraph,
         base: [String: SwiftSourceSnapshot], unownedBase: [String: SwiftSourceSnapshot], provenHelpers: [SourceUnit]) -> String? {
+        // This audit is shared by private and SDK helpers. Authenticate its
+        // implicit bindings here rather than relying on either caller's guards:
+        // unchanged literal syntax can select a different historical type.
+        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules.union(["CoreGraphics"])) else {
+            return "Unproven historical caller reserved-name bindings: project module shadows a trusted SDK module"
+        }
+        for (revision, snapshots) in [("head", current.sources), ("base", base), ("unowned base", unownedBase)] {
+            for (key, snapshot) in snapshots.sorted(by: { $0.key < $1.key }) where snapshot.helperNamesUnshadowed != true {
+                return "Unproven historical caller reserved-name bindings at \(revision):\(key); missing or shadowed SDK names and implicit literal types"
+            }
+        }
         guard let units, !units.isEmpty else { return "Missing compiler-bound caller source evidence" }
         let checkedModules = Set(units.map { String($0.key.prefix { $0 != ":" }) })
         let oldSources = Array(base.values) + Array(unownedBase.values)
