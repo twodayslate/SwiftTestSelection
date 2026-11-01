@@ -105,7 +105,10 @@ and new digests. Unknown/unowned historical source is included in the base diges
 and still undergoes the existing binding checks. Comparison type aliases and
 project namesakes are rejected in the producer's module at both revisions and in
 unowned historical sources. A head SDK substitution and a fresh source digest do
-not prove the historical comparison witness. Rename/deletion, ambiguous source
+not prove the historical comparison witness. SDK helpers also audit historical
+caller bodies and transitive producers outside the requested diff. Replacing or
+removing an old comparison or effect cannot be justified by a formatting review
+of the head assertion. Rename/deletion, ambiguous source
 ownership, an absent compiled overload or missing generic substitutions cannot
 be repaired by a formatting assertion. Toolchain, SDK, architecture, build-context and simulator-runtime changes invalidate declarations;
 consumer policies requiring full toolchain coverage remain in force.
