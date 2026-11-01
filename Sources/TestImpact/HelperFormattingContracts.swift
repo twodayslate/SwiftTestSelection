@@ -121,6 +121,7 @@ public struct HelperContractPreview: Codable, Sendable {
 
 /// Per selection and per changed helper. Never cached on the shared head graph.
 final class HelperContractEvaluation {
+    var bindingReview: HelperBindingEvaluation? = nil
     let helper: String
     let contracts: [HelperFormattingContract]
     let diagnosticCode: String

@@ -76,12 +76,15 @@ struct SDKReceiverOrigins {
             return declarations.count == 1 && !finality.isEmpty && finality.allSatisfy { $0 } &&
                 PrivateTestHelperIsolation.safeHierarchy(owner, module: module, sources: snapshots)
         }
+        func importsSupported(_ unit: SourceUnit) -> Bool {
+            unit.receiverImportsSupported == true || formattingReview?.bindingReview?.importsSupported(unit) == true
+        }
         func metatypeBlocker(_ node: FunctionNode, owners: [SourceUnit]) -> String? {
             guard let origins = node.receiverTypeOrigins, node.receiverGenericCalls != nil else { return "Missing or unrecognized receiver type evidence; recapture sealed SIL" }
-            if !origins.isEmpty, owners.contains(where: { $0.receiverImportsSupported == false }) {
+            if !origins.isEmpty, owners.contains(where: { !importsSupported($0) }) {
                 let imports = Set(owners.flatMap { $0.receiverUnsupportedImports ?? [] }).sorted()
                 return "Receiver type identities are unproven with unsupported source imports" +
-                    (imports.isEmpty ? " (missing import details; refresh source evidence)" : ": " + imports.joined(separator: ", "))
+                    (imports.isEmpty ? " (missing import details; refresh source evidence)" : ": " + imports.joined(separator: ", ")) + "; exact receiver origins: " + origins.sorted().joined(separator: ", ") + "; requires source-scoped dependency/export/host identity evidence at both revisions (helperBindingContracts), not package-name trust"
             }
             let sdkLiterals = SDKReceiverContracts.literalTypes
             func localValueType(_ name: String) -> Bool {
@@ -99,7 +102,7 @@ struct SDKReceiverOrigins {
                 if origin.hasPrefix("cast:") {
                     let target = String(origin.dropFirst(5))
                     guard let names = SDKReceiverContracts.typeNames(target), names.isSubset(of: SDKReceiverContracts.valueTypes),
-                          !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }),
+                          !owners.isEmpty, owners.allSatisfy({ importsSupported($0) }),
                           (sources[node.module] ?? []).allSatisfy({ snapshot in
                               let roots = Set(names.map { String($0.split(separator: ".")[0]) })
                               return snapshot.1.typeAliases != nil && !snapshot.1.typeAliases!.contains(where: { roots.contains(SDKTestHelperSyntax.canonicalName(String($0.split(separator: ".").last ?? ""))) }) &&
@@ -120,12 +123,12 @@ struct SDKReceiverOrigins {
                     else if origin.hasPrefix("enum:XCUIElement.ElementType.") { enumOwner = "XCUIElement" }
                     else {
                         let type = origin.dropFirst("enum:".count).split(separator: ".").dropLast().joined(separator: ".")
-                        guard localValueType(type), !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }) else {
+                        guard localValueType(type), !owners.isEmpty, owners.allSatisfy({ importsSupported($0) }) else {
                             return "Unproven enum argument identity: " + origin
                         }
                         continue
                     }
-                    guard !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }),
+                    guard !owners.isEmpty, owners.allSatisfy({ importsSupported($0) }),
                           (sources[node.module] ?? []).allSatisfy({ $0.1.typeAliases != nil &&
                             !$0.1.typeAliases!.contains(where: { $0.split(separator: ".").last.map(String.init) == enumOwner }) &&
                             !$0.1.units.contains(where: { $0.kind == "type" && $0.scope.split(separator: ".").last.map(String.init) == enumOwner }) }) else {
@@ -136,14 +139,14 @@ struct SDKReceiverOrigins {
                 let parts = origin.split(separator: ":", maxSplits: 1).map(String.init)
                 guard parts.count == 2 else { return "Unproven dynamic metatype: " + origin }
                 let type = parts[1]
-                if !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }),
+                if !owners.isEmpty, owners.allSatisfy({ importsSupported($0) }),
                    finalTestClass(type, module: node.module) { continue }
                 var names = Set(type.split { !$0.isLetter && !$0.isNumber && $0 != "_" && $0 != "." }.map(String.init))
                 names.formUnion(names.compactMap { $0.split(separator: ".").first.map(String.init) })
                 let sdkNames = names.intersection(sdkLiterals)
                 guard parts[0] == "literal" || (parts[0] == "input" && localValueType(type)),
                       !names.isEmpty, names.subtracting(sdkLiterals).allSatisfy(localValueType), !owners.isEmpty,
-                      owners.allSatisfy({ $0.receiverImportsSupported == true }),
+                      owners.allSatisfy({ importsSupported($0) }),
                       (sources[node.module] ?? []).allSatisfy({ $0.1.helperNamesUnshadowed == true && $0.1.typeAliases != nil &&
                           !$0.1.typeAliases!.contains(where: { $0.split(separator: ".").last.map(String.init).map(SDKTestHelperSyntax.canonicalName).map(names.contains) == true }) &&
                           !$0.1.units.contains(where: { $0.kind == "type" && $0.scope.split(separator: ".").last.map(String.init).map(SDKTestHelperSyntax.canonicalName).map(sdkNames.contains) == true }) }) else {
@@ -294,7 +297,7 @@ struct SDKReceiverOrigins {
                     }
                 }
                 var shapes: [String: Set<[String]>]?
-                if !owners.isEmpty, owners.allSatisfy({ $0.receiverCallShapes != nil && $0.receiverImportsSupported == true }) {
+                if !owners.isEmpty, owners.allSatisfy({ $0.receiverCallShapes != nil && importsSupported($0) }) {
                     shapes = [:]
                     for owner in owners {
                         for (name, calls) in owner.receiverCallShapes! { shapes![name, default: []].formUnion(calls) }
@@ -305,7 +308,7 @@ struct SDKReceiverOrigins {
                     guard let calls = node.receiverGenericCalls else { return "Missing generic receiver-call evidence; recapture sealed SIL" }
                     for symbol in generic.sorted() {
                         let arguments = calls.filter { $0.hasPrefix(symbol + "\t") }.map { String($0.dropFirst(symbol.count + 1)) }
-                        guard !owners.isEmpty, owners.allSatisfy({ $0.receiverImportsSupported == true }),
+                        guard !owners.isEmpty, owners.allSatisfy({ importsSupported($0) }),
                               arguments.allSatisfy({ argument in
                                   guard let names = SDKReceiverContracts.requiredTypeIdentities(argument, for: symbol) else { return false }
                                   let roots = Set(names.map { String($0.split(separator: ".")[0]) })
@@ -329,7 +332,7 @@ struct SDKReceiverOrigins {
                 }
                 var paired: [String: Set<[String]>] = [:]
                 if let sites = node.dynamicCallSites, !owners.isEmpty,
-                   owners.allSatisfy({ $0.receiverCallSites != nil && $0.receiverImportsSupported == true }) {
+                   owners.allSatisfy({ $0.receiverCallSites != nil && importsSupported($0) }) {
                     for call in node.dynamicCallSignatures ?? [] {
                         guard let declaration = call.split(separator: " ").dropFirst().first?.split(separator: "!").first,
                               ExternalHelperEffects.tracksReceiverCallSite(String(declaration)) else { continue }

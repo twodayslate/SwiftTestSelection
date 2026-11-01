@@ -36,7 +36,8 @@ struct XcodeHeadOnlySources {
                   snapshot.units.contains(where: { $0.sdkTestHelper != nil || $0.privateTestHelper != nil }) else { return nil }
             return String(key[..<colon])
         })
-        let hasContracts = !HelperFormattingContracts.declarations(current.sources, current.mappings).isEmpty || !(result.mappings?.helperFormattingContracts?.isEmpty ?? true)
+        let hasBindingContracts = !(current.mappings?.helperBindingContracts?.isEmpty ?? true) || !(result.mappings?.helperBindingContracts?.isEmpty ?? true)
+        let hasContracts = hasBindingContracts || !HelperFormattingContracts.declarations(current.sources, current.mappings).isEmpty || !(result.mappings?.helperFormattingContracts?.isEmpty ?? true)
         let auditCallers = !callerModules.isEmpty || hasContracts
         var basePaths: Set<String>?
         if auditCallers {
@@ -96,6 +97,8 @@ enum XcodeHeadOnlySelector {
         var explanations: [TestExplanation] = [], diagnostics: [SelectionDiagnostic] = []
         var fallbackUnits: [SourceUnit] = []
         let review = HelperFormattingContracts.validate(current: current, source: source, baseRevision: baseRevision)
+        let bindings = HelperBindingContracts.validate(current: current, source: source, baseRevision: baseRevision)
+        var bindingDecisions = bindings.decisions
         var contractDecisions = review.decisions
         var evaluations: [HelperContractEvaluation] = []
         let oldContracts = HelperFormattingContracts.declarations(source.base, source.mappings)
@@ -105,10 +108,13 @@ enum XcodeHeadOnlySelector {
             guard let colon = key.firstIndex(of: ":") else { return false }
             return changedPaths.contains(String(key[key.index(after: colon)...]))
         }.flatMap { $0.value.helperContracts?.contracts.map(\.id) ?? [] })
-        let policyHelpers = Set((oldContracts + newContracts).filter { contract in
+        let oldBindings = source.mappings?.helperBindingContracts ?? [], newBindings = current.mappings?.helperBindingContracts ?? []
+        let policyHelpers = Set((oldBindings + newBindings).filter { contract in
+            changedPaths.contains(source.mappingPath) && oldBindings.filter { $0.id == contract.id } != newBindings.filter { $0.id == contract.id }
+        }.map(\.helper)).union(Set((oldContracts + newContracts).filter { contract in
             (changedPaths.contains(source.mappingPath) || directiveIDs.contains(contract.id)) &&
             oldContracts.filter { $0.id == contract.id } != newContracts.filter { $0.id == contract.id }
-        }.map(\.helper))
+        }.map(\.helper)))
         func include(_ tests: Set<String>, kind: String, reason: String, path: [String] = []) {
             let tests = tests.intersection(inventory)
             selected.formUnion(tests)
@@ -128,6 +134,9 @@ enum XcodeHeadOnlySelector {
             for error in snapshot.helperContracts?.diagnostics ?? [] {
                 fallback("helper_contract_invalid", key + ": " + error)
             }
+        }
+        for decision in bindingDecisions where decision.status == "invalid" {
+            diagnostics.append(.init(code: "helper_binding_contract_invalid", message: decision.id + ": " + decision.failures.joined(separator: "; "), tests: []))
         }
         for decision in contractDecisions where decision.status == "invalid" {
             // An invalid declaration cannot expand a no-op into an execution request,
@@ -204,6 +213,7 @@ enum XcodeHeadOnlySelector {
             fallbackUnits = before + after
             let evaluation = HelperContractEvaluation(helper: key, contracts: applyHelperContracts ? review.contracts : [],
                 diagnosticCode: after.first?.sdkTestHelper != nil ? "head_only_sdk_helper_boundary" : "head_only_helper_callee_effects")
+            evaluation.bindingReview = HelperBindingEvaluation(contracts: applyHelperContracts ? bindings.contracts.filter { $0.helper == key } : [], current: current, source: source)
             evaluations.append(evaluation)
             semanticPaths.formUnion((before + after).map { $0.region.path })
             if PrivateTestHelperIsolation.provesExtensionHeaders(before + after, current: current, base: source.base) { continue }
@@ -288,6 +298,7 @@ enum XcodeHeadOnlySelector {
         func onlyContractMappingChange() -> Bool {
             guard var before = source.mappings, var after = originalCurrent.mappings else { return false }
             before.helperFormattingContracts = nil; after.helperFormattingContracts = nil
+            before.helperBindingContracts = nil; after.helperBindingContracts = nil
             let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
             return (try? encoder.encode(before)) == (try? encoder.encode(after))
         }
@@ -295,7 +306,7 @@ enum XcodeHeadOnlySelector {
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) } ?? key
         })
         for change in changes {
-            if change.path == source.mappingPath, onlyContractMappingChange(), oldContracts != newContracts {
+            if change.path == source.mappingPath, onlyContractMappingChange(), oldContracts != newContracts || oldBindings != newBindings {
                 // The affected helpers above are semantic change roots, even if
                 // only the directive changed. Never ignore a mapping dependency edit.
                 continue
@@ -472,13 +483,22 @@ enum XcodeHeadOnlySelector {
         if contractDecisions.contains(where: { $0.status == "discharged" }) {
             report.limitations.append("Exact XCTest failure-formatting boundaries were discharged by reviewed declarations. This trust is separate from compiler-proven isolation and observed coverage; all remaining diagnostics still apply.")
         }
+        let usedBindings = evaluations.reduce(into: Set<String>()) { $0.formUnion($1.bindingReview?.used ?? []) }
+        for i in bindingDecisions.indices where usedBindings.contains(bindingDecisions[i].id) { bindingDecisions[i].status = "discharged" }
+        report.helperBindingDecisions = bindingDecisions.isEmpty ? nil : bindingDecisions
+        if !usedBindings.isEmpty {
+            report.limitations.append("Scoped source identity boundaries were discharged by reviewed declarations, not compiler-proven isolation. Raw declaration inventories and all independent effect checks remain applicable.")
+        }
         let boundaries = evaluations.flatMap(\.encountered)
         report.formattingBoundaries = boundaries.isEmpty ? nil : boundaries
-        if !declarationAudits.isEmpty {
+        if !declarationAudits.isEmpty || diagnostics.contains(where: { $0.code == "head_only_sdk_helper_boundary" }) || !newBindings.isEmpty {
+            report.helperBindingReviewContext = HelperBindingContracts.context(current: current, source: source, baseRevision: baseRevision, helpers: Set(evaluations.map(\.helper)))
+        }
+        if !declarationAudits.isEmpty || !newBindings.isEmpty {
             let inventories = HelperDeclarationInventory.boundaries(current: current.sources, base: source.base, unownedBase: source.unownedBaseSources)
             if !inventories.isEmpty {
                 report.helperDeclarationInventories = inventories
-                report.helperDeclarationAudits = declarationAudits
+                report.helperDeclarationAudits = declarationAudits.isEmpty ? nil : declarationAudits
             }
         }
         report.finishFallbackEvidence()
@@ -498,7 +518,7 @@ enum XcodeHeadOnlySelector {
                 toolchain: current.buildArtifact?.toolchain ?? current.dependencies?.toolchain ?? "",
                 buildContext: HelperFormattingContracts.buildContext(current), helperSymbols: helperSymbols)
         }
-        if applyHelperContracts, !newContracts.isEmpty {
+        if applyHelperContracts, !newContracts.isEmpty || !newBindings.isEmpty {
             let baseline = select(current: originalCurrent, source: source, changes: changes, baseRevision: baseRevision,
                 documentation: documentation, buildEvidenceFailure: buildEvidenceFailure,
                 excludedTestEntries: excludedTestEntries, applyHelperContracts: false)

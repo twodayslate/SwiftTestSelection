@@ -47,6 +47,7 @@ public struct UIFeatureMappings: Codable, Sendable {
     /// Explicit Markdown-only exclusions, agreed by both review revisions.
     public var ignoredDocumentation: [String]?
     /// Non-UI closed-module contracts, checked against compiler imports and hosts.
+    public var helperBindingContracts: [HelperBindingContract]? = nil
     public var helperFormattingContracts: [HelperFormattingContract]? = nil
     public var testRuntimeBoundaries: [TestRuntimeBoundary]? = nil
     public var fixtures: [String: [String]]?

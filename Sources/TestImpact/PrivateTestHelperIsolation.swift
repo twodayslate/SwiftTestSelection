@@ -148,7 +148,7 @@ enum PrivateTestHelperIsolation {
             let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
                 base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(unownedBase.values)
             for source in sources {
-                guard source.diagnostics.isEmpty, let declarations = source.helperOperatorDeclarations else {
+                guard source.diagnostics.isEmpty, let declarations = traversal.receiverOrigins.formattingReview?.bindingReview?.operators(source) ?? source.helperOperatorDeclarations else {
                     traversal.hasUnprovenCalleeEffects = true
                     traversal.receiverOriginBlocker = source.helperDeclarationsComplete == false
                         ? "Incomplete source operator declarations from macros or unsupported attributes"
@@ -256,10 +256,16 @@ enum PrivateTestHelperIsolation {
         // every source used by those binding checks, including base-only files.
         // Continue the compiler effect walk to retain more specific diagnostics.
         let incompleteInventories = HelperDeclarationInventory.boundaries(current: current.sources, base: base, unownedBase: unownedBase)
-        let declarationsComplete = incompleteInventories.isEmpty
+        let declarationsComplete = (Array(current.sources.values) + Array(base.values) + Array(unownedBase.values)).allSatisfy {
+            $0.helperDeclarationsComplete == true || traversal.receiverOrigins.formattingReview?.bindingReview?.inventoryComplete($0) == true
+        }
         if !declarationsComplete {
             traversal.hasUnprovenCalleeEffects = true
-            traversal.receiverOriginBlocker = HelperDeclarationInventory.summary(incompleteInventories)
+            let remaining = incompleteInventories.filter { boundary in
+                let snapshots = boundary.revision == "head" ? current.sources : boundary.revision == "base" ? base : unownedBase
+                return snapshots[boundary.sourceKey].map { traversal.receiverOrigins.formattingReview?.bindingReview?.inventoryComplete($0) != true } ?? true
+            }
+            traversal.receiverOriginBlocker = HelperDeclarationInventory.summary(remaining)
         }
         var sdkBindingsSupported = declarationsComplete && operatorBindingsSupported
         if !sdkBindings.isEmpty {
@@ -359,7 +365,7 @@ enum PrivateTestHelperIsolation {
         } else if effectsSupported, let reason = historicalCallerBindingBlocker(
             units: traversal.receiverOrigins.checkedSourceUnits(for: consumers), current: current, base: base,
             unownedBase: unownedBase, provenHelpers: traversal.sdkEffectDeclarations.values.flatMap { $0 } +
-                traversal.preservedHelperDeclarations.values.flatMap { $0 }) {
+                traversal.preservedHelperDeclarations.values.flatMap { $0 }, bindingReview: traversal.receiverOrigins.formattingReview?.bindingReview) {
             traversal.receiverOriginBlocker = reason
             traversal.hasUnprovenCalleeEffects = true
             effectsSupported = false
@@ -368,7 +374,7 @@ enum PrivateTestHelperIsolation {
     }
 
     static func historicalCallerBindingBlocker(units: [SourceUnit]?, current: XcodeTestGraph,
-        base: [String: SwiftSourceSnapshot], unownedBase: [String: SwiftSourceSnapshot], provenHelpers: [SourceUnit]) -> String? {
+        base: [String: SwiftSourceSnapshot], unownedBase: [String: SwiftSourceSnapshot], provenHelpers: [SourceUnit], bindingReview: HelperBindingEvaluation? = nil) -> String? {
         // This audit is shared by private and SDK helpers. Authenticate its
         // implicit bindings here rather than relying on either caller's guards:
         // unchanged literal syntax can select a different historical type.
@@ -380,6 +386,11 @@ enum PrivateTestHelperIsolation {
                 return "Unproven historical caller reserved-name bindings at \(revision):\(key); missing or shadowed SDK names and implicit literal types"
             }
         }
+        let remaining = HelperDeclarationInventory.boundaries(current: current.sources, base: base, unownedBase: unownedBase).filter { boundary in
+            let snapshots = boundary.revision == "head" ? current.sources : boundary.revision == "base" ? base : unownedBase
+            return snapshots[boundary.sourceKey].map { bindingReview?.inventoryComplete($0) != true } ?? true
+        }
+        if let reason = HelperDeclarationInventory.summary(remaining) { return reason }
         guard let units, !units.isEmpty else { return "Missing compiler-bound caller source evidence" }
         let checkedModules = Set(units.map { String($0.key.prefix { $0 != ":" }) })
         let oldSources = Array(base.values) + Array(unownedBase.values)
@@ -432,7 +443,7 @@ enum PrivateTestHelperIsolation {
             }
             // Identical body text can bind to a different external overload
             // after an import changes. Only the head has compiler evidence.
-            guard unit.receiverImportsSupported == true else {
+            guard unit.receiverImportsSupported == true || bindingReview?.importsSupported(unit) == true else {
                 return "Unproven historical caller imports at " + unit.region.path + ":" + String(unit.region.startLine)
             }
             guard let uses = unit.helperBindingUses, let qualified = uses.qualifiedMembers,
@@ -461,7 +472,7 @@ enum PrivateTestHelperIsolation {
             let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
                 base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(unownedBase.values)
             for source in sources {
-                guard let declarations = source.helperOperatorDeclarations else { return "Missing historical caller operator declarations; refresh source proofs" }
+                guard let declarations = bindingReview?.operators(source) ?? source.helperOperatorDeclarations else { return "Missing historical caller operator declarations; refresh source proofs" }
                 let rebound = declarations.intersection(operators)
                 if !rebound.isEmpty { return "Unproven caller operator binding at base or head: " + rebound.sorted().joined(separator: ", ") }
             }
@@ -486,7 +497,7 @@ enum PrivateTestHelperIsolation {
                 }
                 guard let parameters = labels(SDKTestHelperSyntax.canonicalName(signature)) else { return false }
                 for snapshot in sources {
-                    guard let references = snapshot.helperReferences else { return false }
+                    guard let references = bindingReview?.references(snapshot) ?? snapshot.helperReferences else { return false }
                     let canonical = SDKTestHelperSyntax.canonicalReferences(references)
                     if let allUses = canonical[SDKTestHelperSyntax.canonicalName(name)],
                        allUses.unsupported || allUses.untrustedWrapperImports == true { return false }

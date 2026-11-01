@@ -32,7 +32,8 @@ enum RetainedXcodeBuild {
     }
 
     static func publish(graph: inout XcodeTestGraph, revision: String, context: [String: String], toolchain: String,
-                        workspace: URL, settings: Data, inputIdentity: [String: String], capture: CapturedSIL? = nil) throws -> URL {
+                        workspace: URL, settings: Data, inputIdentity: [String: String], capture: CapturedSIL? = nil,
+                        headOnlyEvidence: HeadOnlyBuildEvidence? = nil) throws -> URL {
         let products = workspace.appendingPathComponent("DerivedData/Build/Products")
         let runs = try FileManager.default.contentsOfDirectory(at: products, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "xctestrun" }
@@ -61,8 +62,22 @@ enum RetainedXcodeBuild {
             buildLogDigest: logDigest, buildSettingsDigest: settingsDigest,
             productsDirectory: products.path, xctestrun: runs[0].lastPathComponent, products: productManifest)
         graph.buildArtifact?.simulatorRuntimes = inputIdentity["simulatorRuntimes"]
+        if let headOnlyEvidence {
+            guard headOnlyEvidence.matches(graph.buildArtifact!) else { throw ImpactError("Head-only audit does not match retained build inputs") }
+            graph.buildArtifact?.headOnlyBuildEvidence = headOnlyEvidence
+        }
         graph.buildArtifact?.helperFormattingBuild = try? .capture(log: Data(contentsOf: logFile), settings: settings,
             source: workspace.appendingPathComponent("source"), derived: workspace.appendingPathComponent("DerivedData"), captured: capture)
+        do {
+            let log = try String(contentsOf: logFile, encoding: .utf8)
+            let source = workspace.appendingPathComponent("source")
+            let evidence = try HelperBindingBuildEvidence.capture(log: log, source: source,
+                sourceInputs: ArtifactFiles.sourceInputs(log: log, directory: source), artifact: graph.buildArtifact!)
+            graph.buildArtifact?.helperBindingBuild = evidence
+            graph.buildArtifact?.helperBindingInputs = evidence.fingerprint
+        } catch {
+            graph.buildArtifact?.helperBindingBuildFailure = String(describing: error)
+        }
         let graphFile = workspace.appendingPathComponent("head-graph.json")
         let encoder = JSONEncoder()
         try encoder.encode(graph).write(to: graphFile, options: .atomic)
