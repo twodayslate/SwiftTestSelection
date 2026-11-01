@@ -55,10 +55,12 @@ final class HelperBindingEvaluation {
     private var importCandidates = Set<String>()
     private var importedUnitCandidates = Set<String>()
     private(set) var used = Set<String>()
+    private let digestCache: HelperBindingDigestCache
     private static func locator(_ snapshot: SwiftSourceSnapshot) -> String {
         snapshot.units.first.map { $0.region.path + ":" + $0.key } ?? "<empty>"
     }
-    init(contracts: [HelperBindingContract], current: XcodeTestGraph, source: XcodeHeadOnlySources) {
+    init(contracts: [HelperBindingContract], current: XcodeTestGraph, source: XcodeHeadOnlySources, digestCache: HelperBindingDigestCache? = nil) {
+        self.digestCache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
         guard !contracts.isEmpty else { return }
         var inventoryReviews: [String: HelperBindingContract] = [:], importReviews: [String: HelperBindingContract] = [:]
         for contract in contracts {
@@ -73,7 +75,7 @@ final class HelperBindingEvaluation {
         let candidates = inventoryCandidates.union(importCandidates)
         // Identical bytes at head do not authorize an unreviewed base binding.
         // Require explicit coverage of every revision represented by a snapshot.
-        for (digest, entries) in Dictionary(grouping: all.filter { candidates.contains(Self.locator($0.1)) }, by: { HelperBindingContracts.snapshotDigest($0.1) }) {
+        for (digest, entries) in Dictionary(grouping: all.filter { candidates.contains(Self.locator($0.1)) }, by: { self.digestCache.snapshotDigest($0.1) }) {
             if entries.allSatisfy({ inventoryReviews[$0.0] != nil }), !entries.isEmpty {
                 inventories[digest] = Set(entries.compactMap { inventoryReviews[$0.0]?.id })
             }
@@ -92,7 +94,7 @@ final class HelperBindingEvaluation {
     func inventoryComplete(_ snapshot: SwiftSourceSnapshot) -> Bool {
         if snapshot.helperDeclarationsComplete == true { return true }
         guard inventoryCandidates.contains(Self.locator(snapshot)) else { return false }
-        guard let id = inventories[HelperBindingContracts.snapshotDigest(snapshot)] else { return false }
+        guard let id = inventories[digestCache.snapshotDigest(snapshot)] else { return false }
         used.formUnion(id)
         return true
     }
@@ -104,7 +106,7 @@ final class HelperBindingEvaluation {
     }
     func references(_ snapshot: SwiftSourceSnapshot) -> [String: SDKTestHelperSyntax.References]? {
         guard importCandidates.contains(Self.locator(snapshot)) else { return snapshot.helperReferences }
-        guard let id = importedSources[HelperBindingContracts.snapshotDigest(snapshot)] else { return snapshot.helperReferences }
+        guard let id = importedSources[digestCache.snapshotDigest(snapshot)] else { return snapshot.helperReferences }
         used.formUnion(id)
         return snapshot.helperReferencesWithReviewedImports
     }
@@ -186,9 +188,10 @@ enum HelperBindingContracts {
         }
         return try! XcodeGraphCache.key(fingerprints)
     }
-    static func validate(current: XcodeTestGraph, source: XcodeHeadOnlySources, baseRevision: String)
+    static func validate(current: XcodeTestGraph, source: XcodeHeadOnlySources, baseRevision: String, digestCache: HelperBindingDigestCache? = nil)
         -> (contracts: [HelperBindingContract], decisions: [HelperBindingDecision]) {
         let contracts = current.mappings?.helperBindingContracts ?? []
+        let digestCache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
         guard !contracts.isEmpty else { return ([], []) }
         let baseDigest = HelperFormattingContracts.fingerprint(source.base, unowned: source.unownedBaseSources)
         let headDigest = HelperFormattingContracts.fingerprint(current.sources)
@@ -226,7 +229,7 @@ enum HelperBindingContracts {
             if !current.diagnostics.isEmpty || !source.diagnostics.isEmpty || current.dependencies?.diagnostics.isEmpty != true { failures.append("Incomplete compiler/source evidence") }
             if let snapshot {
                 let sourceID = contract.revision + ":" + contract.sourceKey
-                let binding = bindingDigests[sourceID] ?? bindingDigest(key: contract.sourceKey, snapshot: snapshot, current: current)
+                let binding = bindingDigests[sourceID] ?? digestCache.bindingDigest(key: contract.sourceKey, snapshot: snapshot)
                 bindingDigests[sourceID] = binding
                 if contract.bindings != binding { failures.append("Exact source/compiler binding inventory changed") }
                 if !snapshot.diagnostics.isEmpty || snapshot.helperNamesUnshadowed != true || snapshot.helperImportsLocal != true {
@@ -239,18 +242,26 @@ enum HelperBindingContracts {
                     for construct in contract.constructs {
                         let module = String(contract.sourceKey.prefix { $0 != ":" })
                         let components = Set(construct.identity.split(separator: ".").map(String.init))
-                        let identityKey = module + ":" + construct.identity
+                        let reviewedPath = String(contract.sourceKey.dropFirst(module.count + 1))
+                        let identityKey = contract.sourceKey + ":" + construct.identity
                         let shadowed: Bool
                         if let cached = identityShadows[identityKey] { shadowed = cached }
                         else {
-                            let bindings = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
-                                source.base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(source.unownedBaseSources.values)
-                            shadowed = bindings.contains { candidate in
-                                candidate.typeAliases == nil || (candidate.typeAliases ?? []).contains {
-                                    $0.split(separator: ".").last.map(String.init).map(SDKTestHelperSyntax.canonicalName).map(components.contains) == true
+                            let bindings = current.sources.filter { $0.key.hasPrefix(module + ":") }.map { (String($0.key.dropFirst(module.count + 1)), $0.value) } +
+                                source.base.filter { $0.key.hasPrefix(module + ":") }.map { (String($0.key.dropFirst(module.count + 1)), $0.value) } +
+                                source.unownedBaseSources.map { ($0.key, $0.value) }
+                            shadowed = bindings.contains { path, candidate in
+                                // This exclusion proves only cross-file inaccessibility.
+                                // It never authorizes same-file lexical/extension lookup.
+                                func canShadow(_ spelling: String) -> Bool {
+                                    let name = SDKTestHelperSyntax.canonicalName(spelling)
+                                    return components.contains(name) && !(path != reviewedPath && candidate.helperFileRestrictedIdentityNames?.contains(name) == true)
+                                }
+                                return candidate.typeAliases == nil || (candidate.typeAliases ?? []).contains {
+                                    $0.split(separator: ".").last.map(String.init).map(canShadow) == true
                                 } || candidate.units.contains {
-                                    $0.kind == "type" && $0.scope.split(separator: ".").last.map(String.init).map(SDKTestHelperSyntax.canonicalName).map(components.contains) == true
-                                } || (candidate.helperDeclarationIssues ?? []).contains { $0.kind == "macro-declaration" && components.contains(SDKTestHelperSyntax.canonicalName($0.spelling)) }
+                                    $0.kind == "type" && $0.scope.split(separator: ".").last.map(String.init).map(canShadow) == true
+                                } || (candidate.helperDeclarationIssues ?? []).contains { $0.kind == "macro-declaration" && canShadow($0.spelling) }
                             }
                             identityShadows[identityKey] = shadowed
                         }
@@ -313,7 +324,8 @@ public struct HelperBindingReviewContext: Codable, Sendable {
 }
 
 extension HelperBindingContracts {
-    static func context(current: XcodeTestGraph, source: XcodeHeadOnlySources, baseRevision: String, helpers: Set<String> = []) -> HelperBindingReviewContext {
+    static func context(current: XcodeTestGraph, source: XcodeHeadOnlySources, baseRevision: String, helpers: Set<String> = [], digestCache: HelperBindingDigestCache? = nil) -> HelperBindingReviewContext {
+        let digestCache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
         let sources = [("head", current.sources), ("base", source.base)].flatMap { revision, snapshots in
             snapshots.keys.sorted().compactMap { key -> HelperBindingReviewContext.Source? in
                 let snapshot = snapshots[key]!
@@ -325,7 +337,7 @@ extension HelperBindingContracts {
                 guard snapshot.helperDeclarationsComplete == true || snapshot.helperDeclarationIssues.map({ issues in
                     !issues.isEmpty && issues.allSatisfy { identities[$0.spelling] != nil && ["unresolved-attribute", "unresolved-global-actor"].contains($0.kind) }
                 }) == true else { return nil }
-                return .init(revision: revision, sourceKey: key, bindings: bindingDigest(key: key, snapshot: snapshot, current: current),
+                return .init(revision: revision, sourceKey: key, bindings: digestCache.bindingDigest(key: key, snapshot: snapshot),
                     imports: imports, issues: snapshot.helperDeclarationIssues ?? [])
             }
         }

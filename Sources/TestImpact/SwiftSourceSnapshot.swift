@@ -103,6 +103,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Alias declarations shadow nominal names even when their targets cannot
     /// be resolved by the source index.
     public var typeAliases: Set<String>? = nil
+    /// All written declarations of these type/alias/macro names are private or
+    /// fileprivate, possibly through an enclosing declaration. Nil is legacy
+    /// evidence and cannot exclude a namesake in another source file.
+    public var helperFileRestrictedIdentityNames: Set<String>? = nil
     /// First inherited type for each class, excluding trailing conformances.
     /// Older snapshots fall back to the broader inheritance inventory.
     public var superclasses: [String: [String]]? = nil
@@ -167,6 +171,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         result.helperGlobalDeclarations = [:]
         result.dispatchOverrides = []
         result.typeAliases = []
+        result.helperFileRestrictedIdentityNames = HelperIdentityVisibility.fileRestrictedNames(tree)
         result.superclasses = [:]
         let identifiers = Dictionary(grouping: tree.tokens(viewMode: .sourceAccurate).filter { $0.identifier != nil }, by: { $0.identifier!.name })
         result.identifierNames = Set(identifiers.keys)

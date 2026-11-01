@@ -19,7 +19,7 @@ public struct SourceRegion: Codable, Hashable, Sendable {
     }
 }
 
-public struct FunctionNode: Codable, Sendable {
+public struct FunctionNode: Codable, Sendable, Equatable {
     public var id: String
     public var module: String
     public var name: String

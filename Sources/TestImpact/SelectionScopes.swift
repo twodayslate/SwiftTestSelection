@@ -38,9 +38,10 @@ extension XcodeHeadOnlySelector {
     static func scopedReports(current: XcodeTestGraph, requests: SelectionScopes, changes: [FileChange],
                               baseRevision: String, headRevision: String, root: URL, mappingPath: String,
                               documentation: Set<String>, buildEvidenceFailure: String?, retainedGraphPath: String? = nil,
-                              sourceCache: XcodeBaseSourceCache? = nil,
+                              sourceCache: XcodeBaseSourceCache? = nil, digestCache: HelperBindingDigestCache? = nil,
                               measurement: (XcodeAnalysisEvent) -> Void = { _ in }) throws -> [ScopedImpactReport] {
         try requests.validate()
+        let digestCache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
         let sourceCache = try sourceCache ?? XcodeBaseSourceCache(root: root, base: baseRevision)
         try sourceCache.validate(root: root, base: baseRevision)
         let changedPaths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
@@ -57,7 +58,7 @@ extension XcodeHeadOnlySelector {
             let selectionStart = Date()
             var report = select(current: current, source: source, changes: filtered, baseRevision: baseRevision,
                                 documentation: documentation, buildEvidenceFailure: buildEvidenceFailure,
-                                excludedTestEntries: Set(scope.excludedTestEntries))
+                                excludedTestEntries: Set(scope.excludedTestEntries), digestCache: digestCache)
             measurement(.init(phase: "scopeSelection", revision: headRevision, seconds: Date().timeIntervalSince(selectionStart), detail: scope.name))
             for i in report.diagnostics.indices {
                 report.diagnostics[i].fallback?.selectionScope = scope.name
