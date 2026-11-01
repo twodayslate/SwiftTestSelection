@@ -36,6 +36,8 @@ public struct ImpactReport: Codable, Sendable {
     public var uiMappingCoverage: UIMappingCoverage?
     public var uiConditionDecisions: [UIConditionDecision]? = nil
     public var helperContractDecisions: [HelperContractDecision]? = nil
+    public var helperDeclarationInventories: [HelperDeclarationInventoryBoundary]? = nil
+    public var helperDeclarationAudits: [HelperDeclarationAudit]? = nil
     public var formattingBoundaries: [FormattingBoundary]? = nil
     public var helperContractReviewContext: HelperContractReviewContext? = nil
     public var helperContractPreview: HelperContractPreview? = nil

@@ -113,6 +113,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source inventories cannot rule out declarations synthesized by macros.
     /// Nil is legacy evidence; false also covers unsupported attributes.
     public var helperDeclarationsComplete: Bool? = nil
+    /// Per-construct reasons for an incomplete inventory; nil in legacy archives.
+    public var helperDeclarationIssues: [HelperDeclarationIssue]? = nil
     /// False for module-wide re-exports, whose bindings can affect callers in
     /// other files. Nil cannot prove file-local import visibility.
     public var helperImportsLocal: Bool? = nil
@@ -181,25 +183,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             guard token.tokenKind == .keyword(.import), let declaration = token.parent?.as(ImportDeclSyntax.self) else { return false }
             return declaration.attributes.contains { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "_exported" }
         }
-        let knownAttributes: Set<String> = ["available", "objc", "objcMembers", "nonobjc",
-            "preconcurrency", "inlinable", "usableFromInline", "discardableResult", "testable", "_exported",
-            "Sendable", "escaping", "autoclosure", "convention"]
-        let compilerLiterals: Set<String> = ["file", "fileID", "filePath", "line", "column", "function", "dsohandle"]
-        result.helperDeclarationsComplete = !tree.hasError && !tree.tokens(viewMode: .sourceAccurate).contains { token in
-            if token.parent?.is(MacroDeclSyntax.self) == true || token.parent?.is(MacroExpansionDeclSyntax.self) == true { return true }
-            if let macro = token.parent?.as(MacroExpansionExprSyntax.self) {
-                return !compilerLiterals.contains(macro.macroName.text) || macro.leftParen != nil || macro.genericArgumentClause != nil ||
-                    macro.trailingClosure != nil || !macro.additionalTrailingClosures.isEmpty
-            }
-            if let attribute = token.parent?.as(AttributeSyntax.self), token.id == attribute.atSign.id {
-                let name = attribute.attributeName.trimmedDescription
-                // MainActor is a library declaration, unlike compiler
-                // attributes. An untrusted import may supply a namesake macro.
-                if name == "MainActor" || name == "Swift.MainActor" { return !callerImportsSupported }
-                return !knownAttributes.contains(name)
-            }
-            return false
-        }
+        let declarationIssues = HelperDeclarationInventory.issues(tree, locations: locations, unsupportedImports: unsupportedCallerImports)
+        result.helperDeclarationIssues = declarationIssues
+        result.helperDeclarationsComplete = declarationIssues.isEmpty
         result.helperOperatorDeclarations = result.helperDeclarationsComplete == true ? Set(tree.tokens(viewMode: .sourceAccurate).compactMap { token in
             if let function = token.parent?.as(FunctionDeclSyntax.self), function.name.id == token.id,
                token.identifier == nil { return token.text }

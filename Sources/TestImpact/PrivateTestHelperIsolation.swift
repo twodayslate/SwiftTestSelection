@@ -255,20 +255,11 @@ enum PrivateTestHelperIsolation {
         // XCTest callbacks without spelling their names in the source. Audit
         // every source used by those binding checks, including base-only files.
         // Continue the compiler effect walk to retain more specific diagnostics.
-        let incompleteInventories = [("head", current.sources), ("base", base), ("unowned base", unownedBase)].flatMap { revision, sources in
-            sources.keys.sorted().compactMap { key -> String? in
-                guard sources[key]?.helperDeclarationsComplete != true else { return nil }
-                let reason = sources[key]?.helperDeclarationsComplete == nil ? "missing source metadata" : "macros or unsupported attributes"
-                return revision + ":" + key + " (" + reason + ")"
-            }
-        }
+        let incompleteInventories = HelperDeclarationInventory.boundaries(current: current.sources, base: base, unownedBase: unownedBase)
         let declarationsComplete = incompleteInventories.isEmpty
         if !declarationsComplete {
             traversal.hasUnprovenCalleeEffects = true
-            let remaining = incompleteInventories.count - 1
-            traversal.receiverOriginBlocker = "Incomplete helper declaration inventories: " + incompleteInventories[0] +
-                (remaining > 0 ? "; \(remaining) additional source inventories are incomplete" : "") +
-                ". Missing metadata requires refreshed source proofs; macros/attributes require supported expansion analysis. A formatting declaration cannot supply this evidence."
+            traversal.receiverOriginBlocker = HelperDeclarationInventory.summary(incompleteInventories)
         }
         var sdkBindingsSupported = declarationsComplete && operatorBindingsSupported
         if !sdkBindings.isEmpty {
@@ -376,8 +367,19 @@ enum PrivateTestHelperIsolation {
         return effectsSupported
     }
 
-    private static func historicalCallerBindingBlocker(units: [SourceUnit]?, current: XcodeTestGraph,
+    static func historicalCallerBindingBlocker(units: [SourceUnit]?, current: XcodeTestGraph,
         base: [String: SwiftSourceSnapshot], unownedBase: [String: SwiftSourceSnapshot], provenHelpers: [SourceUnit]) -> String? {
+        // This audit is shared by private and SDK helpers. Authenticate its
+        // implicit bindings here rather than relying on either caller's guards:
+        // unchanged literal syntax can select a different historical type.
+        guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules.union(["CoreGraphics"])) else {
+            return "Unproven historical caller reserved-name bindings: project module shadows a trusted SDK module"
+        }
+        for (revision, snapshots) in [("head", current.sources), ("base", base), ("unowned base", unownedBase)] {
+            for (key, snapshot) in snapshots.sorted(by: { $0.key < $1.key }) where snapshot.helperNamesUnshadowed != true {
+                return "Unproven historical caller reserved-name bindings at \(revision):\(key); missing or shadowed SDK names and implicit literal types"
+            }
+        }
         guard let units, !units.isEmpty else { return "Missing compiler-bound caller source evidence" }
         let checkedModules = Set(units.map { String($0.key.prefix { $0 != ":" }) })
         let oldSources = Array(base.values) + Array(unownedBase.values)
@@ -467,6 +469,42 @@ enum PrivateTestHelperIsolation {
         for (module, names) in globalsByModule.sorted(by: { $0.key < $1.key }) {
             let sources = current.sources.filter { $0.key.hasPrefix(module + ":") }.map(\.value) +
                 base.filter { $0.key.hasPrefix(module + ":") }.map(\.value) + Array(unownedBase.values)
+            func unusedOverload(_ declaration: SourceUnit) -> Bool {
+                // Exact labels exclude an overload only when every reference
+                // is classified at both revisions. Defaults, variadics, generic
+                // parameter packs, method values and missing inventories cannot
+                // supply that proof. Generic headers remain conservative because
+                // their written labels do not establish a fixed call arity.
+                guard let signature = declaration.helperReferenceSignature,
+                      let name = declaration.helperCallableName,
+                      declaration.key.contains(":functionDecl["),
+                      !declaration.key.contains("genericParameterClause[") else { return false }
+                let prefix = SDKTestHelperSyntax.canonicalName(name) + "("
+                func labels(_ signature: String) -> [String]? {
+                    guard signature.hasPrefix(prefix), signature.hasSuffix(")") else { return nil }
+                    return signature.dropFirst(prefix.count).dropLast().split(separator: ":").map(String.init)
+                }
+                guard let parameters = labels(SDKTestHelperSyntax.canonicalName(signature)) else { return false }
+                for snapshot in sources {
+                    guard let references = snapshot.helperReferences else { return false }
+                    let canonical = SDKTestHelperSyntax.canonicalReferences(references)
+                    if let allUses = canonical[SDKTestHelperSyntax.canonicalName(name)],
+                       allUses.unsupported || allUses.untrustedWrapperImports == true { return false }
+                    for (call, uses) in canonical {
+                        // The reference inventory omits trailing-closure labels.
+                        // A shorter explicit argument list may therefore still
+                        // invoke this declaration; never exclude that candidate.
+                        guard let arguments = labels(call), parameters.starts(with: arguments) else { continue }
+                        guard !uses.unsupported, uses.untrustedWrapperImports != true else { return false }
+                        let callers = snapshot.units.filter { $0.kind == "function" && uses.callers.contains($0.region.startLine) }
+                        guard Set(callers.map { $0.region.startLine }) == uses.callers else { return false }
+                        if callers.contains(where: { caller in allUnits.contains {
+                            $0.region.path == caller.region.path && $0.region.startLine == caller.region.startLine
+                        } }) { return false }
+                    }
+                }
+                return true
+            }
             for source in sources {
                 // @_exported imports make names visible in other files of this
                 // module. File-local import proofs cannot close that boundary.
@@ -479,9 +517,10 @@ enum PrivateTestHelperIsolation {
                     // bodies occur in the compiler-checked closure. A base-only
                     // overload or changed old body has no such head evidence.
                     let functions = source.units.filter { $0.scope.isEmpty && $0.helperCallableName == name }
-                    guard declarations[name] == true, !functions.isEmpty, functions.allSatisfy({ declaration in units.contains {
-                        $0.key == declaration.key && $0.fingerprint == declaration.fingerprint
-                    } }) else { return "Unproven caller global binding at base or head: " + name }
+                    guard declarations[name] == true, !functions.isEmpty, functions.allSatisfy({ declaration in
+                        units.contains { $0.key == declaration.key && $0.fingerprint == declaration.fingerprint } ||
+                            unusedOverload(declaration)
+                    }) else { return "Unproven caller global binding at base or head: " + name }
                 }
             }
         }

@@ -37,7 +37,7 @@ public struct HelperFormattingContract: Codable, Sendable, Equatable {
               guarantees.count == Self.requiredGuarantees.count,
               !rationale.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               SDKReceiverContracts.missingWitnessProof(substitutions, for: assertionSymbol) != nil else {
-            throw ImpactError("Formatting contract requires exact helper/producer/overload identities, review fingerprints, toolchain, all formatting guarantees, and a review rationale; only XCTest equality failure formatting with a proven equality witness is supported")
+            throw ImpactError("Formatting contract requires exact helper/producer/overload identities, review fingerprints, toolchain, all formatting guarantees, and a review rationale; only XCTest equality or scalar relational failure formatting with a proven comparison witness is supported")
         }
     }
 }
@@ -255,6 +255,28 @@ enum HelperFormattingContracts {
                 failures.append("Missing exact compiled assertion overload/substitutions")
             }
             let typeNames = SDKReceiverContracts.requiredTypeIdentities(contract.substitutions, for: contract.assertionSymbol) ?? []
+            // The compiled substitutions identify only the head comparison.
+            // A historical alias or namesake can select a different witness
+            // even when the caller text is unchanged. Formatting guarantees
+            // cannot authenticate that witness or its effects.
+            let module = String(contract.producer.prefix { $0 != ":" })
+            let bindingSources = [("head", current.sources.filter { $0.key.hasPrefix(module + ":") }),
+                                  ("base", source.base.filter { $0.key.hasPrefix(module + ":") }),
+                                  ("unowned base", source.unownedBaseSources)]
+            let bindingNames = Set(typeNames.flatMap { SDKTestHelperSyntax.canonicalName($0).split(separator: ".").map(String.init) })
+            for (revision, snapshots) in bindingSources {
+                for (key, snapshot) in snapshots.sorted(by: { $0.key < $1.key }) {
+                    let declarations = (snapshot.typeAliases ?? []).map(SDKTestHelperSyntax.canonicalName) +
+                        snapshot.units.filter { $0.kind == "type" }.map { SDKTestHelperSyntax.canonicalName($0.scope) }
+                    let rebound = declarations.filter { declaration in
+                        declaration.split(separator: ".").last.map { bindingNames.contains(String($0)) } == true
+                    }
+                    if !rebound.isEmpty {
+                        failures.append("Unproven comparison type binding at \(revision):\(key): " + rebound.sorted().joined(separator: ", ") +
+                            "; a formatting declaration cannot prove historical comparison witnesses")
+                    }
+                }
+            }
             let relevantConformances = conformances.filter { candidate in
                 guard !candidate.ambiguous, let owner = candidate.owner else { return true }
                 return typeNames.contains(owner) || typeNames.contains { $0.hasSuffix("." + owner) || owner.hasSuffix("." + $0) }

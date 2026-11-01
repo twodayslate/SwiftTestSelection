@@ -148,7 +148,15 @@ enum SDKTestHelperIsolation {
         if let reason = receiverOrigins.blocker(tests: consumers, current: current, graph: graph) {
             return "Unproven SDK receiver origin: " + reason
         }
-        return compilerEffectBlocker(unit, graph: graph, index: index)
+        if let reason = compilerEffectBlocker(unit, graph: graph, index: index) { return reason }
+        // A head caller can use an SDK scalar where the old body used a
+        // project comparison or other effectful producer. Audit the entire
+        // compiler-bound caller closure, even outside the requested diff.
+        // Only this helper has an independent base/head SDK effect proof.
+        let callerUnits = receiverOrigins.checkedSourceUnits(for: consumers)?.filter { $0.key != unit.key }
+        return PrivateTestHelperIsolation.historicalCallerBindingBlocker(
+            units: callerUnits, current: current, base: base,
+            unownedBase: unownedBase, provenHelpers: [unit] + (previous.map { [$0] } ?? []))
     }
 
     /// A head binding does not identify its old overload. Reject competing
