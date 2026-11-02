@@ -42,3 +42,5 @@ jobs:
           python3 Scripts/coverage_cli_test.py
           python3 Scripts/inline_mapping_cli_test.py --tool .build/debug/swift-test-impact
           python3 Scripts/mapping_maintenance_cli_test.py --tool .build/debug/swift-test-impact
+      - name: Head-only diagnostic reproducibility
+        run: python3 Scripts/check-head-only-diagnostic-determinism.py --configuration debug

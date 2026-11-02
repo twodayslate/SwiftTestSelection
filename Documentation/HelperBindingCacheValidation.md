@@ -105,6 +105,13 @@ retained all 2,000. Every report field matched the baseline after normalizing
 unordered collection encoding, including the 12 / 125 known positive dependency
 explanations, review fingerprints, formatting decisions, previews, raw inventories
 and uncertainty. Public authoring evidence was not dropped to obtain the speedup.
+This equality describes that observed pair, not a guarantee of repeatability:
+the subsequent fresh-capture consumer check at `9477981` reproduced unstable
+full-diff declaration fallback labels for #293, including between executions of
+the same binary ([#89](https://github.com/twodayslate/SwiftTestSelection/issues/89)).
+Selected IDs, positive dependencies and the independent scope were unchanged.
+See [diagnostic reproducibility validation](HeadOnlyDiagnosticDeterminism.md)
+for the correction and repeated-process checks.
 
 ## Exact private-State diagnostic
 
