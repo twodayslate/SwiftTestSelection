@@ -211,7 +211,12 @@ enum XcodeHeadOnlySelector {
         for key in Set(old.keys).union(new.keys).sorted() {
             let before = old[key] ?? [], after = new[key] ?? []
             guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() || policyHelpers.contains(key) else { continue }
-            fallbackUnits = before + after
+            // Shared keys (notably imports) can span several source dictionaries.
+            // Keep every region, but never let dictionary order label a boundary.
+            fallbackUnits = (before + after).sorted {
+                ($0.region.path, $0.region.startLine, $0.region.endLine) <
+                ($1.region.path, $1.region.startLine, $1.region.endLine)
+            }
             let evaluation = HelperContractEvaluation(helper: key, contracts: applyHelperContracts ? review.contracts : [],
                 diagnosticCode: after.first?.sdkTestHelper != nil ? "head_only_sdk_helper_boundary" : "head_only_helper_callee_effects")
             evaluation.bindingReview = HelperBindingEvaluation(contracts: applyHelperContracts ? bindings.contracts.filter { $0.helper == key } : [], current: current, source: source, digestCache: digestCache)
@@ -282,7 +287,8 @@ enum XcodeHeadOnlySelector {
                PrivateTestHelperIsolation.provesAddedEntry(unit, current: current, base: source.base) { continue }
             guard before.count == 1, after.count == 1, let a = before.first, let b = after.first,
                   a.kind == "function", b.kind == "function", a.region.path == b.region.path else {
-                fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \((before + after).first?.region.path ?? key)")
+                let affectedPaths = Set(fallbackUnits.map(\.region.path)).sorted()
+                fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
             }
             guard a.headOnlyBodySupported == true && b.headOnlyBodySupported == true else {

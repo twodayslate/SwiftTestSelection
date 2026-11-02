@@ -795,6 +795,62 @@ private func headOnlySelection(_ current: XcodeTestGraph, old: XcodeTestGraph = 
     }
 }
 
+@Test func headOnlyAmbiguousDeclarationDiagnosticsAreDeterministic() throws {
+    let paths = ["App/A.swift", "App/M.swift", "App/Z.swift"]
+    var previous = headOnlyModel()
+    for (line, path) in paths.enumerated() {
+        previous.sources["App:" + path] = SwiftSourceSnapshot.parse(
+            String(repeating: "\n", count: line) + "import SwiftUI", path: path, module: "App")
+        previous.targets[1].sourceFiles.insert(path)
+    }
+    var current = previous
+    current.sources["App:App/Z.swift"] = SwiftSourceSnapshot.parse("", path: "App/Z.swift", module: "App")
+    let editedUI = headOnlyModel(ui: uiSource.replacingOccurrences(of: "XCTAssertEqual(2, 2)", with: "XCTAssertEqual(2, 3)"))
+    current.sources["Tests/UI.swift"] = editedUI.sources["Tests/UI.swift"]
+    current.dependencies = editedUI.dependencies
+    let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+    var expected: Data?
+    for _ in 0..<12 {
+        // Fresh dictionaries and insertion permutations exercise per-instance
+        // randomization; the companion script also varies the process hash seed.
+        previous.sources = Dictionary(uniqueKeysWithValues: previous.sources.shuffled())
+        current.sources = Dictionary(uniqueKeysWithValues: current.sources.shuffled())
+        let source = XcodeHeadOnlySources(base: previous.sources, mappings: previous.mappings)
+        func select(_ selectedPaths: [String]) -> ImpactReport {
+            XcodeHeadOnlySelector.select(current: current, source: source,
+                changes: selectedPaths.map { FileChange(path: $0) }, baseRevision: "base")
+        }
+        let full = select(paths + ["Tests/UI.swift"])
+        let boundary = try #require(full.diagnostics.first { $0.code == "head_only_declaration_change" })
+        let reason = "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: " + paths.joined(separator: ", ")
+        #expect(boundary.fallback?.firstBoundary == reason)
+        #expect(boundary.message.hasPrefix(reason + " "))
+        #expect(full.fullRunReasons == [reason])
+        #expect(full.explanations.filter { $0.kind == "fallback" }.allSatisfy { $0.reason == reason })
+        let regions = paths.enumerated().flatMap { line, path in
+            Array(repeating: SourceRegion(path: path, startLine: line + 1, endLine: line + 1), count: path == "App/Z.swift" ? 1 : 2)
+        }
+        #expect(boundary.fallback?.changedRegions == regions)
+        #expect(full.selectedTests == current.tests)
+        let consumers = ["UI/Sharing/testOne()", "UI/Sharing/testThree()", "UI/Sharing/testTwo()"]
+        #expect(full.explanations.filter { $0.kind == "dependency" }.map(\.test).sorted() == consumers)
+        // Independent helper scope retains its exact positive evidence and does
+        // not acquire the unrelated import boundary from the full comparison.
+        let helperScope = select(["Tests/UI.swift"])
+        #expect(helperScope.selectedTests == consumers)
+        #expect(helperScope.diagnostics.isEmpty)
+        let importScope = select(["App/Z.swift"])
+        #expect(importScope.selectedTests == current.tests)
+        #expect(importScope.fullRunReasons == ["Added, deleted, ambiguous or changed declaration/header has no base compiler edges: App/Z.swift"])
+        #expect(importScope.diagnostics.first?.fallback?.changedRegions == [regions.last!])
+        let bytes = try encoder.encode([full, helperScope, importScope])
+        if let expected { #expect(bytes == expected) } else { expected = bytes }
+    }
+    if let output = ProcessInfo.processInfo.environment["IMPACT_DIAGNOSTIC_DETERMINISM_OUTPUT"] {
+        try #require(expected).write(to: URL(fileURLWithPath: output))
+    }
+}
+
 @Test func headOnlyProductionUsesDeclaredUIAndSharedDependencies() {
     let sharing = headOnlySelection(headOnlyModel(app: appSource.replacingOccurrences(of: "func sharing() -> Int { common() }", with: "func sharing() -> Int { common() + 1 }")), paths: ["App/Features.swift"])
     #expect(sharing.selectedTests.count == 4)
