@@ -534,6 +534,7 @@ extension XcodeAnalysis {
                 message: "\(baselineMiss.revision): \(baselineMiss.reason)", tests: current.tests.sorted()))
         }
         report.analysisEvents = events
+        selectionGraphObserver?(current)
         return report
     }
 }

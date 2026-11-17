@@ -55,6 +55,7 @@ public struct XcodeAnalysis {
     public var progress: (String) -> Void
     public var extractionCancellation = XcodeExtractionCancellation()
     var measurement: (String, Double) -> Void = { _, _ in }
+    var selectionGraphObserver: ((XcodeTestGraph) -> Void)? = nil
 
     public init(options: XcodeConfiguration, progress: @escaping (String) -> Void = { _ in }) {
         self.options = options
@@ -122,6 +123,7 @@ public struct XcodeAnalysis {
             report.onlyTestingArguments = report.selectedTests.map { "-only-testing:" + $0 }
             report.explanations += report.selectedTests.map { TestExplanation(test: $0, reason: "Full suite explicitly requested", revision: "head", path: [], kind: "fullSuite") }
         }
+        selectionGraphObserver?(current)
         return report
     }
 

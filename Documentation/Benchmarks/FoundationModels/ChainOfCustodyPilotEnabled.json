@@ -1,0 +1,139 @@
+{
+  "advisoryOnly" : true,
+  "availability" : "available",
+  "datasetDigest" : "28aecf71891011662be357aba1e121f3f9b385bc3b196cc8eb10d090a1a4ad11",
+  "generatedAt" : "2026-11-17T16:10:36Z",
+  "metricsByEvidence" : {
+    "sourceReview" : {
+      "accuracyAmongAnswered" : 0.45454545454545453,
+      "answerRate" : 0.9166666666666666,
+      "errors" : 1,
+      "falseNegative" : 0,
+      "falsePositive" : 6,
+      "precision" : 0.45454545454545453,
+      "recall" : 0.8333333333333334,
+      "retainUnknownRecall" : 1,
+      "total" : 12,
+      "trueNegative" : 0,
+      "truePositive" : 5,
+      "unknownNegative" : 0,
+      "unknownPositive" : 1
+    }
+  },
+  "operatingSystem" : "Version 26.6.1 (Build 25G76)",
+  "promptVersion" : "ui-reachability-v1",
+  "provider" : "Apple Foundation Models (on-device)",
+  "rows" : [
+    {
+      "elapsedSeconds" : 10.255539894104004,
+      "id" : "pr361-scrollViewWillBeginDragging-related",
+      "inputDigest" : "69a24783773224b9168f8cedebd27d0e878cda40847e5794ffd5bf32ce398277",
+      "prediction" : {
+        "reason" : "The test is likely to execute the target Swift function, as it involves a straightforward UI interaction and a clear expectation of the button's behavior.",
+        "verdict" : "likely"
+      }
+    },
+    {
+      "elapsedSeconds" : 5.7637810707092285,
+      "id" : "pr361-scrollViewWillBeginDragging-comparison",
+      "inputDigest" : "94f41f638a696507b33255caef76597c75151e205a9aca657df31f08245bfa70",
+      "prediction" : {
+        "reason" : "The test likely executes the target Swift function, as it involves launching the app, navigating to the composer, and performing actions like tapping buttons and waiting for elements to appear. However, the test runner and app are separate processes, and missing static edges are not proof of non-reachability. Similar names alone are not evidence. Return likely for a supported execution route, unlikely for a supported separate route, or unknown when essential context is missing.",
+        "verdict" : "likely"
+      }
+    },
+    {
+      "elapsedSeconds" : 4.622102975845337,
+      "id" : "pr361-scrollViewDidScroll-related",
+      "inputDigest" : "eea0bd3efa3dec0545bbb24a38a3baea8a631c139807413e7af0ea176fa3a343",
+      "prediction" : {
+        "reason" : "The test likely executes the target Swift function. The test uses the `scrollViewDidScroll` function from the `NoteBlockCollectionCoordinator` class, which is called within the `testAddBlockButtonShrinksAndExpandsWithScrollAndTap` function. The function is defined in the same file as the test, and the test explicitly calls it with a `UIScrollView` object. Additionally, the test verifies the behavior of the `addButtonMinimization` closure, which is expected to be called by `scrollViewDidScroll`. While the test does not explicitly call `scrollViewDidScroll`, its execution is likely triggered by the UI events and state changes that occur during the test's execution.",
+        "verdict" : "likely"
+      }
+    },
+    {
+      "elapsedSeconds" : 4.486653923988342,
+      "id" : "pr361-scrollViewDidScroll-comparison",
+      "inputDigest" : "896b8ef0f9ececb107991036b1a021b0463501d6815192c2576c41d3ad901149",
+      "prediction" : {
+        "reason" : "The test likely executes the target Swift function, as it involves launching the app, navigating to the composer, and performing actions like tapping buttons and waiting for elements to appear. However, the test runner and app are separate processes, and missing static edges are not proof of non-reachability. Similar names alone are not evidence. Return likely for a supported execution route, unlikely for a supported separate route, or unknown when essential context is missing.",
+        "verdict" : "likely"
+      }
+    },
+    {
+      "elapsedSeconds" : 7.949448943138123,
+      "id" : "pr355-isUnread-related",
+      "inputDigest" : "3562c7e2a86649725421986da1eacf4a3405a27027f681479a33370d0481476a",
+      "prediction" : {
+        "reason" : "The test is likely to execute the target Swift function. The test fixture `launchFixture` sets up the app and navigates to the Notes tab, where the `isUnread` function is called on the `NoteUnreadActivity` instance. The function checks the `key` property, which is a static method in `NoteActivityViewHistory`, and returns a boolean indicating whether the note is unread. The test then verifies the expected UI behavior by asserting the presence of the note and the unread activity and comment toolbar badges. The test's execution is supported by the provided Swift code and the test runner's ability to execute the app and its UI components.",
+        "verdict" : "likely"
+      }
+    },
+    {
+      "elapsedSeconds" : 7.957455039024353,
+      "id" : "pr355-isUnread-comparison",
+      "inputDigest" : "7da3fcf0399fca974ef47a44467fc9a62455d519c316dbc3af6678fddfcea61e",
+      "prediction" : {
+        "reason" : "The test likely executes the target Swift function because the function is called within the test's `launch()` method, which is executed before any UI interactions or assertions. The function's `key` method is defined in the `NoteActivityViewHistory` class, and it is called with the necessary parameters (`id`, `noteID`, `readerID`) in the `testSubmittedSettingsReopenAndCancelledEditsStayUnsaved` function. Additionally, the function's `hasUnread` method is used in the test to verify the functionality of the `key` method. Therefore, the function is likely to be executed during the test's execution.",
+        "verdict" : "likely"
+      }
+    },
+    {
+      "elapsedSeconds" : 9.21249806880951,
+      "id" : "pr355-markBlockRead-related",
+      "inputDigest" : "8a4eba1400ec7f5278a237ba37bee151597db79c12d7ec27508c72c2a08495eb",
+      "prediction" : {
+        "error" : "decodingFailure(FoundationModels.LanguageModelSession.GenerationError.Context(debugDescription: \"Failed to convert text into into GeneratedContent\\nText: {\\\"reason\\\": \\\"This test is likely to execute the target Swift function. The test uses the `markViewed` function from the `NoteUnreadActivity` class, which is called within the `body` function of the `NoteBlockReadTracking` class. The `body` function is invoked in the `testActivityAndCommentToolbarBadgesMatchBlockDots` test method, where the `markViewed` function is called to simulate marking a note as read. Additionally, the test uses the `markBlockRead` function from the `NoteUnreadActivity` class, which is called within the `syncBlockActivity` function. The `syncBlockActivity` function is invoked in the `testActivityAndCommentToolbarBadgesMatchBlockDots` test method, where the `markBlockRead` function is called to simulate marking a block as read. The test also uses the `markViewed` function from the `NoteActivityViewHistory` class, which is called within the `markBlockRead` function. The `markBlockRead` function is invoked in the `testActivityAndCommentToolbarBadgesMatchBlockDots` test method, where the `markViewed` function is called to simulate marking a note as read\", underlyingErrors: [DecodingError.dataCorrupted: Data was corrupted. Debug description: The given data was not valid JSON.. Underlying error: Error Domain=NSCocoaErrorDomain Code=3840 \"Unexpected end of file\" UserInfo={NSDebugDescription=Unexpected end of file}], errorDescriptionOverride: nil))",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 5.440667986869812,
+      "id" : "pr355-markBlockRead-comparison",
+      "inputDigest" : "b68895bf241307e3cc08e5a54e46bfc6093294ea60d8293d75e25b535a1b5800",
+      "prediction" : {
+        "reason" : "The test likely executes the target Swift function. The test opens the composer and performs actions that involve marking notes as read, such as tapping the 'check-proof-picker' button and typing a message. The 'markViewed' function in the NoteUnreadActivity.swift file is responsible for marking notes as read, and the test's actions align with this function's expected behavior. Additionally, the test verifies that the 'check-message-field' appears and that the message is correctly typed, which is consistent with the 'markViewed' function's role in updating the note's state.",
+        "verdict" : "likely"
+      }
+    },
+    {
+      "elapsedSeconds" : 6.479408025741577,
+      "id" : "pr365-markAllRead-related",
+      "inputDigest" : "1b241ca560d9755f43222a8fa39b0cca6fc429aa096bbfbeffea33fb2f1906eb",
+      "prediction" : {
+        "reason" : "This test likely executes the target Swift function. The test launches the app, navigates to the Notes tab, and performs UI actions such as tapping the note-activity-button and marking all read. These actions are expected to trigger the markAllRead function in the NoteActivityView. The test also verifies the expected state changes, such as checking the presence of the Unread filter and ensuring the timeline reflects the markAllRead operation. The test's setup and assertions align with the function's expected behavior, suggesting that the function executes as intended.",
+        "verdict" : "likely"
+      }
+    },
+    {
+      "elapsedSeconds" : 6.387472987174988,
+      "id" : "pr365-markAllRead-comparison",
+      "inputDigest" : "78159ed485e9b2541af0407792483f74d873d070d9d2bdbec25f3e2c9c38296a",
+      "prediction" : {
+        "reason" : "This test likely executes the target Swift function. The test calls the `markRead` function from the `NoteActivityView` class, which is part of the same file as the test. The function is defined in the same file, and the test uses the same context and scope as the function. Additionally, the test uses the same `store` and `readSession` objects that are used in the function, which suggests that the function is being called from the test. However, it's important to note that the test runner and app are separate processes, and there may be missing static edges or runtime state that could affect the execution of the function. Therefore, it's not possible to definitively say whether the function is being executed or not.",
+        "verdict" : "likely"
+      }
+    },
+    {
+      "elapsedSeconds" : 5.431713938713074,
+      "id" : "pr365-activityIndex-related",
+      "inputDigest" : "4d84266417ccfa446ff2537d3c49a200f1ae69444a5f5d8e6d12336e6f6901dd",
+      "prediction" : {
+        "reason" : "This test likely executes the target Swift function. The test verifies the functionality of the `load` and `loadMore` methods in the `NoteActivityView` class, which are responsible for fetching and displaying note activity. The test uses assertions to check that the correct number of entries are loaded and that the UI updates as expected. The test also verifies that the `loadMore` method handles cases where there are no more entries to load.",
+        "verdict" : "likely"
+      }
+    },
+    {
+      "elapsedSeconds" : 5.3900909423828125,
+      "id" : "pr365-activityIndex-comparison",
+      "inputDigest" : "9a4c212a77627aad78cc6ff3ff27438afc3763cf5013f3a5d0382a8112575924",
+      "prediction" : {
+        "reason" : "The test likely executes the target Swift function, as the `load` function is called within the `testSubmittedSettingsReopenAndCancelledEditsStayUnsaved` test. The function is part of the `NoteActivityView` class, and its execution is expected during the test's setup and navigation.",
+        "verdict" : "likely"
+      }
+    }
+  ],
+  "schemaVersion" : 1,
+  "unlabeledCount" : 0
+}

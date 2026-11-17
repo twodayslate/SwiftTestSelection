@@ -1,0 +1,35 @@
+{
+  "advisoryOnly" : true,
+  "availability" : "available",
+  "datasetDigest" : "37d18c0726f445b9de1dfec759759aa3f8f722a66599db048fd6c85aabade85b",
+  "generatedAt" : "2026-11-17T18:27:41Z",
+  "metricsByEvidence" : {
+
+  },
+  "operatingSystem" : "Version 27.2.1 (Build 26B131)",
+  "positiveThresholdPercent" : 50,
+  "promptVersion" : "ui-reachability-v3",
+  "provider" : "Apple Foundation Models (on-device)",
+  "rows" : [
+    {
+      "elapsedSeconds" : 3.0500259399414062,
+      "id" : "without-mappings",
+      "inputDigest" : "094bfe253ccfe01d07dda7b153e7c14e0af010967e32ab7cbbc72b570ec9cb96",
+      "prediction" : {
+        "confidencePercent" : 50,
+        "reason" : "The test launches the app, taps the 'save' button, which calls `save()`. `save()` then calls `persist()`. However, the source does not confirm whether `persist()` is executed due to missing compiler graph, ambiguous same-file calls, and absence of fixture state or UI dispatch evidence. The execution path from launch to `persist()` is plausible, but no guarantee is provided that `persist()` runs."
+      }
+    },
+    {
+      "elapsedSeconds" : 4.176752924919128,
+      "id" : "with-mappings",
+      "inputDigest" : "1614d6651608e4d9b8d7414fc44bb62cb4d273ba6c7f3d92b764b627c502e9ab",
+      "prediction" : {
+        "confidencePercent" : 75,
+        "reason" : "The test runner launches the app, navigates to the save button, and triggers `save()`, which calls `persist()`. The source shows `save()` directly invoking `persist()`, and the test is scoped to `UI/Suite/testSave()`. However, the context limitations note that reachability is not guaranteed by source or compiler edges, runtime state and UI dispatch may be missing, and no compiler graph is supplied. The same-file call name mapping implies potential execution, but absence of fixture state, cross-file callers, and dynamic dispatch prevents definitive confirmation. The execution route depends on implicit thread safety, callback queuing, and UI event handling not captured here."
+      }
+    }
+  ],
+  "schemaVersion" : 2,
+  "unlabeledCount" : 2
+}

@@ -14,6 +14,14 @@ methods and extensions. They compose additively with file mappings and bind only
 the selected plan's enabled executable tests. See [inline syntax, change tracking,
 audit/proposal tooling and migration](Documentation/InlineUIMappings.md).
 
+Optional on-device Foundation Models support supplements normal Xcode selection:
+use `select --ai --head REV` (off by default; `--no-ai` disables it). Compiler and
+mapping selections are always retained; AI adds UI tests at the configured
+`--confidence-threshold` (default 75%) and retains unknowns. Custom Stencil prompts
+use `--prompt-template` and `--instructions-template`. The usual `--run` executes
+the combined selection. `ai render` and `ai evaluate` remain inspection/benchmark
+helpers. See [setup, historical results, and limits](Documentation/FoundationModels.md).
+
 ## Install a prebuilt executable
 
 Versioned [GitHub Releases](https://github.com/twodayslate/SwiftTestSelection/releases)

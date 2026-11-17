@@ -1,0 +1,142 @@
+{
+  "advisoryOnly" : true,
+  "availability" : "available",
+  "datasetDigest" : "28aecf71891011662be357aba1e121f3f9b385bc3b196cc8eb10d090a1a4ad11",
+  "generatedAt" : "2026-11-17T18:18:51Z",
+  "metricsByEvidence" : {
+    "sourceReview" : {
+      "accuracyAmongAnswered" : 0.5833333333333334,
+      "answerRate" : 1,
+      "brierScore" : 0.23916666666666672,
+      "errors" : 0,
+      "falseNegative" : 5,
+      "falsePositive" : 0,
+      "precision" : 1,
+      "recall" : 0.16666666666666666,
+      "retainUnknownRecall" : 0.16666666666666666,
+      "scoredCount" : 12,
+      "squaredErrorSum" : 2.8700000000000006,
+      "total" : 12,
+      "trueNegative" : 6,
+      "truePositive" : 1,
+      "unknownNegative" : 0,
+      "unknownPositive" : 0
+    }
+  },
+  "operatingSystem" : "Version 27.2.1 (Build 26B131)",
+  "positiveThresholdPercent" : 50,
+  "promptVersion" : "ui-reachability-v2",
+  "provider" : "Apple Foundation Models (on-device)",
+  "rows" : [
+    {
+      "elapsedSeconds" : 4.387825012207031,
+      "id" : "pr361-scrollViewWillBeginDragging-related",
+      "inputDigest" : "69a24783773224b9168f8cedebd27d0e878cda40847e5794ffd5bf32ce398277",
+      "prediction" : {
+        "confidencePercent" : 20,
+        "reason" : "The test runs in a separate process from the source function execution. The `scrollViewWillBeginDragging` function in `NoteBlockCollectionCoordinator` is not directly called by the test. The test performs UI interactions, navigation, and assertions, but there is no explicit link from the test to this function. The source lacks compiler graph, cross-file callers, and fixture state, making it impossible to confirm execution. The test may trigger related behavior but does not invoke the function directly."
+      }
+    },
+    {
+      "elapsedSeconds" : 5.677883982658386,
+      "id" : "pr361-scrollViewWillBeginDragging-comparison",
+      "inputDigest" : "94f41f638a696507b33255caef76597c75151e205a9aca657df31f08245bfa70",
+      "prediction" : {
+        "confidencePercent" : 0,
+        "reason" : "The test `testSubmittedSettingsReopenAndCancelledEditsStayUnsaved` executes a sequence of UI interactions including launching the app, opening a composer item, adjusting picker values, tapping buttons, typing text, navigating, and calling functions like `openRequest` and `assertResponse`. The function `scrollViewWillBeginDragging` in `NoteBlockCollectionCoordinator` is not directly called in the test, nor is there evidence of its invocation, function dependency, or reachability via static edges. The test runs in a separate process with no compiler graph, cross-file callers, or fixture state indicating execution of this specific function."
+      }
+    },
+    {
+      "elapsedSeconds" : 4.0281840562820435,
+      "id" : "pr361-scrollViewDidScroll-related",
+      "inputDigest" : "eea0bd3efa3dec0545bbb24a38a3baea8a631c139807413e7af0ea176fa3a343",
+      "prediction" : {
+        "confidencePercent" : 50,
+        "reason" : "The test runs in a separate process from the app, and the function `scrollViewDidScroll` in `NoteBlockCollectionCoordinator` may not be directly called due to lack of cross-file invocation evidence, missing compiler graph, and runtime state dependency. The test focuses on UI interactions like tapping, swiping, and asserting button behavior, which could occur independently of the scroll function. The absence of fixture state, shared state mutation, or direct linkage between the scroll event and the test’s logic makes execution uncertain."
+      }
+    },
+    {
+      "elapsedSeconds" : 5.621449112892151,
+      "id" : "pr361-scrollViewDidScroll-comparison",
+      "inputDigest" : "896b8ef0f9ececb107991036b1a021b0463501d6815192c2576c41d3ad901149",
+      "prediction" : {
+        "confidencePercent" : 0,
+        "reason" : "The test `testSubmittedSettingsReopenAndCancelledEditsStayUnsaved` runs in a single file context with direct method calls like `openComposer`, `openRequest`, and `assertResponse`, but the function `scrollViewDidScroll` in `NoteBlockCollectionCoordinator` is unrelated in scope, class, and execution path—no direct linkage, navigation trace, or shared state evidence links its execution to this test. The test involves UI interactions and state checks, while this function operates on scroll behavior in a different component, with no indication of integration or dependency."
+      }
+    },
+    {
+      "elapsedSeconds" : 6.824859976768494,
+      "id" : "pr355-isUnread-related",
+      "inputDigest" : "3562c7e2a86649725421986da1eacf4a3405a27027f681479a33370d0481476a",
+      "prediction" : {
+        "confidencePercent" : 25,
+        "reason" : "The test launches the fixture with specific environment settings and navigates to a note, then performs UI checks on buttons and elements. The function `isUnread` is called during the test flow, particularly when verifying unread status for activities and comments. However, the test does not directly invoke the `isUnread` function in code, and the fixture's logic relies on internal state, UI rendering, and asynchronous checks (e.g., `waitUntilExists`, `tap`). The absence of explicit function call in the test and reliance on runtime state, UI dispatch, and fixture initialization make execution uncertain—especially given the limited context and potential for race conditions or deferred rendering."
+      }
+    },
+    {
+      "elapsedSeconds" : 8.268112063407898,
+      "id" : "pr355-isUnread-comparison",
+      "inputDigest" : "7da3fcf0399fca974ef47a44467fc9a62455d519c316dbc3af6678fddfcea61e",
+      "prediction" : {
+        "confidencePercent" : 25,
+        "reason" : "The test `testSubmittedSettingsReopenAndCancelledEditsStayUnsaved` launches the app, navigates through UI interactions including button taps and field inputs, and calls `openRequest(in: app)` multiple times. The function `hasUnread` in `NoteActivityViewHistory` is called during this flow, particularly when checking `entries.contains` with `isUnread` logic. However, the test does not directly invoke `isUnread` as a function call, nor is there a clear dependency on its internal logic being executed in isolation. The runtime state, UI dispatch, and call stack tracing are not guaranteed due to asynchronous operations, missing static edges, and lack of explicit function invocation in the test code. Reachability of the function depends on internal state and navigation paths not fully observable from the test."
+      }
+    },
+    {
+      "elapsedSeconds" : 5.959769010543823,
+      "id" : "pr355-markBlockRead-related",
+      "inputDigest" : "8a4eba1400ec7f5278a237ba37bee151597db79c12d7ec27508c72c2a08495eb",
+      "prediction" : {
+        "confidencePercent" : 25,
+        "reason" : "The test `testActivityAndCommentToolbarBadgesMatchBlockDots` launches a fixture that sets environment variables and opens a note, then performs UI checks for unread activity and comments. The function `markBlockRead` in `NoteUnreadActivity` is called during the UI flow when a block is tapped, but the test does not explicitly invoke this function. The execution depends on internal navigation, state checks, and UI interactions that may or may not trigger the function. The absence of direct function call in the test and unclear timing of `markBlockRead` within the flow leads to low confidence."
+      }
+    },
+    {
+      "elapsedSeconds" : 4.665074944496155,
+      "id" : "pr355-markBlockRead-comparison",
+      "inputDigest" : "b68895bf241307e3cc08e5a54e46bfc6093294ea60d8293d75e25b535a1b5800",
+      "prediction" : {
+        "confidencePercent" : 25,
+        "reason" : "The test runs in a separate process from the app, and the execution of `markBlockRead` depends on runtime state such as `isLoaded`, the presence of entries in `byBlock`, and UI interactions that may not be guaranteed due to asynchronous dispatch, environment variables, and test launch setup. The test does not directly invoke the function, and the context lacks cross-file caller traces or fixture state indicating function invocation."
+      }
+    },
+    {
+      "elapsedSeconds" : 6.619696021080017,
+      "id" : "pr365-markAllRead-related",
+      "inputDigest" : "1b241ca560d9755f43222a8fa39b0cca6fc429aa096bbfbeffea33fb2f1906eb",
+      "prediction" : {
+        "confidencePercent" : 45,
+        "reason" : "The test simulates launching the app with specific environment settings and navigating through UI elements, including tapping 'note-activity-mark-all-read'. The function 'markAllRead()' is called, but its execution depends on runtime conditions such as view hierarchy, accessibility identifiers, and asynchronous state checks. The test verifies that the UI correctly reflects the mark-all-read state and that certain elements (like 'note-activity-empty') are present after the action. However, the test does not directly observe the function’s internal logic, cancellation checks, or side effects like updating 'entries' or 'readSession'. The absence of direct instrumentation, variable state tracking, and potential race conditions in the test’s lifecycle make execution uncertain."
+      }
+    },
+    {
+      "elapsedSeconds" : 6.279258966445923,
+      "id" : "pr365-markAllRead-comparison",
+      "inputDigest" : "78159ed485e9b2541af0407792483f74d873d070d9d2bdbec25f3e2c9c38296a",
+      "prediction" : {
+        "confidencePercent" : 25,
+        "reason" : "The test `testSubmittedSettingsReopenAndCancelledEditsStayUnsaved` in `CheckSettingsUITests` launches the app, navigates through UI interactions, and asserts responses. The function `markAllRead()` in `NoteActivityView` is called indirectly via `Task { await markAllRead() }` in the test flow, but the test does not directly invoke the function. The execution depends on runtime state, navigation, and conditional logic not fully traceable from the test's call stack alone—especially since the function is private and may be called from within async contexts or overridden. The absence of direct function invocation, fixture state, and full context of how the function is triggered limits confidence."
+      }
+    },
+    {
+      "elapsedSeconds" : 6.539551019668579,
+      "id" : "pr365-activityIndex-related",
+      "inputDigest" : "4d84266417ccfa446ff2537d3c49a200f1ae69444a5f5d8e6d12336e6f6901dd",
+      "prediction" : {
+        "confidencePercent" : 45,
+        "reason" : "The test runs in a separate process from the app, and the execution of the Swift function depends on asynchronous state, fixture initialization, and UI lifecycle events. The function `activityIndex()` is called within the app’s async flow, but the test launches the app, sets environment variables, navigates through UI elements, and checks expected state via XCTest assertions. The function’s logic involves filtering and pagination, and the test verifies that entries are loaded and filtered correctly. However, the test does not directly invoke the function, and the runtime may not reach the function’s execution due to timing, environment constraints, or missing static edges. The absence of direct function call, variable state persistence, and concurrent execution visibility limits confidence."
+      }
+    },
+    {
+      "elapsedSeconds" : 5.670884966850281,
+      "id" : "pr365-activityIndex-comparison",
+      "inputDigest" : "9a4c212a77627aad78cc6ff3ff27438afc3763cf5013f3a5d0382a8112575924",
+      "prediction" : {
+        "confidencePercent" : 25,
+        "reason" : "The test runs in a separate UI test process that launches the app and interacts with UI elements via buttons and taps. The target Swift function `activityIndex()` is called within the app's logic, but the test does not directly invoke it. The execution path depends on internal state, navigation, and asynchronous calls not fully traceable from the test's current context—especially since the function is part of a view model and may be called indirectly during UI updates or background operations. The absence of explicit function call in the test and reliance on runtime state limits predictability."
+      }
+    }
+  ],
+  "schemaVersion" : 2,
+  "unlabeledCount" : 0
+}

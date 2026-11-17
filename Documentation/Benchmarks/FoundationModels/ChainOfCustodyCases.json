@@ -1,0 +1,194 @@
+[
+  {
+    "id": "pr361-scrollViewWillBeginDragging-related",
+    "revision": "841a9149c3691015ae4b62be8e5f9b698c2e42be",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteBlockCollectionCoordinator.swift",
+      "line": 1130
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/PairingNotesUITests.swift",
+      "line": 5887
+    },
+    "testIdentifier": "ChainOfCustodyUITests/PairingNotesEditingUITests/testAddBlockButtonShrinksAndExpandsWithScrollAndTap()",
+    "expected": true,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/361 \u2014 The test opens the note collection and drags it; these UIScrollView delegate callbacks handle that drag."
+  },
+  {
+    "id": "pr361-scrollViewWillBeginDragging-comparison",
+    "revision": "841a9149c3691015ae4b62be8e5f9b698c2e42be",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteBlockCollectionCoordinator.swift",
+      "line": 1130
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/CheckSettingsUITests.swift",
+      "line": 6
+    },
+    "testIdentifier": "ChainOfCustodyUITests/CheckSettingsUITests/testSubmittedSettingsReopenAndCancelledEditsStayUnsaved()",
+    "expected": false,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/361 \u2014 This journey launches the checkSettings fixture and edits check requests; it never opens a note editor or note activity. Background/launch execution has not been measured, so this is a source-review estimate, not a proven negative."
+  },
+  {
+    "id": "pr361-scrollViewDidScroll-related",
+    "revision": "841a9149c3691015ae4b62be8e5f9b698c2e42be",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteBlockCollectionCoordinator.swift",
+      "line": 1134
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/PairingNotesUITests.swift",
+      "line": 5887
+    },
+    "testIdentifier": "ChainOfCustodyUITests/PairingNotesEditingUITests/testAddBlockButtonShrinksAndExpandsWithScrollAndTap()",
+    "expected": true,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/361 \u2014 The test opens the note collection and drags it; these UIScrollView delegate callbacks handle that drag."
+  },
+  {
+    "id": "pr361-scrollViewDidScroll-comparison",
+    "revision": "841a9149c3691015ae4b62be8e5f9b698c2e42be",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteBlockCollectionCoordinator.swift",
+      "line": 1134
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/CheckSettingsUITests.swift",
+      "line": 6
+    },
+    "testIdentifier": "ChainOfCustodyUITests/CheckSettingsUITests/testSubmittedSettingsReopenAndCancelledEditsStayUnsaved()",
+    "expected": false,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/361 \u2014 This journey launches the checkSettings fixture and edits check requests; it never opens a note editor or note activity. Background/launch execution has not been measured, so this is a source-review estimate, not a proven negative."
+  },
+  {
+    "id": "pr355-isUnread-related",
+    "revision": "45d0108f45dd1980437cef7814ebb47c1123f21a",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteUnreadActivity.swift",
+      "line": 11
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/NoteCommentUnreadUITests.swift",
+      "line": 6
+    },
+    "testIdentifier": "ChainOfCustodyUITests/NoteCommentUnreadUITests/testActivityAndCommentToolbarBadgesMatchBlockDots()",
+    "expected": true,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/355 \u2014 The test reads activity badges, injects new block activity, opens that block, and asserts its unread dot clears."
+  },
+  {
+    "id": "pr355-isUnread-comparison",
+    "revision": "45d0108f45dd1980437cef7814ebb47c1123f21a",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteUnreadActivity.swift",
+      "line": 11
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/CheckSettingsUITests.swift",
+      "line": 6
+    },
+    "testIdentifier": "ChainOfCustodyUITests/CheckSettingsUITests/testSubmittedSettingsReopenAndCancelledEditsStayUnsaved()",
+    "expected": false,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/355 \u2014 This journey launches the checkSettings fixture and edits check requests; it never opens a note editor or note activity. Background/launch execution has not been measured, so this is a source-review estimate, not a proven negative."
+  },
+  {
+    "id": "pr355-markBlockRead-related",
+    "revision": "45d0108f45dd1980437cef7814ebb47c1123f21a",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteUnreadActivity.swift",
+      "line": 101
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/NoteCommentUnreadUITests.swift",
+      "line": 6
+    },
+    "testIdentifier": "ChainOfCustodyUITests/NoteCommentUnreadUITests/testActivityAndCommentToolbarBadgesMatchBlockDots()",
+    "expected": true,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/355 \u2014 The test reads activity badges, injects new block activity, opens that block, and asserts its unread dot clears."
+  },
+  {
+    "id": "pr355-markBlockRead-comparison",
+    "revision": "45d0108f45dd1980437cef7814ebb47c1123f21a",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteUnreadActivity.swift",
+      "line": 101
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/CheckSettingsUITests.swift",
+      "line": 6
+    },
+    "testIdentifier": "ChainOfCustodyUITests/CheckSettingsUITests/testSubmittedSettingsReopenAndCancelledEditsStayUnsaved()",
+    "expected": false,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/355 \u2014 This journey launches the checkSettings fixture and edits check requests; it never opens a note editor or note activity. Background/launch execution has not been measured, so this is a source-review estimate, not a proven negative."
+  },
+  {
+    "id": "pr365-markAllRead-related",
+    "revision": "81b904108b1963d8241508a5430b31797953a80e",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteActivityView.swift",
+      "line": 404
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/PairingNoteActivityUITests.swift",
+      "line": 5
+    },
+    "testIdentifier": "ChainOfCustodyUITests/PairingNoteActivityUITests/testUnreadFilterAndMarkAllReadIncludeUnloadedPagesAndDelayedSync()",
+    "expected": true,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/365 \u2014 The test opens paginated note activity and invokes Mark All Read, then changes filters and checks delayed sync."
+  },
+  {
+    "id": "pr365-markAllRead-comparison",
+    "revision": "81b904108b1963d8241508a5430b31797953a80e",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteActivityView.swift",
+      "line": 404
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/CheckSettingsUITests.swift",
+      "line": 6
+    },
+    "testIdentifier": "ChainOfCustodyUITests/CheckSettingsUITests/testSubmittedSettingsReopenAndCancelledEditsStayUnsaved()",
+    "expected": false,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/365 \u2014 This journey launches the checkSettings fixture and edits check requests; it never opens a note editor or note activity. Background/launch execution has not been measured, so this is a source-review estimate, not a proven negative."
+  },
+  {
+    "id": "pr365-activityIndex-related",
+    "revision": "81b904108b1963d8241508a5430b31797953a80e",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteActivityView.swift",
+      "line": 386
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/PairingNoteActivityUITests.swift",
+      "line": 5
+    },
+    "testIdentifier": "ChainOfCustodyUITests/PairingNoteActivityUITests/testUnreadFilterAndMarkAllReadIncludeUnloadedPagesAndDelayedSync()",
+    "expected": true,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/365 \u2014 The test opens paginated note activity and invokes Mark All Read, then changes filters and checks delayed sync."
+  },
+  {
+    "id": "pr365-activityIndex-comparison",
+    "revision": "81b904108b1963d8241508a5430b31797953a80e",
+    "function": {
+      "path": "ChainOfCustody/Features/Notes/NoteActivityView.swift",
+      "line": 386
+    },
+    "test": {
+      "path": "ChainOfCustodyUITests/CheckSettingsUITests.swift",
+      "line": 6
+    },
+    "testIdentifier": "ChainOfCustodyUITests/CheckSettingsUITests/testSubmittedSettingsReopenAndCancelledEditsStayUnsaved()",
+    "expected": false,
+    "evidenceKind": "sourceReview",
+    "evidence": "https://github.com/twodayslate/ChainOfCustody/pull/365 \u2014 This journey launches the checkSettings fixture and edits check requests; it never opens a note editor or note activity. Background/launch execution has not been measured, so this is a source-review estimate, not a proven negative."
+  }
+]

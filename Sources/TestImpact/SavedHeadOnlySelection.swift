@@ -65,6 +65,7 @@ extension XcodeAnalysis {
             report.onlyTestingArguments = report.selectedTests.map { "-only-testing:" + $0 }
             report.explanations += report.selectedTests.map { .init(test: $0, reason: "Full suite explicitly requested", revision: "head", path: [], kind: "fullSuite") }
         }
+        selectionGraphObserver?(current)
         return report
     }
 }
