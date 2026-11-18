@@ -119,12 +119,14 @@ input. For an unlabeled experiment, omit `expected` and use `unlabeled` evidence
 
 `--graph` is optional. If supplied, it must carry the exact revision, a matching
 UI test inventory, and compiler nodes for both declarations. Prepare different
-revisions separately when using graphs. Context is bounded to one hop, 32 graph
-nodes and 64 edges. Syntax-only preparation does not build the app and cannot
+revisions separately when using graphs. Context is bounded to one hop, 32 source nodes
+and 64 candidate edges, with project callbacks prioritized over generated/assertion
+edges. Actual retained evidence is additionally byte-budgeted. Syntax-only preparation does not build the app and cannot
 recover cross-file fixture implementations or inherited test lifecycle methods.
 The entire function and test remain intact. Optional context is dropped explicitly
 to fit a 12,000-byte input budget; this is a byte heuristic, not a token guarantee.
-An oversized subject or a model context-window error is recorded as an abstention.
+A complete subject pair that cannot fit after optional evidence is removed gets a
+distinct subject-size abstention. Model context-window errors also remain abstentions.
 This is not the full transitive graph in either direction. Declaration extraction
 starts after leading trivia, so preceding `///` and `/** ... */` documentation is
 not included. Comments inside the extracted declaration are preserved. Inline
@@ -135,7 +137,7 @@ not included. Comments inside the extracted declaration are preserved. Inline
 `ai render` and `ai evaluate` accept `--prompt-template FILE` and
 `--instructions-template FILE`. Both files are UTF-8 Stencil templates, read once
 at command start. Either option may be omitted to keep that built-in component.
-The default pair renders the existing `ui-reachability-v3` instructions and source
+The default pair renders the `ui-reachability-v4` instructions and source
 JSON exactly. Stencil is pinned to
 [0.15.1](https://github.com/stencilproject/Stencil/releases/tag/0.15.1); its variables,
 loops, conditions, and filters fit this task without changing template syntax.
@@ -166,7 +168,7 @@ Both templates receive the same context:
 | `function`, `test` | `name`, `scope`, `source`, `calls`, and `region` (`path`, `startLine`, `endLine`) |
 | `context` | Array of related source fragments with the same fields |
 | `revision`, `testIdentifier`, `contextKind` | Snapshot identity and preparation mode |
-| `compilerEdges`, `mappings`, `limitations` | Available graph/mapping evidence and its limitations |
+| `compilerEdges`, `mappings`, `limitations`, `contextBudget` | Available graph/mapping evidence, projections, and omission counts |
 | `input` | Entire model-input object, including all fields above |
 | `inputJSON` | Stable JSON representation of that object |
 | `defaultInstructions` | Built-in instructions, for extending rather than rewriting them |
@@ -206,8 +208,15 @@ become error/unknown rows during evaluation (exit 2, retained for selection);
 `ai render` fails rather than emitting a partial preview. No prompt is silently
 truncated. These byte limits remain heuristics, not token-window guarantees.
 
-Reports store both template sources, engine/context versions, a configuration
-SHA-256 digest, and each pair's exact rendered-prompt digest. Custom configurations
+Reports store both template sources, the built-in instruction/output-contract
+values they use, engine/context versions, a configuration SHA-256 digest, and each
+pair's exact rendered-prompt digest. Context v2 includes the built-in values in
+the configuration digest, so changing them changes custom prompt versions even
+when template files still contain the same `{{ defaultInstructions }}` or
+`{{ outputContract }}` reference. Saved v2 configurations render with their recorded
+values. Legacy configurations without these fields continue using the installed
+defaults; their original unrecorded built-in values cannot be reconstructed from
+the template files alone. Custom configurations
 use `custom-stencil-v1:<digest>` as their prompt version. Each rendered pair is
 passed directly to the provider without re-rendering, so its recorded digest
 identifies the actual instructions/input used even with dynamic template tags.
@@ -242,11 +251,23 @@ resolver supplies compiler-bound rules and relevant resolution diagnostics.
 Neither candidate annotations nor resolved selection contracts prove per-function
 runtime execution, and broad file rules do not imply that every function executes.
 
-Mapping context is capped at 16 whole rules, prioritizing rules matching both the
-test and function. The overall 12,000-byte budget still applies: optional source
-context is removed before mapping rules; omitted rules are counted in
-`mappings.omittedRuleCount`. Omission can leave dependency context incomplete and
-is explicitly disclosed. Complete subject function/test declarations are preserved.
+Mapping context is capped at 16 rules, prioritizing rules matching both the test
+and function. Rules larger than 900 serialized bytes may use a pair-specific
+projection: matching source/symbol patterns and test selectors remain, along with
+complete conditions, fixture names, dependency declarations, binding status and
+origin. Unknown symbol scopes stay intact. `projection.originalFeatureDigest`
+identifies the full original feature at the input revision, and
+`projection.omittedAssociations` counts removed nonmatching associations. These
+projected features are prompt evidence, not replacement selection contracts.
+
+The 12,000-byte packer interleaves whole mapping rules, source fragments and edges;
+a large item that cannot fit is skipped so smaller useful evidence still has a
+chance. `contextBudget` records omitted edges (including the 64-edge cap), source
+fragments, mapping rules, and compiler neighbor nodes without represented source.
+`mappings.omittedRuleCount` also counts omitted rules when that envelope fits.
+Missing dependencies and omitted associations never imply non-execution. Complete
+subject function/test declarations are preserved. The byte budget is still a
+heuristic, not a guarantee about the model's token window.
 The prompt asks the model to cite mapping evidence when explaining its percentage;
 it does not convert mappings to fixed percentages or override the normal selector.
 
@@ -256,7 +277,7 @@ for testing or other providers; the command uses only Apple's on-device model.
 
 ## Evaluation contract
 
-The built-in prompt is `ui-reachability-v3`, and new reports use schema version 2.
+The built-in prompt is `ui-reachability-v4`, and new reports use schema version 2.
 Custom Stencil prompts carry their own digest-based version.
 Predictions replace the version 1 `verdict` enum with nullable `confidencePercent`.
 Historical version 1 JSON artifacts below are preserved in their original format.
@@ -445,6 +466,27 @@ of a runtime route. Mapping-only and mapping-assisted comparisons still need a
 held-out dataset with contemporaneous mappings and isolated execution labels.
 
 ## Implementation validation
+
+### Issue #93: graph and mapping context packing
+
+The [packing reproduction](Benchmarks/FoundationModels/Issue93ContextBudget.json)
+uses the eight original source-review cases and the retained compiler graph from
+[issue #93](https://github.com/twodayslate/SwiftTestSelection/issues/93), at consumer
+revision `76dd9cb15ad8ecf625e8a48fa73cd8bb877b6d3e`. The previous implementation
+produced five oversized graph-backed inputs. All eight now render below 12,000
+bytes, retaining 2–5 source fragments, 2–7 mapping rules, and 3–8 compiler edges per
+pair. Complete subject declarations and identities are unchanged. All eight
+source-only inputs also fit; the comment-formatting positive now retains three
+mapping rules instead of losing all mapping rules.
+
+The on-device graph-backed evaluation completed all eight requests without input
+budget or provider errors in 68.2 seconds. Three answers were unknown and remain
+selected conservatively. This validates packing and handoff, not prediction
+accuracy: the labels are source-review estimates, and no UI test bodies ran.
+The 52 targeted tests and CLI validation passed, including generated edge names,
+long tests, projected mapping provenance/conditions/dependencies, omission counts,
+callback prioritization, subject-only oversize abstention, built-in prompt value
+fingerprints and archived/legacy template decoding.
 
 All 46 targeted tests passed after integrating AI into normal selection, including
 30 AI tests and existing saved-build, retained-build, head-only, and cache checks.

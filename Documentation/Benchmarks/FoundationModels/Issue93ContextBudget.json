@@ -1,0 +1,296 @@
+{
+  "issue": "https://github.com/twodayslate/SwiftTestSelection/issues/93",
+  "baselineToolRevision": "037417691f03a553d2d2f9c44e950c97e9ab7dc6",
+  "captureRevision": "76dd9cb15ad8ecf625e8a48fa73cd8bb877b6d3e",
+  "promptVersion": "ui-reachability-v4",
+  "generatedAt": "2026-11-18T06:29:17Z",
+  "inputBudgetBytes": 12000,
+  "evidenceKind": "sourceReview",
+  "validation": "Prompt packing and on-device handoff only; no UI test execution or accuracy claim. Before sizes use compact JSON; after sizes use the exact rendered source JSON.",
+  "liveProvider": "Apple Foundation Models (on-device)",
+  "liveElapsedSeconds": 68.15028512477875,
+  "graphCases": [
+    {
+      "id": "scroll-related",
+      "beforeInputBytes": 20101,
+      "afterInputBytes": 11945,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 3,
+      "retainedMappingRules": 3,
+      "retainedCompilerEdges": 4,
+      "omissions": {
+        "omittedCompilerEdges": 137,
+        "omittedCompilerSourceNodes": 38,
+        "omittedMappingRules": 14,
+        "omittedSourceFragments": 4,
+        "subjectsExceedBudget": false
+      },
+      "confidencePercent": null,
+      "providerError": null,
+      "renderedPromptDigest": "b71b2482f7a7b81483cf49e18b83ed56770014e8c228f850314d49a9a72d2ba4"
+    },
+    {
+      "id": "scroll-comparison",
+      "beforeInputBytes": 10971,
+      "afterInputBytes": 11901,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 5,
+      "retainedMappingRules": 5,
+      "retainedCompilerEdges": 5,
+      "omissions": {
+        "omittedCompilerEdges": 29,
+        "omittedCompilerSourceNodes": 14,
+        "omittedMappingRules": 13,
+        "omittedSourceFragments": 2,
+        "subjectsExceedBudget": false
+      },
+      "confidencePercent": 95,
+      "providerError": null,
+      "renderedPromptDigest": "c822f4205d830c648f077c35519776cec534becab4346abe85fcd6c63359bdce"
+    },
+    {
+      "id": "mark-read-related",
+      "beforeInputBytes": 17244,
+      "afterInputBytes": 11972,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 3,
+      "retainedMappingRules": 2,
+      "retainedCompilerEdges": 3,
+      "omissions": {
+        "omittedCompilerEdges": 83,
+        "omittedCompilerSourceNodes": 33,
+        "omittedMappingRules": 15,
+        "omittedSourceFragments": 9,
+        "subjectsExceedBudget": false
+      },
+      "confidencePercent": null,
+      "providerError": null,
+      "renderedPromptDigest": "006d26a42bf6d2a03e6582575b8c97ff60b6703f4d79cc8cee5834540f9b6044"
+    },
+    {
+      "id": "mark-read-comparison",
+      "beforeInputBytes": 11643,
+      "afterInputBytes": 11936,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 3,
+      "retainedMappingRules": 3,
+      "retainedCompilerEdges": 7,
+      "omissions": {
+        "omittedCompilerEdges": 39,
+        "omittedCompilerSourceNodes": 29,
+        "omittedMappingRules": 15,
+        "omittedSourceFragments": 10,
+        "subjectsExceedBudget": false
+      },
+      "confidencePercent": 20,
+      "providerError": null,
+      "renderedPromptDigest": "4fe373b492f9ed8eb13f9fb2aad29d87654e5066a7203731e898daacaad42e4b"
+    },
+    {
+      "id": "activity-index-related",
+      "beforeInputBytes": 17324,
+      "afterInputBytes": 11995,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 3,
+      "retainedMappingRules": 4,
+      "retainedCompilerEdges": 5,
+      "omissions": {
+        "omittedCompilerEdges": 77,
+        "omittedCompilerSourceNodes": 29,
+        "omittedMappingRules": 13,
+        "omittedSourceFragments": 7,
+        "subjectsExceedBudget": false
+      },
+      "confidencePercent": null,
+      "providerError": null,
+      "renderedPromptDigest": "cbc299ddbd5d4b499cc5048f351a745df0ac42d2c3298fc747b7ca8014faa118"
+    },
+    {
+      "id": "activity-index-comparison",
+      "beforeInputBytes": 11810,
+      "afterInputBytes": 11961,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 4,
+      "retainedMappingRules": 5,
+      "retainedCompilerEdges": 6,
+      "omissions": {
+        "omittedCompilerEdges": 36,
+        "omittedCompilerSourceNodes": 24,
+        "omittedMappingRules": 13,
+        "omittedSourceFragments": 7,
+        "subjectsExceedBudget": false
+      },
+      "confidencePercent": 25,
+      "providerError": null,
+      "renderedPromptDigest": "29f3f8879a2186cb5729490846fd8ed32c908b9da29c8484c839377db2c39c50"
+    },
+    {
+      "id": "comment-format-related",
+      "beforeInputBytes": 19791,
+      "afterInputBytes": 11976,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 2,
+      "retainedMappingRules": 2,
+      "retainedCompilerEdges": 4,
+      "omissions": {
+        "omittedCompilerEdges": 199,
+        "omittedCompilerSourceNodes": 53,
+        "omittedMappingRules": 15,
+        "omittedSourceFragments": 7,
+        "subjectsExceedBudget": false
+      },
+      "confidencePercent": 95,
+      "providerError": null,
+      "renderedPromptDigest": "09dc86ff802277e17af7748fd887c860c804547ed64f37283b2cb72531b57b54"
+    },
+    {
+      "id": "comment-format-comparison",
+      "beforeInputBytes": 13043,
+      "afterInputBytes": 11970,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 5,
+      "retainedMappingRules": 7,
+      "retainedCompilerEdges": 8,
+      "omissions": {
+        "omittedCompilerEdges": 45,
+        "omittedCompilerSourceNodes": 35,
+        "omittedMappingRules": 11,
+        "omittedSourceFragments": 2,
+        "subjectsExceedBudget": false
+      },
+      "confidencePercent": 95,
+      "providerError": null,
+      "renderedPromptDigest": "aa07c914f448a4c5d811982401d50091386350853ce1e544770d52c2830d22ff"
+    }
+  ],
+  "sourceCases": [
+    {
+      "id": "scroll-related",
+      "beforeInputBytes": 10199,
+      "afterInputBytes": 11688,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 0,
+      "retainedMappingRules": 6,
+      "retainedCompilerEdges": 0,
+      "omissions": {
+        "omittedCompilerEdges": 0,
+        "omittedCompilerSourceNodes": 0,
+        "omittedMappingRules": 11,
+        "omittedSourceFragments": 0,
+        "subjectsExceedBudget": false
+      }
+    },
+    {
+      "id": "scroll-comparison",
+      "beforeInputBytes": 9798,
+      "afterInputBytes": 11656,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 5,
+      "retainedMappingRules": 6,
+      "retainedCompilerEdges": 0,
+      "omissions": {
+        "omittedCompilerEdges": 0,
+        "omittedCompilerSourceNodes": 0,
+        "omittedMappingRules": 12,
+        "omittedSourceFragments": 0,
+        "subjectsExceedBudget": false
+      }
+    },
+    {
+      "id": "mark-read-related",
+      "beforeInputBytes": 11798,
+      "afterInputBytes": 11870,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 2,
+      "retainedMappingRules": 3,
+      "retainedCompilerEdges": 0,
+      "omissions": {
+        "omittedCompilerEdges": 0,
+        "omittedCompilerSourceNodes": 0,
+        "omittedMappingRules": 14,
+        "omittedSourceFragments": 2,
+        "subjectsExceedBudget": false
+      }
+    },
+    {
+      "id": "mark-read-comparison",
+      "beforeInputBytes": 11630,
+      "afterInputBytes": 11801,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 3,
+      "retainedMappingRules": 4,
+      "retainedCompilerEdges": 0,
+      "omissions": {
+        "omittedCompilerEdges": 0,
+        "omittedCompilerSourceNodes": 0,
+        "omittedMappingRules": 14,
+        "omittedSourceFragments": 5,
+        "subjectsExceedBudget": false
+      }
+    },
+    {
+      "id": "activity-index-related",
+      "beforeInputBytes": 11694,
+      "afterInputBytes": 11954,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 3,
+      "retainedMappingRules": 5,
+      "retainedCompilerEdges": 0,
+      "omissions": {
+        "omittedCompilerEdges": 0,
+        "omittedCompilerSourceNodes": 0,
+        "omittedMappingRules": 12,
+        "omittedSourceFragments": 0,
+        "subjectsExceedBudget": false
+      }
+    },
+    {
+      "id": "activity-index-comparison",
+      "beforeInputBytes": 11690,
+      "afterInputBytes": 11918,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 5,
+      "retainedMappingRules": 5,
+      "retainedCompilerEdges": 0,
+      "omissions": {
+        "omittedCompilerEdges": 0,
+        "omittedCompilerSourceNodes": 0,
+        "omittedMappingRules": 13,
+        "omittedSourceFragments": 2,
+        "subjectsExceedBudget": false
+      }
+    },
+    {
+      "id": "comment-format-related",
+      "beforeInputBytes": 8664,
+      "afterInputBytes": 11972,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 2,
+      "retainedMappingRules": 3,
+      "retainedCompilerEdges": 0,
+      "omissions": {
+        "omittedCompilerEdges": 0,
+        "omittedCompilerSourceNodes": 0,
+        "omittedMappingRules": 14,
+        "omittedSourceFragments": 3,
+        "subjectsExceedBudget": false
+      }
+    },
+    {
+      "id": "comment-format-comparison",
+      "beforeInputBytes": 11748,
+      "afterInputBytes": 11731,
+      "subjectsAndIdentitiesUnchanged": true,
+      "retainedSourceFragments": 5,
+      "retainedMappingRules": 9,
+      "retainedCompilerEdges": 0,
+      "omissions": {
+        "omittedCompilerEdges": 0,
+        "omittedCompilerSourceNodes": 0,
+        "omittedMappingRules": 9,
+        "omittedSourceFragments": 1,
+        "subjectsExceedBudget": false
+      }
+    }
+  ]
+}
