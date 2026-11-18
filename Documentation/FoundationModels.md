@@ -446,8 +446,8 @@ held-out dataset with contemporaneous mappings and isolated execution labels.
 
 ## Implementation validation
 
-All 45 targeted tests passed after integrating AI into normal selection, including
-29 AI tests and existing saved-build, retained-build, head-only, and cache checks.
+All 46 targeted tests passed after integrating AI into normal selection, including
+30 AI tests and existing saved-build, retained-build, head-only, and cache checks.
 The CLI validation script also passed.
 
 Normal selection integration checks preservation of the deterministic baseline,
@@ -456,6 +456,8 @@ methods, cancellation, comment-only edits, and full-suite short-circuiting. The
 saved-build selection test also exercises the AI wrapper and verifies build identity
 and selected IDs remain intact. CLI checks cover --ai/--no-ai, invalid tuning,
 the explicit-head requirement, disabled-template loading, and removal of ai select.
+Mapping-path regressions cover equivalent relative spellings, absent optional
+defaults, and historical lookup independent of working-tree symlinks.
 These are controlled integration tests, not historical runtime accuracy evidence.
 
 Stencil integration passed all 23 focused AI tests plus the CLI validation script.

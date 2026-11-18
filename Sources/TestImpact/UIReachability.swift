@@ -170,7 +170,7 @@ public enum UIReachabilityPreparation {
         var inlineSyntax: [String: InlineMappingSyntax] = [:]
         var mappingCache: [String: UIFeatureMappings] = [:]
         var loadedMappingRevisions: Set<String> = []
-        let mappingPath = mappingsPath ?? UIReachabilityMappingPreparation.defaultPath
+        let mappingPath = try UIReachabilityMappingPreparation.normalizedPath(mappingsPath ?? UIReachabilityMappingPreparation.defaultPath)
         func source(_ revision: String, _ path: String) throws -> String {
             guard !path.hasPrefix("/"), !path.split(separator: "/").contains(".."), path.hasSuffix(".swift") else {
                 throw ImpactError("Expected a repository-relative Swift source path: \(path)")

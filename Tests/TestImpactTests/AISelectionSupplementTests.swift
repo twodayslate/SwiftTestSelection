@@ -92,6 +92,35 @@ private func withAISupplementFixture(commentOnly: Bool = false,
     }
 }
 
+@Test func aiSupplementNormalizesMappingPathsWithoutRetainingAllCandidates() async throws {
+    try await withAISupplementFixture { root, originalGraph, originalReport in
+        var graph = originalGraph, baseline = originalReport
+        // Both a committed default mapping and an absent optional default must
+        // behave identically for every spelling accepted by normal selection.
+        for present in [true, false] {
+            if !present {
+                _ = try CommandRunner.run("git", ["rm", ".swift-test-selection.json"], at: root)
+                _ = try CommandRunner.run("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "remove optional mapping"], at: root)
+                baseline.headRevision = try GitChanges.revision("HEAD", at: root)
+                graph.mappings = nil
+            }
+            for path in [".swift-test-selection.json", "./.swift-test-selection.json", "config//../.swift-test-selection.json"] {
+                var calls = 0
+                let result = try await AISelectionSupport.supplement(baseline, current: graph, repository: root,
+                    mappingsPath: path, configuration: .init(), availability: { "available" }) { input, _ in
+                    calls += 1
+                    #expect(input.mappings?.rules.contains { $0.origin == "historical-json" } == present)
+                    return .init(confidencePercent: 0, reason: "fixture")
+                }
+                #expect(calls == 3)
+                #expect(result.selectedTests == baseline.selectedTests)
+                #expect(result.aiSelection?.status == "completed")
+                #expect(result.aiSelection?.retainedUnknownTests.isEmpty == true)
+            }
+        }
+    }
+}
+
 @Test func aiSupplementBudgetAndUnresolvedSourceRetainUnevaluatedTests() async throws {
     try await withAISupplementFixture { root, graph, baseline in
         var calls = 0

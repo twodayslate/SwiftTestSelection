@@ -63,6 +63,9 @@ with tempfile.TemporaryDirectory(prefix="ai-cli-") as directory:
     run("prepare", "--repository", root, "--cases", cases, "--mappings", "custom.json", "--output", mapped)
     rules = json.loads(mapped.read_text())["cases"][0]["input"]["mappings"]["rules"]
     assert len(rules) == 1 and rules[0]["matchesTestSelector"]
+    for mapping_path in ["./custom.json", "config//../custom.json"]:
+        alias = json.loads(run("prepare", "--repository", root, "--cases", cases, "--mappings", mapping_path).stdout)
+        assert alias == json.loads(mapped.read_text())
     original_mapping = mapping.read_bytes()
     run("prepare", "--repository", root, "--cases", cases, "--mappings", "custom.json", "--output", mapping, expected=1)
     assert mapping.read_bytes() == original_mapping

@@ -25,12 +25,27 @@ public struct UIReachabilityMappings: Codable, Sendable {
 enum UIReachabilityMappingPreparation {
     static let defaultPath = ".swift-test-selection.json"
 
+    /// Normalize lexically: resolving symlinks in today's checkout would change
+    /// which historical Git object is read. Committed symlinks remain rejected.
+    static func normalizedPath(_ path: String) throws -> String {
+        guard !path.isEmpty, !path.hasPrefix("/") else {
+            throw ImpactError("AI mappings path must be repository-relative")
+        }
+        var components: [String] = []
+        for component in path.split(separator: "/") {
+            if component == "." { continue }
+            if component == ".." {
+                guard !components.isEmpty else { throw ImpactError("AI mapping file must be inside the repository") }
+                components.removeLast()
+            } else { components.append(String(component)) }
+        }
+        guard !components.isEmpty else { throw ImpactError("AI mappings path must name a file inside the repository") }
+        return components.joined(separator: "/")
+    }
+
     /// Never read today's working-tree mapping when evaluating historical source.
     static func load(repository: URL, revision: String, path: String, required: Bool) throws -> UIFeatureMappings? {
-        guard !path.isEmpty, !path.hasPrefix("/"),
-              !path.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0 == ".." || $0 == "." || $0.isEmpty }) else {
-            throw ImpactError("AI mappings path must be repository-relative without dot components")
-        }
+        let path = try normalizedPath(path)
         let entry = try CommandRunner.run("git", ["--literal-pathspecs", "ls-tree", "-z", revision, "--", path], at: repository).text
         guard !entry.isEmpty else {
             if required { throw ImpactError("Mapping file absent at \(revision):\(path)") }

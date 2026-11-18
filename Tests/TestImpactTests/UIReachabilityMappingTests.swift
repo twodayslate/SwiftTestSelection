@@ -76,7 +76,15 @@ private func withAIMappingRepository(_ body: (URL, UIReachabilityCaseSpec) throw
         #expect(throws: ImpactError.self) {
             try UIReachabilityPreparation.prepare([original], repository: root, mappingsPath: "custom.json")
         }
-        for path in ["../custom.json", "/custom.json", "./custom.json"] {
+        for path in ["./custom.json", "config/../custom.json", "./config//.././custom.json"] {
+            let alias = try UIReachabilityPreparation.prepare([spec], repository: root, mappingsPath: path).cases[0].input
+            #expect(try UIReachabilityPrompt.render(alias) == UIReachabilityPrompt.render(input))
+        }
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createSymbolicLink(atPath: file.path, withDestinationPath: "absent-in-this-revision.json")
+        let symlinkedCheckout = try UIReachabilityPreparation.prepare([spec], repository: root, mappingsPath: "./custom.json").cases[0].input
+        #expect(try UIReachabilityPrompt.render(symlinkedCheckout) == UIReachabilityPrompt.render(input))
+        for path in ["", ".", "..", "../custom.json", "/custom.json", "config/../../custom.json"] {
             #expect(throws: ImpactError.self) {
                 try UIReachabilityPreparation.prepare([spec], repository: root, mappingsPath: path)
             }
@@ -92,7 +100,7 @@ private func withAIMappingRepository(_ body: (URL, UIReachabilityCaseSpec) throw
         _ = try CommandRunner.run("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "invalid mappings"], at: root)
         var spec = original
         spec.revision = try GitChanges.revision("HEAD", at: root)
-        for path in ["bad.json", "link.json"] {
+        for path in ["bad.json", "link.json", "./link.json", "config/../link.json"] {
             #expect(throws: (any Error).self) {
                 try UIReachabilityPreparation.prepare([spec], repository: root, mappingsPath: path)
             }

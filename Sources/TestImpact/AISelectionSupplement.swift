@@ -139,8 +139,9 @@ enum AISelectionSupport {
             }
             if !specs.isEmpty {
                 progress("AI supplement: evaluating \(specs.count) function/UI-test pairs at \(configuration.confidenceThreshold)%…")
+                let mappingPath = try UIReachabilityMappingPreparation.normalizedPath(mappingsPath)
                 let dataset = try UIReachabilityPreparation.prepare(specs, repository: repository, graph: current,
-                    mappingsPath: mappingsPath == ".swift-test-selection.json" ? nil : mappingsPath, analyzedRevision: head)
+                    mappingsPath: mappingPath == UIReachabilityMappingPreparation.defaultPath ? nil : mappingPath, analyzedRevision: head)
                 var evaluation = try await UIReachabilityEvaluation.run(dataset,
                     provider: "Apple Foundation Models (on-device)", availability: status,
                     confidenceThreshold: configuration.confidenceThreshold, templates: configuration.templates, predict: predict)
