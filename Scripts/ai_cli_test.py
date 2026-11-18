@@ -96,7 +96,7 @@ with tempfile.TemporaryDirectory(prefix="ai-cli-") as directory:
                       "--no-ai", "--prompt-template", root / "absent.stencil")
     assert "Xcode mode requires --scheme and --destination" in disabled
     preview = json.loads(run("render", "--dataset", dataset).stdout)
-    assert preview["templateVersion"] == "ui-reachability-v3"
+    assert preview["templateVersion"] == "ui-reachability-v4"
     assert preview["engine"] == "Stencil 0.15.1"
     assert preview["rows"][0]["rendered"]["prompt"].startswith("Assess this source snapshot:")
     prompt_template = root / "prompt.stencil"

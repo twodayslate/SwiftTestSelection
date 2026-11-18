@@ -78,7 +78,9 @@ public struct UIReachabilityPromptTemplates: Codable, Sendable {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(input)
         guard data.count <= UIReachabilityPrompt.maximumInputBytes else {
-            throw UIReachabilityPromptSizeError(description: "Source snapshot exceeds \(UIReachabilityPrompt.maximumInputBytes) UTF-8 bytes")
+            throw UIReachabilityPromptSizeError(description: input.contextBudget?.subjectsExceedBudget == true
+                ? "Complete subject pair exceeds \(UIReachabilityPrompt.maximumInputBytes) UTF-8 bytes after optional evidence was removed; declarations were not truncated"
+                : "Source snapshot exceeds \(UIReachabilityPrompt.maximumInputBytes) UTF-8 bytes")
         }
         let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         // Only model input is exposed: no expected labels, case IDs, review

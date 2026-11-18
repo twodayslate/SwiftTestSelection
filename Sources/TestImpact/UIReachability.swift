@@ -29,6 +29,15 @@ public struct UIReachabilityInput: Codable, Sendable {
     /// Bounded actual compiler edges when a matching graph is supplied.
     public var compilerEdges: [CompilerEdge]? = nil
     public var mappings: UIReachabilityMappings? = nil
+    public var contextBudget: ContextBudget? = nil
+    public struct ContextBudget: Codable, Sendable {
+        public var omittedCompilerEdges = 0
+        /// Neighbor nodes whose source is not represented by either subject or retained context.
+        public var omittedCompilerSourceNodes = 0
+        public var omittedSourceFragments = 0
+        public var omittedMappingRules = 0
+        public var subjectsExceedBudget = false
+    }
     public struct CompilerEdge: Codable, Sendable {
         public var caller: String
         public var callee: String
@@ -119,7 +128,7 @@ public struct UIReachabilityPrediction: Codable, Sendable {
 }
 
 public enum UIReachabilityPrompt {
-    public static let version = "ui-reachability-v3"
+    public static let version = "ui-reachability-v4"
     public static let maximumInputBytes = 12_000
     public static let instructions = """
     Estimate whether running this XCUITest executes the target Swift function.
@@ -140,6 +149,9 @@ public enum UIReachabilityPrompt {
     are not runtime conditions or proven true in this snapshot. Do not turn a mapping
     into a hardcoded percentage. Explain which mapping and execution route support
     the score, or what evidence is missing, briefly.
+    Projected mapping rules retain only pair-relevant associations; projection
+    digests identify the original rules. Omitted associations, rules, source nodes
+    and edges are not evidence of non-execution. Conditions remain unevaluated.
     This is advisory and cannot justify excluding a test from a regression run.
     """
 
@@ -223,6 +235,8 @@ public enum UIReachabilityPreparation {
             var limitations = ["Reachability is not guaranteed by source or compiler edges; runtime state and UI dispatch may be missing."]
             var contextKind = "same-file-syntax-neighborhood"
             var compilerEdges: [UIReachabilityInput.CompilerEdge]?
+            var omittedEdges = 0
+            var compilerSourceRegions: [String: [SourceRegion]] = [:]
             // Include same-file callers, callees, setup/teardown and test helpers.
             // Names are hints, not authenticated cross-module call edges.
             let seeds = [function, test]
@@ -250,17 +264,32 @@ public enum UIReachabilityPreparation {
                 let roots = functionRoots.union(testRoots)
                 let neighborIDs = roots.union(roots.flatMap { dependencies.functions[$0]?.dependencies ?? [] })
                     .union(dependencies.functions.values.filter { !$0.dependencies.isDisjoint(with: roots) }.map(\.id))
-                let sortedIDs = neighborIDs.sorted()
-                compilerEdges = []
+                func priority(_ id: String) -> Int {
+                    guard let node = dependencies.functions[id] else { return 20 }
+                    let projectSource = node.regions.contains { !$0.path.hasPrefix("/") && $0.path.hasSuffix(".swift") }
+                    if !projectSource { return 10 }
+                    if ["implicit closure", "reabstraction thunk", "partial apply"].contains(where: { node.name.contains($0) }) { return 4 }
+                    if roots.contains(id) { return 0 }
+                    if !node.dependencies.isDisjoint(with: functionRoots) { return 1 }
+                    if functionRoots.contains(where: { dependencies.functions[$0]?.dependencies.contains(id) == true }) { return 2 }
+                    return 3
+                }
+                let sortedIDs = neighborIDs.sorted { (priority($0), $0) < (priority($1), $1) }
+                compilerSourceRegions = Dictionary(uniqueKeysWithValues: sortedIDs.map { ($0, dependencies.functions[$0]?.regions ?? []) })
+                var edgeCandidates: [(Int, String, String, UIReachabilityInput.CompilerEdge)] = []
                 for id in sortedIDs {
                     guard let node = dependencies.functions[id] else { continue }
                     for callee in node.dependencies.sorted() where roots.contains(id) || roots.contains(callee) {
-                        if compilerEdges!.count < 64 {
-                            compilerEdges!.append(.init(caller: node.name, callee: dependencies.functions[callee]?.name ?? callee))
-                        }
+                        // Prefer project callback routes to SDK/assertion edges.
+                        let rank = max(priority(id), priority(callee))
+                        edgeCandidates.append((rank, id, callee,
+                            .init(caller: node.name, callee: dependencies.functions[callee]?.name ?? callee)))
                     }
                 }
-                limitations.append("Compiler neighborhood is limited to one hop, 32 nodes and 64 edges; it may be incomplete.")
+                edgeCandidates.sort { ($0.0, $0.1, $0.2) < ($1.0, $1.1, $1.2) }
+                compilerEdges = edgeCandidates.prefix(64).map { $0.3 }
+                omittedEdges = max(0, edgeCandidates.count - 64)
+                limitations.append("Compiler neighborhood is one hop; at most 32 source nodes and 64 edges are considered for packing. Missing neighbor source is counted in contextBudget.")
                 for id in sortedIDs.prefix(32) {
                     guard let node = dependencies.functions[id] else { continue }
                     for region in node.regions.sorted(by: { ($0.path, $0.startLine) < ($1.path, $1.startLine) }) {
@@ -270,21 +299,25 @@ public enum UIReachabilityPreparation {
                             let all = try fragments(revision, region.path)
                             let fragment = try resolve(all, .init(path: region.path, line: region.startLine))
                             if seen.insert(fragment.region).inserted { context.append(fragment) }
-                        } catch { limitations.append("Missing compiler neighbor source: \(node.name)") }
+                        } catch { /* Missing source is counted after packing. */ }
                     }
                 }
             } else {
                 limitations.append("No compiler graph supplied. Same-file call names can be ambiguous; cross-file callers, fixtures and helpers are absent.")
             }
-            // Bound optional context only; preserve both complete subject declarations.
-            var bytes = 0
-            let originalCount = context.count
-            context = context.filter { fragment in
-                let size = fragment.source.utf8.count
-                guard bytes + size <= 4_000 else { return false }
-                bytes += size; return true
+            // Put callback callers and direct test helpers before unrelated
+            // same-file lifecycle declarations. Stable tie-breaking is important
+            // because finite budgets cannot retain every candidate.
+            func contextPriority(_ fragment: UIReachabilityInput.Fragment) -> Int {
+                if fragment.calls.contains(function.name) { return 0 }
+                if test.calls.contains(fragment.name) { return 1 }
+                if fragment.scope == test.scope && fragment.region.path == test.region.path { return 2 }
+                return 3
             }
-            if context.count != originalCount { limitations.append("Optional context omitted \(originalCount - context.count) declarations to fit the input budget.") }
+            context.sort {
+                (contextPriority($0), $0.region.path, $0.region.startLine) <
+                (contextPriority($1), $1.region.path, $1.region.startLine)
+            }
             var input = UIReachabilityInput(revision: revision, testIdentifier: spec.testIdentifier,
                 function: function, test: test, context: context, contextKind: contextKind, limitations: limitations, compilerEdges: compilerEdges)
             if loadedMappingRevisions.insert(revision).inserted {
@@ -304,24 +337,9 @@ public enum UIReachabilityPreparation {
                 if priority(lhs) != priority(rhs) { return priority(lhs) > priority(rhs) }
                 return (lhs.origin, lhs.location, lhs.feature.name) < (rhs.origin, rhs.location, rhs.feature.name)
             }
-            if mappingContext.rules.count > 16 {
-                mappingContext.omittedRuleCount = mappingContext.rules.count - 16
-                mappingContext.rules = Array(mappingContext.rules.prefix(16))
-            }
             input.mappings = mappingContext
-            var removedForBudget = false
-            while (try? UIReachabilityPrompt.render(input)) == nil && !input.context.isEmpty {
-                input.context.removeLast()
-                if !removedForBudget { input.limitations.append("Additional optional context omitted to fit the serialized prompt budget.") }
-                removedForBudget = true
-            }
-            if (input.mappings?.omittedRuleCount ?? 0) > 0 || (try? UIReachabilityPrompt.render(input)) == nil {
-                input.limitations.append("Mapping rules may be omitted to fit the prompt budget; inspect omittedRuleCount. Dependency context may be incomplete; absence is not negative evidence.")
-            }
-            while (try? UIReachabilityPrompt.render(input)) == nil, !(input.mappings?.rules.isEmpty ?? true) {
-                input.mappings?.rules.removeLast()
-                input.mappings?.omittedRuleCount += 1
-            }
+            input = try UIReachabilityContextBudget.pack(input, compilerSourceRegions: compilerSourceRegions,
+                                                       omittedEdges: omittedEdges)
             cases.append(.init(id: spec.id, input: input,
                 expected: spec.expected, evidenceKind: spec.evidenceKind, evidence: spec.evidence))
         }

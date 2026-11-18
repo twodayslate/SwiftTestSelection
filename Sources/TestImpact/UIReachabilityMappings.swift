@@ -15,6 +15,12 @@ public struct UIReachabilityMappings: Codable, Sendable {
         public var matchingFunctionSourcePatterns: [String]
         /// Nil means that no compiler identity was available to resolve symbols.
         public var matchingFunctionSymbolPatterns: [String]?
+        /// A pair-specific projection is evidence about this pair, not a complete mapping contract.
+        public var projection: Projection? = nil
+        public struct Projection: Codable, Sendable {
+            public var originalFeatureDigest: String
+            public var omittedAssociations: [String: Int]
+        }
     }
     public var rules: [Rule] = []
     public var runtimeDependencyPolicy: UIFeatureMappings.RuntimeDependencyPolicy?

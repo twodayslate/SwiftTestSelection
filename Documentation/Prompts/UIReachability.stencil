@@ -19,6 +19,7 @@ Calls: {{ fragment.calls|json }}
 {% endfor %}
 
 Compiler edges: {{ compilerEdges|json }}
+Omitted context: {{ contextBudget|json }}
 {% if mappings %}
 Declared mapping evidence (including binding status and limitations):
 {{ mappings|json }}
