@@ -1,0 +1,26 @@
+Revision: {{ revision|required }}
+
+Target function: {{ function.scope }}.{{ function.name }}
+Location: {{ function.region.path }}:{{ function.region.startLine }}
+Calls: {{ function.calls|json }}
+{{ function.source|required }}
+
+UI test: {{ testIdentifier|required }}
+Location: {{ test.region.path }}:{{ test.region.startLine }}
+Calls: {{ test.calls|json }}
+{{ test.source|required }}
+
+Context kind: {{ contextKind }}
+{% for fragment in context %}
+Related declaration: {{ fragment.scope }}.{{ fragment.name }}
+Location: {{ fragment.region.path }}:{{ fragment.region.startLine }}
+Calls: {{ fragment.calls|json }}
+{{ fragment.source }}
+{% endfor %}
+
+Compiler edges: {{ compilerEdges|json }}
+{% if mappings %}
+Declared mapping evidence (including binding status and limitations):
+{{ mappings|json }}
+{% endif %}
+Limitations: {{ limitations|json }}

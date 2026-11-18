@@ -13,6 +13,17 @@ private let usage = """
 swift-test-impact — compiler-derived test selection for Swift and Xcode
 
 USAGE
+  swift-test-impact ai status [--output FILE]
+  swift-test-impact ai prepare --repository PATH --cases FILE [--graph FILE] [--mappings REPO_PATH] --output FILE
+  swift-test-impact ai render --dataset FILE [--prompt-template FILE] [--instructions-template FILE] [--output FILE]
+  swift-test-impact ai evaluate --dataset FILE [--confidence-threshold 75]
+                              [--prompt-template FILE] [--instructions-template FILE] [--output FILE]
+  AI prepare/render/evaluate are experiment and prompt-inspection tools.
+  Normal Xcode selection: select <Xcode options> --base REV --head REV [--ai | --no-ai]
+      [--confidence-threshold 75] [--ai-max-pairs 100]
+      [--prompt-template FILE] [--instructions-template FILE]
+  AI is off by default. --ai supplements compiler/mapping selection, never removes
+  its tests, and retains unresolved predictions. --run executes the combined result.
   swift-test-impact mapping-review --graph FILE [--mappings PROPOSED.json]
                            [--base-graph FILE --changes FILE.json] [--output FILE]
   swift-test-impact inline-audit --graph FILE [--output FILE]
@@ -133,6 +144,7 @@ private struct Options {
     var cachePath: String?
     var cacheContext: String?
     var cacheMaxBytes: Int64 = 5 * 1_024 * 1_024 * 1_024
+    var aiConfiguration: AISelectionConfiguration?
 
     init(_ arguments: [String]) throws {
         guard let first = arguments.first, ["graph", "select", "run", "verify-build"].contains(first) else {
@@ -160,21 +172,39 @@ private struct Options {
         var discoveryContext: String?
         var silCapture: String?
         var buildTimeSIL: String?
+        var aiEnabled = false
+        var confidenceThreshold = 75
+        var aiMaxPairs = 100
+        var promptTemplate: String?
+        var instructionsTemplate: String?
         while index < arguments.count {
             let flag = arguments[index]
             index += 1
             guard seen.insert(flag).inserted else { throw ImpactError("Repeated option: \(flag)") }
+            if flag == "--ai" || flag == "--no-ai" {
+                guard !(seen.contains("--ai") && seen.contains("--no-ai")) else { throw ImpactError("Choose --ai or --no-ai, not both") }
+                aiEnabled = flag == "--ai"; continue
+            }
             if flag == "--run" { run = true; continue }
             if flag == "--merge-base" { mergeBase = true; continue }
             if flag == "--head-only" { headOnly = true; continue }
             if flag == "--full-suite" { fullSuite = true; continue }
             if flag == "--strict-mappings" { strictMappings = true; continue }
-            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--cached-base-policy", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture", "--build-time-sil", "--selection-scopes", "--helper-binding-reviews"].contains(flag), index < arguments.count else {
+            guard ["--package-path", "--format", "--output", "--base", "--project", "--workspace", "--scheme", "--destination", "--configuration", "--test-plan", "--head", "--mappings", "--derived-data", "--build-log", "--build-settings", "--xctestrun", "--revision", "--base-graph", "--head-graph", "--test-products", "--analysis-cache", "--cache-context", "--cache-max-bytes", "--cached-base-policy", "--retain-build", "--report", "--extraction-workers", "--discovery-cache", "--discovery-context", "--sil-capture", "--build-time-sil", "--selection-scopes", "--helper-binding-reviews", "--confidence-threshold", "--ai-max-pairs", "--prompt-template", "--instructions-template"].contains(flag), index < arguments.count else {
                 throw ImpactError("Unknown option or missing value: \(flag)")
             }
             let value = arguments[index]
             index += 1
             switch flag {
+            case "--confidence-threshold":
+                guard let threshold = Int(value) else { throw ImpactError("Confidence threshold must be an integer from 0 through 100") }
+                try UIReachabilitySelection.validateThreshold(threshold)
+                confidenceThreshold = threshold
+            case "--ai-max-pairs":
+                guard let limit = Int(value), limit > 0 else { throw ImpactError("--ai-max-pairs must be positive") }
+                aiMaxPairs = limit
+            case "--prompt-template": promptTemplate = value
+            case "--instructions-template": instructionsTemplate = value
             case "--selection-scopes": selectionScopes = try JSONDecoder().decode(SelectionScopes.self, from: Data(contentsOf: URL(fileURLWithPath: value)))
             case "--discovery-cache": discoveryCache = value
             case "--discovery-context": discoveryContext = value
@@ -218,6 +248,27 @@ private struct Options {
             case "--test-plan": testPlan = value
             default: break
             }
+        }
+        let aiTuning = !seen.isDisjoint(with: ["--confidence-threshold", "--ai-max-pairs", "--prompt-template", "--instructions-template"])
+        if aiEnabled || seen.contains("--no-ai") || aiTuning {
+            guard command == "select" else { throw ImpactError("AI flags apply to normal select; use select --ai [--run]") }
+            guard aiEnabled || seen.contains("--no-ai") || !aiTuning else { throw ImpactError("AI tuning options require --ai (or --no-ai to disable them)") }
+        }
+        if aiEnabled {
+            guard head != nil, project != nil || workspace != nil else {
+                throw ImpactError("--ai requires Xcode select with --head so model evidence matches the selected revision")
+            }
+            if let output {
+                let destination = URL(fileURLWithPath: output).standardizedFileURL.resolvingSymlinksInPath()
+                guard ![promptTemplate, instructionsTemplate].compactMap({ $0 }).contains(where: {
+                    URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath() == destination
+                }) else { throw ImpactError("Report output must not overwrite prompt templates") }
+            }
+            let templates = try UIReachabilityPromptTemplates(
+                instructionsTemplate: instructionsTemplate.map { try String(contentsOfFile: $0, encoding: .utf8) } ?? UIReachabilityPrompt.instructions,
+                promptTemplate: promptTemplate.map { try String(contentsOfFile: $0, encoding: .utf8) } ?? UIReachabilityPromptTemplates.defaultPrompt)
+            aiConfiguration = .init(confidenceThreshold: confidenceThreshold, maximumPairs: aiMaxPairs, templates: templates)
+            try aiConfiguration?.validate()
         }
         if cachePath != nil || cacheContext != nil || seen.contains("--cache-max-bytes") || seen.contains("--cached-base-policy") {
             guard cachePath != nil, cacheContext?.isEmpty == false, head != nil, command == "select",
@@ -339,6 +390,10 @@ private func render(_ report: ImpactReport) -> String {
     var lines = ["Selected \(report.selectedTests.count) of \(report.totalTests) tests", "Base: \(report.baseRevision)"]
     if let mode = report.analysisMode { lines.append("Analysis mode: " + mode) }
     if let head = report.headRevision { lines.append("Head: " + head + " (" + (report.comparisonMode ?? "direct") + ")") }
+    if let ai = report.aiSelection {
+        lines.append("AI supplement: \(ai.status), threshold \(ai.confidenceThreshold)%, added \(ai.addedTests.count) tests (\(ai.retainedUnknownTests.count) unknown)")
+        for note in ai.notes { lines.append("  " + note) }
+    }
     for decision in report.uiConditionDecisions ?? [] {
         lines.append("UI condition [\(decision.revision)] \(decision.feature): \(decision.result.status.rawValue)")
         func describe(_ result: UIConditionResult, indent: String) {
@@ -387,6 +442,11 @@ private func render(_ report: ImpactReport) -> String {
 let arguments = Array(CommandLine.arguments.dropFirst())
 if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h") {
     print(usage)
+} else if arguments.first == "ai" {
+    do { exit(try await AICommand.run(Array(arguments.dropFirst()))) }
+    catch {
+        FileHandle.standardError.write(Data("error: \(error)\n".utf8)); exit(1)
+    }
 } else if arguments.first == "coverage" {
     do { try CoverageCommand.run(Array(arguments.dropFirst())) }
     catch {
@@ -498,21 +558,28 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                     ? FileManager.default.temporaryDirectory.appendingPathComponent("swift-impact-execution-" + UUID().uuidString) : nil
                 defer { if let temporaryRetention { try? FileManager.default.removeItem(at: temporaryRetention) } }
                 let retained = options.retainedBuild.map { URL(fileURLWithPath: $0) } ?? temporaryRetention
-                let report: ImpactReport
-                if let headGraph, options.headOnly {
-                    let reviews = try options.helperBindingReviews.map {
-                        try JSONDecoder().decode([HelperBindingContract].self, from: Data(contentsOf: URL(fileURLWithPath: $0)))
+                let computeBaseline: (XcodeAnalysis) throws -> ImpactReport = { selectionAnalysis in
+                    if let headGraph, options.headOnly {
+                        let reviews = try options.helperBindingReviews.map {
+                            try JSONDecoder().decode([HelperBindingContract].self, from: Data(contentsOf: URL(fileURLWithPath: $0)))
+                        }
+                        return try selectionAnalysis.selectHeadOnly(base: options.base!, head: options.head!, mergeBase: options.mergeBase,
+                            fullSuite: options.fullSuite, headGraph: headGraph, bindingReviews: reviews,
+                            selectionScopes: options.selectionScopes, retainedGraphPath: options.headGraph)
+                    } else if let headGraph, let basePath = options.baseGraph {
+                        let baseGraph = try XcodeAnalysis.executionGraph(at: URL(fileURLWithPath: basePath))
+                        return try selectionAnalysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase,
+                            fullSuite: options.fullSuite, baseGraph: baseGraph, headGraph: headGraph)
+                    } else {
+                        return try selectionAnalysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite,
+                            cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) }, retainingBuildAt: retained, cachedBasePolicy: options.cachedBasePolicy, headOnly: options.headOnly, selectionScopes: options.selectionScopes)
                     }
-                    report = try analysis.selectHeadOnly(base: options.base!, head: options.head!, mergeBase: options.mergeBase,
-                        fullSuite: options.fullSuite, headGraph: headGraph, bindingReviews: reviews,
-                        selectionScopes: options.selectionScopes, retainedGraphPath: options.headGraph)
-                } else if let headGraph, let basePath = options.baseGraph {
-                    let baseGraph = try XcodeAnalysis.executionGraph(at: URL(fileURLWithPath: basePath))
-                    report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase,
-                        fullSuite: options.fullSuite, baseGraph: baseGraph, headGraph: headGraph)
+                }
+                let report: ImpactReport
+                if let ai = options.aiConfiguration {
+                    report = try await analysis.selectWithAI(configuration: ai, baseline: computeBaseline)
                 } else {
-                    report = try analysis.select(base: options.base!, head: options.head, mergeBase: options.mergeBase, fullSuite: options.fullSuite,
-                        cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) }, retainingBuildAt: retained, cachedBasePolicy: options.cachedBasePolicy, headOnly: options.headOnly, selectionScopes: options.selectionScopes)
+                    report = try computeBaseline(analysis)
                 }
                 let data = options.format == "json" ? try encoder.encode(report) : Data(render(report).utf8)
                 try write(data, to: options.output)

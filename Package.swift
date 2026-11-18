@@ -12,12 +12,14 @@ let package = Package(
         .executable(name: "swift-test-impact", targets: ["SwiftTestImpactCLI"])
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "600.0.1")
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "600.0.1"),
+        .package(url: "https://github.com/stencilproject/Stencil.git", exact: "0.15.1")
     ],
     targets: [
         .target(name: "TestImpact", dependencies: [
             .product(name: "SwiftParser", package: "swift-syntax"),
-            .product(name: "SwiftSyntax", package: "swift-syntax")
+            .product(name: "SwiftSyntax", package: "swift-syntax"),
+            .product(name: "Stencil", package: "Stencil")
         ]),
         .executableTarget(name: "SwiftTestImpactCLI", dependencies: ["TestImpact"]),
         .testTarget(name: "TestImpactTests", dependencies: ["TestImpact"])

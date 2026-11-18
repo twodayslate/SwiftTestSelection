@@ -93,7 +93,7 @@ private func capturedGraph(_ text: String, revision: String, context: [String: S
     return graph
 }
 
-@Test func cachedSelectionChecksProvenanceAndNeedsNeitherProductsNorCleanWorktree() throws {
+@Test func cachedSelectionChecksProvenanceAndNeedsNeitherProductsNorCleanWorktree() async throws {
     let root = try artifactTemporary()
     defer { try? FileManager.default.removeItem(at: root) }
     @discardableResult func git(_ args: String...) throws -> String {
@@ -119,6 +119,13 @@ private func capturedGraph(_ text: String, revision: String, context: [String: S
     let report = try analysis.select(base: base, baseGraph: old, headGraph: new)
     #expect(report.selectedTests == new.tests && report.headRevision == head && report.diagnostics.isEmpty)
     #expect(report.buildArtifactID == new.buildArtifact!.id)
+    let supplemented = try await analysis.selectWithAI(configuration: .init()) { selector in
+        try selector.select(base: base, baseGraph: old, headGraph: new)
+    }
+    #expect(supplemented.selectedTests == report.selectedTests)
+    #expect(supplemented.buildArtifactID == report.buildArtifactID)
+    #expect(supplemented.aiSelection?.status == "not-needed")
+    #expect(supplemented.aiSelection?.evaluation == nil)
     let empty = try analysis.select(base: head, baseGraph: new, headGraph: new)
     #expect(empty.selectedTests.isEmpty)
     #expect(try analysis.run(empty, using: new) == 0)

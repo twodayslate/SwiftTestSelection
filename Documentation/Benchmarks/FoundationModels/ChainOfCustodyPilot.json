@@ -1,0 +1,150 @@
+{
+  "advisoryOnly" : true,
+  "availability" : "unavailable: appleIntelligenceNotEnabled",
+  "datasetDigest" : "28aecf71891011662be357aba1e121f3f9b385bc3b196cc8eb10d090a1a4ad11",
+  "generatedAt" : "2026-11-17T05:45:53Z",
+  "metricsByEvidence" : {
+    "sourceReview" : {
+      "accuracyAmongAnswered" : null,
+      "answerRate" : 0,
+      "errors" : 12,
+      "falseNegative" : 0,
+      "falsePositive" : 0,
+      "precision" : null,
+      "recall" : 0,
+      "retainUnknownRecall" : 1,
+      "total" : 12,
+      "trueNegative" : 0,
+      "truePositive" : 0,
+      "unknownNegative" : 6,
+      "unknownPositive" : 6
+    }
+  },
+  "operatingSystem" : "Version 26.6.1 (Build 25G76)",
+  "promptVersion" : "ui-reachability-v1",
+  "provider" : "Apple Foundation Models (on-device)",
+  "rows" : [
+    {
+      "elapsedSeconds" : 0.0028880834579467773,
+      "id" : "pr361-scrollViewWillBeginDragging-related",
+      "inputDigest" : "69a24783773224b9168f8cedebd27d0e878cda40847e5794ffd5bf32ce398277",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 0.0027250051498413086,
+      "id" : "pr361-scrollViewWillBeginDragging-comparison",
+      "inputDigest" : "94f41f638a696507b33255caef76597c75151e205a9aca657df31f08245bfa70",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 0.002691030502319336,
+      "id" : "pr361-scrollViewDidScroll-related",
+      "inputDigest" : "eea0bd3efa3dec0545bbb24a38a3baea8a631c139807413e7af0ea176fa3a343",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 0.0026749372482299805,
+      "id" : "pr361-scrollViewDidScroll-comparison",
+      "inputDigest" : "896b8ef0f9ececb107991036b1a021b0463501d6815192c2576c41d3ad901149",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 0.002684950828552246,
+      "id" : "pr355-isUnread-related",
+      "inputDigest" : "3562c7e2a86649725421986da1eacf4a3405a27027f681479a33370d0481476a",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 0.002698063850402832,
+      "id" : "pr355-isUnread-comparison",
+      "inputDigest" : "7da3fcf0399fca974ef47a44467fc9a62455d519c316dbc3af6678fddfcea61e",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 0.0026350021362304688,
+      "id" : "pr355-markBlockRead-related",
+      "inputDigest" : "8a4eba1400ec7f5278a237ba37bee151597db79c12d7ec27508c72c2a08495eb",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 0.0026329755783081055,
+      "id" : "pr355-markBlockRead-comparison",
+      "inputDigest" : "b68895bf241307e3cc08e5a54e46bfc6093294ea60d8293d75e25b535a1b5800",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 0.0028229951858520508,
+      "id" : "pr365-markAllRead-related",
+      "inputDigest" : "1b241ca560d9755f43222a8fa39b0cca6fc429aa096bbfbeffea33fb2f1906eb",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 0.002678990364074707,
+      "id" : "pr365-markAllRead-comparison",
+      "inputDigest" : "78159ed485e9b2541af0407792483f74d873d070d9d2bdbec25f3e2c9c38296a",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 0.0026220083236694336,
+      "id" : "pr365-activityIndex-related",
+      "inputDigest" : "4d84266417ccfa446ff2537d3c49a200f1ae69444a5f5d8e6d12336e6f6901dd",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    },
+    {
+      "elapsedSeconds" : 0.007948994636535645,
+      "id" : "pr365-activityIndex-comparison",
+      "inputDigest" : "9a4c212a77627aad78cc6ff3ff27438afc3763cf5013f3a5d0382a8112575924",
+      "prediction" : {
+        "error" : "unavailable: appleIntelligenceNotEnabled",
+        "reason" : "Prediction unavailable",
+        "verdict" : "unknown"
+      }
+    }
+  ],
+  "schemaVersion" : 1,
+  "unlabeledCount" : 0
+}

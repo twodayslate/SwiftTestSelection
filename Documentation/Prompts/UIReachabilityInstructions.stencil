@@ -1,0 +1,5 @@
+{{ defaultInstructions }}
+
+In your short explanation, identify the UI action and the callback or lifecycle
+route that could reach the function. Distinguish a declared mapping association
+from a demonstrated call route. If that link is missing, say which link is missing.
