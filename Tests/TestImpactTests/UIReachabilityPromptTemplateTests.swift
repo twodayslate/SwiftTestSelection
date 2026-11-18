@@ -59,6 +59,36 @@ private func templateCase(_ id: String = "case") -> UIReachabilityCase {
     #expect(try UIReachabilityPromptTemplates(promptTemplate: "{{ test.source }}").digest == templates.digest)
 }
 
+@Test func aiStencilVersionsAndArchivesTrackBuiltInValues() throws {
+    let templates = UIReachabilityPromptTemplates(instructionsTemplate: "{{ defaultInstructions }}\n{{ outputContract }}")
+    let input = templateCase().input
+    let original = try templates.render(input)
+    for changeInstructions in [true, false] {
+        var changed = templates
+        if changeInstructions { changed.builtInInstructions = "Different release's built-in instructions" }
+        else { changed.builtInOutputContract = "Different release's output contract" }
+        let rendered = try changed.render(input)
+        #expect(rendered.instructions != original.instructions)
+        #expect(try changed.digest != templates.digest)
+        #expect(try changed.version != templates.version)
+        // Decoding must preserve the recorded values, not substitute this
+        // process's current defaults and silently change the rendered prompt.
+        let saved = try JSONDecoder().decode(UIReachabilityPromptTemplates.self, from: JSONEncoder().encode(changed))
+        #expect(try saved.render(input).instructions == rendered.instructions)
+        #expect(try saved.render(input).digest == rendered.digest)
+        #expect(try saved.digest == changed.digest)
+        #expect(try saved.version == changed.version)
+    }
+}
+
+@Test func aiStencilLegacyConfigurationsStillDecode() throws {
+    let data = Data(#"{"instructionsTemplate":"{{ defaultInstructions }}","promptTemplate":"{{ outputContract }}"}"#.utf8)
+    let legacy = try JSONDecoder().decode(UIReachabilityPromptTemplates.self, from: data)
+    let rendered = try legacy.render(templateCase().input)
+    #expect(rendered.instructions == UIReachabilityPrompt.instructions)
+    #expect(rendered.prompt == UIReachabilityPromptTemplates.outputContract)
+}
+
 @Test func aiStencilErrorsFailBeforeAnyModelCallsIncludingLaterRows() async throws {
     var second = templateCase("second")
     second.input.function.name = "second"

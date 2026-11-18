@@ -208,8 +208,15 @@ become error/unknown rows during evaluation (exit 2, retained for selection);
 `ai render` fails rather than emitting a partial preview. No prompt is silently
 truncated. These byte limits remain heuristics, not token-window guarantees.
 
-Reports store both template sources, engine/context versions, a configuration
-SHA-256 digest, and each pair's exact rendered-prompt digest. Custom configurations
+Reports store both template sources, the built-in instruction/output-contract
+values they use, engine/context versions, a configuration SHA-256 digest, and each
+pair's exact rendered-prompt digest. Context v2 includes the built-in values in
+the configuration digest, so changing them changes custom prompt versions even
+when template files still contain the same `{{ defaultInstructions }}` or
+`{{ outputContract }}` reference. Saved v2 configurations render with their recorded
+values. Legacy configurations without these fields continue using the installed
+defaults; their original unrecorded built-in values cannot be reconstructed from
+the template files alone. Custom configurations
 use `custom-stencil-v1:<digest>` as their prompt version. Each rendered pair is
 passed directly to the provider without re-rendering, so its recorded digest
 identifies the actual instructions/input used even with dynamic template tags.
@@ -476,9 +483,10 @@ The on-device graph-backed evaluation completed all eight requests without input
 budget or provider errors in 68.2 seconds. Three answers were unknown and remain
 selected conservatively. This validates packing and handoff, not prediction
 accuracy: the labels are source-review estimates, and no UI test bodies ran.
-The 50 targeted tests and CLI validation passed, including generated edge names,
+The 52 targeted tests and CLI validation passed, including generated edge names,
 long tests, projected mapping provenance/conditions/dependencies, omission counts,
-callback prioritization and subject-only oversize abstention.
+callback prioritization, subject-only oversize abstention, built-in prompt value
+fingerprints and archived/legacy template decoding.
 
 All 46 targeted tests passed after integrating AI into normal selection, including
 30 AI tests and existing saved-build, retained-build, head-only, and cache checks.
