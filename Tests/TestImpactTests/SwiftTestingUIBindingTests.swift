@@ -4,6 +4,57 @@ import Foundation
 import Testing
 @testable import TestImpact
 
+@Test func swiftTestingSelectionIsIndependentOfExtractionWorkerCount() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import Testing
+    import XCTest
+    @Test func unrelated() {}
+    final class Case: XCTestCase {
+        func testEdited() { XCTAssertTrue(true) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "XCTAssertTrue(true)", with: "XCTAssertTrue(false)")
+    try Data(after.utf8).write(to: root.appendingPathComponent("Tests.swift"))
+    func query(_ command: String, _ arguments: [String]) throws -> String {
+        try CommandRunner.run(command, arguments, at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    let platform = try query("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"])
+    let sdk = try query("xcrun", ["--sdk", "macosx", "--show-sdk-path"])
+    let compiler = try query("xcrun", ["--find", "swiftc"])
+    let architecture = try query("uname", ["-m"])
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let arguments = [compiler, "-module-name", "Tests", "-sdk", sdk, "-target", architecture + "-apple-macosx13.0",
+                     "-plugin-path", plugins.path, "-F", platform + "/Developer/Library/Frameworks",
+                     "-I", platform + "/Developer/usr/lib", root.appendingPathComponent("Tests.swift").path]
+    let log = "builtin-SwiftDriver -- " + arguments.map { "\"" + $0 + "\"" }.joined(separator: " ")
+    let tests = ["Tests/unrelated()", "Tests/Case/testEdited()"]
+    let sources = ["Tests:Tests.swift": SwiftSourceSnapshot.parse(after, path: "Tests.swift", module: "Tests")]
+    let base = XcodeHeadOnlySources(base: ["Tests:Tests.swift": .parse(before, path: "Tests.swift", module: "Tests")])
+    var reference: DependencyGraph?
+    for workers in [1, 2] {
+        let scratch = root.appendingPathComponent("extract-\(workers)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        var graph = XcodeCompilerGraph.extract(log: log, sourceRoot: root, directory: root, derived: scratch,
+            progress: { _ in }, ownership: ["Tests": ["Tests.swift"]], workers: workers)
+        #expect(graph.diagnostics.isEmpty)
+        #expect(graph.functions.values.compactMap(\.swiftTestingEmptyFactory) == ["top-level"])
+        XcodeCompilerGraph.bind(tests: tests, modules: ["Tests": "Tests"], sources: sources, graph: &graph)
+        #expect(graph.testDiagnostics.isEmpty)
+        if let reference {
+            #expect(graph.functions == reference.functions)
+            #expect(graph.tests == reference.tests)
+        } else { reference = graph }
+        var current = XcodeTestGraph(targets: [.init(name: "Tests", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: ["Tests.swift"])], tests: tests)
+        current.modules = ["Tests": "Tests"]; current.sources = sources; current.dependencies = graph
+        let report = XcodeHeadOnlySelector.select(current: current, source: base, changes: [.init(path: "Tests.swift")], baseRevision: "base")
+        #expect(report.selectedTests == [tests[1]])
+        #expect(report.diagnostics.isEmpty)
+    }
+}
+
 @Test func compiledSwiftTestingUIEntriesPreserveNestedAndStaticIdentifiers() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -146,13 +197,20 @@ import Testing
     """
     try Data(external.utf8).write(to: root.appendingPathComponent("External.swift"))
     _ = try CommandRunner.run("xcrun", compilerArguments + ["-module-name", "External", "-emit-module", root.appendingPathComponent("External.swift").path, "-emit-module-path", root.appendingPathComponent("External.swiftmodule").path], at: root)
+    let cache = try XcodeGraphCache(.init(directory: root.appendingPathComponent("cache"), context: "fixture"), progress: { _ in })
     func capture(_ text: String) throws -> (XcodeTestGraph, String) {
         try Data(text.utf8).write(to: root.appendingPathComponent("Tests.swift"))
         let sil = root.appendingPathComponent("UI.sil")
         _ = try CommandRunner.run("xcrun", compilerArguments + ["-module-name", "UI", "-emit-sil", "-whole-module-optimization", "-I", root.path, root.appendingPathComponent("Tests.swift").path, "-o", sil.path], at: root)
         let parsed = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
+        // Production module-cache reads cross the compact archive boundary
+        // before discovery binding, so exercise that order here as well.
+        let identity = ["fixture": text]
+        try cache.storeModule(parsed, identity: identity)
+        let restored = try #require(try cache.loadModule(identity))
+        #expect(restored.functions == parsed.functions)
         let source = SwiftSourceSnapshot.parse(text, path: "Tests.swift", module: "UI")
-        var graph = DependencyGraph(functions: parsed.functions)
+        var graph = DependencyGraph(functions: restored.functions)
         XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": source], graph: &graph)
         var current = XcodeTestGraph(targets: [.init(name: "UI", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: ["Tests.swift"])], tests: tests)
         current.sources = ["UI:Tests.swift": source]
@@ -186,6 +244,9 @@ import Testing
     }.joined(separator: "\n")
     let escaped = SILParser.parse(escapedSIL, module: "UI", sourceRoot: root)
     #expect(escaped.functions.values.allSatisfy { $0.swiftTestingEmptyFactory == nil })
-    let decoded = try JSONDecoder().decode(DependencyGraph.self, from: JSONEncoder().encode(current.dependencies!))
-    #expect(decoded.functions == current.dependencies?.functions)
+    for data in [try JSONEncoder().encode(current), try GraphArchive.encode(current)] {
+        let decoded = try GraphArchive.decode(data)
+        #expect(decoded.dependencies?.functions == current.dependencies?.functions)
+        #expect(decoded.dependencies?.testDiagnostics == current.dependencies?.testDiagnostics)
+    }
 }

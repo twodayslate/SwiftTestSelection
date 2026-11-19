@@ -452,8 +452,17 @@ The isolated 200-file reproducer's retained-artifact read fell from 15.495/15.45
 seconds before the review fix to 0.201/0.294 seconds afterward. The corresponding
 reads without a retained artifact took 0.214/0.216 seconds afterward. This measures
 only source loading, not an end-to-end consumer workflow or test execution.
-The final review fixes passed all 604 tests with
+The initial review fixes at `da8fd81` passed all 604 tests with
 `swift test -c release --jobs 3 --no-parallel` on Xcode 27.2 (358.040 seconds).
+
+The subsequent archive review found that compact SIL fragments dropped the
+factory proof before binding. The compact format now preserves this optional
+evidence for both SIL modules and Xcode graphs. Regression coverage loads a
+compiled module through the module cache before binding and compares actual
+one-worker and two-worker extraction: both must exclude the unrelated trait-free
+test. Archives written without the field remain readable with unproven evidence.
+After the archive fix, all 605 release tests passed on Xcode 27.2 in 374.958
+seconds, including the compiled worker-parity and module-cache regressions.
 
 The final #383 exact policy is preserved in
 [compressed JSON](OpenIssuesEvidence/consumer-383-policy.json.gz), with its
