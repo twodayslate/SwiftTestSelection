@@ -1053,7 +1053,8 @@ func headOnlyNestedOpaqueResultsRequireFallback(result: String) throws {
     #expect(cache.counts.blobReads == initialCounts.blobReads)
     #expect(cache.counts.parses == initialCounts.parses)
     #expect(cache.counts.parseHits > 0)
-    #expect(events.map(\.phase) == Array(repeating: ["scopeSourceSyntax", "scopeSelection"], count: 3).flatMap { $0 })
+    #expect(events.filter { $0.parentPhase == "selectionScopes" }.map(\.phase) == Array(repeating: ["scopeSourceSyntax", "scopeSelection"], count: 3).flatMap { $0 })
+    #expect(events.filter { $0.phase == "dependencyIndex" }.allSatisfy { $0.parentPhase == "scopeSelection" })
     for result in reports {
         let filtered = changes.filter { result.scope.paths.contains($0.path) }
         let oldSource = try uncachedHeadOnlySources(current: current, changes: filtered, base: base, root: root, mappingPath: ".swift-test-selection.json")

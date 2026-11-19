@@ -9,6 +9,29 @@ import Darwin
 /// Progress-only measurements for the analyzer process (not compiler children).
 struct AnalysisMeasurement {
     private let start = ContinuousClock.now
+    private let cpuStart = Self.cpuSeconds()
+
+    private static func cpuSeconds() -> Double {
+        #if canImport(Darwin)
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else { return 0 }
+        return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1e6
+        #else
+        return 0
+        #endif
+    }
+
+    func event(_ phase: String, revision: String, detail: String = "", parent: String? = nil) -> XcodeAnalysisEvent {
+        let duration = start.duration(to: .now).components
+        var event = XcodeAnalysisEvent(phase: phase, revision: revision,
+            seconds: Double(duration.seconds) + Double(duration.attoseconds) / 1e18, detail: detail, parentPhase: parent)
+        #if canImport(Darwin)
+        event.analyzerCPUSeconds = max(0, Self.cpuSeconds() - cpuStart)
+        var usage = rusage()
+        if getrusage(RUSAGE_SELF, &usage) == 0 { event.processPeakBytes = UInt64(max(0, usage.ru_maxrss)) }
+        #endif
+        return event
+    }
 
     func report(_ phase: String) -> String {
         let duration = start.duration(to: .now).components

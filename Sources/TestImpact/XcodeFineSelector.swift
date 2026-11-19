@@ -668,7 +668,7 @@ public enum XcodeFineSelector {
         guard overlapping == [unit.key] else { return false }
         return snapshot.tests.contains { test in
             let parts = test.split(separator: "/").map(String.init)
-            guard (2...3).contains(parts.count), let method = parts.last else { return false }
+            guard parts.count >= 2, let method = parts.last else { return false }
             let name = (unit.scope.isEmpty ? "" : unit.scope + ".") +
                 (method.contains("(") ? method : method + "()")
             return (graph.tests[test] ?? []).contains { id in

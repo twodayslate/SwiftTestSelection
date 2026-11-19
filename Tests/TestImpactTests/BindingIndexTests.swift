@@ -37,6 +37,9 @@ private func sameBinding(_ lhs: DependencyGraph, _ rhs: DependencyGraph) -> Bool
     let modules = ["Target": "UI", "OtherTarget": "Other"]
     var expected = graph
     ReferenceXcodeBinding.bind(tests: tests, modules: modules, sources: sources, graph: &expected)
+    // Xcode parameterized Swift Testing IDs now retain the same argument-
+    // generation uncertainty already required by SwiftPM discovery.
+    expected.testDiagnostics["Target/Child/parameters(a:)", default: []].append("Parameterized test arguments may execute outside the test body; compiler evidence for argument generation and traits is required")
     XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: sources, graph: &graph)
     #expect(sameBinding(graph, expected))
     #expect(graph.tests["Target/Child/missing()"] == [])

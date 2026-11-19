@@ -45,6 +45,9 @@ final class HelperBindingDigestCache {
     private var nodeDigests: [String: String] = [:]
     private var snapshots: [String: [(SnapshotInput, String)]] = [:]
     private var bindings: [String: [String: String]] = [:]
+    private var index: DependencyIndex?
+    private var indexTests: [String: Set<String>] = [:]
+    private(set) var indexComputations = 0
     private(set) var snapshotComputations = 0
     private(set) var snapshotHits = 0
     private(set) var nodeComputations = 0
@@ -58,6 +61,16 @@ final class HelperBindingDigestCache {
     /// a changed compiler graph. Equality covers all FunctionNode evidence.
     func matching(_ current: XcodeTestGraph) -> HelperBindingDigestCache {
         functions == (current.dependencies?.functions ?? [:]) ? self : .init(current: current)
+    }
+
+    func dependencyIndex(_ current: XcodeTestGraph) -> DependencyIndex? {
+        guard let graph = current.dependencies else { return nil }
+        // The graph's test roots contribute vertices as well as function edges.
+        guard functions == graph.functions else { return DependencyIndex(graph) }
+        if let index, indexTests == graph.tests { return index }
+        let built = DependencyIndex(graph)
+        index = built; indexTests = graph.tests; indexComputations += 1
+        return built
     }
 
     func snapshotDigest(_ snapshot: SwiftSourceSnapshot) -> String {

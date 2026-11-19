@@ -2,7 +2,15 @@
 
 Select Swift tests from a Git diff and a compiler-derived dependency graph. **No coverage baseline or initial full-suite run is required.**
 
-A Swift package providing a `swift-test-impact` executable and reusable `TestImpact` library. SwiftPM packages use a function dependency graph with XCTest and Swift Testing discovery. Xcode projects/workspaces select individual XCTest methods through syntax and compiler dependencies, with explicit feature mappings for XCUITest. It is experimental static analysis, not a guarantee of the smallest safe test set.
+A Swift package providing a `swift-test-impact` executable and reusable `TestImpact` library. SwiftPM packages use a function dependency graph with XCTest and Swift Testing discovery. Xcode projects/workspaces select individual XCTest and Swift Testing entries through syntax and compiler dependencies, with explicit feature mappings for UI tests. It is experimental static analysis, not a guarantee of the smallest safe test set.
+
+Xcode discovery preserves exact identifiers for top-level, nested, static and
+parameterized Swift Testing entries. Captured test factories contribute argument
+providers and test traits; suite factories are conservatively shared across their
+module's Swift Testing entries. Runtime trait/scoping callbacks and generic
+argument iteration retain fallback; factory references do not prove their effects.
+Switching test frameworks does not reveal cross-process app dependencies.
+See [current support and runner-validation limits](Documentation/OpenIssuesFollowup.md).
 
 Optional coverage-assisted UI mapping authoring is available through
 `coverage plan`, `coverage import`, and `coverage apply`. It proposes additive
@@ -508,7 +516,7 @@ shared files/preferences, and other runtime effects cannot depend on project cod
 outside those modules.** Compiler imports cannot prove that assertion. Do not add
 a contract to a suite with such dependencies merely to reduce the selected count.
 
-Both revisions must declare the identical contract. The analyzer validates
+Both revisions must declare the identical contract. In two-graph mode, the analyzer validates
 compiler-produced explicit-module import inventories, test-host settings, bound
 entries/lifecycle evidence, and explicit compiler references in each revision.
 Broad dispatch candidates outside the declared runtime universe do not contradict
@@ -522,6 +530,19 @@ or unresolved host does not invalidate a complete hostless boundary. These failu
 are recorded per target and retain conservative selection for the affected target.
 Missing target identities or an ambiguous compiler inventory still invalidate the
 whole runtime inventory.
+
+Head-only mode also supports a narrower hostless proof. It requires the complete
+resolved Git comparison, matching captured compiler/dependency/build audits,
+byte-identical sources inside the declared modules, unchanged build/resource/policy
+inputs, and unchanged source membership and declaration structure. Historical
+macro expansions, generated boundary sources, unowned files, hosted tests, or
+changes inside the boundary retain uncertainty. These checks use the full diff
+even for a filtered selection scope. Unchanged Git bytes may reuse head syntax;
+no base compiler graph is manufactured. The runtime contract's guarantees about
+loading, callbacks, IPC and shared state remain explicit user assertions.
+`runtimeBoundaryDecisions` records `validated`, `affected`, or `unproven` plus the
+specific missing evidence. This does not override other fallbacks or direct
+dependency selections. See [the implementation and validation limits](Documentation/OpenIssuesFollowup.md).
 
 Only production changes **entirely outside** that validated module closure can
 exclude its runtime-uncertainty fallback. Direct dependency selections always

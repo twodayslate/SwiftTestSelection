@@ -1,0 +1,97 @@
+// SPDX-FileCopyrightText: 2026 Zachary Gorak
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+import Foundation
+
+/// Swift Testing executes argument producers and traits through generated
+/// discovery functions, outside the source test body. Follow exact compiler
+/// references from SDK test factories to entry thunks; never infer a binding
+/// from a macro's generated display name or a source spelling alone.
+enum SwiftTestingDiscoveryRoots {
+    static let missingEvidence = "Swift Testing discovery roots are incomplete; compiler evidence for argument generation and traits is required"
+    static let runtimeEvidence = "Swift Testing argument/trait factory roots are bound, but runtime trait/scoping callbacks and generic argument-iteration witnesses remain unproven"
+
+    static func bind(modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph) {
+        guard !Set(modules.values).contains("Testing") else { return }
+        let entries = graph.tests
+        let sourceModules = Dictionary(grouping: sources, by: { String($0.key.prefix { $0 != ":" }) })
+        var testRegions: [String: [String: [SourceRegion]]] = [:], suiteCounts: [String: Int] = [:]
+        var currentMetadata = Set<String>()
+        for (module, files) in sourceModules {
+            if files.allSatisfy({ $0.value.parserVersion == SwiftSourceSnapshot.currentParserVersion }) { currentMetadata.insert(module) }
+            for unit in files.flatMap({ $0.value.units }) {
+                if unit.swiftTestingRole == "test" { testRegions[module, default: [:]][unit.region.path, default: []].append(unit.region) }
+                if unit.swiftTestingRole == "suite" { suiteCounts[module, default: 0] += 1 }
+            }
+        }
+        var entryTests: [String: Set<String>] = [:]
+        for (test, roots) in entries {
+            let name = test.split(separator: "/").dropFirst().joined(separator: ".")
+            for root in roots where graph.functions[root].map({ $0.name == name || $0.name == "static " + name }) == true {
+                entryTests[root, default: []].insert(test)
+            }
+        }
+        var factories: [String: Set<String>] = [:], suites: [String: Set<String>] = [:]
+        for node in graph.functions.values {
+            guard let references = node.compilerReferences else { continue }
+            if references.contains(where: { $0.hasPrefix("$s7Testing4TestV10__function") }) {
+                factories[node.module, default: []].insert(node.id)
+            }
+            if references.contains(where: { $0.hasPrefix("$s7Testing4TestV6__type") }) {
+                suites[node.module, default: []].insert(node.id)
+            }
+        }
+        var discovered: [String: Set<String>] = [:], incompleteFactories = Set<String>()
+        let ownedPrefixes = Set(modules.values).map { "$s" + String($0.utf8.count) + $0 }
+        for (module, roots) in factories.merging(suites, uniquingKeysWith: { $0.union($1) }) {
+            for root in roots {
+                var pending = [root], visited = Set<String>()
+                while let id = pending.popLast() {
+                    guard visited.insert(id).inserted else { continue }
+                    if let tests = entryTests[id], factories[module]?.contains(root) == true {
+                        for test in tests where modules[String(test.prefix { $0 != "/" })] == module {
+                            discovered[test, default: []].insert(root)
+                        }
+                        continue
+                    }
+                    guard let node = graph.functions[id] else {
+                        if ownedPrefixes.contains(where: id.hasPrefix) { incompleteFactories.insert(root) }
+                        continue
+                    }
+                    guard node.module == module, node.regions.isEmpty else { continue }
+                    guard let references = node.compilerReferences else { incompleteFactories.insert(root); continue }
+                    pending.append(contentsOf: references)
+                }
+            }
+        }
+        for (test, roots) in entries {
+            guard let module = modules[String(test.prefix { $0 != "/" })] else { continue }
+            let isWrittenTest = roots.contains { id in
+                entryTests[id]?.contains(test) == true && graph.functions[id]?.regions.contains { region in
+                    testRegions[module]?[region.path]?.contains { $0.intersects(region) } == true
+                } == true
+            }
+            guard isWrittenTest || discovered[test] != nil else { continue }
+            let factoryRoots = discovered[test] ?? []
+            // All suite factories in this module are retained. This deliberately
+            // overapproximates inherited/custom suite traits rather than guessing
+            // a precise hierarchy from generated symbol names.
+            graph.tests[test, default: []].formUnion(factoryRoots.union(suites[module] ?? []))
+            guard factoryRoots.count == 1, (suiteCounts[module] ?? 0) <= (suites[module]?.count ?? 0),
+                  currentMetadata.contains(module),
+                  factoryRoots.isDisjoint(with: incompleteFactories),
+                  (suites[module] ?? []).isDisjoint(with: incompleteFactories),
+                  !roots.isEmpty, graph.diagnostics.isEmpty else {
+                graph.testDiagnostics[test, default: []].append(missingEvidence)
+                continue
+            }
+            // Factory references cover producers, not the runtime invocation of
+            // TestTrait/TestScoping witnesses or custom Collection iteration.
+            // Keep explicit uncertainty even for nonparameterized trait-bearing
+            // tests; finding a constructor is not a lifecycle/effect proof.
+            graph.testDiagnostics[test]?.removeAll {
+                $0 == "Parameterized test arguments may execute outside the test body; compiler evidence for argument generation and traits is required"
+            }
+            graph.testDiagnostics[test, default: []].append(runtimeEvidence)
+        }
+    }
+}

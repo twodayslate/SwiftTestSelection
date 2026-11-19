@@ -10,8 +10,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 29 rejects assertion-configuration-dependent caller effects.
-    static let currentProofVersion = 29
+    // Version 31 also checks bounded, nonescaping local function bodies.
+    static let currentProofVersion = 31
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -69,7 +69,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     }
 
     private static let allowedGlobals = assertions.union(["NSPredicate", "XCUIElement", "XCTAttachment", "CGRect", "CGVector", "max"])
-    private static let valueTypes: Set<String> = ["String", "Bool", "Int", "Double", "XCUIApplication", "XCUIElement",
+    private static let valueTypes: Set<String> = ["StaticString", "Swift.StaticString", "UInt", "Swift.UInt", "String", "Bool", "Int", "Double", "XCUIApplication", "XCUIElement",
         "Swift.String", "Swift.Bool", "Swift.Int", "Swift.Double", "XCTest.XCUIApplication", "XCTest.XCUIElement"]
     // Every accepted bare global must participate in the whole-source binding
     // audit, including deleted/unowned base files. A head SDK binding cannot
@@ -192,9 +192,22 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         return Owner(methods: methods, containers: Set([type.id] + extensions.map(\.id)))
     }
 
-    private static func primitiveDefault(_ parameter: FunctionParameterSyntax) -> Bool {
+    static func supportedDefault(_ parameter: FunctionParameterSyntax) -> Bool {
         guard let value = parameter.defaultValue?.value else { return true }
+        if let label = diagnosticParameter(parameter), let macro = value.as(MacroExpansionExprSyntax.self),
+           macro.arguments.isEmpty, macro.leftParen == nil, macro.genericArgumentClause == nil, macro.trailingClosure == nil,
+           macro.additionalTrailingClosures.isEmpty {
+            return label == "file" ? ["file", "fileID", "filePath"].contains(macro.macroName.text) : macro.macroName.text == "line"
+        }
         return primitiveValue(value, type: parameter.type.trimmedDescription)
+    }
+
+    private static func diagnosticParameter(_ parameter: FunctionParameterSyntax) -> String? {
+        switch parameter.type.trimmedDescription {
+        case "StaticString", "Swift.StaticString": return "file"
+        case "UInt", "Swift.UInt": return "line"
+        default: return nil
+        }
     }
 
     /// Defaults may have separate SIL entry points from their owning declaration.
@@ -219,13 +232,28 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     static func unsupportedEffect(_ function: FunctionDeclSyntax, locations: SourceLocationConverter) -> String? {
         guard function.modifiers.map(\.name.text) == ["private"], !function.name.text.hasPrefix("test"),
               owner(of: function) != nil else { return nil }
-        if function.signature.parameterClause.parameters.contains(where: { !primitiveDefault($0) }) {
-            return "Default argument is not a primitive literal"
+        if function.signature.parameterClause.parameters.contains(where: { !supportedDefault($0) }) {
+            return "Default argument is neither a primitive literal nor a supported diagnostic source-location literal"
+        }
+        if let parameter = function.signature.parameterClause.parameters.first(where: { !valueTypes.contains($0.type.trimmedDescription) }) {
+            return "Parameter \((parameter.secondName ?? parameter.firstName).text) uses unsupported helper type \(parameter.type.trimmedDescription)"
         }
         guard let body = function.body else { return "Missing helper body" }
         if let owner = owner(of: function), safeBody(function, methods: owner.methods) != nil { return nil }
+        // This effect language receives application context as a parameter.
+        // Diagnose an unsupported application producer before blaming a later
+        // local function that may itself satisfy the bounded local-call proof.
+        if let token = body.tokens(viewMode: .sourceAccurate).first(where: {
+            guard $0.text == "XCUIApplication", let reference = $0.parent?.as(DeclReferenceExprSyntax.self) else { return false }
+            return reference.parent?.as(MemberAccessExprSyntax.self)?.declName.id != reference.id
+        }) {
+            return "Application construction/factory reference XCUIApplication at line \(locations.location(for: token.positionAfterSkippingLeadingTrivia).line) requires receiver initialization and mutable application-state effect evidence; supported helpers receive the application as an argument"
+        }
         // Report unsupported nested bindings without granting source-only isolation.
         for token in body.tokens(viewMode: .sourceAccurate) {
+            if let declaration = token.parent?.as(FunctionDeclSyntax.self), declaration.funcKeyword.id == token.id {
+                return "Nested local function \(declaration.name.text) at line \(locations.location(for: declaration.positionAfterSkippingLeadingTrivia).line) requires historical capture, mutation, recursion and nonescaping caller evidence"
+            }
             if let declaration = token.parent?.as(VariableDeclSyntax.self), declaration.bindingSpecifier.id == token.id,
                declaration.parent?.parent?.id != body.statements.id && declaration.parent?.parent?.parent?.id != body.id {
                 return "Nested local declaration at line \(locations.location(for: declaration.positionAfterSkippingLeadingTrivia).line) requires control-flow effect evidence"
@@ -395,15 +423,18 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         if let result = function.signature.returnClause?.type.trimmedDescription,
            !valueTypes.union(["Void", "()"]).contains(result) { return nil }
         var locals = Set<String>()
+        var diagnosticParameters: [String: String] = [:]
         for parameter in function.signature.parameterClause.parameters {
-            guard valueTypes.contains(parameter.type.trimmedDescription), primitiveDefault(parameter),
+            guard valueTypes.contains(parameter.type.trimmedDescription), supportedDefault(parameter),
                   parameter.attributes.isEmpty, parameter.modifiers.isEmpty, parameter.ellipsis == nil else { return nil }
             let name = (parameter.secondName ?? parameter.firstName).text
             guard !reservedNames.contains(name), name != "add" else { return nil }
             locals.insert(name)
+            diagnosticParameters[name] = diagnosticParameter(parameter)
         }
         let helpers = Set(methods.filter { $0.modifiers.map(\.name.text) == ["private"] }.map { $0.name.text })
         var attachments = Set<String>(), writesAttachment = false
+        var localFunctions = Set<String>()
         func references(_ node: Syntax) -> Bool {
             // A contextual type can invoke a project literal initializer even
             // when its expression contains only a literal. The head graph
@@ -462,6 +493,27 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             if let reference = node.as(DeclReferenceExprSyntax.self),
                reference.parent?.as(MemberAccessExprSyntax.self)?.declName.id != reference.id {
                 let name = reference.baseName.text
+                if localFunctions.contains(name) {
+                    // A local function is callable only as a direct statement.
+                    // Passing its value or wrapping the call in an autoclosure
+                    // would require a separate escape/lifetime proof.
+                    guard let call = reference.parent?.as(FunctionCallExprSyntax.self),
+                          call.calledExpression.id == reference.id, call.arguments.isEmpty,
+                          call.trailingClosure == nil, call.additionalTrailingClosures.isEmpty,
+                          call.parent?.is(CodeBlockItemSyntax.self) == true else { return false }
+                    return true
+                }
+                if let label = diagnosticParameters[name] {
+                    // Keep location values out of data flow, callbacks, return
+                    // values and fixture I/O. Only direct XCTest diagnostic
+                    // arguments are supported; compiler/binding audits below
+                    // still authenticate the actual assertion declaration.
+                    guard let argument = reference.parent?.as(LabeledExprSyntax.self),
+                          argument.expression.id == reference.id, argument.label?.text == label,
+                          let call = argument.parent?.parent?.as(FunctionCallExprSyntax.self),
+                          let assertion = call.calledExpression.as(DeclReferenceExprSyntax.self),
+                          assertions.contains(assertion.baseName.text) else { return false }
+                }
                 if helpers.contains(name) {
                     guard let call = reference.parent?.as(FunctionCallExprSyntax.self), call.calledExpression.id == reference.id else { return false }
                 } else if name == "add" {
@@ -477,10 +529,26 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
         // Add locals only after checking their initializer. Collecting every
         // binding up front could mistake `let value = value` for a local read.
         func statements(_ items: CodeBlockItemListSyntax) -> Bool {
-            let outerLocals = locals, outerAttachments = attachments
-            defer { locals = outerLocals; attachments = outerAttachments }
+            let outerLocals = locals, outerAttachments = attachments, outerFunctions = localFunctions
+            defer { locals = outerLocals; attachments = outerAttachments; localFunctions = outerFunctions }
             for statement in items {
-                if let variable = statement.item.as(VariableDeclSyntax.self) {
+                if let nested = statement.item.as(FunctionDeclSyntax.self) {
+                    let name = nested.name.text
+                    guard nested.attributes.isEmpty, nested.modifiers.isEmpty,
+                          nested.genericParameterClause == nil, nested.genericWhereClause == nil,
+                          nested.signature.parameterClause.parameters.isEmpty,
+                          nested.signature.effectSpecifiers == nil,
+                          nested.signature.returnClause.map({ ["Void", "()"].contains($0.type.trimmedDescription) }) ?? true,
+                          !locals.contains(name), !localFunctions.contains(name),
+                          !helpers.contains(name), !reservedNames.contains(name), name != "add",
+                          let nestedBody = nested.body else { return false }
+                    // Validate before adding the name: self recursion, forward
+                    // references and mutual recursion cannot acquire a proof.
+                    // Only already-bound immutable values are captured. General
+                    // writes, closures and declarations still fail references().
+                    guard statements(nestedBody.statements) else { return false }
+                    localFunctions.insert(name)
+                } else if let variable = statement.item.as(VariableDeclSyntax.self) {
                     guard variable.bindingSpecifier.text == "let", variable.attributes.isEmpty, variable.modifiers.isEmpty else { return false }
                     for binding in variable.bindings {
                         guard let name = binding.pattern.as(IdentifierPatternSyntax.self), binding.accessorBlock == nil,
@@ -493,7 +561,8 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
                         }
                         // Shadowing could redirect an attachment mutation to other state.
                         guard !locals.contains(name.identifier.text), !allowedGlobals.contains(name.identifier.text),
-                              !helpers.contains(name.identifier.text), name.identifier.text != "add" else { return false }
+                              !helpers.contains(name.identifier.text), !localFunctions.contains(name.identifier.text),
+                              name.identifier.text != "add" else { return false }
                         locals.insert(name.identifier.text)
                     }
                 } else if let sequence = statement.item.as(SequenceExprSyntax.self), sequence.elements.count == 3,

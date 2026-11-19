@@ -39,17 +39,27 @@ extension XcodeAnalysis {
         try validateMappings(in: current, revision: artifact.revision)
         let changes = try GitChanges.readComparison(base: comparison.base, head: comparison.head, at: root)
         let cache = try XcodeBaseSourceCache(root: root, base: comparison.base)
+        var events: [XcodeAnalysisEvent] = []
+        let sourceStart = AnalysisMeasurement()
         let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: comparison.base,
             root: root, mappingPath: options.mappingsPath, cache: cache)
+        events.append(sourceStart.event("baseSourceSyntax", revision: comparison.base))
         let digestCache = HelperBindingDigestCache(current: current)
+        let selectionStart = AnalysisMeasurement()
         var report = XcodeHeadOnlySelector.select(current: current, source: source, changes: changes,
-            baseRevision: comparison.base, documentation: Set(proof.documentation), buildEvidenceFailure: proof.uncertainty, digestCache: digestCache)
+            baseRevision: comparison.base, documentation: Set(proof.documentation), buildEvidenceFailure: proof.uncertainty, digestCache: digestCache,
+            measurement: { var event = $0; event.parentPhase = "selection"; events.append(event) })
+        events.append(selectionStart.event("selection", revision: artifact.revision))
         if let selectionScopes {
+            let scopesStart = AnalysisMeasurement()
             report.selectionScopes = try XcodeHeadOnlySelector.scopedReports(current: current, requests: selectionScopes,
                 changes: changes, baseRevision: comparison.base, headRevision: artifact.revision, root: root,
                 mappingPath: options.mappingsPath, documentation: Set(proof.documentation), buildEvidenceFailure: proof.uncertainty,
-                retainedGraphPath: retainedGraphPath, sourceCache: cache, digestCache: digestCache)
+                retainedGraphPath: retainedGraphPath, sourceCache: cache, digestCache: digestCache, measurement: { events.append($0) })
+            events.append(scopesStart.event("selectionScopes", revision: artifact.revision))
         }
+        events.append(.init(phase: "baseSourceCache", revision: comparison.base, seconds: 0, detail: cache.counts.detail))
+        report.analysisEvents = events
         report.headRevision = artifact.revision
         report.comparisonMode = comparison.mode
         report.buildArtifactID = artifact.id

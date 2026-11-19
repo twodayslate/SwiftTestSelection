@@ -45,6 +45,7 @@ public struct ImpactReport: Codable, Sendable {
     public var helperContractReviewContext: HelperContractReviewContext? = nil
     public var helperContractPreview: HelperContractPreview? = nil
     public var runtimeBoundaryDecisions: [RuntimeBoundaryDecision]? = nil
+    public var headOnlyDeclarationChanges: [HeadOnlyDeclarationChange]? = nil
     public var aiSelection: AISelectionSupplement? = nil
 
     public var filter: String? {

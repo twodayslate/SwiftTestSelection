@@ -447,6 +447,9 @@ enum XcodeCompilerGraph {
                             "init(", "__allocating_init(", "deinit", "__deallocating_deinit"]
         for node in graph.functions.values where !node.regions.isEmpty {
             entries[node.module, default: [:]][node.name, default: []].insert(node.id)
+            if node.name.hasPrefix("static ") {
+                entries[node.module, default: [:]][String(node.name.dropFirst(7)), default: []].insert(node.id)
+            }
             let variablePrefix = "variable initialization expression of "
             let variable = node.name.hasPrefix(variablePrefix)
             let name = variable ? String(node.name.dropFirst(variablePrefix.count)) :
@@ -467,7 +470,15 @@ enum XcodeCompilerGraph {
         }
         var bindings: [String: ClassBinding] = [:]
         for test in tests {
-            let parts = test.split(separator: "/").map(String.init)
+            var parts = test.split(separator: "/").map(String.init)
+            // Xcode preserves nested Swift Testing suite components in IDs.
+            // Keep the identifier intact for execution, joining only lookup scope.
+            if parts.count > 3, parts.last?.hasSuffix(")") == true {
+                parts = [parts[0], parts.dropFirst().dropLast().joined(separator: "."), parts.last!]
+            }
+            if parts.last?.contains(":") == true {
+                graph.testDiagnostics[test, default: []].append("Parameterized test arguments may execute outside the test body; compiler evidence for argument generation and traits is required")
+            }
             if parts.count == 2, let module = modules[parts[0]], parts[1].hasSuffix(")") {
                 graph.tests[test] = entries[module]?[parts[1]] ?? []
                 continue
@@ -521,5 +532,6 @@ enum XcodeCompilerGraph {
             if !roots.isEmpty { roots.formUnion(binding.hooks) }
             graph.tests[test] = roots
         }
+        SwiftTestingDiscoveryRoots.bind(modules: modules, sources: sources, graph: &graph)
     }
 }

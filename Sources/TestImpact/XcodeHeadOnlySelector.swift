@@ -13,12 +13,17 @@ struct XcodeHeadOnlySources {
     /// Git sources absent from the captured head inventory have unknown base ownership.
     var unownedBaseSources: [String: SwiftSourceSnapshot] = [:]
     var mappingPath: String = ".swift-test-selection.json"
+    /// Full Git comparison, never the filtered scope. Produced only by read().
+    var runtimeBoundaryEvidence: HeadOnlyRuntimeSourceEvidence? = nil
 
     static func read(current: XcodeTestGraph, changes: [FileChange], base: String, root: URL, mappingPath: String, cache: XcodeBaseSourceCache? = nil) throws -> Self {
         let cache = try cache ?? XcodeBaseSourceCache(root: root, base: base)
         try cache.validate(root: root, base: base)
         var result = Self(base: current.sources)
         result.mappingPath = mappingPath
+        if let artifact = current.buildArtifact {
+            result.runtimeBoundaryEvidence = try? cache.runtimeEvidence(headRevision: artifact.revision)
+        }
         var mappingDiagnostics: [String] = []
         if let mapping = try cache.content(path: mappingPath) {
             do {
@@ -38,7 +43,7 @@ struct XcodeHeadOnlySources {
         })
         let hasBindingContracts = !(current.mappings?.helperBindingContracts?.isEmpty ?? true) || !(result.mappings?.helperBindingContracts?.isEmpty ?? true)
         let hasContracts = hasBindingContracts || !HelperFormattingContracts.declarations(current.sources, current.mappings).isEmpty || !(result.mappings?.helperFormattingContracts?.isEmpty ?? true)
-        let auditCallers = !callerModules.isEmpty || hasContracts
+        let auditCallers = !callerModules.isEmpty || hasContracts || !(current.mappings?.testRuntimeBoundaries?.isEmpty ?? true)
         var basePaths: Set<String>?
         if auditCallers {
             basePaths = try cache.paths()
@@ -52,6 +57,16 @@ struct XcodeHeadOnlySources {
             // turn a proven absence into an unrelated scope diagnostic.
             if !paths.contains(path), let basePaths, !basePaths.contains(path) {
                 result.base.removeValue(forKey: key)
+                continue
+            }
+            if current.sources[key]?.parserVersion == SwiftSourceSnapshot.currentParserVersion,
+               let evidence = result.runtimeBoundaryEvidence, evidence.regularSourcePaths.contains(path),
+               let blob = evidence.sourceBlobIDs[path], current.sources[key]?.sourceBlobIDs?.contains(blob) == true,
+               basePaths?.contains(path) == true, !evidence.changedPaths.contains(path) {
+                // The complete Git diff authenticates identical bytes, including
+                // imports and source-location literals. Reuse only this native
+                // syntax snapshot; no historical compiler graph is invented.
+                cache.recordHeadSyntaxReuse()
                 continue
             }
             if let snapshot = try cache.snapshot(path: path, module: module) {
@@ -84,7 +99,8 @@ struct XcodeHeadOnlySources {
 /// This does not delegate to the two-graph selector with a synthetic previous.
 enum XcodeHeadOnlySelector {
     static func select(current: XcodeTestGraph, source: XcodeHeadOnlySources, changes: [FileChange],
-                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = [], applyHelperContracts: Bool = true, digestCache: HelperBindingDigestCache? = nil) -> ImpactReport {
+                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = [], applyHelperContracts: Bool = true, digestCache: HelperBindingDigestCache? = nil,
+                       measurement: (XcodeAnalysisEvent) -> Void = { _ in }) -> ImpactReport {
         let digestCache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
         let originalCurrent = current
         let mappingFilePresent = current.mappings != nil
@@ -97,8 +113,13 @@ enum XcodeHeadOnlySelector {
         var selected = Set<String>(), ignored = Set<String>(), fullReasons = Set<String>()
         var explanations: [TestExplanation] = [], diagnostics: [SelectionDiagnostic] = []
         var fallbackUnits: [SourceUnit] = []
+        let reviewStart = AnalysisMeasurement()
         let review = HelperFormattingContracts.validate(current: current, source: source, baseRevision: baseRevision)
         let bindings = HelperBindingContracts.validate(current: current, source: source, baseRevision: baseRevision, digestCache: digestCache)
+        measurement(reviewStart.event("helperReviewValidation", revision: baseRevision))
+        let indexStart = AnalysisMeasurement()
+        let dependencyIndex = digestCache.dependencyIndex(current)
+        measurement(indexStart.event("dependencyIndex", revision: baseRevision))
         var bindingDecisions = bindings.decisions
         var contractDecisions = review.decisions
         var evaluations: [HelperContractEvaluation] = []
@@ -159,7 +180,7 @@ enum XcodeHeadOnlySelector {
             fallback("head_only_inline_policy_changed", "Inline UI policy changed without base compiler bindings: " + policyPaths.sorted().joined(separator: ", "), tests: uiTests)
         }
         if !inline.features.isEmpty, let graph = current.dependencies {
-            let mi = MappingIndex(UIFeatureMappings(features: inline.features), snapshot: current, graph: graph, index: DependencyIndex(graph))
+            let mi = MappingIndex(UIFeatureMappings(features: inline.features), snapshot: current, graph: graph, index: dependencyIndex!)
             for feature in inline.features where feature.when == nil {
                 for entry in mi.unresolvedEntries[feature.name] ?? [] {
                     fallback("unresolved_mapping_boundary", "\(feature.name): no compiled boundary matches \(entry)", tests: Set(feature.tests ?? []))
@@ -202,10 +223,10 @@ enum XcodeHeadOnlySelector {
         let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
         let old = Dictionary(grouping: source.base.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
         let new = Dictionary(grouping: current.sources.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
-        let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries)
-        let dependencyIndex = current.dependencies.map(DependencyIndex.init)
+        let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries, index: dependencyIndex)
         var isolatedHelpers = Set<String>(), isolatedSDKHelpers = Set<String>()
         var declarationAudits: [HelperDeclarationAudit] = []
+        var declarationChanges: [HeadOnlyDeclarationChange] = []
         var changed: [SourceUnit] = []
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
         for key in Set(old.keys).union(new.keys).sorted() {
@@ -287,6 +308,7 @@ enum XcodeHeadOnlySelector {
                PrivateTestHelperIsolation.provesAddedEntry(unit, current: current, base: source.base) { continue }
             guard before.count == 1, after.count == 1, let a = before.first, let b = after.first,
                   a.kind == "function", b.kind == "function", a.region.path == b.region.path else {
+                declarationChanges.append(.describe(key: key, before: before, after: after, source: source))
                 let affectedPaths = Set(fallbackUnits.map(\.region.path)).sorted()
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
@@ -336,6 +358,7 @@ enum XcodeHeadOnlySelector {
             if let buildEvidenceFailure { fallback("head_only_build_evidence", buildEvidenceFailure) }
         }
         var mappingIndex: MappingIndex?
+        var runtimeDecisions: [RuntimeBoundaryDecision] = []
         if let graph = current.dependencies {
             let index = dependencyIndex!
             if let mappings = current.mappings { mappingIndex = MappingIndex(mappings, snapshot: current, graph: graph, index: index) }
@@ -396,12 +419,30 @@ enum XcodeHeadOnlySelector {
             let entriesOnly = !changed.isEmpty && changed.allSatisfy { isolatedHelpers.contains($0.key) || XcodeFineSelector.isTestEntry($0, in: current) }
             if !changed.isEmpty && !entriesOnly {
                 let opaque = index.paths(to: Set(graph.functions.values.filter(\.hasOpaqueRuntimeDependency).map(\.id)))
+                var boundedTargets = Set<String>()
+                let changedModules = Set(changed.map { String($0.key.prefix { $0 != ":" }) })
+                for boundary in current.mappings?.testRuntimeBoundaries ?? [] {
+                    let failure = boundary.headOnlyValidationFailure(current: current, source: source,
+                        baseRevision: baseRevision, buildEvidenceFailure: buildEvidenceFailure)
+                    let eligible = failure == nil && boundary.modules.isDisjoint(with: changedModules)
+                    if eligible { boundedTargets.insert(boundary.target) }
+                    runtimeDecisions.append(.init(target: boundary.target, revision: "head-only", modules: boundary.modules.sorted(),
+                        changedModules: changedModules.sorted(), boundedUncertaintyTests: eligible ? inventory.filter {
+                            target($0) == boundary.target && opaque.path(from: graph.tests[$0] ?? []) != nil
+                        }.sorted() : [],
+                        rationale: boundary.rationale, status: failure == nil ? (eligible ? "validated" : "affected") : "unproven",
+                        failures: failure.map { [$0] } ?? []))
+                    if let failure {
+                        diagnostics.append(.init(code: "head_only_runtime_boundary_unproven", message: failure, tests: []))
+                    }
+                }
                 let productionKeys = Set(production.map(\.key))
                 // App feature contracts do not isolate test helpers or lifecycle
                 // code. A mixed production edit must preserve their uncertainty.
                 let declaredUI = current.mappings?.runtimeDependencyPolicy == .declared && source.mappings?.runtimeDependencyPolicy == .declared &&
                     changed.allSatisfy { productionKeys.contains($0.key) || isolatedHelpers.contains($0.key) || XcodeFineSelector.isTestEntry($0, in: current) }
                 for test in inventory.sorted() {
+                    if boundedTargets.contains(target(test)) { continue }
                     if !production.isEmpty, uiTests.contains(test), declaredUI { continue }
                     if let path = opaque.path(from: graph.tests[test] ?? []) {
                         fallback("head_only_runtime_uncertainty", "Opaque head runtime dependency may reach the change; no base compiler evidence validates isolation for \(test)", tests: [test], path: path)
@@ -465,6 +506,8 @@ enum XcodeHeadOnlySelector {
                 "Tests are assumed independent. Non-UI runtime isolation is not inferred from base source imports; app-hosted and opaque runtime effects retain explicit fallbacks.",
                 "UI feature mappings are explicit dependency contracts, not measured coverage. Validate selections with full runs."])
         report.uiConditionDecisions = conditionDecisions.isEmpty ? nil : conditionDecisions
+        report.runtimeBoundaryDecisions = runtimeDecisions.isEmpty ? nil : runtimeDecisions.sorted { $0.target < $1.target }
+        report.headOnlyDeclarationChanges = declarationChanges.isEmpty ? nil : declarationChanges
         report.schemaVersion = 2; report.analysisMode = "head-only-git-syntax"
         report.onlyTestingArguments = report.selectedTests.map { "-only-testing:" + $0 }
         report.ignoredChanges = ignored.sorted()
@@ -499,7 +542,9 @@ enum XcodeHeadOnlySelector {
         let boundaries = evaluations.flatMap(\.encountered)
         report.formattingBoundaries = boundaries.isEmpty ? nil : boundaries
         if applyHelperContracts && (!declarationAudits.isEmpty || diagnostics.contains(where: { $0.code == "head_only_sdk_helper_boundary" }) || !newBindings.isEmpty) {
+            let contextStart = AnalysisMeasurement()
             report.helperBindingReviewContext = HelperBindingContracts.context(current: current, source: source, baseRevision: baseRevision, helpers: Set(evaluations.map(\.helper)), digestCache: digestCache)
+            measurement(contextStart.event("helperReviewContext", revision: baseRevision))
         }
         if !declarationAudits.isEmpty || !newBindings.isEmpty {
             let inventories = HelperDeclarationInventory.boundaries(current: current.sources, base: source.base, unownedBase: source.unownedBaseSources)
@@ -526,9 +571,11 @@ enum XcodeHeadOnlySelector {
                 buildContext: HelperFormattingContracts.buildContext(current), helperSymbols: helperSymbols)
         }
         if applyHelperContracts, !newContracts.isEmpty || !newBindings.isEmpty {
+            let previewStart = AnalysisMeasurement()
             let baseline = select(current: originalCurrent, source: source, changes: changes, baseRevision: baseRevision,
                 documentation: documentation, buildEvidenceFailure: buildEvidenceFailure,
                 excludedTestEntries: excludedTestEntries, applyHelperContracts: false, digestCache: digestCache)
+            measurement(previewStart.event("helperReviewPreview", revision: baseRevision))
             report.helperContractPreview = .init(withoutDeclarations: baseline.selectedTests, withDeclarations: report.selectedTests,
                 added: Set(report.selectedTests).subtracting(baseline.selectedTests).sorted(),
                 removed: Set(baseline.selectedTests).subtracting(report.selectedTests).sorted())
