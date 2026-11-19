@@ -21,9 +21,6 @@ struct XcodeHeadOnlySources {
         try cache.validate(root: root, base: base)
         var result = Self(base: current.sources)
         result.mappingPath = mappingPath
-        if let artifact = current.buildArtifact {
-            result.runtimeBoundaryEvidence = try? cache.runtimeEvidence(headRevision: artifact.revision)
-        }
         var mappingDiagnostics: [String] = []
         if let mapping = try cache.content(path: mappingPath) {
             do {
@@ -46,6 +43,11 @@ struct XcodeHeadOnlySources {
         let auditCallers = !callerModules.isEmpty || hasContracts || !(current.mappings?.testRuntimeBoundaries?.isEmpty ?? true)
         var basePaths: Set<String>?
         if auditCallers {
+            // Only caller audits can reuse unchanged head syntax or validate a
+            // runtime boundary. A scoped source read needs no full Git diff.
+            if let artifact = current.buildArtifact {
+                result.runtimeBoundaryEvidence = try? cache.runtimeEvidence(headRevision: artifact.revision)
+            }
             basePaths = try cache.paths()
             if basePaths == nil { result.diagnostics.append("Cannot enumerate base sources at \(base)") }
         }

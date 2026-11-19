@@ -92,8 +92,15 @@ this can overselect dependencies from unrelated suite traits. Factory matching
 requires a single matching factory, current native syntax metadata, complete
 generated references and enough suite factories. Missing/ambiguous factories,
 missing argument thunks and legacy metadata retain discovery fallback. Even when
-these roots are bound, runtime TestTrait/TestScoping callbacks and generic
-argument iteration retain explicit uncertainty. A compiled custom TestTrait
+these roots are bound, trait-bearing factories and generic argument iteration
+retain explicit runtime TestTrait/TestScoping uncertainty. A bounded SIL proof
+now exempts nonparameterized SDK factories whose trait array is a literal empty
+allocation and whose returned Test does not escape or get mutated. Top-level
+functions cannot inherit suite traits; member entries additionally require a
+local compiler declaration owner and all captured suite factories to prove empty
+traits. Extensions of imported suites retain fallback for unseen inherited
+traits. Unsupported SIL and old captures
+retain fallback. A compiled custom TestTrait
 control demonstrates that its `prepare(for:)` callback is not reached through
 the constructor graph. Source attribute spelling alone never proves a macro
 identity/effect, and factory binding alone cannot authorize exclusions.
@@ -422,7 +429,7 @@ diagnostic now names the `XCUIApplication` factory at
 requests receiver-initialization/mutable-application-state evidence. It no longer
 blames the supported shape of the later local function.
 
-The final Swift Testing safeguard deliberately reports runtime discovery
+The pre-review capture at commit `80dbee4` reports runtime discovery
 uncertainty beyond parameterized entries: 1,618 entries in #380 and 1,623 in #383.
 Factory bindings provide additional roots, but do not authenticate trait/scoping
 callbacks or generic iteration. These diagnostics are identical between the
@@ -431,6 +438,22 @@ change the selected IDs above. In #383, the Core decision names
 `CacheRecoveryTests/localCacheCloudRecoveryMarkerMergesAndClearsByRequestID()`
 and the unproven runtime callbacks, instead of a generic missing-root message.
 The consumer Core boundary remains `unproven`.
+
+PR #99 review follow-up removes the unconditional runtime diagnostic for proven
+trait-free entries. Compiled regressions cover top-level and suite-member tests,
+both selectors, custom traits, inherited traits, parameterized entries, and
+missing compiler proof. The full Git comparison is also now deferred until a
+caller/runtime-boundary audit actually needs it; an unaudited retained source
+read with 200 unrelated changed files exercises this path. The consumer timings,
+policy artifacts, and source hashes above remain historical evidence for
+`80dbee4`, not a rerun of these review fixes.
+
+The isolated 200-file reproducer's retained-artifact read fell from 15.495/15.453
+seconds before the review fix to 0.201/0.294 seconds afterward. The corresponding
+reads without a retained artifact took 0.214/0.216 seconds afterward. This measures
+only source loading, not an end-to-end consumer workflow or test execution.
+The final review fixes passed all 604 tests with
+`swift test -c release --jobs 3 --no-parallel` on Xcode 27.2 (358.040 seconds).
 
 The final #383 exact policy is preserved in
 [compressed JSON](OpenIssuesEvidence/consumer-383-policy.json.gz), with its

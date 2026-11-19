@@ -153,6 +153,7 @@ public enum SILParser {
         var tables: [String: Set<String>] = [:]
         var externalWitnesses: [String: Set<String>] = [:]
         var current: FunctionNode?
+        var testingFactoryLines: [String]?
         var pendingName = ""
         var pendingLocation: SourceRegion?
         var locations: [String: ClosedRange<Int>] = [:]
@@ -224,6 +225,7 @@ public enum SILParser {
                     }
                     if line.split(separator: " ", maxSplits: 2)[1] == "shared" { sharedSymbols.insert(match[0]) }
                     current = FunctionNode(id: match[0], module: module, name: pendingName.isEmpty ? match[0] : pendingName)
+                    testingFactoryLines = line.hasSuffix("-> @out Test {") ? [] : nil
                     current!.captureModules = [module]
                     current!.dynamicCallSignatures = []
                     current!.dynamicCallSites = []
@@ -269,12 +271,19 @@ public enum SILParser {
                 }
                 current!.dynamicDeclarationModules = Dictionary(uniqueKeysWithValues: current!.dynamicDeclarations.map { ($0, [module]) })
                 current!.compilerReferences = current!.dependencies
+                if let testingFactoryLines, current!.dependencies.contains(where: SwiftTestingFactoryProof.isFactory) {
+                    current!.swiftTestingEmptyFactory = SwiftTestingFactoryProof.emptyFactory(testingFactoryLines)
+                }
                 functions[current!.id] = current!
                 current = nil
                 return
             }
             if let found = location(line) { addLocation(found) }
             if line.hasPrefix("//") { return }
+            if testingFactoryLines != nil {
+                if testingFactoryLines!.count < 1024 { testingFactoryLines!.append(line) }
+                else { testingFactoryLines = nil }
+            }
 
             if line.hasPrefix("bb"), let block = Pattern.groups(Expressions.block, in: line)?.first {
                 currentBlock = block

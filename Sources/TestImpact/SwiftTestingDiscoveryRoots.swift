@@ -91,7 +91,17 @@ enum SwiftTestingDiscoveryRoots {
             graph.testDiagnostics[test]?.removeAll {
                 $0 == "Parameterized test arguments may execute outside the test body; compiler evidence for argument generation and traits is required"
             }
-            graph.testDiagnostics[test, default: []].append(runtimeEvidence)
+            let factoryKind = factoryRoots.first.flatMap { graph.functions[$0]?.swiftTestingEmptyFactory }
+            let emptySuites = (suites[module] ?? []).allSatisfy { graph.functions[$0]?.swiftTestingEmptyFactory == "suite" }
+            let localMember = factoryRoots.allSatisfy { $0.hasPrefix("$s" + String(module.utf8.count) + module) }
+            // Top-level functions cannot inherit suite traits. Member tests
+            // require empty traits in every captured suite until exact suite
+            // ownership is available. Extensions of imported types have a
+            // different mangled declaration owner and may inherit unseen traits.
+            // Legacy/unknown SIL stays conservative.
+            if factoryKind != "top-level" && !(factoryKind == "member" && localMember && emptySuites) {
+                graph.testDiagnostics[test, default: []].append(runtimeEvidence)
+            }
         }
     }
 }

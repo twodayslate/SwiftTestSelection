@@ -30,6 +30,29 @@ private struct SourceRepository {
     }
 }
 
+@Test func unauditedRetainedSourceReadSkipsFullComparison() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let before = "func value() -> Int { 0 }"
+    let after = "func value() -> Int { 1 }"
+    try repo.write("App.swift", before)
+    for index in 0..<200 { try repo.write("File\(index).txt", "before") }
+    let base = try repo.commit()
+    try repo.write("App.swift", after)
+    for index in 0..<200 { try repo.write("File\(index).txt", "after") }
+    let head = try repo.commit()
+    var current = XcodeTestGraph(targets: [], tests: [])
+    current.sources = ["App:App.swift": .parse(after, path: "App.swift", module: "App")]
+    current.buildArtifact = .init(revision: head, context: [:], toolchain: "fixture", buildLogDigest: "log", buildSettingsDigest: "settings", productsDirectory: repo.root.path, xctestrun: "fixture", products: [:])
+    let cache = try XcodeBaseSourceCache(root: repo.root, base: base)
+    let result = try XcodeHeadOnlySources.read(current: current, changes: [.init(path: "App.swift")], base: base, root: repo.root, mappingPath: "mapping.json", cache: cache)
+    #expect(result.runtimeBoundaryEvidence == nil)
+    #expect(cache.counts.treeReads == 0)
+    #expect(cache.counts.parses == 1)
+    #expect(cache.counts.headSyntaxReuse == 0)
+    #expect(result.base["App:App.swift"]?.units.map(\.fingerprint) == SwiftSourceSnapshot.parse(before, path: "App.swift", module: "App").units.map(\.fingerprint))
+}
+
 @Test(arguments: ["current", "legacy-parser", "missing-head", "archive-substitution"])
 func headSyntaxReuseAuthenticatesFullGitDiffAndParser(scenario: String) throws {
     let repo = try SourceRepository()
