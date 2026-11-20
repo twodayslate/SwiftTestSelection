@@ -48,7 +48,7 @@ import Testing
     let overlay = root.appendingPathComponent("headers#overlay.yaml")
     try Data("overlay bytes".utf8).write(to: overlay)
     try Data("module map bytes".utf8).write(to: root.appendingPathComponent("relative.modulemap"))
-    let log = "builtin-SwiftDriver -- \(bin.path)/swiftc -module-name UI -explicit-module-build @\(list.path) -vfsoverlay \(overlay.path) -Xcc -fmodule-map-file=relative.modulemap"
+    let log = "cd \(root.path)\nbuiltin-SwiftDriver -- \(bin.path)/swiftc -module-name UI -explicit-module-build @\(list.path) -vfsoverlay \(overlay.path) -Xcc -fmodule-map-file=relative.modulemap"
     let artifact = XcodeBuildArtifact(revision: "head", context: [:], toolchain: "compiler", buildLogDigest: XcodeGraphCache.digest(Data(log.utf8)), buildSettingsDigest: "settings", productsDirectory: root.path, xctestrun: "Tests.xctestrun", products: [:])
     let inputs = try ArtifactFiles.sourceInputs(log: log, directory: root)
     let valid = try HelperBindingBuildEvidence.capture(log: log, source: root, sourceInputs: inputs, artifact: artifact)
