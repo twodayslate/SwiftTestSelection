@@ -213,7 +213,11 @@ struct SDKReceiverOrigins {
                 return "; missing indirect-call error evidence; regenerate the graph from sealed SIL"
             }
             let reasons = (node.receiverErrorEffects ?? []).union(node.receiverIndirectErrorEffects ?? []).sorted()
-            return reasons.isEmpty ? "" : "; " + reasons.prefix(2).joined(separator: "; ")
+            let detail = reasons.isEmpty ? "" : "; " + reasons.prefix(2).joined(separator: "; ")
+            if reasons.contains("throwing callback parameter") {
+                return detail + "; missing call-site binding of the throwing callback and its error-formatting witnesses; an import/identity review or snapshot recording mode does not establish these effects"
+            }
+            return detail
         }
         func errorFormattingBlocker(_ inputs: Set<String>) -> String? {
             var pending = inputs, visited = Set<String>()
@@ -276,7 +280,11 @@ struct SDKReceiverOrigins {
                           (!node.uncertainties.contains("Indirect function invocation") || node.receiverIndirectErrorEffects?.isEmpty == true) else {
                         return "Unproven XCTest error formatting from an opaque callback in " + node.module + "." + node.name + errorEvidenceDetail(node)
                     }
-                    if let reason = errorFormattingBlocker(direct) { return reason }
+                    if let reason = errorFormattingBlocker(direct) {
+                        let locations = node.regions.sorted { ($0.path, $0.startLine) < ($1.path, $1.startLine) }
+                        let location = locations.first.map { " at " + $0.path + ":" + String($0.startLine) } ?? " (no physical source location)"
+                        return reason + "; inspected from " + node.module + "." + node.name + location
+                    }
                 }
                 var checked = node
                 // A final source-bound XCTest class has no descendant override.

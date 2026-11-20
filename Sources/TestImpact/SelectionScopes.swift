@@ -52,14 +52,15 @@ extension XcodeHeadOnlySelector {
             let paths = Set(scope.paths)
             let filtered = changes.filter { paths.contains($0.path) || ($0.previousPath.map(paths.contains) ?? false) }
             // Derive evidence independently, sharing only immutable reads/parses.
-            let sourceStart = Date()
+            let sourceStart = AnalysisMeasurement()
             let source = try XcodeHeadOnlySources.read(current: current, changes: filtered, base: baseRevision, root: root, mappingPath: mappingPath, cache: sourceCache)
-            measurement(.init(phase: "scopeSourceSyntax", revision: baseRevision, seconds: Date().timeIntervalSince(sourceStart), detail: scope.name))
-            let selectionStart = Date()
+            measurement(sourceStart.event("scopeSourceSyntax", revision: baseRevision, detail: scope.name, parent: "selectionScopes"))
+            let selectionStart = AnalysisMeasurement()
             var report = select(current: current, source: source, changes: filtered, baseRevision: baseRevision,
                                 documentation: documentation, buildEvidenceFailure: buildEvidenceFailure,
-                                excludedTestEntries: Set(scope.excludedTestEntries), digestCache: digestCache)
-            measurement(.init(phase: "scopeSelection", revision: headRevision, seconds: Date().timeIntervalSince(selectionStart), detail: scope.name))
+                                excludedTestEntries: Set(scope.excludedTestEntries), digestCache: digestCache,
+                                measurement: { var event = $0; event.parentPhase = "scopeSelection"; event.detail = scope.name; measurement(event) })
+            measurement(selectionStart.event("scopeSelection", revision: headRevision, detail: scope.name, parent: "selectionScopes"))
             for i in report.diagnostics.indices {
                 report.diagnostics[i].fallback?.selectionScope = scope.name
             }
@@ -70,7 +71,7 @@ extension XcodeHeadOnlySelector {
         }
     }
 
-    static func independentEntryKeys(current: XcodeTestGraph, excluding entries: Set<String>) -> Set<String> {
+    static func independentEntryKeys(current: XcodeTestGraph, excluding entries: Set<String>, index: DependencyIndex? = nil) -> Set<String> {
         guard !entries.isEmpty, let graph = current.dependencies else { return [] }
         // Missing roots and incomplete lifecycle bindings hide possible callers.
         // Keep the change roots so normal selection reports that uncertainty;
@@ -90,7 +91,7 @@ extension XcodeHeadOnlySelector {
             }
         }
         guard !candidates.isEmpty else { return [] }
-        let index = DependencyIndex(graph)
+        let index = index ?? DependencyIndex(graph)
         return Set(candidates.filter {
             isIndependentEntry($0, current: current, graph: graph, index: index, entries: entries)
         }.map(\.key))

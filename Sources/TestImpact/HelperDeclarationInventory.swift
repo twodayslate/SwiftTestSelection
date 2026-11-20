@@ -40,6 +40,10 @@ enum HelperDeclarationInventory {
             "preconcurrency", "inlinable", "usableFromInline", "discardableResult", "testable", "_exported",
             "Sendable", "escaping", "autoclosure", "convention"]
         let compilerLiterals: Set<String> = ["file", "fileID", "filePath", "line", "column", "function", "dsohandle"]
+        // These compiler expressions perform lookup but cannot introduce source
+        // declarations. Their runtime effects remain subject to the separate
+        // helper/body/reference proofs (which do not accept selector escapes).
+        let compilerExpressions: Set<String> = ["selector", "keyPath"]
         let expansionEffects = ["globals or operators", "SDK members or aliases", "conformances", "XCTest lifecycle or callbacks"]
         var result: [HelperDeclarationIssue] = []
         func add(_ token: TokenSyntax, kind: String, spelling: String, effects: [String], evidence: String) {
@@ -59,6 +63,7 @@ enum HelperDeclarationInventory {
                 add(token, kind: "declaration-macro", spelling: "#" + macro.macroName.text, effects: expansionEffects,
                     evidence: "Captured declaration expansion and ownership evidence is required at both revisions, including generated globals, operators and lifecycle declarations.")
             } else if let macro = token.parent?.as(MacroExpansionExprSyntax.self), token.id == macro.pound.id,
+                      !compilerExpressions.contains(macro.macroName.text),
                       !compilerLiterals.contains(macro.macroName.text) || macro.leftParen != nil || macro.genericArgumentClause != nil ||
                         macro.trailingClosure != nil || !macro.additionalTrailingClosures.isEmpty {
                 add(token, kind: "expression-macro", spelling: "#" + macro.macroName.text, effects: expansionEffects + ["hidden expression effects"],
@@ -69,6 +74,10 @@ enum HelperDeclarationInventory {
                     guard !unsupportedImports.isEmpty else { continue }
                     add(token, kind: "unresolved-global-actor", spelling: "@" + name, effects: expansionEffects + ["actor isolation"],
                         evidence: "Authenticate the actor/attribute identity and module exports at both revisions. Unsupported import context: " + unsupportedImports.sorted().joined(separator: ", ") + ". A namesake macro cannot be excluded from source imports alone.")
+                } else if name == "unchecked", attribute.parent?.parent?.is(AttributedTypeSyntax.self) == true {
+                    // A language conformance modifier, not an attached macro.
+                    // The written inheritance/conformance is still inventoried.
+                    continue
                 } else if !knownAttributes.contains(name) {
                     add(token, kind: "unresolved-attribute", spelling: "@" + name,
                         effects: expansionEffects + ["wrapper storage/accessors or result-builder calls"],

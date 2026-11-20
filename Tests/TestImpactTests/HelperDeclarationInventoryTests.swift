@@ -64,3 +64,36 @@ import Testing
         #expect(boundaries.allSatisfy { $0.issues.first?.requiredEvidence.contains("Refresh source proofs") == true })
     }
 }
+
+@Test func compiledCompilerLookupExpressionsDoNotPretendToBeExpansionMacros() throws {
+    let text = """
+    import XCTest
+    final class Holder: NSObject, @unchecked Sendable {
+        @objc dynamic var title: String { "" }
+        @objc func action() {}
+    }
+    func lookup() {
+        _ = #selector(Holder.action)
+        _ = #keyPath(Holder.title)
+    }
+    """
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let current = try boundaryGraph(["UI.swift": text], tests: [], root: root)
+    let source = try #require(current.sources["UI:UI.swift"])
+    #expect(source.helperDeclarationIssues == [])
+    #expect(source.helperDeclarationsComplete == true)
+    #expect(source.inheritance.values.contains { $0.contains { $0.contains("Sendable") } })
+    #expect(source.units.first { $0.helperCallableName == "lookup" }?.headOnlyBodySupported == false)
+    // Ordinary namesakes and arbitrary expression/declaration macros remain
+    // inventoried; the language lookup exception grants no expansion contract.
+    let opaque = SwiftSourceSnapshot.parse("""
+    @unchecked struct Fake {}
+    @Observable class Model { var value = 0 }
+    let result = #customSelector()
+    #generateBindings()
+    """, path: "Other.swift", module: "UI")
+    #expect(opaque.helperDeclarationsComplete == false)
+    #expect(opaque.helperDeclarationIssues?.map(\.spelling) == ["@unchecked", "@Observable", "#customSelector", "#generateBindings"])
+}

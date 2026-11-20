@@ -136,6 +136,8 @@ public struct RuntimeBoundaryDecision: Codable, Sendable {
     /// Only the uncertainty fallback is excluded; direct dependency selection wins.
     public var boundedUncertaintyTests: [String]
     public var rationale: String
+    public var status: String? = nil
+    public var failures: [String]? = nil
 }
 
 extension TestRuntimeBoundary {
@@ -158,9 +160,16 @@ extension TestRuntimeBoundary {
             return "Incomplete compiler/source graph for \(target)"
         }
         let tests = snapshot.tests.filter { $0.hasPrefix(target + "/") }
-        guard !tests.isEmpty, tests.allSatisfy({
-            graph.tests[$0]?.isEmpty == false && (graph.testDiagnostics[$0]?.isEmpty ?? true)
-        }) else { return "Missing test entries or lifecycle evidence for \(target)" }
+        guard !tests.isEmpty else { return "No enumerated test entries for \(target)" }
+        for test in tests.sorted() {
+            guard let roots = graph.tests[test], !roots.isEmpty,
+                  roots.allSatisfy({ graph.functions[$0] != nil }) else {
+                return "Missing test entry/lifecycle compiler roots for " + test
+            }
+            if let reasons = graph.testDiagnostics[test], !reasons.isEmpty {
+                return "Incomplete test entry/lifecycle evidence for " + test + ": " + reasons.sorted().joined(separator: "; ")
+            }
+        }
         let knownModules = Set(snapshot.modules.values).union(inventory.imports.keys)
             .union(inventory.unavailableModules?.keys ?? [:].keys).sorted()
         func owner(_ node: FunctionNode) -> String? {

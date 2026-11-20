@@ -31,6 +31,7 @@ import Testing
     var graph = XcodeTestGraph(targets: [], tests: ["Tests/C/test"], diagnostics: ["diagnostic"])
     var node = FunctionNode(id: "a", module: "M", name: "日本語()", regions: [.init(path: "é.swift", startLine: 3, endLine: 6)], dependencies: ["missing", "a"], uncertainties: ["uncertainty"], dynamicDeclarations: ["D"])
     node.resolvedDynamicDeclarations = ["D"]
+    node.swiftTestingEmptyFactory = "top-level"
     graph.dependencies = DependencyGraph(functions: ["a": node], tests: ["Tests/C/test": ["a", "missing"]])
     graph.dependencies!.testDiagnostics = ["Tests/C/test": ["inherited"]]
     let data = try GraphArchive.encode(graph)
@@ -40,11 +41,23 @@ import Testing
     #expect(roundTrip.dependencies?.functions["a"]?.uncertainties == node.uncertainties)
     #expect(roundTrip.dependencies?.functions["a"]?.resolvedDynamicDeclarations == ["D"])
     #expect(roundTrip.dependencies?.functions["a"]?.regions == node.regions)
+    #expect(roundTrip.dependencies?.functions["a"]?.swiftTestingEmptyFactory == "top-level")
     #expect(roundTrip.dependencies?.testDiagnostics == graph.dependencies?.testDiagnostics)
     #expect(roundTrip.tests == graph.tests && roundTrip.diagnostics == graph.diagnostics)
     #expect(try GraphArchive.decode(encoder.encode(graph)).tests == graph.tests)
     var broken = data; broken[broken.count - 1] ^= 1
     #expect(throws: (any Error).self) { try GraphArchive.decode(broken) }
+    // An archive from before this optional field existed remains readable and
+    // must not manufacture a proof for a legacy factory.
+    let magic = Data("STIGRAPH1\n".utf8)
+    var envelope = try #require(PropertyListSerialization.propertyList(from: data.dropFirst(magic.count + 64), format: nil) as? [String: Any])
+    var packed = try #require(envelope["graph"] as? [String: Any])
+    packed.removeValue(forKey: "swiftTestingEmptyFactories")
+    envelope["graph"] = packed
+    let payload = try PropertyListSerialization.data(fromPropertyList: envelope, format: .binary, options: 0)
+    let legacy = try GraphArchive.decode(magic + Data(XcodeGraphCache.digest(payload).utf8) + payload)
+    #expect(legacy.dependencies?.functions["a"]?.swiftTestingEmptyFactory == nil)
+    #expect(legacy.dependencies?.functions["a"]?.dependencies == node.dependencies)
 }
 
 @Test func concreteWitnessKeepsOnlyItsConformanceAndUnknownReceiverFallsBack() {

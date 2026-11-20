@@ -38,6 +38,9 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// callbacks), before broad dispatch candidates are added. Nil means legacy
     /// or unknown edge provenance.
     public var compilerReferences: Set<String>? = nil
+    /// A bounded SIL proof of an SDK factory with literal empty traits and no
+    /// argument producer: "top-level", "member", or "suite". Nil is unproven.
+    public var swiftTestingEmptyFactory: String? = nil
     /// Full SIL method reference and formal type for every dynamic call.
     /// Nil means legacy or incomplete evidence; display names lose overloads.
     public var dynamicCallSignatures: Set<String>? = nil
@@ -80,6 +83,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
             return lhs.union(rhs)
         }
         compilerReferences = union(compilerReferences, other.compilerReferences)
+        if swiftTestingEmptyFactory != other.swiftTestingEmptyFactory { swiftTestingEmptyFactory = nil }
         dynamicCallSignatures = union(dynamicCallSignatures, other.dynamicCallSignatures)
         stateAccesses = union(stateAccesses, other.stateAccesses)
         receiverTypeOrigins = union(receiverTypeOrigins, other.receiverTypeOrigins)

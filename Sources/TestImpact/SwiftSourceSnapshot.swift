@@ -39,6 +39,9 @@ public struct SourceUnit: Codable, Sendable {
     public var privateTestHelperBlocker: String? = nil
     /// Closed name evidence for a separately executed added XCTest entry.
     public var independentAddedTestEntry: String? = nil
+    /// Written Testing attributes identify candidates, not authenticated macro
+    /// identities. Compiler-generated discovery roots must agree separately.
+    public var swiftTestingRole: String? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
     /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
     public var bodylessProtocolRequirement: String? = nil
@@ -90,6 +93,15 @@ public struct SourceUnit: Codable, Sendable {
 }
 
 public struct SwiftSourceSnapshot: Codable, Sendable {
+    /// Source-only parser contract for byte-identical historical syntax reuse.
+    /// Bump when parsing or supplemental syntax evidence changes; nil archives
+    /// must be reparsed from Git rather than substituted for historical syntax.
+    static let currentParserVersion = 3
+    public var parserVersion: Int? = nil
+    /// Git blob identities of the actual parsed bytes. Archive substitutions,
+    /// filters or generated replacements must not authenticate unchanged Git
+    /// paths as unchanged parsed content. Nil retains historical parsing.
+    public var sourceBlobIDs: Set<String>? = nil
     public var inlineMappings: InlineMappingSyntax? = nil
     public var helperContracts: HelperContractSyntax? = nil
     public var units: [SourceUnit]
@@ -165,6 +177,13 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         let tree = Parser.parse(source: text)
         let locations = SourceLocationConverter(fileName: path, tree: tree)
         var result = Self(units: [], inheritance: [:], diagnostics: [])
+        result.parserVersion = Self.currentParserVersion
+        #if canImport(CryptoKit)
+        let bytes = Data(text.utf8)
+        let blob = Data("blob \(bytes.count)\0".utf8) + bytes
+        result.sourceBlobIDs = [Insecure.SHA1.hash(data: blob).map { String(format: "%02x", $0) }.joined(),
+                                SHA256.hash(data: blob).map { String(format: "%02x", $0) }.joined()]
+        #endif
         result.helperContracts = text.contains(HelperContractSyntax.prefix) ? HelperContractSyntax.parse(tree) : HelperContractSyntax()
         result.inlineMappings = InlineMappingSyntax.parse(tree, path: path, module: module, hasDirectives: text.contains(InlineMappingSyntax.prefix))
         result.dispatchMembers = []
@@ -362,7 +381,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 ?? node.as(SubscriptDeclSyntax.self)?.parameterClause.parameters
             if let parameters {
                 guard parameters.allSatisfy({ parameter in
-                    parameter.defaultValue.map { PrivateTestHelperSyntax.primitiveValue($0.value, type: parameter.type.trimmedDescription) } ?? true
+                    PrivateTestHelperSyntax.supportedDefault(parameter)
                 }) else { return false }
             }
             if let subscriptDecl = node.as(SubscriptDeclSyntax.self) { return singleGetter(subscriptDecl.accessorBlock) }
@@ -525,7 +544,17 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 }, privateTestHelperBlocker: node.as(FunctionDeclSyntax.self).flatMap { PrivateTestHelperSyntax.unsupportedEffect($0, locations: locations) },
                 independentAddedTestEntry: node.as(FunctionDeclSyntax.self).flatMap {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
-                }, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                }, swiftTestingRole: {
+                    if let function = node.as(FunctionDeclSyntax.self), function.attributes.contains(where: {
+                        ["Test", "Testing.Test"].contains($0.as(AttributeSyntax.self)?.attributeName.trimmedDescription ?? "")
+                    }) { return "test" }
+                    let attributes = node.as(StructDeclSyntax.self)?.attributes ?? node.as(ClassDeclSyntax.self)?.attributes
+                        ?? node.as(EnumDeclSyntax.self)?.attributes ?? node.as(ActorDeclSyntax.self)?.attributes
+                    if attributes?.contains(where: {
+                        ["Suite", "Testing.Suite"].contains($0.as(AttributeSyntax.self)?.attributeName.trimmedDescription ?? "")
+                    }) == true { return "suite" }
+                    return nil
+                }(), sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,
                 helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },

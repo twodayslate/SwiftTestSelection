@@ -1,0 +1,252 @@
+// SPDX-FileCopyrightText: 2026 Zachary Gorak
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+import Foundation
+import Testing
+@testable import TestImpact
+
+@Test func swiftTestingSelectionIsIndependentOfExtractionWorkerCount() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import Testing
+    import XCTest
+    @Test func unrelated() {}
+    final class Case: XCTestCase {
+        func testEdited() { XCTAssertTrue(true) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "XCTAssertTrue(true)", with: "XCTAssertTrue(false)")
+    try Data(after.utf8).write(to: root.appendingPathComponent("Tests.swift"))
+    func query(_ command: String, _ arguments: [String]) throws -> String {
+        try CommandRunner.run(command, arguments, at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    let platform = try query("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"])
+    let sdk = try query("xcrun", ["--sdk", "macosx", "--show-sdk-path"])
+    let compiler = try query("xcrun", ["--find", "swiftc"])
+    let architecture = try query("uname", ["-m"])
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let arguments = [compiler, "-module-name", "Tests", "-sdk", sdk, "-target", architecture + "-apple-macosx13.0",
+                     "-plugin-path", plugins.path, "-F", platform + "/Developer/Library/Frameworks",
+                     "-I", platform + "/Developer/usr/lib", root.appendingPathComponent("Tests.swift").path]
+    let log = "builtin-SwiftDriver -- " + arguments.map { "\"" + $0 + "\"" }.joined(separator: " ")
+    let tests = ["Tests/unrelated()", "Tests/Case/testEdited()"]
+    let sources = ["Tests:Tests.swift": SwiftSourceSnapshot.parse(after, path: "Tests.swift", module: "Tests")]
+    let base = XcodeHeadOnlySources(base: ["Tests:Tests.swift": .parse(before, path: "Tests.swift", module: "Tests")])
+    var reference: DependencyGraph?
+    for workers in [1, 2] {
+        let scratch = root.appendingPathComponent("extract-\(workers)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        var graph = XcodeCompilerGraph.extract(log: log, sourceRoot: root, directory: root, derived: scratch,
+            progress: { _ in }, ownership: ["Tests": ["Tests.swift"]], workers: workers)
+        #expect(graph.diagnostics.isEmpty)
+        #expect(graph.functions.values.compactMap(\.swiftTestingEmptyFactory) == ["top-level"])
+        XcodeCompilerGraph.bind(tests: tests, modules: ["Tests": "Tests"], sources: sources, graph: &graph)
+        #expect(graph.testDiagnostics.isEmpty)
+        if let reference {
+            #expect(graph.functions == reference.functions)
+            #expect(graph.tests == reference.tests)
+        } else { reference = graph }
+        var current = XcodeTestGraph(targets: [.init(name: "Tests", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: ["Tests.swift"])], tests: tests)
+        current.modules = ["Tests": "Tests"]; current.sources = sources; current.dependencies = graph
+        let report = XcodeHeadOnlySelector.select(current: current, source: base, changes: [.init(path: "Tests.swift")], baseRevision: "base")
+        #expect(report.selectedTests == [tests[1]])
+        #expect(report.diagnostics.isEmpty)
+    }
+}
+
+@Test func compiledSwiftTestingUIEntriesPreserveNestedAndStaticIdentifiers() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let text = """
+    import Testing
+    import XCUIAutomation
+    import XCTest
+    func argumentValues() -> [Bool] { [true, false] }
+    func testEnabled() -> Bool { true }
+    func suiteEnabled() -> Bool { true }
+    func runtimeHook() {}
+    struct RuntimeTrait: TestTrait {
+        func prepare(for test: Testing.Test) async throws { runtimeHook() }
+    }
+    @Test @MainActor func topLevel() { let app = XCUIApplication(); #expect(app.exists) }
+    @Suite(.enabled(if: suiteEnabled()))
+    struct Outer {
+        struct Inner {
+            @Test @MainActor func instance() { let app = XCUIApplication(); #expect(app.exists) }
+            @Test @MainActor static func typeTest() { let app = XCUIApplication(); #expect(app.exists) }
+            @Test(RuntimeTrait(), .enabled(if: testEnabled()), arguments: argumentValues()) func arguments(value: Bool) { #expect(value || !value) }
+        }
+    }
+    final class XCTestSuite: XCTestCase {
+        func testOrdinary() { XCTAssertTrue(true) }
+    }
+    @Test(RuntimeTrait()) func runtimeOnly() {}
+    @Test(arguments: [true]) func argumentsOnly(value: Bool) {}
+    """
+    let tests = ["UI/topLevel()", "UI/Outer/Inner/instance()", "UI/Outer/Inner/typeTest()", "UI/Outer/Inner/arguments(value:)", "UI/XCTestSuite/testOrdinary()", "UI/runtimeOnly()", "UI/argumentsOnly(value:)"]
+    try Data(text.utf8).write(to: root.appendingPathComponent("Tests.swift"))
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let sil = root.appendingPathComponent("UI.sil")
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-module-name", "UI", "-g", "-Onone", "-emit-sil", "-whole-module-optimization",
+        "-plugin-path", plugins.path,
+        "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", root.appendingPathComponent("Tests.swift").path, "-o", sil.path], at: root)
+    let parsed = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
+    var graph = DependencyGraph(functions: parsed.functions)
+    let source = SwiftSourceSnapshot.parse(text, path: "Tests.swift", module: "UI")
+    XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": source], graph: &graph)
+    for test in tests { #expect(graph.tests[test]?.isEmpty == false, "\(test)") }
+    #expect(graph.testDiagnostics[tests[0]]?.isEmpty ?? true)
+    #expect(graph.testDiagnostics[tests[1]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+    #expect(graph.testDiagnostics[tests[3]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+    #expect(graph.testDiagnostics[tests[4]]?.isEmpty ?? true)
+    for test in tests.suffix(2) {
+        #expect(graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+    }
+    // A namesake macro's source spelling cannot hide compiler-emitted traits.
+    let plainSpelling = SwiftSourceSnapshot.parse(text.replacingOccurrences(of: "@Test(RuntimeTrait())", with: "@Test"), path: "Tests.swift", module: "UI")
+    var hiddenTrait = DependencyGraph(functions: parsed.functions)
+    XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": plainSpelling], graph: &hiddenTrait)
+    #expect(hiddenTrait.testDiagnostics[tests[5]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+    let index = DependencyIndex(graph)
+    let runtimeHook = try #require(graph.functions.values.first { $0.name == "runtimeHook()" }?.id)
+    // The runtime invokes prepare through TestTrait, independently of the
+    // constructor. This missing path is why factory evidence cannot clear the
+    // test diagnostic and authorize exclusions.
+    #expect(index.paths(to: [runtimeHook]).path(from: graph.tests[tests[3]] ?? []) == nil)
+    for name in ["argumentValues()", "testEnabled()", "suiteEnabled()"] {
+        let symbol = try #require(graph.functions.values.first { $0.name == name }?.id)
+        #expect(index.paths(to: [symbol]).path(from: graph.tests[tests[3]] ?? []) != nil, "\(name)")
+        if name != "suiteEnabled()" {
+            #expect(index.paths(to: [symbol]).path(from: graph.tests[tests[0]] ?? []) == nil, "\(name)")
+        }
+    }
+    let testFactories = Set(graph.functions.values.filter {
+        $0.compilerReferences?.contains { $0.hasPrefix("$s7Testing4TestV10__function") } == true
+    }.map(\.id))
+    let suiteFactories = Set(graph.functions.values.filter {
+        $0.compilerReferences?.contains { $0.hasPrefix("$s7Testing4TestV6__type") } == true
+    }.map(\.id))
+    #expect(!suiteFactories.isEmpty)
+    for missing in [testFactories, suiteFactories] {
+        var incomplete = DependencyGraph(functions: parsed.functions.filter { !missing.contains($0.key) })
+        XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": source], graph: &incomplete)
+        #expect(incomplete.testDiagnostics[tests[3]]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true)
+    }
+    let factoryID = try #require(testFactories.intersection(graph.tests[tests[3]] ?? []).first)
+    let factory = try #require(parsed.functions[factoryID])
+    var duplicate = factory; duplicate.id += "-ambiguous"
+    var ambiguous = DependencyGraph(functions: parsed.functions)
+    ambiguous.functions[duplicate.id] = duplicate
+    XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": source], graph: &ambiguous)
+    #expect(ambiguous.testDiagnostics[tests[3]]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true)
+    let argumentThunk = try #require(factory.compilerReferences?.first { id in
+        parsed.functions[id]?.compilerReferences?.contains { parsed.functions[$0]?.name == "argumentValues()" } == true
+    })
+    var missingArgument = DependencyGraph(functions: parsed.functions.filter { $0.key != argumentThunk })
+    XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": source], graph: &missingArgument)
+    #expect(missingArgument.testDiagnostics[tests[3]]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true)
+    var legacySource = source; legacySource.parserVersion = nil
+    var legacy = DependencyGraph(functions: parsed.functions)
+    XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": legacySource], graph: &legacy)
+    #expect(legacy.testDiagnostics[tests[3]]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true)
+    let enumeration = try JSONSerialization.data(withJSONObject: ["errors": [], "values": [["enabledTests": tests.map { ["identifier": $0] }]]])
+    #expect(try XcodeTestEnumeration.parse(enumeration) == tests.sorted())
+    let options = XcodeConfiguration(container: .project, path: root.appendingPathComponent("App.xcodeproj"), scheme: "App", destination: "platform=macOS")
+    let arguments = try options.executionArguments(tests: tests, derivedData: root, resultBundle: root.appendingPathComponent("Results.xcresult"))
+    for test in tests { #expect(arguments.contains("-only-testing:" + test)) }
+    // Compilation and binding are exercised here, not UI execution on Xcode 27.3.
+    // Unauthenticated Testing macros remain outside head-only body isolation.
+    #expect(source.units.filter { $0.swiftTestingRole == "test" }.allSatisfy { $0.headOnlyBodySupported == false })
+}
+
+
+@Test func plainSwiftTestingEntriesDoNotBroadenUnrelatedXCTestEdits() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let before = """
+    import Testing
+    import XCTest
+    import External
+    @Test func plain() {}
+    @Suite struct Empty {
+        @Test("Display only") func member() {}
+    }
+    extension ImportedSuite { @Test func member() {} }
+    final class Case: XCTestCase {
+        func testEdited() { XCTAssertTrue(true) }
+    }
+    """
+    let after = before.replacingOccurrences(of: "XCTAssertTrue(true)", with: "XCTAssertTrue(false)")
+    let tests = ["UI/plain()", "UI/Empty/member()", "UI/Case/testEdited()", "UI/ImportedSuite/member()"]
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let compilerArguments = ["swiftc", "-g", "-Onone", "-plugin-path", plugins.path, "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib"]
+    let external = """
+    import Testing
+    public struct RecursiveTrait: SuiteTrait {
+        public var isRecursive: Bool { true }
+        public func prepare(for test: Test) async throws {}
+    }
+    @Suite(RecursiveTrait()) public struct ImportedSuite { public init() {} }
+    """
+    try Data(external.utf8).write(to: root.appendingPathComponent("External.swift"))
+    _ = try CommandRunner.run("xcrun", compilerArguments + ["-module-name", "External", "-emit-module", root.appendingPathComponent("External.swift").path, "-emit-module-path", root.appendingPathComponent("External.swiftmodule").path], at: root)
+    let cache = try XcodeGraphCache(.init(directory: root.appendingPathComponent("cache"), context: "fixture"), progress: { _ in })
+    func capture(_ text: String) throws -> (XcodeTestGraph, String) {
+        try Data(text.utf8).write(to: root.appendingPathComponent("Tests.swift"))
+        let sil = root.appendingPathComponent("UI.sil")
+        _ = try CommandRunner.run("xcrun", compilerArguments + ["-module-name", "UI", "-emit-sil", "-whole-module-optimization", "-I", root.path, root.appendingPathComponent("Tests.swift").path, "-o", sil.path], at: root)
+        let parsed = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
+        // Production module-cache reads cross the compact archive boundary
+        // before discovery binding, so exercise that order here as well.
+        let identity = ["fixture": text]
+        try cache.storeModule(parsed, identity: identity)
+        let restored = try #require(try cache.loadModule(identity))
+        #expect(restored.functions == parsed.functions)
+        let source = SwiftSourceSnapshot.parse(text, path: "Tests.swift", module: "UI")
+        var graph = DependencyGraph(functions: restored.functions)
+        XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": source], graph: &graph)
+        var current = XcodeTestGraph(targets: [.init(name: "UI", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: ["Tests.swift"])], tests: tests)
+        current.sources = ["UI:Tests.swift": source]
+        current.modules = ["UI": "UI"]
+        current.dependencies = graph
+        return (current, try String(contentsOf: sil, encoding: .utf8))
+    }
+    let (previous, _) = try capture(before)
+    let (current, sil) = try capture(after)
+    for test in tests.prefix(3) { #expect(current.dependencies?.testDiagnostics[test]?.isEmpty ?? true) }
+    #expect(current.dependencies?.testDiagnostics[tests[3]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+    let changes = [FileChange(path: "Tests.swift")]
+    let headOnly = XcodeHeadOnlySelector.select(current: current, source: .init(base: previous.sources), changes: changes, baseRevision: "base")
+    let twoGraphs = XcodeFineSelector.select(current: current, previous: previous, changes: changes, baseRevision: "base")
+    #expect(headOnly.selectedTests == [tests[2], tests[3]])
+    #expect(twoGraphs.selectedTests == [tests[2], tests[3]])
+
+    // Older archives and nonempty trait allocations cannot authorize exclusions.
+    var legacy = current.dependencies!
+    for id in legacy.functions.keys { legacy.functions[id]?.swiftTestingEmptyFactory = nil }
+    legacy.tests = [:]; legacy.testDiagnostics = [:]
+    XcodeCompilerGraph.bind(tests: tests, modules: current.modules, sources: current.sources, graph: &legacy)
+    #expect(legacy.testDiagnostics[tests[0]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+    let nonempty = SILParser.parse(sil.replacingOccurrences(of: "integer_literal $Builtin.Word, 0,", with: "integer_literal $Builtin.Word, 1,"), module: "UI", sourceRoot: root)
+    #expect(nonempty.functions.values.allSatisfy { $0.swiftTestingEmptyFactory == nil })
+    // The location-based SDK ABI uses the same trait and output positions.
+    let locationABI = SILParser.parse(sil.replacingOccurrences(of: "6traits12sourceBounds", with: "6traits14sourceLocation"), module: "UI", sourceRoot: root)
+    #expect(locationABI.functions.values.compactMap(\.swiftTestingEmptyFactory).sorted() == ["member", "member", "suite", "top-level"])
+    let escapedSIL = sil.components(separatedBy: "\n").map { line in
+        line.hasPrefix("bb0(%0 : $*Test") ? line + "\n  %9999 = address_to_pointer %0 : $*Test to $Builtin.RawPointer" : line
+    }.joined(separator: "\n")
+    let escaped = SILParser.parse(escapedSIL, module: "UI", sourceRoot: root)
+    #expect(escaped.functions.values.allSatisfy { $0.swiftTestingEmptyFactory == nil })
+    for data in [try JSONEncoder().encode(current), try GraphArchive.encode(current)] {
+        let decoded = try GraphArchive.decode(data)
+        #expect(decoded.dependencies?.functions == current.dependencies?.functions)
+        #expect(decoded.dependencies?.testDiagnostics == current.dependencies?.testDiagnostics)
+    }
+}

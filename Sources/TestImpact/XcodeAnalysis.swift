@@ -236,10 +236,12 @@ public struct XcodeAnalysis {
             guard let module = modules[target.name] else { return [] }
             return target.sourceFiles.sorted().map { (module, $0) }
         }
+        let sourceStart = Date()
         for (key, snapshot) in try BoundedWork.map(sourceJobs, workers: configuration.extractionWorkers, { module, path in
             let text = try String(contentsOf: sourceRoot.appendingPathComponent(path), encoding: .utf8)
             return (module + ":" + path, SwiftSourceSnapshot.parse(text, path: path, module: module))
         }) { sources[key] = snapshot }
+        measurement("headSourceReadParse", Date().timeIntervalSince(sourceStart))
         // Preserve active lists that neither settings nor compiler invocations
         // could classify, especially files shared with tests.
         // Otherwise a production dependency could look like test-only source.
@@ -286,6 +288,7 @@ public struct XcodeAnalysis {
         progress("Binding compiler dependencies to \(tests.count) enumerated tests…")
         let binding = AnalysisMeasurement()
         XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: sources, graph: &dependencies)
+        measurement("compilerBinding", binding.event("compilerBinding", revision: "head").seconds)
         progress(binding.report("Bound Xcode test dependencies"))
         for target in targets where !target.sourceFiles.isEmpty {
             if let module = modules[target.name], !dependencies.functions.values.contains(where: { $0.module == module && !$0.regions.isEmpty }) {

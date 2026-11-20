@@ -15,9 +15,10 @@ final class XcodeBaseSourceCache {
         var treeHits = 0
         var parses = 0
         var parseHits = 0
+        var headSyntaxReuse = 0
 
         var detail: String {
-            "blobReads=\(blobReads), blobHits=\(blobHits), treeReads=\(treeReads), treeHits=\(treeHits), parses=\(parses), parseHits=\(parseHits)"
+            "blobReads=\(blobReads), blobHits=\(blobHits), treeReads=\(treeReads), treeHits=\(treeHits), parses=\(parses), parseHits=\(parseHits), headSyntaxReuse=\(headSyntaxReuse)"
         }
     }
     private struct SyntaxKey: Hashable {
@@ -35,7 +36,17 @@ final class XcodeBaseSourceCache {
     private var blobs: [String: Evidence<Data>] = [:]
     private var tree: Evidence<Set<String>>?
     private var syntax: [SyntaxKey: SwiftSourceSnapshot] = [:]
+    private var runtimeComparisons: [String: HeadOnlyRuntimeSourceEvidence] = [:]
     private(set) var counts = Counts()
+    var resolvedRevision: String? { revision }
+    func recordHeadSyntaxReuse() { counts.headSyntaxReuse += 1 }
+
+    func runtimeEvidence(headRevision: String) throws -> HeadOnlyRuntimeSourceEvidence {
+        if let result = runtimeComparisons[headRevision] { return result }
+        let result = try HeadOnlyRuntimeSourceEvidence.read(head: headRevision, root: root, cache: self)
+        runtimeComparisons[headRevision] = result
+        return result
+    }
 
     init(root: URL, base: String) throws {
         self.root = root.standardizedFileURL

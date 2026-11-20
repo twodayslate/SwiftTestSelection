@@ -553,7 +553,9 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                 let data = options.format == "binary" ? try GraphArchive.encode(graph) : options.format == "dot" ? Data(graph.dot().utf8) : try encoder.encode(graph)
                 try write(data, to: options.output)
             } else {
+                let graphReadStart = Date()
                 let headGraph = try options.headGraph.map { try XcodeAnalysis.executionGraph(at: URL(fileURLWithPath: $0)) }
+                let graphReadSeconds = Date().timeIntervalSince(graphReadStart)
                 let temporaryRetention = options.run && options.head != nil && headGraph == nil && options.retainedBuild == nil
                     ? FileManager.default.temporaryDirectory.appendingPathComponent("swift-impact-execution-" + UUID().uuidString) : nil
                 defer { if let temporaryRetention { try? FileManager.default.removeItem(at: temporaryRetention) } }
@@ -575,11 +577,15 @@ if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h")
                             cache: options.cachePath.map { XcodeAnalysisCache(directory: URL(fileURLWithPath: $0), context: options.cacheContext!, maximumBytes: options.cacheMaxBytes) }, retainingBuildAt: retained, cachedBasePolicy: options.cachedBasePolicy, headOnly: options.headOnly, selectionScopes: options.selectionScopes)
                     }
                 }
-                let report: ImpactReport
+                var report: ImpactReport
                 if let ai = options.aiConfiguration {
                     report = try await analysis.selectWithAI(configuration: ai, baseline: computeBaseline)
                 } else {
                     report = try computeBaseline(analysis)
+                }
+                if let headGraph {
+                    report.analysisEvents = (report.analysisEvents ?? []) + [.init(phase: "savedGraphLoad", revision: headGraph.buildArtifact?.revision ?? "head",
+                        seconds: graphReadSeconds, detail: "Read, decode and validate retained graph archive")]
                 }
                 let data = options.format == "json" ? try encoder.encode(report) : Data(render(report).utf8)
                 try write(data, to: options.output)

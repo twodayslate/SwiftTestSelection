@@ -28,6 +28,8 @@ public enum GraphArchive {
         var captureModules: [String: Set<String>]?
         var dynamicDeclarationModules: [String: [String: Set<String>]]?
         var nominalTypeContexts: [String: String]?
+        /// Optional for archives written before factory-effect evidence existed.
+        var swiftTestingEmptyFactories: [String: String]?
         init(_ graph: DependencyGraph) {
             var table: [String] = [], ids: [String: Int] = [:]
             func intern(_ s: String) -> Int {
@@ -59,6 +61,7 @@ public enum GraphArchive {
             compilerClassIdentities = graph.compilerClassIdentities
             compilerImplicitImports = graph.compilerImplicitImports
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
+            swiftTestingEmptyFactories = graph.functions.compactMapValues(\.swiftTestingEmptyFactory)
             captureModules = graph.functions.compactMapValues(\.captureModules)
             dynamicDeclarationModules = graph.functions.compactMapValues(\.dynamicDeclarationModules)
         }
@@ -133,6 +136,7 @@ public enum GraphArchive {
                 if cursor < row.count { node.receiverIndirectErrorEffects = try values() }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
                 node.nominalTypeContext = nominalTypeContexts?[node.id]
+                node.swiftTestingEmptyFactory = swiftTestingEmptyFactories?[node.id]
                 node.captureModules = captureModules?[node.id]
                 node.dynamicDeclarationModules = dynamicDeclarationModules?[node.id]
                 graph.functions[node.id] = node

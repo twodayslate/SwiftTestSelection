@@ -51,6 +51,17 @@ public struct XcodeAnalysisEvent: Codable, Sendable {
     public var revision: String
     public var seconds: Double
     public var detail: String
+    /// Inclusive nesting: never add a child duration to its parent duration.
+    public var parentPhase: String? = nil
+    /// Analyzer process only; compiler/other children are excluded.
+    public var analyzerCPUSeconds: Double? = nil
+    public var processPeakBytes: UInt64? = nil
+
+    public init(phase: String, revision: String, seconds: Double, detail: String, parentPhase: String? = nil,
+                analyzerCPUSeconds: Double? = nil, processPeakBytes: UInt64? = nil) {
+        self.phase = phase; self.revision = revision; self.seconds = seconds; self.detail = detail
+        self.parentPhase = parentPhase; self.analyzerCPUSeconds = analyzerCPUSeconds; self.processPeakBytes = processPeakBytes
+    }
 }
 
 /// One OS lock covers publication, reads, eviction, and staging. A killed process
@@ -320,12 +331,16 @@ extension XcodeAnalysis {
         try cache.resetWork(); try cache.prune()
         defer { try? FileManager.default.removeItem(at: cache.work) }
         var events: [XcodeAnalysisEvent] = []
+        var phaseStack: [String] = []
         func timed<T>(_ phase: String, revision: String, detail: String = "", _ body: () throws -> T) rethrows -> T {
-            let start = Date()
+            let start = AnalysisMeasurement()
+            let parent = phaseStack.last
+            phaseStack.append(phase)
             defer {
-                let seconds = Date().timeIntervalSince(start)
-                events.append(.init(phase: phase, revision: revision, seconds: seconds, detail: detail))
-                progress(String(format: "%@: %.2f s (%@)", phase, seconds, String(revision.prefix(12))))
+                phaseStack.removeLast()
+                let event = start.event(phase, revision: revision, detail: detail, parent: parent)
+                events.append(event)
+                progress(String(format: "%@: %.2f s (%@)", phase, event.seconds, String(revision.prefix(12))))
             }
             return try body()
         }
@@ -351,7 +366,9 @@ extension XcodeAnalysis {
             } else { workspace = cache.work }
             let source = workspace.appendingPathComponent("source")
             let derived = workspace.appendingPathComponent("DerivedData")
-            try GitChanges.export(base: revision, from: root, into: source)
+            try timed("sourceExport", revision: revision) {
+                try GitChanges.export(base: revision, from: root, into: source)
+            }
             var options = self.options; options.path = source.appendingPathComponent(context["path"]!)
             // Resolve settings/packages before lookup. No build, enumeration, or
             // compiler extraction occurs on a hit. Locked resolution cannot float.
@@ -412,7 +429,8 @@ extension XcodeAnalysis {
             try extractionCancellation.check()
             var measured = self
             measured.measurement = { phase, seconds in
-                events.append(.init(phase: phase, revision: revision, seconds: seconds, detail: "fresh analysis"))
+                events.append(.init(phase: phase, revision: revision, seconds: seconds, detail: "fresh analysis",
+                    parentPhase: ["captureConsumption", "compilerReplay", "silParsing"].contains(phase) ? "extraction" : nil))
             }
             var result: XcodeTestGraph
             if let found, XcodeSourceOwnership.metadataMatches(found, log: buildText, root: source, derived: derived, captured: captured) {
@@ -502,10 +520,13 @@ extension XcodeAnalysis {
             try XcodeHeadOnlySources.read(current: current, changes: changes, base: comparison.base, root: root, mappingPath: options.mappingsPath, cache: sourceCache)
         } : nil
         let digestCache = headOnly ? HelperBindingDigestCache(current: current) : nil
+        events.append(.init(phase: "graphInventory", revision: comparison.head!, seconds: 0,
+            detail: "sources=\(current.sources.count), sourceUnits=\(current.sources.values.reduce(0) { $0 + $1.units.count }), functions=\(current.dependencies?.functions.count ?? 0), edges=\(current.dependencies?.functions.values.reduce(0) { $0 + $1.dependencies.count } ?? 0), tests=\(current.tests.count)"))
         var report = timed("selection", revision: comparison.head!) {
             if let baseSources {
                 return XcodeHeadOnlySelector.select(current: current, source: baseSources, changes: changes,
-                    baseRevision: comparison.base, documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty, digestCache: digestCache)
+                    baseRevision: comparison.base, documentation: headDocumentation, buildEvidenceFailure: headBuildUncertainty, digestCache: digestCache,
+                    measurement: { var event = $0; event.parentPhase = phaseStack.last; events.append(event) })
             }
             return XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base, additionalFallbacks: fallbacks)
         }
@@ -520,6 +541,10 @@ extension XcodeAnalysis {
         if let sourceCache {
             events.append(.init(phase: "baseSourceCache", revision: comparison.base, seconds: 0, detail: sourceCache.counts.detail))
             progress("Base source cache: " + sourceCache.counts.detail)
+        }
+        if let digestCache {
+            events.append(.init(phase: "selectionReuse", revision: comparison.head!, seconds: 0,
+                detail: "indexBuilds=\(digestCache.indexComputations), snapshotHashes=\(digestCache.snapshotComputations), snapshotHits=\(digestCache.snapshotHits), nodeHashes=\(digestCache.nodeComputations), bindingHashes=\(digestCache.bindingComputations)"))
         }
         report.headRevision = comparison.head; report.comparisonMode = comparison.mode
         report.buildArtifactID = current.buildArtifact?.id

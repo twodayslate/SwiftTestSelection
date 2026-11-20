@@ -30,6 +30,72 @@ private struct SourceRepository {
     }
 }
 
+@Test func unauditedRetainedSourceReadSkipsFullComparison() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let before = "func value() -> Int { 0 }"
+    let after = "func value() -> Int { 1 }"
+    try repo.write("App.swift", before)
+    for index in 0..<200 { try repo.write("File\(index).txt", "before") }
+    let base = try repo.commit()
+    try repo.write("App.swift", after)
+    for index in 0..<200 { try repo.write("File\(index).txt", "after") }
+    let head = try repo.commit()
+    var current = XcodeTestGraph(targets: [], tests: [])
+    current.sources = ["App:App.swift": .parse(after, path: "App.swift", module: "App")]
+    current.buildArtifact = .init(revision: head, context: [:], toolchain: "fixture", buildLogDigest: "log", buildSettingsDigest: "settings", productsDirectory: repo.root.path, xctestrun: "fixture", products: [:])
+    let cache = try XcodeBaseSourceCache(root: repo.root, base: base)
+    let result = try XcodeHeadOnlySources.read(current: current, changes: [.init(path: "App.swift")], base: base, root: repo.root, mappingPath: "mapping.json", cache: cache)
+    #expect(result.runtimeBoundaryEvidence == nil)
+    #expect(cache.counts.treeReads == 0)
+    #expect(cache.counts.parses == 1)
+    #expect(cache.counts.headSyntaxReuse == 0)
+    #expect(result.base["App:App.swift"]?.units.map(\.fingerprint) == SwiftSourceSnapshot.parse(before, path: "App.swift", module: "App").units.map(\.fingerprint))
+}
+
+@Test(arguments: ["current", "legacy-parser", "missing-head", "archive-substitution"])
+func headSyntaxReuseAuthenticatesFullGitDiffAndParser(scenario: String) throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let helper = "import XCTest\nextension XCUIElement { func waiting() -> Bool { exists } }"
+    let caller = "import XCTest\nfunc call(_ element: XCUIElement) { _ = element.waiting() }\nfunc commit() -> String { \"$Format:%H$\" }"
+    let old = ["Helper.swift": helper, "Caller.swift": caller, "Changed.swift": caller]
+    for (path, text) in old { try repo.write(path, text) }
+    if scenario == "archive-substitution" { try repo.write(".gitattributes", "Caller.swift export-subst\n") }
+    let base = try repo.commit()
+    var headFiles = old
+    headFiles["Helper.swift"] = helper.replacingOccurrences(of: "exists", with: "isHittable")
+    headFiles["Changed.swift"] = "func call() {}"
+    for (path, text) in headFiles { try repo.write(path, text) }
+    // A non-Swift edit forbids runtime isolation, but does not change the
+    // source-only parse of an independently authenticated identical file.
+    try repo.write("Config.xcconfig", "changed settings")
+    let head = try repo.commit()
+    if scenario == "archive-substitution" {
+        let exported = repo.root.appendingPathComponent("exported")
+        try GitChanges.export(base: head, from: repo.root, into: exported)
+        headFiles["Caller.swift"] = try String(contentsOf: exported.appendingPathComponent("Caller.swift"), encoding: .utf8)
+        #expect(headFiles["Caller.swift"]?.contains(head) == true)
+        #expect(headFiles["Caller.swift"] != old["Caller.swift"])
+    }
+    var current = XcodeTestGraph(targets: [], tests: [])
+    current.sources = Dictionary(uniqueKeysWithValues: headFiles.map { path, text in
+        ("UI:" + path, SwiftSourceSnapshot.parse(text, path: path, module: "UI"))
+    })
+    if scenario == "legacy-parser" { current.sources["UI:Caller.swift"]?.parserVersion = nil }
+    current.buildArtifact = .init(revision: scenario == "missing-head" ? "missing" : head, context: [:], toolchain: "fixture", buildLogDigest: "log", buildSettingsDigest: "settings", productsDirectory: repo.root.path, xctestrun: "fixture", products: [:])
+    let cache = try XcodeBaseSourceCache(root: repo.root, base: base)
+    let changes = [FileChange(path: "Helper.swift")]
+    let result = try XcodeHeadOnlySources.read(current: current, changes: changes, base: base, root: repo.root, mappingPath: "mapping.json", cache: cache)
+    let reference = try uncachedHeadOnlySources(current: current, changes: changes, base: base, root: repo.root, mappingPath: "mapping.json")
+    #expect(cache.counts.headSyntaxReuse == (scenario == "current" ? 1 : 0))
+    #expect(cache.counts.parses == (scenario == "current" ? 2 : 3))
+    for key in result.base.keys {
+        #expect(result.base[key]?.units.map(\.fingerprint) == reference.base[key]?.units.map(\.fingerprint))
+    }
+    #expect(result.base["UI:Changed.swift"]?.units.map(\.fingerprint) != current.sources["UI:Changed.swift"]?.units.map(\.fingerprint))
+}
+
 @Test func baseSourceCachePinsRevisionModuleAndLogicalPath() throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
