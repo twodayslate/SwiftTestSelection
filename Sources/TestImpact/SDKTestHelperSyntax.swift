@@ -14,9 +14,10 @@ public struct SDKTestHelperSyntax: Codable, Sendable {
     // calls. Version 4's lexical shadow checks could miss external overloads.
     static let currentVersion = 5
     static let trustedModules: Set<String> = ["XCTest", "Foundation", "Swift"]
-    // UIKit is allowed in callers for UI types, not in the helper query body.
+    // UIKit/CoreGraphics are allowed in callers for UI and geometry types,
+    // not in the helper query body.
     // These SDKs do not replace XCTest assertions or Swift's Bool negation.
-    static let trustedCallerModules = trustedModules.union(["UIKit"])
+    static let trustedCallerModules = trustedModules.union(["UIKit", "CoreGraphics"])
 
     public struct References: Codable, Sendable, Equatable {
         public var declarations: Set<Int> = []

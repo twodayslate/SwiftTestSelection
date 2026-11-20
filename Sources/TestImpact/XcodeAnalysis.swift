@@ -83,8 +83,9 @@ public struct XcodeAnalysis {
             guard let head else { throw ImpactError("--analysis-cache requires an explicit --head revision; worktree analysis is never cached.") }
             let scratch = cache == nil ? try temporaryDirectory() : nil
             defer { if let scratch { try? FileManager.default.removeItem(at: scratch) } }
-            let cache = cache ?? XcodeAnalysisCache(directory: scratch!, context: "uncached-" + UUID().uuidString, maximumBytes: 1)
-            return try selectCached(base: base, head: head, mergeBase: mergeBase, fullSuite: fullSuite, cache: cache, retainingBuildAt: retainingBuildAt, cachedBasePolicy: cachedBasePolicy, headOnly: headOnly, selectionScopes: selectionScopes)
+            let reuseAnalysis = cache != nil
+            let cache = cache ?? XcodeAnalysisCache(directory: scratch!, context: "uncached-" + UUID().uuidString)
+            return try selectCached(base: base, head: head, mergeBase: mergeBase, fullSuite: fullSuite, cache: cache, retainingBuildAt: retainingBuildAt, cachedBasePolicy: cachedBasePolicy, headOnly: headOnly, selectionScopes: selectionScopes, reuseAnalysis: reuseAnalysis)
         }
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         guard options.path.path.hasPrefix(root.path + "/") else { throw ImpactError("Xcode container must be inside the Git repository.") }

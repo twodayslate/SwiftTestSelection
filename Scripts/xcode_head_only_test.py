@@ -97,6 +97,12 @@ try:
         value=json.loads(report.read_text())
         assert row['buildCount']==1 and value['baseRevision']==expected_base and value['headRevision']==head
         assert value['analysisMode']=='head-only-git-syntax'
+        phases = {event['phase'] for event in value.get('analysisEvents', [])}
+        assert {'freshInputValidation', 'freshInputRecheck'} <= phases, phases
+        assert not phases.intersection({'graphLoad', 'graphPublish'}), phases
+        log = (directory / (label + '.log')).read_text()
+        assert 'Module cache input validation' not in log, log[-6000:]
+        assert 'Module cache final input recheck' not in log, log[-6000:]
         # Historical source syntax and cache metrics belong to the base revision;
         # only compiler work must be confined to the head.
         assert not any(e['revision']!=head and e['phase'] in ['build', 'enumeration', 'extraction'] for e in value['analysisEvents'])

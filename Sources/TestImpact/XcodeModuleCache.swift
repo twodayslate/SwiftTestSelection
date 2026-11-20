@@ -15,6 +15,7 @@ final class XcodeModuleCache {
     private let workspace: URL
     private let directory: URL
     private let workers: Int
+    private let reuseEnabled: Bool
     private let pathRoots: [(String, String)]
     var inspectIdentityInputs: ((String, [String: String]) -> Void)?
     private var identities: [String: [String: String]] = [:]
@@ -48,14 +49,16 @@ final class XcodeModuleCache {
             throw ImpactError("Compiler inputs changed during extraction; no fragments were published")
         }
         cache.progress(String(format: "Module cache final input recheck: %.3f s", Date().timeIntervalSince(start)))
+        guard reuseEnabled else { return }
         for (path, identity) in pending {
             do { try cache.storeModule(GraphArchive.decodeValue(SILModule.self, from: Data(contentsOf: path)), identity: identity) }
             catch { cache.progress("Module cache publication bypass: \(error)") }
         }
     }
 
-    init(cache: XcodeGraphCache, identity: [String: String], source: URL, derived: URL, workspace: URL, directory: URL? = nil, workers: Int = 1) {
+    init(cache: XcodeGraphCache, identity: [String: String], source: URL, derived: URL, workspace: URL, directory: URL? = nil, workers: Int = 1, reuseEnabled: Bool = true) {
         self.workers = workers
+        self.reuseEnabled = reuseEnabled
         self.cache = cache
         var context = identity
         context.removeValue(forKey: "revision")
@@ -107,7 +110,7 @@ final class XcodeModuleCache {
         cache.progress(String(format: "Module cache input validation: %.2f s (%d reusable identities)", Date().timeIntervalSince(start), identities.count))
     }
 
-    func identity(for module: String) -> [String: String]? { identities[module] }
+    func identity(for module: String) -> [String: String]? { reuseEnabled ? identities[module] : nil }
 
     private func makeIdentities(log: String) throws -> [String: [String: String]] {
         var invocations: [String: [String]] = [:]

@@ -52,6 +52,20 @@ import Testing
     #expect(valid.matches(artifact))
     #expect(valid.importedModules == ["UI": ["Dependency"]])
     #expect(valid.inputFiles[root.appendingPathComponent("Dependency.swiftmodule").resolvingSymlinksInPath().path] != nil)
+    let fresh = try XcodeFreshExtractionInputs.read(log: log, source: root)
+    try fresh.validate(log: log, source: root)
+    for name in ["UI.swift", "Dependency.swiftmodule", "UI-dependencies-1.json", "UI.SwiftFileList", "bin/swiftc", "lib/swift/host/plugins/plugin"] {
+        let path = root.appendingPathComponent(name)
+        let original = try Data(contentsOf: path)
+        try (original + Data(" changed".utf8)).write(to: path)
+        #expect(throws: (any Error).self) { try fresh.validate(log: log, source: root) }
+        try original.write(to: path)
+        try fresh.validate(log: log, source: root)
+    }
+    let extraPlugin = plugins.appendingPathComponent("new-plugin")
+    try Data("new compiler input".utf8).write(to: extraPlugin)
+    #expect(throws: (any Error).self) { try fresh.validate(log: log, source: root) }
+    try FileManager.default.removeItem(at: extraPlugin)
     // The one-build retained path constructs its own artifact; exercise that
     // publication path as well as importing an existing build.
     let retained = root.appendingPathComponent("retained"), products = retained.appendingPathComponent("DerivedData/Build/Products")

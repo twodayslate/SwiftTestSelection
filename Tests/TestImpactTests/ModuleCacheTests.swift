@@ -60,6 +60,20 @@ private struct ModuleCacheFixture {
     for module in base.keys { #expect(base[module] != moved[module]) }
 }
 
+@Test func uncachedReplayChecksMutationWithoutExposingReusableFragments() throws {
+    let fixture = try ModuleCacheFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let validator = XcodeModuleCache(cache: fixture.cache, identity: fixture.context,
+        source: fixture.source, derived: fixture.derived, workspace: fixture.root, reuseEnabled: false)
+    validator.prepare(log: fixture.log)
+    for module in ["Core", "App", "Tests", "Other"] { #expect(validator.identity(for: module) == nil) }
+    try validator.finish(log: fixture.log)
+    try Data("func changed() {}".utf8).write(to: fixture.source.appendingPathComponent("Core.swift"))
+    #expect(throws: (any Error).self) { try validator.finish(log: fixture.log) }
+    let entries = try FileManager.default.contentsOfDirectory(atPath: fixture.cache.options.directory.path)
+    #expect(!entries.contains { $0.hasPrefix("stage-module-") || $0.count == 64 })
+}
+
 @Test func moduleCacheRecognizesKnownRootSymlinkAliases() throws {
     let fixture = try ModuleCacheFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }

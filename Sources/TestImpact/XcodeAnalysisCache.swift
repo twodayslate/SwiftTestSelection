@@ -316,7 +316,7 @@ final class XcodeGraphCache {
 }
 
 extension XcodeAnalysis {
-    func selectCached(base: String, head: String, mergeBase: Bool, fullSuite: Bool, cache configuration: XcodeAnalysisCache, retainingBuildAt retained: URL? = nil, cachedBasePolicy: XcodeCachedBasePolicy = .build, headOnly: Bool = false, selectionScopes: SelectionScopes? = nil) throws -> ImpactReport {
+    func selectCached(base: String, head: String, mergeBase: Bool, fullSuite: Bool, cache configuration: XcodeAnalysisCache, retainingBuildAt retained: URL? = nil, cachedBasePolicy: XcodeCachedBasePolicy = .build, headOnly: Bool = false, selectionScopes: SelectionScopes? = nil, reuseAnalysis: Bool = true) throws -> ImpactReport {
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         let context = try artifactContext(root: root)
         let comparison = try RevisionComparison(base: base, head: head, mergeBase: mergeBase, root: root)
@@ -328,7 +328,8 @@ extension XcodeAnalysis {
             }
         }
         let cache = try XcodeGraphCache(configuration, progress: progress)
-        try cache.resetWork(); try cache.prune()
+        try cache.resetWork()
+        if reuseAnalysis { try cache.prune() }
         defer { try? FileManager.default.removeItem(at: cache.work) }
         var events: [XcodeAnalysisEvent] = []
         var phaseStack: [String] = []
@@ -391,8 +392,8 @@ extension XcodeAnalysis {
             identity["externalInputs"] = configuration.context
             identity["buildTimeSIL"] = captureMode?.identity ?? "replay"
             var missReason = "No compatible cache entry"
-            let found = try timed("graphLoad", revision: revision) { try cache.load(identity, onMiss: { missReason = $0 }) }
-            events.append(.init(phase: "cache", revision: revision, seconds: 0, detail: found == nil ? "miss: " + missReason : "hit: no build, enumeration or extraction"))
+            let found = reuseAnalysis ? try timed("graphLoad", revision: revision) { try cache.load(identity, onMiss: { missReason = $0 }) } : nil
+            events.append(.init(phase: "cache", revision: revision, seconds: 0, detail: !reuseAnalysis ? "disabled: fresh extraction without cache lookup or publication" : found == nil ? "miss: " + missReason : "hit: no build, enumeration or extraction"))
             if let found, !keepBuild { return found }
             if cacheOnly { throw XcodeCachedBaseUnavailable(revision: revision, reason: missReason) }
             if found != nil { progress("Reusing head analysis; building its executable products once for retention.") }
@@ -438,10 +439,29 @@ extension XcodeAnalysis {
             }
             else {
                 if found != nil { progress("Cached analysis has different or unverifiable generated-input/product-role evidence; extracting the new build.") }
-                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: buildText, settingsData: settings, moduleCache: XcodeModuleCache(cache: cache, identity: identity, source: source, derived: derived, workspace: workspace, directory: options.path.deletingLastPathComponent(), workers: options.extractionWorkers), captured: captured)
+                // A compiler replay can read dependency source files that a
+                // completed SIL capture no longer consumes. Preserve its scan
+                // and mutation check, but never load/stage/publish fragments in
+                // the uncached path. Complete captures use exact input seals.
+                let needsReplayValidation = captured == nil || captured?.diagnostics.isEmpty == false
+                let moduleCache = reuseAnalysis || needsReplayValidation ? XcodeModuleCache(cache: cache, identity: identity, source: source, derived: derived, workspace: workspace, directory: options.path.deletingLastPathComponent(), workers: options.extractionWorkers, reuseEnabled: reuseAnalysis) : nil
+                var freshInputs: XcodeFreshExtractionInputs?
+                var freshInputFailure: String?
+                if !reuseAnalysis {
+                    do {
+                        freshInputs = try timed("freshInputValidation", revision: revision) {
+                            try XcodeFreshExtractionInputs.read(log: buildText, source: source)
+                        }
+                    } catch { freshInputFailure = "Fresh compiler input inventory unavailable: \(error)" }
+                }
+                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: buildText, settingsData: settings, moduleCache: moduleCache, captured: captured)
                 try extractionCancellation.check()
+                if let freshInputs {
+                    try timed("freshInputRecheck", revision: revision) { try freshInputs.validate(log: buildText, source: source) }
+                }
+                if let freshInputFailure { result.diagnostics.append(freshInputFailure) }
                 try captured?.validateFiles()
-                try timed("graphPublish", revision: revision) { try cache.store(result, identity: identity) }
+                if reuseAnalysis { try timed("graphPublish", revision: revision) { try cache.store(result, identity: identity) } }
             }
             try extractionCancellation.check()
             try captured?.validateFiles()
