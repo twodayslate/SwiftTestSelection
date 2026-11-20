@@ -92,13 +92,31 @@ public struct HelperBindingBuildEvidence: Codable, Sendable {
             // is unnecessary when checking one immutable build in place.
             let inputDirectory: URL
             if let index = args.lastIndex(of: "-working-directory"), index + 1 < args.count {
-                inputDirectory = URL(fileURLWithPath: args[index + 1], relativeTo: working).standardizedFileURL
+                let path = args[index + 1]
+                inputDirectory = path.hasPrefix("/") ? URL(fileURLWithPath: path)
+                    : working.appendingPathComponent(path).standardizedFileURL
             } else { inputDirectory = working }
+            func inputFile(_ operand: String) -> URL {
+                operand.hasPrefix("/") ? URL(fileURLWithPath: operand)
+                    : inputDirectory.appendingPathComponent(operand).standardizedFileURL
+            }
+            // Unlike optional output paths, named compiler inputs must exist
+            // even at the initial snapshot. Preserve forwarded/joined forms.
+            let inputFlags: Set<String> = ["-vfsoverlay", "-ivfsoverlay", "-import-objc-header",
+                "-fmodule-map-file", "-explicit-swift-module-map-file"]
+            let operands = args.filter { !["-Xcc", "-Xfrontend"].contains($0) }
+            for index in operands.indices {
+                let parts = operands[index].split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                guard let flag = parts.first, inputFlags.contains(String(flag)) else { continue }
+                let operand = parts.count == 2 ? String(parts[1]) : index + 1 < operands.count ? operands[index + 1] : ""
+                guard !operand.isEmpty, !operand.hasPrefix("-") else { throw ImpactError("Missing compiler input operand for " + flag) }
+                try record(inputFile(operand))
+            }
             for argument in args.dropFirst() {
                 let operand = argument.hasPrefix("-") && argument.contains("=")
                     ? String(argument.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)[1]) : argument
                 guard !operand.isEmpty, !operand.hasPrefix("-") else { continue }
-                let file = URL(fileURLWithPath: operand, relativeTo: inputDirectory).standardizedFileURL
+                let file = inputFile(operand)
                 var isDirectory: ObjCBool = false
                 if FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory), !isDirectory.boolValue {
                     try record(file)

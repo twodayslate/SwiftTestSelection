@@ -61,9 +61,15 @@ import Testing
         let path = root.appendingPathComponent(name)
         let original = try Data(contentsOf: path)
         try (original + Data(" changed".utf8)).write(to: path)
-        #expect(throws: (any Error).self) { try fresh.validate(log: log, source: root) }
+        #expect(throws: (any Error).self, "\(name)") { try fresh.validate(log: log, source: root) }
         try original.write(to: path)
         try fresh.validate(log: log, source: root)
+    }
+    for name in ["headers#overlay.yaml", "relative.modulemap"] {
+        let path = root.appendingPathComponent(name), bytes = try Data(contentsOf: root.appendingPathComponent(name))
+        try FileManager.default.removeItem(at: path)
+        #expect(throws: (any Error).self, "\(name)") { try XcodeFreshExtractionInputs.read(log: log, source: root) }
+        try bytes.write(to: path)
     }
     let extraPlugin = plugins.appendingPathComponent("new-plugin")
     try Data("new compiler input".utf8).write(to: extraPlugin)
