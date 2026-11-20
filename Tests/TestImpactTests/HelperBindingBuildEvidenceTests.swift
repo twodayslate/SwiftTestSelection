@@ -145,7 +145,8 @@ import Testing
     #expect(nestedEvidence.inputFiles[nested.resolvingSymlinksInPath().path] != nil)
     let otherDirectory = root.appendingPathComponent("another-directory")
     try FileManager.default.createDirectory(at: otherDirectory, withIntermediateDirectories: true)
-    let repeated = "cd " + root.path + "\n" + log + "\ncd " + otherDirectory.path + "\n" + log
+    let invocation = try #require(log.components(separatedBy: .newlines).first { $0.hasPrefix("builtin-SwiftDriver -- ") })
+    let repeated = "cd " + root.path + "\n" + invocation + "\ncd " + otherDirectory.path + "\n" + invocation
     var repeatedArtifact = artifact
     repeatedArtifact.buildLogDigest = XcodeGraphCache.digest(Data(repeated.utf8))
     #expect(throws: (any Error).self) {
