@@ -45,7 +45,9 @@ import Testing
     try Data(root.appendingPathComponent("UI.swift").path.utf8).write(to: list)
     let entry = ["moduleName": "Dependency", "modulePath": root.appendingPathComponent("Dependency.swiftmodule").path]
     try JSONSerialization.data(withJSONObject: [entry]).write(to: map)
-    let log = "builtin-SwiftDriver -- \(bin.path)/swiftc -module-name UI -explicit-module-build @\(list.path)"
+    let overlay = root.appendingPathComponent("headers#overlay.yaml")
+    try Data("overlay bytes".utf8).write(to: overlay)
+    let log = "builtin-SwiftDriver -- \(bin.path)/swiftc -module-name UI -explicit-module-build @\(list.path) -vfsoverlay \(overlay.path)"
     let artifact = XcodeBuildArtifact(revision: "head", context: [:], toolchain: "compiler", buildLogDigest: XcodeGraphCache.digest(Data(log.utf8)), buildSettingsDigest: "settings", productsDirectory: root.path, xctestrun: "Tests.xctestrun", products: [:])
     let inputs = try ArtifactFiles.sourceInputs(log: log, directory: root)
     let valid = try HelperBindingBuildEvidence.capture(log: log, source: root, sourceInputs: inputs, artifact: artifact)
@@ -54,7 +56,7 @@ import Testing
     #expect(valid.inputFiles[root.appendingPathComponent("Dependency.swiftmodule").resolvingSymlinksInPath().path] != nil)
     let fresh = try XcodeFreshExtractionInputs.read(log: log, source: root)
     try fresh.validate(log: log, source: root)
-    for name in ["UI.swift", "Dependency.swiftmodule", "UI-dependencies-1.json", "UI.SwiftFileList", "bin/swiftc", "lib/swift/host/plugins/plugin"] {
+    for name in ["UI.swift", "Dependency.swiftmodule", "UI-dependencies-1.json", "UI.SwiftFileList", "bin/swiftc", "lib/swift/host/plugins/plugin", "headers#overlay.yaml"] {
         let path = root.appendingPathComponent(name)
         let original = try Data(contentsOf: path)
         try (original + Data(" changed".utf8)).write(to: path)

@@ -91,7 +91,7 @@ public struct HelperBindingBuildEvidence: Codable, Sendable {
             // plugins) as well as imports. Cache-specific output normalization
             // is unnecessary when checking one immutable build in place.
             for argument in args.dropFirst() {
-                let path = argument.components(separatedBy: "#")[0]
+                let path = argument
                 var isDirectory: ObjCBool = false
                 if path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue {
                     try record(URL(fileURLWithPath: path))
