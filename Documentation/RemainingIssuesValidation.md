@@ -62,3 +62,22 @@ These issues are not closed by substituting conservative fallback for a proven
 precision improvement. Prior exact consumer evidence is in
 [OpenPrecisionIssuesValidation.md](OpenPrecisionIssuesValidation.md) and
 [OpenIssuesFollowup.md](OpenIssuesFollowup.md).
+
+## Automated validation
+
+With Xcode 27.2, the serial release suite passed all **607 tests** in 431.926
+seconds. The capture-helper, release-distribution (one platform skip), profiling,
+coverage, inline-mapping and mapping-maintenance Python/CLI checks also passed.
+
+All 20 capture failure/cancellation controls passed across retained, head-only,
+cached and temporary storage, including source tampering and missing products.
+The fresh head-only integration fixture passed all six comparisons: method edit,
+mixed documentation, stacked edit, production change, added test and comment-only
+empty selection. Each comparison performed one head build and observed fresh
+input checks without graph lookup/publication or module-cache preparation.
+Malformed reports, altered graphs and altered executable products were rejected
+before test launch. These integration checks did not execute application tests.
+
+The first integration attempt failed during simulator runner preflight after two
+successful comparisons. Explicitly booting the dedicated simulator resolved it;
+the full rerun passed. This environmental retry is not counted as a selector pass.

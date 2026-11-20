@@ -90,11 +90,18 @@ public struct HelperBindingBuildEvidence: Codable, Sendable {
             // Include explicit auxiliary operands (overlays, headers, lists,
             // plugins) as well as imports. Cache-specific output normalization
             // is unnecessary when checking one immutable build in place.
+            let inputDirectory: URL
+            if let index = args.lastIndex(of: "-working-directory"), index + 1 < args.count {
+                inputDirectory = URL(fileURLWithPath: args[index + 1], relativeTo: working).standardizedFileURL
+            } else { inputDirectory = working }
             for argument in args.dropFirst() {
-                let path = argument
+                let operand = argument.hasPrefix("-") && argument.contains("=")
+                    ? String(argument.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)[1]) : argument
+                guard !operand.isEmpty, !operand.hasPrefix("-") else { continue }
+                let file = URL(fileURLWithPath: operand, relativeTo: inputDirectory).standardizedFileURL
                 var isDirectory: ObjCBool = false
-                if path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue {
-                    try record(URL(fileURLWithPath: path))
+                if FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory), !isDirectory.boolValue {
+                    try record(file)
                 }
             }
             let lists = responseFiles.filter { $0.pathExtension == "SwiftFileList" }
