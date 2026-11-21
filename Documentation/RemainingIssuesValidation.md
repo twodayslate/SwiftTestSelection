@@ -56,13 +56,14 @@ historical `replyDestination` caller. #383 needs application-factory, launch-sta
 and renamed/removed helper evidence. Their hostless Swift Testing targets have
 independent trait/parameter iteration and declaration-inventory boundaries.
 
-## Issues that still need external or historical evidence
+## Issue disposition after #103
+
+The follow-up [historical helper analysis](HistoricalHelperResolution.md) covers
+the diagnostic acceptance criteria for #58, #61 and #83, including both #291
+comparisons. Their conditional UI count targets remain unproven.
 
 | Issue | Remaining requirement |
 | --- | --- |
-| #58 | Actual throwing-callback bindings and error-formatting witnesses in the transitive consumer closure; the known caller count alone cannot exclude other tests. |
-| #61 | Reviewed Optional/String assertion formatting and remaining declaration/binding evidence for the historical comparisons. Extension entries and bounded scrolling helpers are already supported. |
-| #83 | Authenticated historical macro/attribute declarations or reviewed source-scoped contracts. Per-construct inventory diagnostics and supported SDK identity contracts already exist; arbitrary expansions cannot be treated as complete. |
 | #91 | Actual UI-runner validation on Xcode 27.3. This machine has Xcode 27.0–27.2. Existing fixtures cover compiler discovery, mixed frameworks, exact identifiers, argument providers and trait uncertainty, but do not establish 27.3 runtime behavior. |
 | #101 | The independent callback, factory, historical-caller and Swift Testing boundaries above. |
 

@@ -54,6 +54,9 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// Supported SDK method signatures followed by tab-separated path, line and UTF-8 column.
     /// Unknown locations are retained explicitly; nil denotes an older capture.
     public var dynamicCallSites: Set<String>? = nil
+    /// Observed generic XCTest assertion instructions, keyed by symbol and
+    /// substitutions. Diagnostic locations only, never a completeness proof.
+    public var assertionFormattingSites: Set<String>? = nil
     /// Swift error propagation and opaque throwing callback inputs. Nil means missing evidence.
     public var receiverErrorEffects: Set<String>? = nil
     /// Indirect invocations without a proven nonthrowing predicate signature.
@@ -88,6 +91,9 @@ public struct FunctionNode: Codable, Sendable, Equatable {
         stateAccesses = union(stateAccesses, other.stateAccesses)
         receiverTypeOrigins = union(receiverTypeOrigins, other.receiverTypeOrigins)
         receiverGenericCalls = union(receiverGenericCalls, other.receiverGenericCalls)
+        if let sites = other.assertionFormattingSites {
+            assertionFormattingSites = (assertionFormattingSites ?? []).union(sites)
+        }
         dynamicCallSites = union(dynamicCallSites, other.dynamicCallSites)
         receiverErrorEffects = union(receiverErrorEffects, other.receiverErrorEffects)
         receiverIndirectErrorEffects = union(receiverIndirectErrorEffects, other.receiverIndirectErrorEffects)

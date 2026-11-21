@@ -36,6 +36,24 @@ import Testing
     #expect(SDKReceiverContracts.typeNames(String(repeating: "Array<", count: 40) + "String" + String(repeating: ">", count: 40)) == nil)
 }
 
+@Test func assertionFormattingSitesDistinguishOpcodeFromSourcePath() throws {
+    let root = FileManager.default.temporaryDirectory
+    let file = root.appendingPathComponent("partial_apply tests.swift")
+    let symbol = "$s6XCTest14XCTAssertEqual___4file4lineyxyKXK_xyKXKSSyXKs12StaticStringVSutSQRzlF"
+    let sil = """
+    sil @caller : $@convention(thin) () -> () {
+    bb0:
+      %f = function_ref @\(symbol) : $Function
+      %call = apply %f<Optional<String>>(%input) : $Function, loc "\(file.path)":4:5
+      %closure = partial_apply [callee_guaranteed] %f<Optional<Int>>(%input) : $Function, loc "\(file.path)":5:5
+      return %nothing : $()
+    } // end sil function 'caller'
+    """
+    let node = try #require(SILParser.parse(sil, module: "UI", sourceRoot: root).functions["caller"])
+    #expect(node.assertionFormattingSites == [symbol + "\tOptional<String>\tpartial_apply tests.swift:4"])
+    #expect(node.receiverGenericCalls == [symbol + "\tOptional<String>", symbol + "\tOptional<Int>"])
+}
+
 @Test func genericReceiverCaptureRetainsEveryInstantiationAndConversion() {
     let sil = """
     sil @caller : $@convention(thin) () -> () {

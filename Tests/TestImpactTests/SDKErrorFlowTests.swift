@@ -52,7 +52,7 @@ func receiverErrorEvidencePreservesMissingPrecedingFields(kind: String) throws {
     #expect(merged.functions["entry"]?.receiverErrorEffects == ["throw"])
 }
 
-@Test(arguments: ["valid", "missingCaller", "missingInput", "throw", "opaque", "indirect", "nonthrowingInput", "nonthrowingCaller", "mixedIndirect", "throwDespitePredicate"])
+@Test(arguments: ["valid", "missingCaller", "missingInput", "throw", "opaque", "indirect", "nonthrowingInput", "nonthrowingCaller", "mixedIndirect", "throwDespitePredicate", "transitiveCallback"])
 func savedReceiverProofRequiresErrorFlowEvidence(kind: String) throws {
     let assertion = "$s6XCTest13XCTAssertTrue__4file4lineySbyKXK_SSyXKs12StaticStringVSutF"
     var caller = FunctionNode(id: "$s2UI5entryyyF", module: "UI", name: "entry", regions: [.init(path: "Tests.swift", startLine: 2, endLine: 2)])
@@ -76,12 +76,24 @@ func savedReceiverProofRequiresErrorFlowEvidence(kind: String) throws {
     var current = XcodeTestGraph(targets: [], tests: ["UI/Suite/test()"])
     current.sources["UI:Tests.swift"] = .parse("import XCTest\nfunc entry() {}\nfunc input() {}", path: "Tests.swift", module: "UI")
     current.dependencies = .init(functions: [caller.id: caller, input.id: input], tests: [current.tests[0]: [caller.id]])
+    if kind == "transitiveCallback" {
+        var leaf = FunctionNode(id: "callback", module: "Dependency", name: "snapshot",
+                                regions: [.init(path: "Snapshot.swift", startLine: 11, endLine: 18)])
+        leaf.receiverErrorEffects = ["throwing callback parameter"]
+        leaf.compilerReferences = []
+        current.dependencies?.functions[leaf.id] = leaf
+        current.dependencies?.functions[input.id]?.compilerReferences = [caller.id, leaf.id]
+    }
     for data in [try GraphArchive.encode(current), try JSONEncoder().encode(current)] {
         let restored = try GraphArchive.decode(data)
         var proof = SDKReceiverOrigins()
         let blocker = proof.blocker(tests: Set(restored.tests), current: restored, graph: restored.dependencies!)
         #expect((blocker == nil) == (["valid", "nonthrowingInput", "nonthrowingCaller"].contains(kind)), "\(blocker ?? "no blocker")")
         if kind == "indirect" { #expect(blocker?.contains("missing indirect-call error evidence") == true) }
+        if kind == "transitiveCallback" {
+            #expect(blocker?.contains("compiler reference path: UI.entry at Tests.swift:2 → UI.input at Tests.swift:3 → Dependency.snapshot at Snapshot.swift:11") == true)
+            #expect(blocker?.contains("throwing callback parameter") == true)
+        }
         if kind == "mixedIndirect" { #expect(blocker?.contains("unproven") == true) }
         if kind.hasPrefix("missing") { #expect(blocker?.contains("sealed SIL") == true) }
     }

@@ -74,6 +74,12 @@ enum HelperDeclarationInventory {
                     guard !unsupportedImports.isEmpty else { continue }
                     add(token, kind: "unresolved-global-actor", spelling: "@" + name, effects: expansionEffects + ["actor isolation"],
                         evidence: "Authenticate the actor/attribute identity and module exports at both revisions. Unsupported import context: " + unsupportedImports.sorted().joined(separator: ", ") + ". A namesake macro cannot be excluded from source imports alone.")
+                } else if name == "unknown", attribute.arguments == nil, attribute.leftParen == nil,
+                          let switchCase = attribute.parent?.as(SwitchCaseSyntax.self),
+                          case .default = switchCase.label {
+                    // This switch label cannot synthesize declarations. Calls in
+                    // the branch still participate in ordinary effect analysis.
+                    continue
                 } else if name == "unchecked", attribute.parent?.parent?.is(AttributedTypeSyntax.self) == true {
                     // A language conformance modifier, not an attached macro.
                     // The written inheritance/conformance is still inventoried.
