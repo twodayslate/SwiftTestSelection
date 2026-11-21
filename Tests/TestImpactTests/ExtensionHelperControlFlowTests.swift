@@ -108,7 +108,10 @@ func compiledExtensionScrollingHelperRequiresCompleteEffects(kind: String) throw
         #expect(report.selectedTests.contains(tests[3]), "\(report.diagnostics)")
         #expect(!report.diagnostics.isEmpty)
         if ["optionalString", "optionalFormatting"].contains(kind) {
-            #expect(report.diagnostics.contains { $0.message.contains("Optional<String>") }, "\(report.diagnostics)")
+            let assertionLine = try #require(after.components(separatedBy: "\n").firstIndex { $0.contains("XCTAssertEqual(value,") }) + 1
+            #expect(report.diagnostics.contains {
+                $0.message.contains("Optional<String>") && $0.message.contains("captured assertion sites: UI.swift:\(assertionLine)")
+            }, "\(report.diagnostics)")
             #expect(current.sources["UI:UI.swift"]?.units.first { $0.privateTestHelper?.name == "revealInboxFilter" }?.privateTestHelper?.calleeEffectsSupported == true)
         }
     }

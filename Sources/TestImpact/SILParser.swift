@@ -369,6 +369,12 @@ public enum SILParser {
                     if depth == 0 {
                         let proof = unreachableNilSome && symbol == SDKReceiverContracts.objectBridge ? SDKReceiverContracts.unreachableNil : arguments
                         current!.receiverGenericCalls?.insert(symbol + "\t" + proof)
+                        if SDKReceiverContracts.errorFormatting.contains(symbol),
+                           !line.containsASCII("partial_apply "), let point = location(line) {
+                            let site = symbol + "\t" + arguments + "\t" + point.path + ":" + String(point.startLine)
+                            if current!.assertionFormattingSites == nil { current!.assertionFormattingSites = [] }
+                            current!.assertionFormattingSites!.insert(site)
+                        }
                     }
                     else { current!.receiverGenericCalls = nil }
                 }
