@@ -48,10 +48,9 @@ private func formattingArtifact(toolchain: String) -> XcodeBuildArtifact {
     return artifact
 }
 
-private func formattingFixture(assertion: String? = nil) throws -> (URL, XcodeTestGraph, XcodeHeadOnlySources, HelperFormattingContract) {
+private func formattingFixture(before: String = formattingBefore) throws -> (URL, XcodeTestGraph, XcodeHeadOnlySources, HelperFormattingContract) {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("formatting-contract-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    let before = assertion.map { formattingBefore.replacingOccurrences(of: "let value: String? = \"ready\"; XCTAssertEqual(value, \"ready\")", with: "let value: CGFloat = 1; " + $0 + "(value, CGFloat(0))") } ?? formattingBefore
     let after = before.replacingOccurrences(of: "private func candidate() { XCTAssertTrue(true) }", with: "private func candidate() { XCTAssertTrue(true); XCTAssertFalse(false) }")
     var current = try boundaryGraph(["UI.swift": after], tests: formattingTests, root: root)
     current.dependencies!.toolchain = try CommandRunner.run("xcrun", ["swiftc", "--version"], at: root).text
@@ -82,6 +81,36 @@ private func formattingFixture(assertion: String? = nil) throws -> (URL, XcodeTe
     let contradicted = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base")
     #expect(contradicted.selectedTests == formattingTests.sorted())
     #expect(contradicted.explanations.contains { $0.test == formattingTests[2] && $0.kind == "dependency" })
+}
+
+@Test func mixedFormattingReviewsReportOnlyUnresolvedAssertionSites() throws {
+    let before = formattingBefore.replacingOccurrences(of: "XCTAssertEqual(value, \"ready\")", with: """
+    let number: Int? = 1
+    XCTAssertEqual(value, "ready")
+    XCTAssertEqual(number, 1)
+    """)
+    let (root, fixture, source, original) = try formattingFixture(before: before)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let lines = before.components(separatedBy: "\n")
+    let stringLine = try #require(lines.firstIndex { $0.contains("XCTAssertEqual(value,") }) + 1
+    let intLine = try #require(lines.firstIndex { $0.contains("XCTAssertEqual(number,") }) + 1
+    for (reviewed, unresolved, reviewedLine, unresolvedLine) in [
+        ("Optional<String>", "Optional<Int>", stringLine, intLine),
+        ("Optional<Int>", "Optional<String>", intLine, stringLine)
+    ] {
+        var current = fixture, contract = original
+        contract.substitutions = reviewed
+        current.mappings!.helperFormattingContracts = [contract]
+        let report = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base")
+        let diagnostic = try #require(report.diagnostics.first { $0.code == "head_only_helper_callee_effects" })
+        #expect(diagnostic.message.contains("with substitutions " + unresolved + " in "))
+        #expect(diagnostic.message.contains("captured assertion sites: UI.swift:\(unresolvedLine)"))
+        #expect(!diagnostic.message.contains("UI.swift:\(reviewedLine)"))
+        let decision = try #require(report.helperContractDecisions?.first)
+        #expect(decision.status == "discharged")
+        #expect(decision.dischargedBoundaries.map(\.substitutions) == [reviewed])
+        #expect(report.selectedTests == formattingTests.sorted())
+    }
 }
 
 @Test func formattingContractsRejectStaleAmbiguousAndIncompleteEvidence() throws {
@@ -417,7 +446,9 @@ func formattingContractsRequireCompleteBuildAndConformanceEvidence(change: Strin
 
 @Test(arguments: ["XCTAssertGreaterThan", "XCTAssertGreaterThanOrEqual", "XCTAssertLessThan", "XCTAssertLessThanOrEqual"])
 func relationalFormattingContractsRequireExactReviewedBoundaries(assertion: String) throws {
-    let (root, fixture, source, original) = try formattingFixture(assertion: assertion)
+    let before = formattingBefore.replacingOccurrences(of: "let value: String? = \"ready\"; XCTAssertEqual(value, \"ready\")",
+                                                       with: "let value: CGFloat = 1; " + assertion + "(value, CGFloat(0))")
+    let (root, fixture, source, original) = try formattingFixture(before: before)
     defer { try? FileManager.default.removeItem(at: root) }
     var contract = original
     contract.rationale = "Reviewed fixture: SDK CGFloat scalar comparison of local constants; no project printing/reflection conformances. Failure formatting has no shared effects, escaping callbacks or receiver production."

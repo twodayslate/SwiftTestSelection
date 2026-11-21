@@ -339,9 +339,13 @@ struct SDKReceiverOrigins {
                             return "Unproven generic receiver contract for " + symbol + " in " + node.module + "." + node.name +
                                 "; missing or ambiguous source type identities/imports; no formatting declaration resolves this binding"
                         }
-                        guard !arguments.isEmpty, arguments.allSatisfy({ SDKReceiverContracts.allows($0, for: symbol) ||
-                            formattingReview?.allows(node: node, owners: owners, symbol: symbol, arguments: $0) == true }) else {
-                            let missing = arguments.sorted().compactMap { argument -> String? in
+                        // Review records a decision per substitution, including those after the first blocker.
+                        let unresolved = arguments.sorted().filter { argument in
+                            !SDKReceiverContracts.allows(argument, for: symbol) &&
+                                formattingReview?.allows(node: node, owners: owners, symbol: symbol, arguments: argument) != true
+                        }
+                        guard !arguments.isEmpty, unresolved.isEmpty else {
+                            let missing = unresolved.compactMap { argument -> String? in
                                 guard let reason = SDKReceiverContracts.missingWitnessProof(argument, for: symbol) else { return nil }
                                 let prefix = symbol + "\t" + argument + "\t"
                                 let sites = (node.assertionFormattingSites ?? []).filter { $0.hasPrefix(prefix) }
@@ -349,7 +353,7 @@ struct SDKReceiverOrigins {
                                 return sites.isEmpty ? reason : reason + "; captured assertion sites: " + sites.joined(separator: ", ")
                             }
                             let location = node.regions.first.map { " at " + $0.path + ":" + String($0.startLine) } ?? ""
-                            return "Unproven generic receiver contract for " + symbol + " with substitutions " + arguments.sorted().joined(separator: "; ") +
+                            return "Unproven generic receiver contract for " + symbol + " with substitutions " + unresolved.joined(separator: "; ") +
                                 " in " + node.module + "." + node.name + location +
                                 (missing.isEmpty ? "" : "; " + missing.joined(separator: "; "))
                         }
