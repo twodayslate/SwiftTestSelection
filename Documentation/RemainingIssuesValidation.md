@@ -34,6 +34,14 @@ Compiler replay retains the existing dependency-scan mutation checks in a mode
 that exposes no reusable fragment identities. Explicit persistent caches retain
 their existing lookup, mutation checks, publication and budget behavior.
 
+If a seemingly complete capture has an unsupported SIL layout discovered only
+during parsing, the uncached capture-only path now rejects late compiler replay
+and retains conservative selection. A scan started at that point cannot recover
+the identity of dependency sources that may already have changed during
+extraction. Replay remains available when its validator was initialized before
+extraction. Regression controls cover an external dependency changing before a
+late fallback and valid capture consumption, with one/two workers.
+
 ## Geometry helpers and remaining precision boundaries (#101)
 
 Private helpers now accept `CGRect` and `CoreGraphics.CGRect` value parameters and

@@ -442,7 +442,9 @@ extension XcodeAnalysis {
                 // A compiler replay can read dependency source files that a
                 // completed SIL capture no longer consumes. Preserve its scan
                 // and mutation check, but never load/stage/publish fragments in
-                // the uncached path. Complete captures use exact input seals.
+                // the uncached path. Complete captures use exact input seals;
+                // extraction must decline a late replay if parsing discovers
+                // an unsupported layout without pre-extraction replay validation.
                 let needsReplayValidation = captured == nil || captured?.diagnostics.isEmpty == false
                 let moduleCache = reuseAnalysis || needsReplayValidation ? XcodeModuleCache(cache: cache, identity: identity, source: source, derived: derived, workspace: workspace, directory: options.path.deletingLastPathComponent(), workers: options.extractionWorkers, reuseEnabled: reuseAnalysis) : nil
                 var freshInputs: XcodeFreshExtractionInputs?
@@ -454,7 +456,7 @@ extension XcodeAnalysis {
                         }
                     } catch { freshInputFailure = "Fresh compiler input inventory unavailable: \(error)" }
                 }
-                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: buildText, settingsData: settings, moduleCache: moduleCache, captured: captured)
+                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: buildText, settingsData: settings, moduleCache: moduleCache, captured: captured, allowCompilerReplay: moduleCache != nil)
                 try extractionCancellation.check()
                 if let freshInputs {
                     try timed("freshInputRecheck", revision: revision) { try freshInputs.validate(log: buildText, source: source) }

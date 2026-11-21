@@ -6,7 +6,7 @@ import Foundation
 enum XcodeCompilerGraph {
     static func extract(log: String, sourceRoot: URL, directory: URL, derived: URL,
                         progress: (String) -> Void, ownership: [String: Set<String>] = [:],
-                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil, measurement: (String, Double) -> Void = { _, _ in }) -> DependencyGraph {
+                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil, measurement: (String, Double) -> Void = { _, _ in }, allowCompilerReplay: Bool = true) -> DependencyGraph {
         var graph = DependencyGraph()
         graph.compilerImplicitImports = [:]
         guard (1...8).contains(workers) else {
@@ -85,6 +85,12 @@ enum XcodeCompilerGraph {
                         }
                     } catch let error as CapturedSIL.UnsupportedLayout {
                         captureMessages.append("Captured SIL \(job.module): \(error); replaying module")
+                    }
+                    // Dependency sources can have changed while parsing other
+                    // captured modules. A scan started here cannot recover their
+                    // pre-extraction identity, so decline unvalidated replay.
+                    guard allowCompilerReplay else {
+                        throw ImpactError("Captured SIL requires compiler replay, but dependency inputs were not validated before extraction; a supported capture layout is required")
                     }
                     let output = derived.appendingPathComponent("impact-\(UUID().uuidString).sil")
                     defer { try? FileManager.default.removeItem(at: output) }
