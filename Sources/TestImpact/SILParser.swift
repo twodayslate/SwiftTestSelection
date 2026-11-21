@@ -131,7 +131,7 @@ public enum SILParser {
         static let block = try! NSRegularExpression(pattern: #"^(bb[0-9]+)[(:]"#)
         static let nilSwitch = try! NSRegularExpression(pattern: #"^switch_enum_addr (%[\w]+), case #Optional.some!enumelt: (bb[0-9]+), case #Optional.none!enumelt: bb[0-9]+(?:,|$)"#)
         static let receiverCast = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?(?:unconditional_checked_cast(?:_addr|_value)?|checked_cast(?:_addr|_value)?_br|unchecked_(?:addr|trivial_bit|bitwise)_cast)\b.*? to (.+)"#)
-        static let genericApply = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?(?:apply|try_apply|begin_apply|partial_apply)(?: \[[^\]]*\])* (%[\w]+)<"#)
+        static let genericApply = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?(?<opcode>apply|try_apply|begin_apply|partial_apply)(?: \[[^\]]*\])* (?<callee>%[\w]+)<"#)
         static let predicateApply = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?apply(?: \[[^\]]*\])* %[\w]+\([^\r\n]*\) : \$@(?:noescape @)?callee_guaranteed \(\) -> (?:@out )?Bool$"#)
         static let apply = try! NSRegularExpression(pattern: #"\b(?:apply|try_apply|begin_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
     }
@@ -354,7 +354,7 @@ public enum SILParser {
             }
             if line.containsASCII("apply"), let match = Expressions.genericApply.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) {
                 let text = line as NSString
-                let value = text.substring(with: match.range(at: 1))
+                let value = text.substring(with: match.range(withName: "callee"))
                 if let symbol = directReferences[value] {
                     let tail = text.substring(from: match.range.location + match.range.length)
                     var depth = 1, arguments = ""
@@ -370,7 +370,7 @@ public enum SILParser {
                         let proof = unreachableNilSome && symbol == SDKReceiverContracts.objectBridge ? SDKReceiverContracts.unreachableNil : arguments
                         current!.receiverGenericCalls?.insert(symbol + "\t" + proof)
                         if SDKReceiverContracts.errorFormatting.contains(symbol),
-                           !line.containsASCII("partial_apply "), let point = location(line) {
+                           text.substring(with: match.range(withName: "opcode")) != "partial_apply", let point = location(line) {
                             let site = symbol + "\t" + arguments + "\t" + point.path + ":" + String(point.startLine)
                             if current!.assertionFormattingSites == nil { current!.assertionFormattingSites = [] }
                             current!.assertionFormattingSites!.insert(site)
