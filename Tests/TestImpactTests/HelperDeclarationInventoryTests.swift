@@ -75,6 +75,10 @@ import Testing
     func lookup() {
         _ = #selector(Holder.action)
         _ = #keyPath(Holder.title)
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal, .fair, .serious, .critical: break
+        @unknown default: break
+        }
     }
     """
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -90,10 +94,11 @@ import Testing
     // inventoried; the language lookup exception grants no expansion contract.
     let opaque = SwiftSourceSnapshot.parse("""
     @unchecked struct Fake {}
+    @unknown struct OtherFake {}
     @Observable class Model { var value = 0 }
     let result = #customSelector()
     #generateBindings()
     """, path: "Other.swift", module: "UI")
     #expect(opaque.helperDeclarationsComplete == false)
-    #expect(opaque.helperDeclarationIssues?.map(\.spelling) == ["@unchecked", "@Observable", "#customSelector", "#generateBindings"])
+    #expect(opaque.helperDeclarationIssues?.map(\.spelling) == ["@unchecked", "@unknown", "@Observable", "#customSelector", "#generateBindings"])
 }

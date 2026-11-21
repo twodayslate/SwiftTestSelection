@@ -472,7 +472,9 @@ the policy artifacts; the ledger records their compressed and uncompressed
 SHA-256 digests. Full products and graphs retain their original absolute paths
 under `/tmp/swift-open-issues-validation/`.
 
-No GitHub issue was closed by this work. Recommended disposition after review:
+The table records the disposition at #99. The subsequent
+[historical helper analysis](HistoricalHelperResolution.md) reconciles the four
+archived comparisons and updates the conclusions for #58, #61 and #83.
 
 | Issue | Disposition | Evidence or remaining requirement |
 | --- | --- | --- |

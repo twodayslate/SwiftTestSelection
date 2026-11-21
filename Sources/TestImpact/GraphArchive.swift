@@ -25,6 +25,7 @@ public enum GraphArchive {
         var testDiagnostics: [String: [String]]
         var compilerClassIdentities: [String: CompilerClassIdentity]?
         var compilerImplicitImports: [String: Set<String>]?
+        var assertionFormattingSites: [String: Set<String>]?
         var captureModules: [String: Set<String>]?
         var dynamicDeclarationModules: [String: [String: Set<String>]]?
         var nominalTypeContexts: [String: String]?
@@ -60,6 +61,7 @@ public enum GraphArchive {
             diagnostics = graph.diagnostics; testDiagnostics = graph.testDiagnostics
             compilerClassIdentities = graph.compilerClassIdentities
             compilerImplicitImports = graph.compilerImplicitImports
+            assertionFormattingSites = graph.functions.compactMapValues(\.assertionFormattingSites)
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
             swiftTestingEmptyFactories = graph.functions.compactMapValues(\.swiftTestingEmptyFactory)
             captureModules = graph.functions.compactMapValues(\.captureModules)
@@ -138,6 +140,7 @@ public enum GraphArchive {
                 node.nominalTypeContext = nominalTypeContexts?[node.id]
                 node.swiftTestingEmptyFactory = swiftTestingEmptyFactories?[node.id]
                 node.captureModules = captureModules?[node.id]
+                node.assertionFormattingSites = assertionFormattingSites?[node.id]
                 node.dynamicDeclarationModules = dynamicDeclarationModules?[node.id]
                 graph.functions[node.id] = node
             }

@@ -219,7 +219,20 @@ struct SDKReceiverOrigins {
             }
             return detail
         }
-        func errorFormattingBlocker(_ inputs: Set<String>) -> String? {
+        func errorFormattingBlocker(from caller: FunctionNode, inputs: Set<String>) -> String? {
+            // A compiler reference can be a callback or an escaped value. Report
+            // the reference path without claiming that each edge is an invocation.
+            var predecessor: [String: String] = [:]
+            func referencePath(to leaf: String) -> String {
+                var path = [leaf]
+                while let parent = predecessor[path.last!] { path.append(parent) }
+                return ([caller.id] + path.reversed()).map { id in
+                    guard let node = graph.functions[id] else { return id }
+                    let region = node.regions.min { ($0.path, $0.startLine) < ($1.path, $1.startLine) }
+                    let location = region.map { " at " + $0.path + ":" + String($0.startLine) } ?? ""
+                    return node.module + "." + node.name + location
+                }.joined(separator: " → ")
+            }
             var pending = inputs, visited = Set<String>()
             while !pending.isEmpty {
                 let batch = pending.subtracting(visited).subtracting(nonthrowingProducers)
@@ -229,15 +242,17 @@ struct SDKReceiverOrigins {
                 for id in batch.subtracting(sdk).sorted() {
                     guard let node = graph.functions[id], let errors = node.receiverErrorEffects,
                           let direct = node.compilerReferences else {
-                        return "Missing error-flow evidence for XCTest input producer " + id + "; regenerate the graph from sealed SIL"
+                        return "Missing error-flow evidence for XCTest input producer " + id + "; regenerate the graph from sealed SIL; compiler reference path: " + referencePath(to: id)
                     }
                     guard errors.isEmpty, (!node.uncertainties.contains("Indirect function invocation") || node.receiverIndirectErrorEffects?.isEmpty == true) else {
-                        return "Unproven XCTest error formatting from input producer " + node.module + "." + node.name + errorEvidenceDetail(node)
+                        return "Unproven XCTest error formatting in referenced producer " + node.module + "." + node.name + errorEvidenceDetail(node) + "; compiler reference path: " + referencePath(to: id)
                     }
                     // A Swift throw from any dynamic/indirect call must propagate
                     // through this body to reach the SDK's catch. Explicit callees
                     // also cover callback bodies handed to known SDK operations.
-                    pending.formUnion(direct)
+                    for child in direct where !visited.contains(child) && pending.insert(child).inserted {
+                        predecessor[child] = id
+                    }
                 }
             }
             nonthrowingProducers.formUnion(visited)
@@ -280,11 +295,7 @@ struct SDKReceiverOrigins {
                           (!node.uncertainties.contains("Indirect function invocation") || node.receiverIndirectErrorEffects?.isEmpty == true) else {
                         return "Unproven XCTest error formatting from an opaque callback in " + node.module + "." + node.name + errorEvidenceDetail(node)
                     }
-                    if let reason = errorFormattingBlocker(direct) {
-                        let locations = node.regions.sorted { ($0.path, $0.startLine) < ($1.path, $1.startLine) }
-                        let location = locations.first.map { " at " + $0.path + ":" + String($0.startLine) } ?? " (no physical source location)"
-                        return reason + "; inspected from " + node.module + "." + node.name + location
-                    }
+                    if let reason = errorFormattingBlocker(from: node, inputs: direct) { return reason }
                 }
                 var checked = node
                 // A final source-bound XCTest class has no descendant override.
@@ -330,7 +341,13 @@ struct SDKReceiverOrigins {
                         }
                         guard !arguments.isEmpty, arguments.allSatisfy({ SDKReceiverContracts.allows($0, for: symbol) ||
                             formattingReview?.allows(node: node, owners: owners, symbol: symbol, arguments: $0) == true }) else {
-                            let missing = arguments.sorted().compactMap { SDKReceiverContracts.missingWitnessProof($0, for: symbol) }
+                            let missing = arguments.sorted().compactMap { argument -> String? in
+                                guard let reason = SDKReceiverContracts.missingWitnessProof(argument, for: symbol) else { return nil }
+                                let prefix = symbol + "\t" + argument + "\t"
+                                let sites = (node.assertionFormattingSites ?? []).filter { $0.hasPrefix(prefix) }
+                                    .map { String($0.dropFirst(prefix.count)) }.sorted()
+                                return sites.isEmpty ? reason : reason + "; captured assertion sites: " + sites.joined(separator: ", ")
+                            }
                             let location = node.regions.first.map { " at " + $0.path + ":" + String($0.startLine) } ?? ""
                             return "Unproven generic receiver contract for " + symbol + " with substitutions " + arguments.sorted().joined(separator: "; ") +
                                 " in " + node.module + "." + node.name + location +
