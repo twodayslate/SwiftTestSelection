@@ -73,14 +73,20 @@ extension XcodeHeadOnlySelector {
 
     static func independentEntryKeys(current: XcodeTestGraph, excluding entries: Set<String>, index: DependencyIndex? = nil) -> Set<String> {
         guard !entries.isEmpty, let graph = current.dependencies else { return [] }
-        // Missing roots and incomplete lifecycle bindings hide possible callers.
-        // Keep the change roots so normal selection reports that uncertainty;
-        // absence of a path in a partial test inventory cannot prove isolation.
-        guard current.tests.allSatisfy({ test in
-            guard let roots = graph.tests[test], !roots.isEmpty,
-                  graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
-            return roots.allSatisfy { graph.functions[$0] != nil }
-        }) else { return [] }
+        // A bound Swift Testing factory can hide per-test runtime callbacks.
+        // Retain those entries as possible consumers when using an exclusion.
+        // Missing symbols, ambiguous discovery, or unknown lifecycle roots can
+        // obscure intermediate call paths as well and still block exclusions.
+        var uncertain = Set<String>()
+        for test in current.tests {
+            let roots = graph.tests[test] ?? []
+            guard !roots.isEmpty, roots.allSatisfy({ graph.functions[$0] != nil }) else { return [] }
+            let diagnostics = graph.testDiagnostics[test] ?? []
+            guard diagnostics.allSatisfy({ $0 == SwiftTestingDiscoveryRoots.runtimeEvidence }) else { return [] }
+            if !diagnostics.isEmpty { uncertain.insert(test) }
+        }
+        let entries = entries.subtracting(uncertain)
+        guard !entries.isEmpty else { return [] }
         // Restrict expensive ownership/reachability checks to locations of the
         // requested entries, rather than scanning every test body in the graph.
         let regions = Dictionary(grouping: entries.flatMap { graph.tests[$0] ?? [] }

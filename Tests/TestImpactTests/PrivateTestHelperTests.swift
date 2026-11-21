@@ -345,6 +345,16 @@ func compiledPrivateHelperChainAndAddedEntry(safety: String) throws {
     entryBase["UI:UI.swift"] = SwiftSourceSnapshot.parse(after.replacingOccurrences(of: newEntry, with: ""), path: "UI.swift", module: "UI")
     #expect(select(current, base: entryBase).selectedTests.isEmpty)
     #expect(select(current, base: entryBase).diagnostics.isEmpty)
+    // Keep the unresolved runtime consumer, and preserve full fallback for
+    // missing roots or a diagnostic that could hide intermediate call paths.
+    var uncertain = current
+    uncertain.dependencies!.testDiagnostics[unrelated] = [SwiftTestingDiscoveryRoots.runtimeEvidence]
+    let partial = select(uncertain, base: entryBase)
+    #expect(partial.selectedTests == [unrelated])
+    #expect(partial.diagnostics.map(\.code) == ["head_only_unresolved_test"])
+    #expect(select(uncertain, base: uncertain.sources).selectedTests.isEmpty)
+    uncertain.dependencies!.testDiagnostics[unrelated] = ["Unknown lifecycle"]
+    #expect(select(uncertain, base: entryBase).selectedTests == tests)
     for fault in ["legacy", "missingRoot", "unknownConsumer", "ancestorState", "baseName", "otherFileName", "nonfinal", "unsupported", "attachmentAPI", "legacyAttachment"] {
         var broken = current, old = entryBase
         switch fault {

@@ -40,7 +40,22 @@ struct XcodeHeadOnlySources {
         })
         let hasBindingContracts = !(current.mappings?.helperBindingContracts?.isEmpty ?? true) || !(result.mappings?.helperBindingContracts?.isEmpty ?? true)
         let hasContracts = hasBindingContracts || !HelperFormattingContracts.declarations(current.sources, current.mappings).isEmpty || !(result.mappings?.helperFormattingContracts?.isEmpty ?? true)
-        let auditCallers = !callerModules.isEmpty || hasContracts || !(current.mappings?.testRuntimeBoundaries?.isEmpty ?? true)
+        var auditCallers = !callerModules.isEmpty || hasContracts || !(current.mappings?.testRuntimeBoundaries?.isEmpty ?? true)
+        if !auditCallers {
+            // The last helper in a file can disappear. Read the actual old
+            // declaration before deciding whether other files need a Git audit.
+            for (key, head) in current.sources {
+                guard let colon = key.firstIndex(of: ":") else { continue }
+                let path = String(key[key.index(after: colon)...])
+                guard paths.contains(path),
+                      let old = try cache.snapshot(path: path, module: String(key[..<colon])) else { continue }
+                let surviving = Set(head.units.map(\.key))
+                if old.units.contains(where: { $0.helperCallableName != nil && !surviving.contains($0.key) }) {
+                    auditCallers = true
+                    break
+                }
+            }
+        }
         var basePaths: Set<String>?
         if auditCallers {
             // Only caller audits can reuse unchanged head syntax or validate a
@@ -229,6 +244,7 @@ enum XcodeHeadOnlySelector {
         var isolatedHelpers = Set<String>(), isolatedSDKHelpers = Set<String>()
         var declarationAudits: [HelperDeclarationAudit] = []
         var declarationChanges: [HeadOnlyDeclarationChange] = []
+        var excludedChanges: [SourceUnit] = []
         var changed: [SourceUnit] = []
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
         for key in Set(old.keys).union(new.keys).sorted() {
@@ -307,10 +323,13 @@ enum XcodeHeadOnlySelector {
             // New independent entries are covered only by an explicit separate
             // execution policy, after proving no existing source name is rebound.
             if before.isEmpty, after.count == 1, let unit = after.first, excludedKeys.contains(key),
-               PrivateTestHelperIsolation.provesAddedEntry(unit, current: current, base: source.base) { continue }
+               PrivateTestHelperIsolation.provesAddedEntry(unit, current: current, base: source.base) {
+                excludedChanges.append(unit)
+                continue
+            }
             guard before.count == 1, after.count == 1, let a = before.first, let b = after.first,
                   a.kind == "function", b.kind == "function", a.region.path == b.region.path else {
-                declarationChanges.append(.describe(key: key, before: before, after: after, source: source))
+                declarationChanges.append(.describe(key: key, before: before, after: after, source: source, current: current))
                 let affectedPaths = Set(fallbackUnits.map(\.region.path)).sorted()
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
@@ -321,7 +340,10 @@ enum XcodeHeadOnlySelector {
             }
             // A separate execution of this entry does not cover effects from
             // structural changes or unsupported bodies outside its call graph.
-            if excludedKeys.contains(key) { continue }
+            if excludedKeys.contains(key) {
+                excludedChanges.append(b)
+                continue
+            }
             changed.append(b)
         }
         fallbackUnits = []
@@ -394,7 +416,8 @@ enum XcodeHeadOnlySelector {
             // Positive compiler paths survive every failed isolation gate. A
             // broad fallback is an additional reason, not a replacement for
             // already observed helper/fixture dependencies.
-            for (key, units) in new where !excludedKeys.contains(key) &&
+            let omittedKeys = Set(excludedChanges.map(\.key))
+            for (key, units) in new where !omittedKeys.contains(key) &&
                 ((old[key] ?? []).map(fingerprint).sorted() != units.map(fingerprint).sorted() || policyHelpers.contains(key)) {
                 for unit in units where unit.kind == "function" {
                     let module = String(unit.key.prefix { $0 != ":" })
@@ -404,13 +427,13 @@ enum XcodeHeadOnlySelector {
                     })
                 }
             }
-            fallbackUnits = changed
+            fallbackUnits = changed + excludedChanges
             let affectedPaths = index.paths(to: affected)
             for test in inventory.sorted() {
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
                     include([test], kind: "dependency", reason: path.last.map(sdkSymbols.contains) == true ? "Head compiler dependencies reach a changed SDK test helper; source/compiler query and caller checks passed; consult helperContractDecisions for any reviewed formatting assumptions" : path.last.map(isolatedSymbols.contains) == true ? "Head compiler dependencies reach a changed body; private helper isolation passed source/compiler checks; consult helperContractDecisions for any reviewed formatting assumptions" : "Head compiler dependencies reach a surviving body with an unchanged declaration header", path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
-                if !changed.isEmpty {
+                if !changed.isEmpty || !excludedChanges.isEmpty {
                     let roots = graph.tests[test] ?? []
                     if roots.isEmpty || roots.contains(where: { graph.functions[$0] == nil }) {
                         fallback("head_only_unresolved_test", "Missing or incomplete compiled head entry for \(test)", tests: [test])

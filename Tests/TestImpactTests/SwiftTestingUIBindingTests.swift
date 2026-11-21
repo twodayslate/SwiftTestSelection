@@ -12,6 +12,8 @@ import Testing
     import Testing
     import XCTest
     @Test func unrelated() {}
+    @Suite(.serialized) struct OtherSuite {}
+    struct Independent { @Test func plainMember() {} }
     final class Case: XCTestCase {
         func testEdited() { XCTAssertTrue(true) }
     }
@@ -30,7 +32,7 @@ import Testing
                      "-plugin-path", plugins.path, "-F", platform + "/Developer/Library/Frameworks",
                      "-I", platform + "/Developer/usr/lib", root.appendingPathComponent("Tests.swift").path]
     let log = "builtin-SwiftDriver -- " + arguments.map { "\"" + $0 + "\"" }.joined(separator: " ")
-    let tests = ["Tests/unrelated()", "Tests/Case/testEdited()"]
+    let tests = ["Tests/unrelated()", "Tests/Case/testEdited()", "Tests/Independent/plainMember()"]
     let sources = ["Tests:Tests.swift": SwiftSourceSnapshot.parse(after, path: "Tests.swift", module: "Tests")]
     let base = XcodeHeadOnlySources(base: ["Tests:Tests.swift": .parse(before, path: "Tests.swift", module: "Tests")])
     var reference: DependencyGraph?
@@ -40,9 +42,22 @@ import Testing
         var graph = XcodeCompilerGraph.extract(log: log, sourceRoot: root, directory: root, derived: scratch,
             progress: { _ in }, ownership: ["Tests": ["Tests.swift"]], workers: workers)
         #expect(graph.diagnostics.isEmpty)
-        #expect(graph.functions.values.compactMap(\.swiftTestingEmptyFactory) == ["top-level"])
+        #expect(graph.functions.values.compactMap(\.swiftTestingEmptyFactory).sorted() == ["member", "top-level"])
+        let suite = try #require(graph.functions.values.first { $0.swiftTestingFactoryType == "OtherSuite" })
+        let member = try #require(graph.functions.values.first { $0.swiftTestingFactoryType == "Independent" })
         XcodeCompilerGraph.bind(tests: tests, modules: ["Tests": "Tests"], sources: sources, graph: &graph)
         #expect(graph.testDiagnostics.isEmpty)
+        #expect(graph.tests[tests[2]]?.contains(suite.id) == true)
+        for type in ["Independent", nil] {
+            var uncertain = DependencyGraph(functions: graph.functions)
+            uncertain.functions[suite.id]?.swiftTestingFactoryType = type
+            XcodeCompilerGraph.bind(tests: tests, modules: ["Tests": "Tests"], sources: sources, graph: &uncertain)
+            #expect(uncertain.testDiagnostics[tests[2]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+        }
+        var unknown = DependencyGraph(functions: graph.functions)
+        unknown.functions[member.id]?.swiftTestingFactoryType = nil
+        XcodeCompilerGraph.bind(tests: tests, modules: ["Tests": "Tests"], sources: sources, graph: &unknown)
+        #expect(unknown.testDiagnostics[tests[2]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
         if let reference {
             #expect(graph.functions == reference.functions)
             #expect(graph.tests == reference.tests)
@@ -96,6 +111,7 @@ import Testing
         "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", root.appendingPathComponent("Tests.swift").path, "-o", sil.path], at: root)
     let parsed = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
     var graph = DependencyGraph(functions: parsed.functions)
+    XcodeCompilerGraph.resolveDispatch(&graph, tables: parsed.dispatchTargets)
     let source = SwiftSourceSnapshot.parse(text, path: "Tests.swift", module: "UI")
     XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": source], graph: &graph)
     for test in tests { #expect(graph.tests[test]?.isEmpty == false, "\(test)") }
@@ -113,10 +129,11 @@ import Testing
     #expect(hiddenTrait.testDiagnostics[tests[5]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
     let index = DependencyIndex(graph)
     let runtimeHook = try #require(graph.functions.values.first { $0.name == "runtimeHook()" }?.id)
-    // The runtime invokes prepare through TestTrait, independently of the
-    // constructor. This missing path is why factory evidence cannot clear the
-    // test diagnostic and authorize exclusions.
-    #expect(index.paths(to: [runtimeHook]).path(from: graph.tests[tests[3]] ?? []) == nil)
+    // The runtime invokes prepare through Trait. Bind its emitted witness even
+    // while custom scoping and parameter iteration retain uncertainty.
+    #expect(index.paths(to: [runtimeHook]).path(from: graph.tests[tests[3]] ?? []) != nil)
+    #expect(index.paths(to: [runtimeHook]).path(from: graph.tests[tests[5]] ?? []) != nil)
+    #expect(index.paths(to: [runtimeHook]).path(from: graph.tests[tests[0]] ?? []) == nil)
     for name in ["argumentValues()", "testEnabled()", "suiteEnabled()"] {
         let symbol = try #require(graph.functions.values.first { $0.name == name }?.id)
         #expect(index.paths(to: [symbol]).path(from: graph.tests[tests[3]] ?? []) != nil, "\(name)")

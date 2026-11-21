@@ -189,3 +189,20 @@ func baseSourceCachePreservesIndependentEvidence(scenario: String) throws {
         }
     }
 }
+
+@Test func removedFunctionAuditsHistoricalCallersOutsideTheRequestedScope() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    try repo.write("Helper.swift", "func removed() {}")
+    try repo.write("Caller.swift", "func caller() { removed() }")
+    let base = try repo.commit()
+    var current = XcodeTestGraph(targets: [], tests: [])
+    current.sources = [
+        "UI:Helper.swift": .parse("", path: "Helper.swift", module: "UI"),
+        "UI:Caller.swift": .parse("func caller() {}", path: "Caller.swift", module: "UI")
+    ]
+    let source = try XcodeHeadOnlySources.read(current: current, changes: [.init(path: "Helper.swift")],
+        base: base, root: repo.root, mappingPath: ".swift-test-selection.json")
+    let oldCaller = try #require(source.base["UI:Caller.swift"])
+    #expect(oldCaller.identifierNames?.contains("removed") == true)
+}

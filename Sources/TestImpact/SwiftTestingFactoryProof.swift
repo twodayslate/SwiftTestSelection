@@ -16,7 +16,15 @@ enum SwiftTestingFactoryProof {
     private static let extraction = try! NSRegularExpression(pattern: #"^tuple_extract (%\d+), 0$"#)
     private static let value = try! NSRegularExpression(pattern: #"%\d+"#)
 
-    static func emptyFactory(_ lines: [String]) -> String? {
+    private static let existential = try! NSRegularExpression(pattern: #"^%[0-9]+ = init_existential_addr %[0-9]+, \$([A-Za-z_][A-Za-z_0-9.]*)($|, loc | //)"#)
+    static func existentialTypes(_ lines: [String]) -> Set<String> {
+        Set(lines.compactMap { Pattern.groups(existential, in: $0)?.first })
+    }
+
+    private static let simpleType = try! NSRegularExpression(pattern: #"^[A-Za-z_][A-Za-z_0-9]*$"#)
+
+    static func emptyFactory(_ lines: [String], nominalType: inout String?) -> String? {
+        nominalType = nil
         var definitions: [String: String] = [:], uses: [String: [String]] = [:]
         for line in lines {
             let instruction = line.components(separatedBy: ", loc ")[0].components(separatedBy: " // ")[0]
@@ -49,6 +57,20 @@ enum SwiftTestingFactoryProof {
         }
         guard uses[arguments[0]]?.contains(where: isOutputParameter) == true,
               uses[arguments[0]]?.allSatisfy({ $0 == call || isOutputParameter($0) }) == true else { return nil }
+        // Bind the actual SDK factory argument, including its SSA value. A
+        // generic substitution alone cannot distinguish a nil/forwarded type.
+        let type = fields[1]
+        if Pattern.groups(simpleType, in: type) != nil {
+            let literal = "metatype $@thick " + type + ".Type"
+            if suite, definitions[arguments[1]] == literal {
+                nominalType = type
+            } else if function, let optional = definitions[arguments[2]] {
+                let prefix = "enum $Optional<@thick " + type + ".Type>, #Optional.some!enumelt, "
+                if optional.hasPrefix(prefix), definitions[String(optional.dropFirst(prefix.count))] == literal {
+                    nominalType = type
+                }
+            }
+        }
         let traits = arguments[suite ? 3 : 5]
         guard let extract = definitions[traits].flatMap({ Pattern.groups(extraction, in: $0) }),
               let allocation = definitions[extract[0]],

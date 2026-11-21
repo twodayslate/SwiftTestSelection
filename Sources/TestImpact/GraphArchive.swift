@@ -30,6 +30,8 @@ public enum GraphArchive {
         var dynamicDeclarationModules: [String: [String: Set<String>]]?
         var nominalTypeContexts: [String: String]?
         /// Optional for archives written before factory-effect evidence existed.
+        var swiftTestingExistentialTypes: [String: Set<String>]?
+        var swiftTestingFactoryTypes: [String: String]?
         var swiftTestingEmptyFactories: [String: String]?
         init(_ graph: DependencyGraph) {
             var table: [String] = [], ids: [String: Int] = [:]
@@ -63,6 +65,8 @@ public enum GraphArchive {
             compilerImplicitImports = graph.compilerImplicitImports
             assertionFormattingSites = graph.functions.compactMapValues(\.assertionFormattingSites)
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
+            swiftTestingExistentialTypes = graph.functions.compactMapValues(\.swiftTestingExistentialTypes)
+            swiftTestingFactoryTypes = graph.functions.compactMapValues(\.swiftTestingFactoryType)
             swiftTestingEmptyFactories = graph.functions.compactMapValues(\.swiftTestingEmptyFactory)
             captureModules = graph.functions.compactMapValues(\.captureModules)
             dynamicDeclarationModules = graph.functions.compactMapValues(\.dynamicDeclarationModules)
@@ -138,6 +142,8 @@ public enum GraphArchive {
                 if cursor < row.count { node.receiverIndirectErrorEffects = try values() }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
                 node.nominalTypeContext = nominalTypeContexts?[node.id]
+                node.swiftTestingExistentialTypes = swiftTestingExistentialTypes?[node.id]
+                node.swiftTestingFactoryType = swiftTestingFactoryTypes?[node.id]
                 node.swiftTestingEmptyFactory = swiftTestingEmptyFactories?[node.id]
                 node.captureModules = captureModules?[node.id]
                 node.assertionFormattingSites = assertionFormattingSites?[node.id]

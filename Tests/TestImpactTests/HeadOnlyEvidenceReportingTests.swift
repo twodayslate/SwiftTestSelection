@@ -23,9 +23,44 @@ import Testing
     #expect(removed.baseRegions.first?.startLine == 4)
     #expect(removed.headRegions.isEmpty)
     #expect(removed.historicalReferences.contains { $0.sourceKey == "UI:UI.swift" && $0.callerLines.contains(3) })
+    #expect(removed.historicalReferences.flatMap { $0.possibleCallers ?? [] }.contains {
+        $0.baseRegion.startLine == 3 && $0.survivingTestEntries == ["UI/Suite/testConsumer()"]
+    })
     #expect(!removed.missingEvidence.isEmpty)
     #expect(report.selectedTests == current.tests)
     #expect(report.diagnostics.contains { $0.code == "head_only_declaration_change" })
+}
+
+@Test func historicalChainedAndEscapedUsesRetainOwnersWithoutGuessingRenamedEntries() throws {
+    let before = """
+    import XCTest
+    final class Suite: XCTestCase {
+        func testChained() { XCTAssertTrue(oldHelper().isEmpty) }
+        func testEscaped() { let closure = oldHelper; XCTAssertTrue(closure().isEmpty) }
+        private func oldHelper() -> String { "" }
+    }
+    """
+    let after = """
+    import XCTest
+    final class Suite: XCTestCase {
+        func testChained() { XCTAssertTrue(true) }
+        func testReplacement() { XCTAssertTrue(true) }
+    }
+    """
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let tests = ["UI/Suite/testChained()", "UI/Suite/testReplacement()"]
+    let current = try boundaryGraph(["UI.swift": after], tests: tests, root: root)
+    let old = SwiftSourceSnapshot.parse(before, path: "UI.swift", module: "UI")
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: ["UI:UI.swift": old]),
+        changes: [.init(path: "UI.swift")], baseRevision: "base")
+    let helper = try #require(report.headOnlyDeclarationChanges?.first { $0.key.contains("oldHelper") })
+    let callers = helper.historicalReferences.flatMap { $0.possibleCallers ?? [] }
+    #expect(callers.contains { $0.baseRegion.startLine == 3 && $0.survivingTestEntries == [tests[0]] })
+    #expect(callers.contains { $0.baseRegion.startLine == 4 && $0.survivingTestEntries.isEmpty })
+    #expect(helper.historicalReferences.contains { $0.incomplete })
+    #expect(report.selectedTests == tests)
 }
 
 @Test func localFunctionBlockersNameTheMissingCaptureAndEffectProof() {

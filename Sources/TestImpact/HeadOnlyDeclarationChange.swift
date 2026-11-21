@@ -5,12 +5,20 @@ import Foundation
 /// Source references are possible callers, never reconstructed compiler edges.
 /// In particular, a new same-bodied declaration does not prove a safe rename.
 public struct HeadOnlyDeclarationChange: Codable, Sendable {
+    public struct Caller: Codable, Sendable {
+        public var declaration: String
+        public var baseRegion: SourceRegion
+        /// A matching head entry identifies the enclosing historical method.
+        /// It does not establish which overload or callback the base invoked.
+        public var survivingTestEntries: [String]
+    }
     public struct Reference: Codable, Sendable {
         public var sourceKey: String
         public var signature: String
         public var callerLines: [Int]
         public var unsupportedLines: [Int]
         public var incomplete: Bool
+        public var possibleCallers: [Caller]? = nil
     }
     public var key: String
     public var change: String
@@ -19,7 +27,7 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
     public var historicalReferences: [Reference]
     public var missingEvidence: [String]
 
-    static func describe(key: String, before: [SourceUnit], after: [SourceUnit], source: XcodeHeadOnlySources) -> Self {
+    static func describe(key: String, before: [SourceUnit], after: [SourceUnit], source: XcodeHeadOnlySources, current: XcodeTestGraph) -> Self {
         let names = Set(before.compactMap(\.helperCallableName))
         let sources = source.base.map { ($0.key, $0.value) } + source.unownedBaseSources.map { ("unowned:" + $0.key, $0.value) }
         var references: [Reference] = []
@@ -30,8 +38,17 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
             }
             for (signature, uses) in inventory.sorted(by: { $0.key < $1.key }) where names.contains(String(signature.prefix { $0 != "(" })) {
                 if !uses.callers.isEmpty || uses.unsupported || !uses.unsupportedLines.isEmpty {
+                    let lines = uses.callers.union(uses.unsupportedLines)
+                    let functions = snapshot.units.filter { $0.kind == "function" }
+                    let callers = functions.filter { unit in
+                        lines.contains { $0 >= unit.region.startLine && $0 <= unit.region.endLine }
+                    }.map { unit in
+                        let unique = functions.filter { $0.key == unit.key || $0.region.intersects(unit.region) }.count == 1
+                        return Caller(declaration: unit.key, baseRegion: unit.region,
+                               survivingTestEntries: unique ? survivingEntries(for: unit, sourceKey: sourceKey, current: current) : [])
+                    }.sorted { ($0.baseRegion.startLine, $0.declaration) < ($1.baseRegion.startLine, $1.declaration) }
                     references.append(.init(sourceKey: sourceKey, signature: signature, callerLines: uses.callers.sorted(),
-                        unsupportedLines: uses.unsupportedLines.sorted(), incomplete: uses.unsupported))
+                        unsupportedLines: uses.unsupportedLines.sorted(), incomplete: uses.unsupported, possibleCallers: callers))
                 }
             }
         }
@@ -42,6 +59,30 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
                 "Historical escaped/stored references, dynamic selectors/macros and lifecycle/shared effects",
                 "A verified mapping of every historical consumer to surviving or independently executed head entries; absence of head callers is insufficient"
             ])
+    }
+
+    private static func survivingEntries(for historical: SourceUnit, sourceKey: String, current: XcodeTestGraph) -> [String] {
+        guard let snapshot = current.sources[sourceKey], let graph = current.dependencies else { return [] }
+        let matches = snapshot.units.filter { $0.key == historical.key && $0.region.path == historical.region.path }
+        guard matches.count == 1, let unit = matches.first, let name = unit.helperCallableName else { return [] }
+        let module = String(sourceKey.prefix { $0 != ":" })
+        let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
+        guard !owners.isEmpty, owners.allSatisfy({ $0.isTest && current.modules[$0.name] == module }),
+              snapshot.units.filter({ $0.kind == "function" && $0.region.intersects(unit.region) }).count == 1 else { return [] }
+        // Restrict this projection to zero-argument test methods. Match the
+        // enumerated ID, compiler root, module, and physical declaration.
+        let method = name + "()"
+        let qualified = unit.scope + "." + method
+        return owners.compactMap { owner in
+            let entry = [owner.name, unit.scope, method].joined(separator: "/")
+            guard current.tests.contains(entry), graph.tests[entry]?.contains(where: { id in
+                guard let node = graph.functions[id], node.module == module, node.name == qualified else { return false }
+                return node.regions.contains { region in
+                    region.path == unit.region.path && region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine
+                }
+            }) == true else { return nil }
+            return entry
+        }.sorted()
     }
 
     private static func regions(_ units: [SourceUnit]) -> [SourceRegion] {

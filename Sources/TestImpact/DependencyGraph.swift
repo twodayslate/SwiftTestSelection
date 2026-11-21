@@ -41,6 +41,12 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// A bounded SIL proof of an SDK factory with literal empty traits and no
     /// argument producer: "top-level", "member", or "suite". Nil is unproven.
     public var swiftTestingEmptyFactory: String? = nil
+    /// Unqualified concrete nominal passed as a literal metatype to the SDK factory.
+    public var swiftTestingFactoryType: String? = nil
+    /// Concrete existential payloads observed in a Swift Testing factory.
+    /// Matching trait witnesses are possible runtime edges, never proof that
+    /// the complete set of runtime conformances was captured.
+    public var swiftTestingExistentialTypes: Set<String>? = nil
     /// Full SIL method reference and formal type for every dynamic call.
     /// Nil means legacy or incomplete evidence; display names lose overloads.
     public var dynamicCallSignatures: Set<String>? = nil
@@ -86,6 +92,8 @@ public struct FunctionNode: Codable, Sendable, Equatable {
             return lhs.union(rhs)
         }
         compilerReferences = union(compilerReferences, other.compilerReferences)
+        swiftTestingExistentialTypes = union(swiftTestingExistentialTypes, other.swiftTestingExistentialTypes)
+        if swiftTestingFactoryType != other.swiftTestingFactoryType { swiftTestingFactoryType = nil }
         if swiftTestingEmptyFactory != other.swiftTestingEmptyFactory { swiftTestingEmptyFactory = nil }
         dynamicCallSignatures = union(dynamicCallSignatures, other.dynamicCallSignatures)
         stateAccesses = union(stateAccesses, other.stateAccesses)

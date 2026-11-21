@@ -7,8 +7,11 @@ A Swift package providing a `swift-test-impact` executable and reusable `TestImp
 Xcode discovery preserves exact identifiers for top-level, nested, static and
 parameterized Swift Testing entries. Captured test factories contribute argument
 providers and test traits; suite factories are conservatively shared across their
-module's Swift Testing entries. Runtime trait/scoping callbacks and generic
-argument iteration retain fallback; factory references do not prove their effects.
+module's Swift Testing entries. Concrete existential payloads in a factory also
+contribute matching compiled trait and scoping witnesses. Custom traits and
+generic argument iteration retain fallback. A plain test on a top-level value
+type can rule out an unrelated suite's traits when the SDK factory metatypes and
+the compiler's test-method owner agree.
 Switching test frameworks does not reveal cross-process app dependencies.
 See [current support and runner-validation limits](Documentation/OpenIssuesFollowup.md).
 
@@ -1949,8 +1952,9 @@ contract as surviving entries. The primary report still includes new tests;
 exclusion only changes the scoped roots, so a new test can still be selected as a
 consumer of a changed helper. Deletions, renames, ambiguous names, nonfinal classes,
 and macro/attribute uncertainty retain their structural fallbacks.
-Missing test roots or unresolved lifecycle bindings prevent independence from being
-proven, so those entries remain change roots and unresolved tests stay selected.
+Missing compiler roots and unresolved lifecycle bindings prevent exclusions.
+When the only uncertainty belongs to bound Swift Testing factories, a scope may
+exclude a separately executed entry and retain each unresolved runtime consumer.
 Only provide entries your policy already executes. This does not exclude helpers,
 lifecycle methods, resources, or global build/graph uncertainty. Validate scope
 identity and candidates against the primary report, and use `verify-build` before

@@ -222,6 +222,7 @@ enum XcodeCompilerGraph {
 
     static func resolveDispatch(_ graph: inout DependencyGraph, tables: [String: Set<String>],
                                 externalWitnesses: [String: Set<String>] = [:], projectModules: Set<String>? = nil) {
+        SwiftTestingDiscoveryRoots.bindTraitWitnesses(graph: &graph, tables: tables)
         let localModules = projectModules ?? Set(graph.functions.values.filter { !$0.regions.isEmpty }.map(\.module))
         for symbol in graph.functions.keys {
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
