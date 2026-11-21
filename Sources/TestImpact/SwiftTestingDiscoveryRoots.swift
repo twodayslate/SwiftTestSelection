@@ -35,7 +35,7 @@ enum SwiftTestingDiscoveryRoots {
         let entries = graph.tests
         let sourceModules = Dictionary(grouping: sources, by: { String($0.key.prefix { $0 != ":" }) })
         var testRegions: [String: [String: [SourceRegion]]] = [:], suiteCounts: [String: Int] = [:]
-        var valueTypes: [String: Set<String>] = [:]
+        var valueTypes: [String: Set<String>] = [:], declaredSuites: [String: [String]] = [:]
         var currentMetadata = Set<String>()
         for (module, files) in sourceModules {
             if files.allSatisfy({ $0.value.parserVersion == SwiftSourceSnapshot.currentParserVersion }) { currentMetadata.insert(module) }
@@ -44,7 +44,10 @@ enum SwiftTestingDiscoveryRoots {
                     valueTypes[module, default: []].insert(unit.scope)
                 }
                 if unit.swiftTestingRole == "test" { testRegions[module, default: [:]][unit.region.path, default: []].append(unit.region) }
-                if unit.swiftTestingRole == "suite" { suiteCounts[module, default: 0] += 1 }
+                if unit.swiftTestingRole == "suite" {
+                    suiteCounts[module, default: 0] += 1
+                    declaredSuites[module, default: []].append(unit.scope)
+                }
             }
         }
         var entryTests: [String: Set<String>] = [:]
@@ -68,8 +71,11 @@ enum SwiftTestingDiscoveryRoots {
         // separate runtime trait diagnostic can be scoped by nominal identity.
         let traitSuites = suites.values.flatMap { $0 }.compactMap { graph.functions[$0] }.filter { $0.swiftTestingEmptyFactory != "suite" }
         let suiteTypes = Set(traitSuites.compactMap(\.swiftTestingFactoryType))
-        let suiteTypesComplete = traitSuites.allSatisfy { $0.swiftTestingFactoryType != nil } &&
-            suiteCounts.allSatisfy { suites[$0.key]?.count == $0.value }
+        let suiteTypesComplete = Set(declaredSuites.keys) == Set(suites.keys) && suites.allSatisfy { module, symbols in
+            let types = symbols.compactMap { graph.functions[$0]?.swiftTestingFactoryType }
+            return currentMetadata.contains(module) && types.count == symbols.count &&
+                types.sorted() == declaredSuites[module]?.sorted()
+        }
         var discovered: [String: Set<String>] = [:], incompleteFactories = Set<String>()
         let ownedPrefixes = Set(modules.values).map { "$s" + String($0.utf8.count) + $0 }
         for (module, roots) in factories.merging(suites, uniquingKeysWith: { $0.union($1) }) {
