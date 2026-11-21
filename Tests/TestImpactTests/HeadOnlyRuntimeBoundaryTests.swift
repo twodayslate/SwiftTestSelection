@@ -16,6 +16,7 @@ import Testing
     ]
     for (module, text) in files { try Data(text.utf8).write(to: root.appendingPathComponent(module + ".swift")) }
     var policy = UIFeatureMappings(features: [])
+    policy.ignoredDocumentation = ["**.md"]
     policy.testRuntimeBoundaries = [.init(target: "CoreTests", modules: ["CoreTests", "Core"], rationale: "Hostless Core and test-owned fixtures only; no app loading, IPC, callbacks into App, or app-owned shared state.")]
     try JSONEncoder().encode(policy).write(to: root.appendingPathComponent(".swift-test-selection.json"))
     func git(_ args: [String]) throws -> String { try CommandRunner.run("git", args, at: root).text.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -72,6 +73,49 @@ import Testing
     #expect(narrowed.selectedTests == [current.tests[1]], "\(narrowed.diagnostics)")
     #expect(narrowed.runtimeBoundaryDecisions?.first?.status == "validated")
     #expect(narrowed.runtimeBoundaryDecisions?.first?.boundedUncertaintyTests == [current.tests[0]])
+    // The same captured code plus authenticated documentation must compose with
+    // a closed boundary, including a scope that only sees the App change.
+    try Data("Documentation only\n".utf8).write(to: root.appendingPathComponent("AGENTS.md"))
+    _ = try git(["add", "AGENTS.md"])
+    _ = try git(["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "docs"])
+    var documented = current
+    documented.buildArtifact?.revision = try git(["rev-parse", "HEAD"])
+    documented.buildArtifact?.headOnlyBuildEvidence?.documentation = ["AGENTS.md"]
+    let withDocs = try GitChanges.readComparison(base: base, head: documented.buildArtifact!.revision, at: root)
+    let docsSource = try XcodeHeadOnlySources.read(current: documented, changes: withDocs, base: base, root: root, mappingPath: ".swift-test-selection.json")
+    let mixed = XcodeHeadOnlySelector.select(current: documented, source: docsSource, changes: withDocs, baseRevision: base, documentation: ["AGENTS.md"])
+    #expect(mixed.ignoredChanges == ["AGENTS.md"])
+    #expect(mixed.selectedTests == narrowed.selectedTests)
+    #expect(mixed.runtimeBoundaryDecisions?.first?.status == "validated")
+    #expect(select(documented, docsSource).selectedTests == narrowed.selectedTests)
+    for condition in ["build-input", "uncertain-build", "changed-policy", "missing-policy", "stale-head"] {
+        var candidate = documented
+        switch condition {
+        case "build-input": candidate.buildArtifact?.headOnlyBuildEvidence?.documentation = []
+        case "uncertain-build": candidate.buildArtifact?.headOnlyBuildEvidence?.uncertainty = "Unknown build task"
+        case "changed-policy": candidate.mappings?.ignoredDocumentation = ["AGENTS.md"]
+        case "missing-policy": candidate.mappings?.ignoredDocumentation = nil
+        case "stale-head": candidate.buildArtifact?.revision = head
+        default: break
+        }
+        #expect(select(candidate, docsSource).selectedTests.contains(current.tests[0]), "\(condition)")
+    }
+    // A trailing comment changes bytes without changing native syntax or any
+    // semantic source location. String literals and caller location shifts do.
+    for suffix in [" // trailing comment", "\n// another comment"] {
+        let text = files["Core"]! + suffix
+        try Data(text.utf8).write(to: root.appendingPathComponent("Core.swift"))
+        _ = try git(["add", "Core.swift"])
+        _ = try git(["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "comment"])
+        var candidate = documented
+        candidate.buildArtifact?.revision = try git(["rev-parse", "HEAD"])
+        candidate.sources["Core:Core.swift"] = .parse(text, path: "Core.swift", module: "Core")
+        let full = try GitChanges.readComparison(base: base, head: candidate.buildArtifact!.revision, at: root)
+        let old = try XcodeHeadOnlySources.read(current: candidate, changes: full, base: base, root: root, mappingPath: ".swift-test-selection.json")
+        let report = XcodeHeadOnlySelector.select(current: candidate, source: old, changes: full, baseRevision: base, documentation: ["AGENTS.md"])
+        #expect(report.selectedTests == narrowed.selectedTests, "\(report.diagnostics)")
+        #expect(report.runtimeBoundaryDecisions?.first?.status == "validated")
+    }
     for failure in ["build", "inputs", "base", "source", "byte-identity", "contract", "host", "edge", "imports", "unowned", "lifecycle", "macro", "body", "generated"] {
         var candidate = current, old = source
         switch failure {
@@ -105,6 +149,7 @@ import Testing
     _ = try git(["add", "Config.xcconfig"])
     _ = try git(["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "config"])
     current.buildArtifact?.revision = try git(["rev-parse", "HEAD"])
+    current.buildArtifact?.headOnlyBuildEvidence?.documentation = ["AGENTS.md"]
     let scopedSource = try XcodeHeadOnlySources.read(current: current, changes: changes, base: base, root: root, mappingPath: ".swift-test-selection.json")
     #expect(scopedSource.runtimeBoundaryEvidence?.failure != nil)
     let scoped = select(current, scopedSource)

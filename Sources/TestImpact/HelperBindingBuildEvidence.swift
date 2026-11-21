@@ -25,6 +25,18 @@ public struct HelperBindingBuildEvidence: Codable, Sendable {
         guard XcodeGraphCache.digest(Data(log.utf8)) == artifact.buildLogDigest else {
             throw ImpactError("Binding-review compiler log does not match the captured artifact")
         }
+        let (files, imported) = try compilerInputs(log: log, source: source)
+        guard try sourceInputs == ArtifactFiles.sourceInputs(log: log, directory: source) else {
+            throw ImpactError("Compiler source input bytes changed during binding evidence capture")
+        }
+        return .init(sourceInputs: try XcodeGraphCache.key(sourceInputs), inputFiles: files, importedModules: imported,
+            buildLogDigest: artifact.buildLogDigest, buildSettingsDigest: artifact.buildSettingsDigest,
+            productsDigest: try XcodeGraphCache.key(artifact.products))
+    }
+
+    /// Exact inputs to this build, without cross-build normalization or a new
+    /// dependency scan. Fresh extraction validates these independently of reuse.
+    static func compilerInputs(log: String, source: URL) throws -> ([String: String], [String: [String]]) {
         var files: [String: String] = [:], imported: [String: [String]] = [:], invocations: [String: [String]] = [:]
         func record(_ file: URL) throws {
             let path = file.standardizedFileURL.resolvingSymlinksInPath().path
@@ -75,6 +87,41 @@ public struct HelperBindingBuildEvidence: Codable, Sendable {
                 throw ImpactError("Custom macro plugin resource inputs are unsupported for binding review")
             }
             try record(URL(fileURLWithPath: compiler))
+            // Include explicit auxiliary operands (overlays, headers, lists,
+            // plugins) as well as imports. Cache-specific output normalization
+            // is unnecessary when checking one immutable build in place.
+            let inputDirectory: URL
+            if let index = args.lastIndex(of: "-working-directory"), index + 1 < args.count {
+                let path = args[index + 1]
+                inputDirectory = path.hasPrefix("/") ? URL(fileURLWithPath: path)
+                    : working.appendingPathComponent(path).standardizedFileURL
+            } else { inputDirectory = working }
+            func inputFile(_ operand: String) -> URL {
+                operand.hasPrefix("/") ? URL(fileURLWithPath: operand)
+                    : inputDirectory.appendingPathComponent(operand).standardizedFileURL
+            }
+            // Unlike optional output paths, named compiler inputs must exist
+            // even at the initial snapshot. Preserve forwarded/joined forms.
+            let inputFlags: Set<String> = ["-vfsoverlay", "-ivfsoverlay", "-import-objc-header",
+                "-fmodule-map-file", "-explicit-swift-module-map-file"]
+            let operands = args.filter { !["-Xcc", "-Xfrontend"].contains($0) }
+            for index in operands.indices {
+                let parts = operands[index].split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                guard let flag = parts.first, inputFlags.contains(String(flag)) else { continue }
+                let operand = parts.count == 2 ? String(parts[1]) : index + 1 < operands.count ? operands[index + 1] : ""
+                guard !operand.isEmpty, !operand.hasPrefix("-") else { throw ImpactError("Missing compiler input operand for " + flag) }
+                try record(inputFile(operand))
+            }
+            for argument in args.dropFirst() {
+                let operand = argument.hasPrefix("-") && argument.contains("=")
+                    ? String(argument.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)[1]) : argument
+                guard !operand.isEmpty, !operand.hasPrefix("-") else { continue }
+                let file = inputFile(operand)
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory), !isDirectory.boolValue {
+                    try record(file)
+                }
+            }
             let lists = responseFiles.filter { $0.pathExtension == "SwiftFileList" }
             guard lists.count == 1 else { throw ImpactError("Missing unique compiler source list for binding review") }
             let list = lists.first!
@@ -124,11 +171,6 @@ public struct HelperBindingBuildEvidence: Codable, Sendable {
                 : try ArtifactFiles.digest(URL(fileURLWithPath: path))
             guard current == digest else { throw ImpactError("Binding-review input changed: " + path) }
         }
-        guard try sourceInputs == ArtifactFiles.sourceInputs(log: log, directory: source) else {
-            throw ImpactError("Compiler source input bytes changed during binding evidence capture")
-        }
-        return .init(sourceInputs: try XcodeGraphCache.key(sourceInputs), inputFiles: files, importedModules: imported,
-            buildLogDigest: artifact.buildLogDigest, buildSettingsDigest: artifact.buildSettingsDigest,
-            productsDigest: try XcodeGraphCache.key(artifact.products))
+        return (files, imported)
     }
 }

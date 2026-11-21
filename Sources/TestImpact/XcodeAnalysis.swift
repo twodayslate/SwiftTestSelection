@@ -83,8 +83,9 @@ public struct XcodeAnalysis {
             guard let head else { throw ImpactError("--analysis-cache requires an explicit --head revision; worktree analysis is never cached.") }
             let scratch = cache == nil ? try temporaryDirectory() : nil
             defer { if let scratch { try? FileManager.default.removeItem(at: scratch) } }
-            let cache = cache ?? XcodeAnalysisCache(directory: scratch!, context: "uncached-" + UUID().uuidString, maximumBytes: 1)
-            return try selectCached(base: base, head: head, mergeBase: mergeBase, fullSuite: fullSuite, cache: cache, retainingBuildAt: retainingBuildAt, cachedBasePolicy: cachedBasePolicy, headOnly: headOnly, selectionScopes: selectionScopes)
+            let reuseAnalysis = cache != nil
+            let cache = cache ?? XcodeAnalysisCache(directory: scratch!, context: "uncached-" + UUID().uuidString)
+            return try selectCached(base: base, head: head, mergeBase: mergeBase, fullSuite: fullSuite, cache: cache, retainingBuildAt: retainingBuildAt, cachedBasePolicy: cachedBasePolicy, headOnly: headOnly, selectionScopes: selectionScopes, reuseAnalysis: reuseAnalysis)
         }
         let root = try GitChanges.repositoryRoot(at: options.path.deletingLastPathComponent())
         guard options.path.path.hasPrefix(root.path + "/") else { throw ImpactError("Xcode container must be inside the Git repository.") }
@@ -177,7 +178,7 @@ public struct XcodeAnalysis {
 
     func analyzeBuild(_ configuration: XcodeConfiguration, sourceRoot: URL, derived: URL,
                       log: String, settingsData: Data, xctestrun: URL? = nil, moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil,
-                      activeCompilerInputs: Set<String>? = nil) throws -> XcodeTestGraph {
+                      activeCompilerInputs: Set<String>? = nil, allowCompilerReplay: Bool = true) throws -> XcodeTestGraph {
         guard FileManager.default.fileExists(atPath: configuration.path.path) else {
             throw ImpactError("Xcode container does not exist: \(configuration.path.path)")
         }
@@ -283,7 +284,7 @@ public struct XcodeAnalysis {
             if let module = modules[target.name] { result[module, default: []].formUnion(target.sourceFiles) }
         }
         let extractionStart = Date()
-        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation, moduleCache: moduleCache, captured: captured, measurement: measurement)
+        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation, moduleCache: moduleCache, captured: captured, measurement: measurement, allowCompilerReplay: allowCompilerReplay)
         measurement("extraction", Date().timeIntervalSince(extractionStart))
         progress("Binding compiler dependencies to \(tests.count) enumerated tests…")
         let binding = AnalysisMeasurement()

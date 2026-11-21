@@ -11,7 +11,16 @@ struct HeadOnlyRuntimeSourceEvidence {
     let sourcePaths: Set<String>
     let regularSourcePaths: Set<String>
     let sourceBlobIDs: [String: String]
-    let failure: String?
+    let structuralFailure: String?
+    let buildInputPaths: Set<String>
+    var failure: String? { validationFailure(ignoringDocumentation: []) }
+
+    func validationFailure(ignoringDocumentation documentation: Set<String>) -> String? {
+        if let structuralFailure { return structuralFailure }
+        return buildInputPaths.subtracting(documentation).sorted().first.map {
+            "Changed build, resource or policy input requires historical evidence: " + $0
+        }
+    }
 
     static func read(head: String, root: URL, cache: XcodeBaseSourceCache) throws -> Self {
         guard let baseRevision = cache.resolvedRevision else { throw ImpactError("Cannot resolve historical runtime boundary source revision") }
@@ -36,12 +45,11 @@ struct HeadOnlyRuntimeSourceEvidence {
         let basePaths = try cache.paths().map { Set($0.filter { $0.hasSuffix(".swift") }) }
         let failure: String?
         if basePaths != headPaths { failure = "Added/deleted/moved Swift sources lack historical module ownership" }
-        else if let path = paths.sorted().first(where: { !$0.hasSuffix(".swift") || $0 == "Package.swift" }) {
-            failure = "Changed build, resource or policy input requires historical evidence: " + path
-        } else if changes.contains(where: { $0.previousPath != nil || $0.requiresFallback }) {
+        else if changes.contains(where: { $0.previousPath != nil || $0.requiresFallback }) {
             failure = "Moved or unclassified source lacks historical ownership"
         } else { failure = nil }
-        return .init(baseRevision: baseRevision, headRevision: headRevision, changedPaths: paths, sourcePaths: headPaths, regularSourcePaths: regularPaths, sourceBlobIDs: blobIDs, failure: failure)
+        return .init(baseRevision: baseRevision, headRevision: headRevision, changedPaths: paths, sourcePaths: headPaths, regularSourcePaths: regularPaths, sourceBlobIDs: blobIDs, structuralFailure: failure,
+            buildInputPaths: paths.filter { !$0.hasSuffix(".swift") || $0 == "Package.swift" })
     }
 }
 
@@ -70,7 +78,16 @@ extension TestRuntimeBoundary {
               evidence.headRevision == artifact.revision else {
             return prefix + "missing full Git comparison at the exact resolved base/head revisions"
         }
-        if let failure = evidence.failure { return prefix + failure }
+        // Exclusions are authenticated against the complete comparison, not a
+        // selection scope. A suffix or the caller's ignored-path list alone is
+        // insufficient: the capture must prove the file is not a build input.
+        let owned = Set(current.targets.flatMap(\.sourceFiles))
+        let unchangedPolicy = current.mappings?.ignoredDocumentation == source.mappings?.ignoredDocumentation
+        let documentation = Set(artifact.headOnlyBuildEvidence?.documentation ?? []).filter { path in
+            unchangedPolicy && path.hasSuffix(".md") && !owned.contains(path) &&
+                current.mappings?.ignoredDocumentation?.contains { UIFeatureMappings.matches(path, pattern: $0) } == true
+        }
+        if let failure = evidence.validationFailure(ignoringDocumentation: documentation) { return prefix + failure }
         guard source.diagnostics.isEmpty, source.unownedBaseSources.isEmpty else {
             return prefix + "missing or unowned historical Swift sources"
         }
@@ -87,9 +104,6 @@ extension TestRuntimeBoundary {
             guard let blob = evidence.sourceBlobIDs[path], snapshot.sourceBlobIDs?.contains(blob) == true else {
                 return prefix + "captured source bytes are not authenticated by Git (archive substitution or missing byte identity): " + key
             }
-            if modules.contains(module), evidence.changedPaths.contains(path) {
-                return prefix + "closed runtime source changed: " + key
-            }
             if modules.contains(module), snapshot.helperDeclarationsComplete != true || old.helperDeclarationsComplete != true {
                 let issues = (old.helperDeclarationIssues ?? []) + (snapshot.helperDeclarationIssues ?? [])
                 let detail = issues.first.map { ":\($0.line):\($0.column) \($0.spelling) (\($0.kind)); \($0.requiredEvidence)" }
@@ -102,6 +116,19 @@ extension TestRuntimeBoundary {
             }
             let before = Dictionary(grouping: old.units, by: \.key)
             let after = Dictionary(grouping: snapshot.units, by: \.key)
+            // Native syntax fingerprints retain semantic source-location
+            // values. Also retain caller locations, since default arguments can
+            // observe them without a literal in the caller's own body.
+            if modules.contains(module), evidence.changedPaths.contains(path) {
+                guard Set(before.keys) == Set(after.keys), before.allSatisfy({ key, units in
+                    let next = after[key]!
+                    return units.count == 1 && next.count == 1 &&
+                        units[0].fingerprint == next[0].fingerprint && units[0].callerLocations == next[0].callerLocations
+                }), InlineUIMappings.policyPaths([key: old]) == InlineUIMappings.policyPaths([key: snapshot]),
+                    HelperFormattingContracts.declarations([key: old], nil) == HelperFormattingContracts.declarations([key: snapshot], nil) else {
+                    return prefix + "closed runtime source changed: " + key
+                }
+            }
             guard Set(before.keys) == Set(after.keys), before.allSatisfy({ key, units in
                 let next = after[key]!
                 if units.map(\.fingerprint).sorted() == next.map(\.fingerprint).sorted() { return true }

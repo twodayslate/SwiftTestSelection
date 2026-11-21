@@ -96,7 +96,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 3
+    static let currentParserVersion = 4
     public var parserVersion: Int? = nil
     /// Git blob identities of the actual parsed bytes. Archive substitutions,
     /// filters or generated replacements must not authenticate unchanged Git

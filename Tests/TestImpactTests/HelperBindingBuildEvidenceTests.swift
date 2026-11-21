@@ -45,13 +45,36 @@ import Testing
     try Data(root.appendingPathComponent("UI.swift").path.utf8).write(to: list)
     let entry = ["moduleName": "Dependency", "modulePath": root.appendingPathComponent("Dependency.swiftmodule").path]
     try JSONSerialization.data(withJSONObject: [entry]).write(to: map)
-    let log = "builtin-SwiftDriver -- \(bin.path)/swiftc -module-name UI -explicit-module-build @\(list.path)"
+    let overlay = root.appendingPathComponent("headers#overlay.yaml")
+    try Data("overlay bytes".utf8).write(to: overlay)
+    try Data("module map bytes".utf8).write(to: root.appendingPathComponent("relative.modulemap"))
+    let log = "cd \(root.path)\nbuiltin-SwiftDriver -- \(bin.path)/swiftc -module-name UI -explicit-module-build @\(list.path) -vfsoverlay \(overlay.path) -Xcc -fmodule-map-file=relative.modulemap"
     let artifact = XcodeBuildArtifact(revision: "head", context: [:], toolchain: "compiler", buildLogDigest: XcodeGraphCache.digest(Data(log.utf8)), buildSettingsDigest: "settings", productsDirectory: root.path, xctestrun: "Tests.xctestrun", products: [:])
     let inputs = try ArtifactFiles.sourceInputs(log: log, directory: root)
     let valid = try HelperBindingBuildEvidence.capture(log: log, source: root, sourceInputs: inputs, artifact: artifact)
     #expect(valid.matches(artifact))
     #expect(valid.importedModules == ["UI": ["Dependency"]])
     #expect(valid.inputFiles[root.appendingPathComponent("Dependency.swiftmodule").resolvingSymlinksInPath().path] != nil)
+    let fresh = try XcodeFreshExtractionInputs.read(log: log, source: root)
+    try fresh.validate(log: log, source: root)
+    for name in ["UI.swift", "Dependency.swiftmodule", "UI-dependencies-1.json", "UI.SwiftFileList", "bin/swiftc", "lib/swift/host/plugins/plugin", "headers#overlay.yaml", "relative.modulemap"] {
+        let path = root.appendingPathComponent(name)
+        let original = try Data(contentsOf: path)
+        try (original + Data(" changed".utf8)).write(to: path)
+        #expect(throws: (any Error).self, "\(name)") { try fresh.validate(log: log, source: root) }
+        try original.write(to: path)
+        try fresh.validate(log: log, source: root)
+    }
+    for name in ["headers#overlay.yaml", "relative.modulemap"] {
+        let path = root.appendingPathComponent(name), bytes = try Data(contentsOf: root.appendingPathComponent(name))
+        try FileManager.default.removeItem(at: path)
+        #expect(throws: (any Error).self, "\(name)") { try XcodeFreshExtractionInputs.read(log: log, source: root) }
+        try bytes.write(to: path)
+    }
+    let extraPlugin = plugins.appendingPathComponent("new-plugin")
+    try Data("new compiler input".utf8).write(to: extraPlugin)
+    #expect(throws: (any Error).self) { try fresh.validate(log: log, source: root) }
+    try FileManager.default.removeItem(at: extraPlugin)
     // The one-build retained path constructs its own artifact; exercise that
     // publication path as well as importing an existing build.
     let retained = root.appendingPathComponent("retained"), products = retained.appendingPathComponent("DerivedData/Build/Products")
@@ -122,7 +145,8 @@ import Testing
     #expect(nestedEvidence.inputFiles[nested.resolvingSymlinksInPath().path] != nil)
     let otherDirectory = root.appendingPathComponent("another-directory")
     try FileManager.default.createDirectory(at: otherDirectory, withIntermediateDirectories: true)
-    let repeated = "cd " + root.path + "\n" + log + "\ncd " + otherDirectory.path + "\n" + log
+    let invocation = try #require(log.components(separatedBy: .newlines).first { $0.hasPrefix("builtin-SwiftDriver -- ") })
+    let repeated = "cd " + root.path + "\n" + invocation + "\ncd " + otherDirectory.path + "\n" + invocation
     var repeatedArtifact = artifact
     repeatedArtifact.buildLogDigest = XcodeGraphCache.digest(Data(repeated.utf8))
     #expect(throws: (any Error).self) {

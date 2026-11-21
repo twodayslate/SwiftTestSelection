@@ -10,8 +10,9 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
     public var callerLines: Set<Int>
     /// A capture produced by an older escape analysis must not grant isolation.
     public var proofVersion: Int? = nil
-    // Version 31 also checks bounded, nonescaping local function bodies.
-    static let currentProofVersion = 31
+    // Version 32 also admits value-only CGRect parameters under the existing
+    // historical type/member binding and compiler effect checks.
+    static let currentProofVersion = 32
     /// Nil in older captures, whose caller/escape proof is not sufficient.
     public var statements: [Statement]? = nil
     /// Writes are limited to newly created, local XCTest attachments.
@@ -70,7 +71,7 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
 
     private static let allowedGlobals = assertions.union(["NSPredicate", "XCUIElement", "XCTAttachment", "CGRect", "CGVector", "max"])
     private static let valueTypes: Set<String> = ["StaticString", "Swift.StaticString", "UInt", "Swift.UInt", "String", "Bool", "Int", "Double", "XCUIApplication", "XCUIElement",
-        "Swift.String", "Swift.Bool", "Swift.Int", "Swift.Double", "XCTest.XCUIApplication", "XCTest.XCUIElement"]
+        "Swift.String", "Swift.Bool", "Swift.Int", "Swift.Double", "XCTest.XCUIApplication", "XCTest.XCUIElement", "CGRect", "CoreGraphics.CGRect"]
     // Every accepted bare global must participate in the whole-source binding
     // audit, including deleted/unowned base files. A head SDK binding cannot
     // prove the effects of a project declaration that disappeared at head.
@@ -248,6 +249,17 @@ public struct PrivateTestHelperSyntax: Codable, Sendable {
             return reference.parent?.as(MemberAccessExprSyntax.self)?.declName.id != reference.id
         }) {
             return "Application construction/factory reference XCUIApplication at line \(locations.location(for: token.positionAfterSkippingLeadingTrivia).line) requires receiver initialization and mutable application-state effect evidence; supported helpers receive the application as an argument"
+        }
+        for token in body.tokens(viewMode: .sourceAccurate) {
+            guard let closure = token.parent?.as(ClosureExprSyntax.self), closure.leftBrace.id == token.id else { continue }
+            var parent = closure.parent
+            while let node = parent, !node.is(CodeBlockSyntax.self) {
+                if let call = node.as(FunctionCallExprSyntax.self) {
+                    return "Callback passed to \(call.calledExpression.trimmedDescription) at line \(locations.location(for: closure.positionAfterSkippingLeadingTrivia).line) requires call-site binding, nonescaping lifetime and transitive callback effect evidence"
+                }
+                parent = node.parent
+            }
+            return "Closure at line \(locations.location(for: closure.positionAfterSkippingLeadingTrivia).line) requires capture, lifetime and callback effect evidence"
         }
         // Report unsupported nested bindings without granting source-only isolation.
         for token in body.tokens(viewMode: .sourceAccurate) {
