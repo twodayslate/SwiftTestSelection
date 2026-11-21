@@ -48,7 +48,8 @@ the consumer's image precisions (0.99 and 0.5), and a temporary
 `SNAPSHOT_ARTIFACTS` directory. Verification produced a 422-byte failure PNG and
 preserved the reference bytes. A second run put an ordinary file where a
 directory was required. The returned failure matched the localized description
-of the underlying Foundation error.
+of the underlying Foundation error. The [standalone probe](HistoricalHelperEvidence/SnapshotNever.swift)
+uses the package’s public verification API and removes its temporary directory.
 
 The remaining proof would have to bound the snapshot strategy callbacks,
 reference and artifact destinations, and error reporting across affected tests.
@@ -75,7 +76,9 @@ and report the unreviewed `Optional<String>` failure-formatting boundary.
 The extractor now keeps observed SIL assertion locations by XCTest symbol and
 generic substitutions. Compact and JSON graphs can carry these sites through
 selection. Older captures still identify the containing producer. The additional
-location grants no permission to remove a test.
+location grants no permission to remove a test. Isolated compiles of the exact
+assertion from each original head reported the same XCTest symbol, substitution
+and site, `ChainOfCustodyUITests/NotificationUITests.swift:369`.
 
 Two separate XCTest probes deliberately failed this optional-string equality on
 the iOS 26.2 simulator. One installed a retroactive `Optional` conformance to
@@ -101,8 +104,38 @@ identity experiment rejected six reviews for shadowed `SwiftUI.State`.
 
 Forty archived entries across thirty revision/file pairs spell `@unknown`.
 Every one occurs on a switch default label in the original #293 sources.
-SwiftSyntax now recognizes that grammar position as a compiler construct.
+Reparsing those thirty original source files with the updated analyzer removed
+all forty switch-label entries and retained 438 other construct locations in
+that subset. SwiftSyntax recognizes that grammar position as a compiler construct.
 The branch body retains its ordinary compiler dependencies. A declaration
 bearing the same attribute spelling remains in the inventory, as do arbitrary
 macros, shadowed SDK names and unproven historical declarations. Counts of
 resolved syntax locations cannot be converted to counts of removable tests.
+
+### Reproduce the snapshot mismatch probe
+
+Use a clean SnapshotTesting checkout at `05b6f05b55ff9e2dcdcc21ac78c6ba81ea624791`
+and a booted iOS simulator. The following zsh commands use `SNAPSHOT_CHECKOUT`
+for that checkout and `SIMULATOR_UDID` for the device. Run from the selector
+repository with the desired Xcode selected.
+
+```zsh
+work=$(mktemp -d)
+sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
+platform=$(xcrun --sdk iphonesimulator --show-sdk-platform-path)
+lib="$platform/Developer/Library"
+flags=(-sdk "$sdk" -target arm64-apple-ios26.0-simulator
+       -F "$lib/Frameworks" -F "$lib/PrivateFrameworks"
+       -I "$platform/Developer/usr/lib" -L "$platform/Developer/usr/lib")
+xcrun --sdk iphonesimulator swiftc "${flags[@]}" -swift-version 5 -Onone \
+  -whole-module-optimization -parse-as-library -module-name SnapshotTesting \
+  -emit-module -emit-module-path "$work/SnapshotTesting.swiftmodule" \
+  -emit-object "$SNAPSHOT_CHECKOUT"/Sources/SnapshotTesting/**/*.swift \
+  -o "$work/SnapshotTesting.o"
+xcrun --sdk iphonesimulator swiftc "${flags[@]}" -I "$work" \
+  Documentation/HistoricalHelperEvidence/SnapshotNever.swift \
+  "$work/SnapshotTesting.o" -o "$work/probe"
+SIMCTL_CHILD_DYLD_LIBRARY_PATH="$platform/Developer/usr/lib" \
+SIMCTL_CHILD_DYLD_FRAMEWORK_PATH="$lib/Frameworks:$lib/PrivateFrameworks" \
+  xcrun simctl spawn "$SIMULATOR_UDID" "$work/probe"
+```
