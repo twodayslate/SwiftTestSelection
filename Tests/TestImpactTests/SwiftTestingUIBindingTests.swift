@@ -47,7 +47,7 @@ import Testing
         let member = try #require(graph.functions.values.first { $0.swiftTestingFactoryType == "Independent" })
         XcodeCompilerGraph.bind(tests: tests, modules: ["Tests": "Tests"], sources: sources, graph: &graph)
         #expect(graph.testDiagnostics.isEmpty)
-        #expect(graph.tests[tests[2]]?.contains(suite.id) == true)
+        #expect(graph.dependencyPath(from: graph.tests[tests[2]] ?? [], to: [suite.id]) != nil)
         for type in ["Independent", nil] {
             var uncertain = DependencyGraph(functions: graph.functions)
             uncertain.functions[suite.id]?.swiftTestingFactoryType = type
@@ -314,6 +314,46 @@ import Testing
     #expect(headOnly.selectedTests == [tests[2], tests[3]])
     #expect(twoGraphs.selectedTests == [tests[2], tests[3]])
 
+    // The runtime constructs Marker even when filtering to plain(). Its
+    // argument and initializer can both affect what plain() observes.
+    let discovery = before.replacingOccurrences(of: "@Test func plain() {}", with: """
+        import Foundation
+        func flag() -> Bool { true }
+        func store(_ value: Bool) { UserDefaults.standard.set(value, forKey: "discovery") }
+        struct Marker: TestTrait { init(_ value: Bool) { store(value) } }
+        @Test func plain() { #expect(UserDefaults.standard.bool(forKey: "discovery")) }
+        """).replacingOccurrences(of: "@Test(\"Display only\")", with: "@Test(Marker(flag()))")
+    let (discoveryBase, _) = try capture(discovery)
+    let (discoveryHead, _) = try capture(discovery.replacingOccurrences(of: "func flag() -> Bool { true }", with: "func flag() -> Bool { false }"))
+    let bound = try #require(discoveryHead.dependencies)
+    let roots = try #require(bound.tests[tests[0]])
+    for name in ["flag()", "store(_:)"] {
+        let symbol = try #require(bound.functions.values.first { $0.name == name }?.id)
+        #expect(bound.dependencyPath(from: roots, to: [symbol]) != nil)
+    }
+    let member = try #require(bound.functions.values.first { $0.name == "Empty.member()" }?.id)
+    #expect(bound.dependencyPath(from: roots, to: [member]) == nil)
+    for report in [
+        XcodeHeadOnlySelector.select(current: discoveryHead, source: .init(base: discoveryBase.sources), changes: changes, baseRevision: "base"),
+        XcodeFineSelector.select(current: discoveryHead, previous: discoveryBase, changes: changes, baseRevision: "base")
+    ] {
+        #expect(report.explanations.contains { $0.test == tests[0] && $0.kind == "dependency" })
+    }
+    let (changedAttribute, _) = try capture(discovery.replacingOccurrences(of: "@Test(Marker(flag()))", with: "@Test(Marker(!flag()))"))
+    let attributeReport = XcodeFineSelector.select(current: changedAttribute, previous: discoveryBase, changes: changes, baseRevision: "base")
+    #expect(attributeReport.explanations.contains { $0.test == tests[0] && $0.kind == "dependency" })
+    let attributeHeadOnly = XcodeHeadOnlySelector.select(current: changedAttribute, source: .init(base: discoveryBase.sources), changes: changes, baseRevision: "base")
+    #expect(attributeHeadOnly.selectedTests.contains(tests[0]))
+    var legacyDiscovery = discoveryHead
+    legacyDiscovery.dependencies?.functions.removeValue(forKey: SwiftTestingDiscoveryRoots.sharedDiscoveryID)
+    for id in bound.functions.keys { legacyDiscovery.dependencies?.functions[id]?.swiftTestingDiscoveryReferences = nil }
+    for test in tests { legacyDiscovery.dependencies?.tests[test]?.remove(SwiftTestingDiscoveryRoots.sharedDiscoveryID) }
+    let flag = try #require(bound.functions.values.first { $0.name == "flag()" }?.id)
+    for data in [try JSONEncoder().encode(legacyDiscovery), try GraphArchive.encode(legacyDiscovery)] {
+        let restored = try #require(try GraphArchive.decode(data).dependencies)
+        #expect(restored.dependencyPath(from: restored.tests[tests[0]] ?? [], to: [flag]) != nil)
+    }
+
     // Older archives and nonempty trait allocations cannot authorize exclusions.
     var legacy = current.dependencies!
     for id in legacy.functions.keys { legacy.functions[id]?.swiftTestingEmptyFactory = nil }
@@ -359,6 +399,10 @@ import Testing
     #if os(macOS)
     @Suite(Mode()) struct Common { @Test func decorated() {} }
     #endif
+    func register() {}
+    struct Eager: TestTrait { init() { register() } }
+    @Test(Eager()) func registered() {}
+    @Suite(Mode()) public struct Extended { public init() {} }
     @Suite(Mode()) actor Live { @Test func real() {} }
     actor Host {
         #if os(macOS)
@@ -382,6 +426,11 @@ import Testing
     let client = "import Testing\nimport Vendor\n" + trait.replacingOccurrences(of: "public struct", with: "private struct") + """
 
     @Suite struct Common { @Test func plain() {} }
+    @Suite(Mode()) struct Extended { @Test func localMember() {} }
+    extension Vendor.Extended {
+        @Test func member() {}
+        @Test(arguments: [true]) static func parameterized(value: Bool) {}
+    }
     @Suite(Mode()) struct Decorated { @Test func local() {} }
     @Test(Mode()) func own() {}
     @Test(Vendor.Mode()) func imported() {}
@@ -406,6 +455,7 @@ import Testing
         "Vendor/top()": [], "Vendor/Independent/plainMember()": [],
         "Vendor/Conditional/active()": ["Vendor"], "Vendor/Host/Nested/inner()": ["Vendor"], "Vendor/OptionalSuite/ordinary()": [],
         "Vendor/Live/real()": ["Vendor"], "Vendor/Common/decorated()": ["Vendor"], "Client/Common/plain()": [], "Client/Decorated/local()": ["Client"],
+        "Client/Extended/localMember()": ["Client"], "Client/Extended/member()": ["Vendor"], "Client/Extended/parameterized(value:)": ["Vendor"],
         "Client/own()": ["Client"], "Client/imported()": ["Vendor"], "Client/both()": ["Client", "Vendor"]
     ]
     XcodeCompilerGraph.resolveDispatch(&graph, tables: tables, compiler: compiler)
@@ -413,6 +463,8 @@ import Testing
     for test in ["Client/Common/plain()", "Vendor/top()", "Vendor/Independent/plainMember()", "Vendor/OptionalSuite/ordinary()"] {
         #expect(graph.testDiagnostics[test]?.isEmpty ?? true)
     }
+    let register = try #require(graph.functions.values.first { $0.module == "Vendor" && $0.name == "register()" })
+    #expect(graph.dependencyPath(from: graph.tests["Client/Common/plain()"] ?? [], to: [register.id]) != nil)
     let activeSuite = try #require(graph.functions.values.first { $0.module == "Vendor" && $0.swiftTestingFactoryType == "Common" &&
         $0.compilerReferences?.contains(where: { $0.hasPrefix("$s7Testing4TestV6__type") }) == true })
     var incomplete = DependencyGraph(functions: graph.functions.filter { $0.key != activeSuite.id })

@@ -337,6 +337,38 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
     #expect(result.diagnostics.isEmpty)
 }
 
+@Test func renamingAFileWithOnlyDuplicatedDeclarationKeysIgnoresTrivia() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let entries = ["UI/Cases/testFirst()", "UI/Cases/testSecond()"]
+    let first = "#if DEBUG\nfunc result() -> Int { 1 }\n#else\nprivate func shadow() {}\n#endif"
+    func capture(path: String, source: String) throws -> XcodeTestGraph {
+        let files = [
+            path: source,
+            "Second.swift": "#if DEBUG\nprivate func shadow() {}\n#else\nfunc result() -> Int { 2 }\n#endif",
+            "Tests.swift": """
+            import XCTest
+            final class Cases: XCTestCase {
+                func testFirst() { XCTAssertEqual(result(), 1) }
+                func testSecond() { XCTAssertTrue(true) }
+            }
+            """
+        ]
+        var graph = try boundaryGraph(files, tests: entries, root: repo.root, compilerArguments: ["-D", "DEBUG"])
+        graph.targets = [.init(name: "UI", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: Set(files.keys))]
+        return graph
+    }
+    let base = try capture(path: "First.swift", source: first)
+    let head = try capture(path: "Renamed.swift", source: "// moved\n" + first)
+    var rename = FileChange(path: "Renamed.swift")
+    rename.previousPath = "First.swift"
+    for changes in [[rename], [FileChange(path: "First.swift"), FileChange(path: "Renamed.swift")]] {
+        let report = XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base")
+        #expect(report.selectedTests.isEmpty)
+        #expect(report.diagnostics.isEmpty)
+    }
+}
+
 @Test func movingAFunctionBetweenFilesSelectsItsFilePrivateValueConsumer() throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }

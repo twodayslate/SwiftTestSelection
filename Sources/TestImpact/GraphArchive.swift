@@ -33,6 +33,7 @@ public enum GraphArchive {
         var testVTableEntries: [String: Set<String>]?
         var swiftTestingRegisteredFactories: [String: Set<String>]?
         var swiftTestingSuiteWitnesses: [String: Set<String>]?
+        var swiftTestingDiscoveryReferences: [String: Set<String>]?
         var swiftTestingTraitProducers: [String: Set<String>]?
         var swiftTestingExistentialTypes: [String: Set<String>]?
         var swiftTestingFactoryTypes: [String: String]?
@@ -72,6 +73,7 @@ public enum GraphArchive {
             testVTableEntries = graph.testVTableEntries
             swiftTestingRegisteredFactories = graph.swiftTestingRegisteredFactories
             swiftTestingSuiteWitnesses = graph.swiftTestingSuiteWitnesses
+            swiftTestingDiscoveryReferences = graph.functions.compactMapValues(\.swiftTestingDiscoveryReferences)
             swiftTestingTraitProducers = graph.functions.compactMapValues(\.swiftTestingTraitProducers)
             swiftTestingExistentialTypes = graph.functions.compactMapValues(\.swiftTestingExistentialTypes)
             swiftTestingFactoryTypes = graph.functions.compactMapValues(\.swiftTestingFactoryType)
@@ -153,6 +155,7 @@ public enum GraphArchive {
                 if cursor < row.count { node.receiverIndirectErrorEffects = try values() }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
                 node.nominalTypeContext = nominalTypeContexts?[node.id]
+                node.swiftTestingDiscoveryReferences = swiftTestingDiscoveryReferences?[node.id]
                 node.swiftTestingTraitProducers = swiftTestingTraitProducers?[node.id]
                 node.swiftTestingExistentialTypes = swiftTestingExistentialTypes?[node.id]
                 node.swiftTestingFactoryType = swiftTestingFactoryTypes?[node.id]
@@ -181,8 +184,28 @@ public enum GraphArchive {
         let payload = try encoder.encode(envelope)
         return magic + Data(XcodeGraphCache.digest(payload).utf8) + payload
     }
+    /// Previous captures stored only the test's own factories. Rebind once on
+    /// load so comparing retained graphs also includes eager discovery effects.
+    private static func upgradeDiscovery(_ snapshot: inout XcodeTestGraph) {
+        guard var graph = snapshot.dependencies, !graph.tests.isEmpty, graph.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] == nil,
+              graph.functions.values.contains(where: { $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true }) else { return }
+        SwiftTestingDiscoveryRoots.bind(modules: snapshot.modules, sources: snapshot.sources, graph: &graph)
+        graph.testDiagnostics = graph.testDiagnostics.mapValues { diagnostics in
+            var seen = Set<String>()
+            return diagnostics.filter { seen.insert($0).inserted }
+        }
+        snapshot.dependencies = graph
+    }
+
     static func decodeValue<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-        guard data.starts(with: magic) else { return try JSONDecoder().decode(type, from: data) }
+        guard data.starts(with: magic) else {
+            if type == XcodeTestGraph.self {
+                var graph = try JSONDecoder().decode(XcodeTestGraph.self, from: data)
+                upgradeDiscovery(&graph)
+                return graph as! T
+            }
+            return try JSONDecoder().decode(type, from: data)
+        }
         guard data.count >= magic.count + 64 else { throw ImpactError("Truncated compact graph") }
         let payload = data.dropFirst(magic.count + 64)
         guard String(decoding: data.dropFirst(magic.count).prefix(64), as: UTF8.self) == XcodeGraphCache.digest(payload) else {
@@ -192,6 +215,7 @@ public enum GraphArchive {
         if type == XcodeTestGraph.self {
             var graph = try JSONDecoder().decode(XcodeTestGraph.self, from: envelope.metadata)
             graph.dependencies = try envelope.graph?.unpack()
+            upgradeDiscovery(&graph)
             return graph as! T
         }
         if type == SILModule.self, let packed = envelope.graph, let dispatch = envelope.dispatch {

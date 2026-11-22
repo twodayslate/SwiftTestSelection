@@ -46,6 +46,8 @@ public struct SourceUnit: Codable, Sendable {
     public var swiftTestingRole: String? = nil
     /// Qualified suite name, including actors whose source unit covers the whole declaration.
     public var swiftTestingSuiteName: String? = nil
+    /// The written discovery attribute has arguments. Nil denotes older evidence.
+    public var swiftTestingHasArguments: Bool? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
     /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
     public var bodylessProtocolRequirement: String? = nil
@@ -597,7 +599,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 }, privateTestHelperBlocker: node.as(FunctionDeclSyntax.self).flatMap { PrivateTestHelperSyntax.unsupportedEffect($0, locations: locations) },
                 independentAddedTestEntry: node.as(FunctionDeclSyntax.self).flatMap {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
-                }, swiftTestingRole: testing.role, swiftTestingSuiteName: testing.suiteName, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                }, swiftTestingRole: testing.role, swiftTestingSuiteName: testing.suiteName,
+                swiftTestingHasArguments: testing.hasArguments, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,
                 helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },

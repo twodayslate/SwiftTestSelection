@@ -7,6 +7,7 @@ import Foundation
 /// references from SDK test factories to entry thunks; never infer a binding
 /// from a macro's generated display name or a source spelling alone.
 enum SwiftTestingDiscoveryRoots {
+    static let sharedDiscoveryID = "swift-testing:discovery"
     static let missingEvidence = "Swift Testing discovery roots are incomplete; compiler evidence for argument generation and traits is required"
     static let runtimeEvidence = "Swift Testing argument/trait factory roots are bound, but runtime trait/scoping callbacks and generic argument-iteration witnesses remain unproven"
 
@@ -159,14 +160,30 @@ enum SwiftTestingDiscoveryRoots {
                 suites[node.module, default: []].insert(node.id)
             }
         }
-        // Suite construction runs during module-wide discovery. The runtime
-        // callbacks belong to entries in the suite or one of its nested suites.
-        var suiteWitnesses: [String: [String: Set<String>]] = [:]
+        // Swift Testing constructs registrations across linked modules before it
+        // applies a filter. Without linkage information, share construction
+        // across the capture. A single node keeps the graph linear in its entries.
+        var construction = Set(suites.values.flatMap { $0 })
+        for id in factories.values.flatMap({ $0 }) {
+            guard let node = graph.functions[id] else { continue }
+            if let references = node.swiftTestingDiscoveryReferences, node.dynamicDeclarations.isEmpty {
+                construction.formUnion(references)
+            } else {
+                // Unsupported lowering and older fragments retain the entire factory.
+                construction.insert(id)
+            }
+        }
+        if !construction.isEmpty {
+            graph.functions[sharedDiscoveryID] = FunctionNode(id: sharedDiscoveryID, module: "Testing",
+                name: "discovery", dependencies: construction)
+        }
+        var suiteWitnesses: [String: Set<String>] = [:]
         for (id, witnesses) in graph.swiftTestingSuiteWitnesses ?? [:] {
             guard let suite = graph.functions[id], let type = suite.swiftTestingFactoryType,
                   declaredSuites[suite.module]?.contains(type) == true else { continue }
-            suiteWitnesses[suite.module, default: [:]][type, default: []].formUnion(witnesses)
+            suiteWitnesses[suite.module + "." + type, default: []].formUnion(witnesses)
         }
+        let witnessModules = Set(suiteWitnesses.keys.map { String($0.prefix { $0 != "." }) })
         let traitSuites = suites.values.flatMap { $0 }.compactMap { graph.functions[$0] }.filter { $0.swiftTestingEmptyFactory != "suite" }
         let suiteTypes = Set(traitSuites.compactMap { suite in
             suite.swiftTestingFactoryType.map { suite.module + "." + $0 }
@@ -226,20 +243,29 @@ enum SwiftTestingDiscoveryRoots {
             }
             guard isWrittenTest || discovered[test] != nil else { continue }
             let factoryRoots = discovered[test] ?? []
-            // All suite factories in this module are retained. This deliberately
-            // overapproximates inherited/custom suite traits rather than guessing
-            // a precise hierarchy from generated symbol names.
-            graph.tests[test, default: []].formUnion(factoryRoots.union(suites[module] ?? []))
-            // A bound test factory reaches the exact compiler entry named by
-            // this enumerated ID. Only its enclosing scopes can supply these
-            // positive witness roots. Unresolved ownership keeps the diagnostic.
-            if !factoryRoots.isEmpty, let witnesses = suiteWitnesses[module] {
-                var scope = test.split(separator: "/").dropFirst().dropLast()
-                while !scope.isEmpty {
-                    if let callbacks = witnesses[scope.joined(separator: ".")] {
-                        graph.tests[test, default: []].formUnion(callbacks)
+            graph.tests[test, default: []].formUnion(factoryRoots)
+            if !construction.isEmpty {
+                graph.tests[test, default: []].insert(sharedDiscoveryID)
+            }
+            // Extensions register in their emitting module, but inherit traits
+            // from the nominal type's declaring module (and its enclosing suites).
+            let owners = Set(roots.compactMap { id -> String? in
+                guard entryTests[id]?.contains(test) == true, let owner = graph.functions[id]?.nominalTypeContext,
+                      !owner.isEmpty else { return nil }
+                return owner
+            })
+            if !factoryRoots.isEmpty {
+                let scope = test.split(separator: "/").dropFirst().dropLast().joined(separator: ".")
+                let candidates = owners.isEmpty && !scope.isEmpty
+                    ? Set(witnessModules.map { $0 + "." + scope }) : owners
+                for owner in candidates {
+                    var path = owner.split(separator: ".")
+                    while path.count > 1 {
+                        if let callbacks = suiteWitnesses[path.joined(separator: ".")] {
+                            graph.tests[test, default: []].formUnion(callbacks)
+                        }
+                        path = path.dropLast()
                     }
-                    scope = scope.dropLast()
                 }
             }
             guard factoryRoots.count == 1, completeSuiteModules.contains(module) || (declaredSuites[module]?.count ?? 0) <= (suites[module]?.count ?? 0),

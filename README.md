@@ -5,10 +5,11 @@ Select Swift tests from a Git diff and a compiler-derived dependency graph. **No
 A Swift package providing a `swift-test-impact` executable and reusable `TestImpact` library. SwiftPM packages use a function dependency graph with XCTest and Swift Testing discovery. Xcode projects/workspaces select individual XCTest and Swift Testing entries through syntax and compiler dependencies, with explicit feature mappings for UI tests. It is experimental static analysis, not a guarantee of the smallest safe test set.
 
 Xcode discovery preserves exact identifiers for top-level, nested, static and
-parameterized Swift Testing entries. Captured test factories contribute argument
-providers and test traits; suite factories are conservatively shared across their
-module's Swift Testing entries. Matching compiled suite-trait and scoping witnesses
-are roots for tests bound to the suite or its nested suites. Custom traits and
+parameterized Swift Testing entries. Swift Testing constructs traits before filtering
+tests, so selection shares discovery-time dependencies across captured modules.
+Compiler-identified test bodies and deferred argument providers stay with their
+own entries. Suite-trait and scoping callbacks follow the suite's declaring
+module, including tests added in an extension from another module. Custom traits and
 generic argument iteration retain fallback. A plain test on a top-level value
 type can rule out an unrelated suite's traits when the SDK factory metatypes and
 the compiler's test-method owner agree.

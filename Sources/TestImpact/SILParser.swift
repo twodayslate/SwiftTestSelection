@@ -327,6 +327,7 @@ public enum SILParser {
                 current!.compilerReferences = current!.dependencies
                 if let testingFactoryLines, current!.dependencies.contains(where: SwiftTestingFactoryProof.isFactory) {
                     let evidence = SwiftTestingFactoryProof.analyze(testingFactoryLines)
+                    current!.swiftTestingDiscoveryReferences = current!.dependencies.subtracting(evidence.deferredReferences)
                     current!.swiftTestingExistentialTypes = evidence.traitTypes
                     current!.swiftTestingTraitProducers = evidence.traitProducers
                     current!.swiftTestingEmptyFactory = evidence.emptyFactory

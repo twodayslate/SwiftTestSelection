@@ -49,6 +49,8 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     public var swiftTestingExistentialTypes: Set<String>? = nil
     /// Direct callees whose results are stored into the SDK traits array.
     public var swiftTestingTraitProducers: Set<String>? = nil
+    /// Factory references that may execute before Swift Testing filters the tests.
+    public var swiftTestingDiscoveryReferences: Set<String>? = nil
     /// Full SIL method reference and formal type for every dynamic call.
     /// Nil means legacy or incomplete evidence; display names lose overloads.
     public var dynamicCallSignatures: Set<String>? = nil
@@ -96,6 +98,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
         compilerReferences = union(compilerReferences, other.compilerReferences)
         swiftTestingExistentialTypes = union(swiftTestingExistentialTypes, other.swiftTestingExistentialTypes)
         swiftTestingTraitProducers = union(swiftTestingTraitProducers, other.swiftTestingTraitProducers)
+        swiftTestingDiscoveryReferences = union(swiftTestingDiscoveryReferences, other.swiftTestingDiscoveryReferences)
         if swiftTestingFactoryType != other.swiftTestingFactoryType { swiftTestingFactoryType = nil }
         if swiftTestingEmptyFactory != other.swiftTestingEmptyFactory { swiftTestingEmptyFactory = nil }
         dynamicCallSignatures = union(dynamicCallSignatures, other.dynamicCallSignatures)

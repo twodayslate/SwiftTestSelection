@@ -9,10 +9,12 @@ import Foundation
 enum SILOwnership {
     static func resolve(_ input: SILModule, module: String, compiler: String, directory: URL) throws -> SILModule {
         let shared = Set((input.sharedSymbols ?? []).filter { input.functions[$0]?.regions.isEmpty == false })
-        // Parameterless source methods are the supported inline XCTest boundary.
+        // Swift Testing also permits parameterized methods in imported suites.
         // Display names omit the nominal owner's module, even for extensions.
+        let hasTestingFactories = input.functions.values.contains { $0.swiftTestingDiscoveryReferences != nil }
         let methods = Set(input.functions.values.filter {
-            $0.nominalTypeContext == nil && !$0.regions.isEmpty && $0.name.contains(".") && $0.name.hasSuffix("()")
+            $0.nominalTypeContext == nil && !$0.regions.isEmpty && $0.name.contains(".") &&
+                ($0.name.hasSuffix("()") || hasTestingFactories && $0.name.hasSuffix(")"))
         }.map(\.id))
         let swiftMethods = methods.filter { $0.hasPrefix("$s") || $0.hasPrefix("$S") || $0.hasPrefix("_T") }
         let symbols = shared.union(swiftMethods).sorted()
@@ -63,6 +65,7 @@ enum SILOwnership {
                     || node.compilerReferences.map({ !$0.isDisjoint(with: adapterSymbols) }) == true else { continue }
                 node.dependencies = renamed(node.dependencies)
                 node.compilerReferences = node.compilerReferences.map(renamed)
+                node.swiftTestingDiscoveryReferences = node.swiftTestingDiscoveryReferences.map(renamed)
                 if let local = adapters[symbol] {
                     result.functions.removeValue(forKey: symbol)
                     node.id = local
@@ -114,7 +117,9 @@ enum SILOwnership {
         func finish() {
             guard let symbol, nodes.first?.value == "kind=Global", nodes.first?.depth == 0 else { return }
             let declarations = children(0).filter { !["kind=ObjCAttribute", "kind=NonObjCAttribute", "kind=DynamicAttribute"].contains(nodes[$0].value) }
-            guard declarations.count == 1, let function = declarations.first, nodes[function].value == "kind=Function",
+            guard declarations.count == 1, let declaration = declarations.first else { return }
+            let members = nodes[declaration].value == "kind=Static" ? children(declaration) : [declaration]
+            guard members.count == 1, let function = members.first, nodes[function].value == "kind=Function",
                   let owner = children(function).first, let name = context(owner), name.contains(".") else { return }
             result[symbol] = name
         }

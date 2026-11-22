@@ -133,7 +133,9 @@ public enum XcodeFineSelector {
         // An archive comparison may have no Git rename record, or the move may
         // include trivia edits. Pair only whole files with the same declarations,
         // module ownership, and source order. Caller locations still compare below.
-        var displacedPaths = Set<String>()
+        var displacedPaths = touchedPaths.filter { path in
+            (oldUnitsByFile[path] == nil) != (newUnitsByFile[path] == nil)
+        }
         for (key, old) in oldUnits where old.count == 1 {
             guard let new = newUnits[key], new.count == 1 else { continue }
             let before = old[0].region.path, after = new[0].region.path
@@ -341,6 +343,16 @@ public enum XcodeFineSelector {
             }
         }
         let hasSemanticChanges = !oldChanged.isEmpty || !newChanged.isEmpty
+        // Header keys include attribute expressions. Changing or removing an
+        // argument can alter discovery even when its constructor is unchanged.
+        func discoveryHeaders(_ units: [SourceUnit]) -> [String: Int] {
+            var counts: [String: Int] = [:]
+            for unit in units where unit.swiftTestingRole != nil && unit.swiftTestingHasArguments != false {
+                counts[unit.key + (unit.conditionalBranch ?? ""), default: 0] += 1
+            }
+            return counts
+        }
+        let changedDiscoveryHeaders = discoveryHeaders(oldChanged) != discoveryHeaders(newChanged)
         // A proven test-entry change is invoked by the test runner, not by
         // unrelated tests' opaque SDK calls. Keep explicit callers in the graph,
         // but do not let uncertainty elsewhere expand this into a suite run.
@@ -392,6 +404,7 @@ public enum XcodeFineSelector {
             }
             let index = DependencyIndex(graph)
             var affected = Set<String>()
+            if changedDiscoveryHeaders { affected.insert(SwiftTestingDiscoveryRoots.sharedDiscoveryID) }
             var productionUnits: [SourceUnit] = []
             var productionAffected = Set<String>()
             var enumModules = Set<String>()

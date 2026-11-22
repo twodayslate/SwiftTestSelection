@@ -33,6 +33,39 @@ enum SwiftTestingFactoryProof {
         var emptyFactory: String?
         var traitTypes = Set<String>()
         var traitProducers = Set<String>()
+        var deferredReferences = Set<String>()
+    }
+
+    private static let closureConversion = try! NSRegularExpression(pattern: #"^(?:thin_to_thick_function |partial_apply (?:\[\w+\] )*)(%\d+)(?: to |\()"#)
+
+    /// A function reference is deferred only if every occurrence is used solely
+    /// to build a callback handed to the SDK. Captures and constructor arguments
+    /// can execute user code during discovery and retain their ordinary edges.
+    private static func deferredReferences(factoryCall: String, factoryCallbacks: [String], definitions: [String: String],
+                                           uses: [String: [String]], references: [String: String]) -> Set<String> {
+        var deferredValues = Set<String>()
+        for instruction in definitions.values {
+            let callbacks: [String]
+            if instruction == factoryCall {
+                callbacks = factoryCallbacks
+            } else {
+                guard let fields = Pattern.groups(application, in: instruction), let symbol = references[fields[0]],
+                      symbol.hasPrefix("$s7Testing5TraitPA2A09ConditionB0VRszrlE7enabled2if_14sourceLocation") ||
+                        symbol.hasPrefix("$s7Testing5TraitPA2A09ConditionB0VRszrlE8disabled2if_14sourceLocation") else { continue }
+                let arguments = fields[2].components(separatedBy: ", ")
+                guard arguments.count == 5 else { continue }
+                callbacks = [arguments[1]]
+            }
+            for argument in callbacks {
+                guard let conversion = definitions[argument], let closure = Pattern.groups(closureConversion, in: conversion)?.first,
+                      uses[closure] == [conversion],
+                      uses[argument]?.allSatisfy({ $0 == instruction || $0 == "strong_release " + argument ||
+                          $0 == "release_value " + argument || $0 == "destroy_value " + argument }) == true else { continue }
+                deferredValues.insert(closure)
+            }
+        }
+        let eager = references.filter { !deferredValues.contains($0.key) }.values
+        return Set(references.values).subtracting(eager)
     }
 
     /// Look backwards from the traits argument passed to Testing. Other arrays
@@ -114,6 +147,16 @@ enum SwiftTestingFactoryProof {
         let suite = locations.contains { factory.value.hasPrefix("$s7Testing4TestV6__type_11displayName6traits" + $0) }
         let functionPrefix = "$s7Testing4TestV10__function5named2in02xcB18CompatibleSelector11displayName6traits"
         let function = locations.contains { factory.value.hasPrefix(functionPrefix + $0 + "10parameters12testFunction") }
+        let parameterized = locations.contains {
+            factory.value.hasPrefix(functionPrefix + "9arguments") && factory.value.contains($0 + "10parameters12testFunction")
+        }
+        if (function && arguments.count == 10) || (parameterized && arguments.count > 10) {
+            // The argument providers follow traits. The final four operands
+            // are the source location/bounds, parameters, test body, and Self.
+            let callbacks = Array(arguments[6..<(arguments.count - 4)]) + [arguments[arguments.count - 2]]
+            evidence.deferredReferences = deferredReferences(factoryCall: call, factoryCallbacks: callbacks,
+                definitions: definitions, uses: uses, references: references)
+        }
         // Parameterized overloads have additional arguments after the traits.
         let traitIndex = suite ? 3 : 5
         if (suite || factory.value.hasPrefix(functionPrefix)), arguments.indices.contains(traitIndex) {
