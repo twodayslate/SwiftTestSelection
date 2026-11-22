@@ -129,15 +129,16 @@ enum SwiftTestingDiscoveryRoots {
         var valueTypes: [String: Set<String>] = [:], declaredSuites: [String: [String]] = [:]
         var currentMetadata = Set<String>()
         for (module, files) in sourceModules {
-            if files.allSatisfy({ $0.value.parserVersion == SwiftSourceSnapshot.currentParserVersion }) { currentMetadata.insert(module) }
-            for unit in files.flatMap({ $0.value.units }) {
-                if unit.kind == "type", unit.receiverValueType == true, !unit.scope.contains(".") {
+            if files.allSatisfy({ $0.value.parserVersion == SwiftSourceSnapshot.currentParserVersion && $0.value.swiftTestingDeclarations != nil }) { currentMetadata.insert(module) }
+            for (_, file) in files {
+                for unit in file.units where unit.kind == "type" && unit.receiverValueType == true && !unit.scope.contains(".") {
                     valueTypes[module, default: []].insert(unit.scope)
                 }
-                if unit.swiftTestingRole == "test" { testRegions[module, default: [:]][unit.region.path, default: []].append(unit.region) }
-                if unit.swiftTestingRole == "suite", let name = unit.swiftTestingSuiteName ?? (unit.kind == "type" ? unit.scope : nil) {
-                    declaredSuites[module, default: []].append(name)
-                    if unit.conditionalBranch != nil { conditionalSuites[module, default: []].append(name) }
+                let declarations = file.swiftTestingDeclarations ?? SwiftTestingSourceDeclarations(legacyUnits: file.units)
+                for region in declarations.tests { testRegions[module, default: [:]][region.path, default: []].append(region) }
+                for suite in declarations.suites {
+                    declaredSuites[module, default: []].append(suite.name)
+                    if suite.conditional { conditionalSuites[module, default: []].append(suite.name) }
                 }
             }
         }

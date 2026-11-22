@@ -112,7 +112,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 6
+    static let currentParserVersion = 7
+    var swiftTestingDeclarations: SwiftTestingSourceDeclarations? = nil
     public var parserVersion: Int? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
     static func legacyConditionalPaths(in sources: [String: Self], touching paths: Set<String>) -> Set<String> {
@@ -447,6 +448,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             return true
         }
+        var discovery = SwiftTestingSourceDeclarations()
         var branch = ""
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String], plainExtension: Bool? = nil) {
             var declaredMembers = Set<String>()
@@ -576,16 +578,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 }
             }
             let receiverCalls = SDKReceiverCallSyntax.evidence(in: node, locations: physicalLocations ? locations : nil, path: path)
-            let actor = node.as(ActorDeclSyntax.self)
-            let attributes = node.as(StructDeclSyntax.self)?.attributes ?? node.as(ClassDeclSyntax.self)?.attributes
-                ?? node.as(EnumDeclSyntax.self)?.attributes ?? actor?.attributes
-            let suiteName: String?
-            if attributes?.contains(where: {
-                ["Suite", "Testing.Suite"].contains($0.as(AttributeSyntax.self)?.attributeName.trimmedDescription ?? "")
-            }) == true {
-                let names = scope + (actor.map { [$0.name.text] } ?? [])
-                suiteName = names.map(SDKTestHelperSyntax.canonicalName).joined(separator: ".")
-            } else { suiteName = nil }
+            let testingScope = node.as(ActorDeclSyntax.self).map { scope + [$0.name.text] } ?? scope
+            let testing = discovery.record(node, scope: testingScope, conditional: !branch.isEmpty, path: path, locations: locations)
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
@@ -603,12 +597,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 }, privateTestHelperBlocker: node.as(FunctionDeclSyntax.self).flatMap { PrivateTestHelperSyntax.unsupportedEffect($0, locations: locations) },
                 independentAddedTestEntry: node.as(FunctionDeclSyntax.self).flatMap {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
-                }, swiftTestingRole: {
-                    if let function = node.as(FunctionDeclSyntax.self), function.attributes.contains(where: {
-                        ["Test", "Testing.Test"].contains($0.as(AttributeSyntax.self)?.attributeName.trimmedDescription ?? "")
-                    }) { return "test" }
-                    return suiteName == nil ? nil : "suite"
-                }(), swiftTestingSuiteName: suiteName, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                }, swiftTestingRole: testing.role, swiftTestingSuiteName: testing.suiteName, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,
                 helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },
@@ -735,6 +724,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
         }
         walk(Syntax(tree), scope: [])
+        result.swiftTestingDeclarations = discovery
         return result
     }
 }

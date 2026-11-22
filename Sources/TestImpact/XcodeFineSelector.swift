@@ -123,6 +123,25 @@ public enum XcodeFineSelector {
         for change in changes where change.isPureMove {
             if let previousPath = change.previousPath { movedPaths[previousPath] = change.path }
         }
+        // An archive comparison may have no Git rename record, or the move may
+        // include trivia edits. Pair only whole files with the same declarations,
+        // module ownership, and source order. Caller locations still compare below.
+        var displacedPaths = Set<String>()
+        for (key, old) in oldUnits where old.count == 1 {
+            guard let new = newUnits[key], new.count == 1 else { continue }
+            let before = old[0].region.path, after = new[0].region.path
+            if before != after && movedPaths[before] != after {
+                displacedPaths.insert(before)
+                displacedPaths.insert(after)
+            }
+        }
+        if let previous, !displacedPaths.isEmpty {
+            let removed = filesBySyntax(previous.sources, paths: displacedPaths.subtracting(movedPaths.keys))
+            let added = filesBySyntax(current.sources, paths: displacedPaths.subtracting(movedPaths.values))
+            for (syntax, before) in removed where before.count == 1 {
+                if let after = added[syntax], after.count == 1 { movedPaths[before[0]] = after[0] }
+            }
+        }
         for key in Set(oldUnits.keys).union(newUnits.keys) {
             let old = oldUnits[key] ?? [], new = newUnits[key] ?? []
             if old.count > 1 || new.count > 1 {
@@ -135,7 +154,8 @@ public enum XcodeFineSelector {
                         newChanged += rhs
                     }
                 }
-            } else if old.first.map(comparisonFingerprint) != new.first.map(comparisonFingerprint) {
+            } else if old.first.map({ movedPaths[$0.region.path] ?? $0.region.path }) != new.first?.region.path ||
+                        old.first.map(comparisonFingerprint) != new.first.map(comparisonFingerprint) {
                 oldChanged += old; newChanged += new
             }
         }
@@ -677,6 +697,20 @@ public enum XcodeFineSelector {
             for unit in units { result[unit.key, default: []].formUnion(unresolved) }
         }
         return result
+    }
+
+    private static func filesBySyntax(_ sources: [String: SwiftSourceSnapshot], paths: Set<String>) -> [[String]: [String]] {
+        var signatures: [String: [String]] = [:]
+        // A physical file can belong to multiple modules. Use a stable order
+        // across snapshots and preserve the parser's declaration order within each.
+        for key in sources.keys.sorted() {
+            guard let snapshot = sources[key], let path = snapshot.units.first?.region.path, paths.contains(path) else { continue }
+            for unit in snapshot.units {
+                signatures[path, default: []].append(unit.key)
+                signatures[path, default: []].append(unit.comparisonFingerprint(.diagnostic))
+            }
+        }
+        return Dictionary(grouping: signatures.keys, by: { signatures[$0]! })
     }
 
     private static func isProductionOrTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {

@@ -47,6 +47,33 @@ import Testing
     #expect(report.diagnostics.contains { $0.code == "head_only_declaration_change" })
 }
 
+@Test func conditionalHistoricalCallerMatchesOnlyItsCompiledBranch() throws {
+    let before = """
+    import XCTest
+    final class Cases: XCTestCase {
+        #if DEBUG
+        func testReading() { oldHelper() }
+        #else
+        func testReading() { oldHelper() }
+        #endif
+    }
+    func oldHelper() {}
+    """
+    let after = before.replacingOccurrences(of: "oldHelper", with: "newHelper")
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let entry = "UI/Cases/testReading()"
+    let head = try boundaryGraph(["Tests.swift": after], tests: [entry], root: root, compilerArguments: ["-D", "DEBUG"])
+    let base = SwiftSourceSnapshot.parse(before, path: "Tests.swift", module: "UI")
+    let report = XcodeHeadOnlySelector.select(current: head, source: .init(base: ["UI:Tests.swift": base]),
+        changes: [.init(path: "Tests.swift")], baseRevision: "base")
+    let removed = try #require(report.headOnlyDeclarationChanges?.first { $0.change == "removed" && $0.key.contains("oldHelper") })
+    let callers = removed.historicalReferences.flatMap { $0.possibleCallers ?? [] }
+    #expect(callers.contains { $0.baseRegion.startLine == 4 && $0.survivingTestEntries == [entry] })
+    #expect(callers.contains { $0.baseRegion.startLine == 6 && $0.survivingTestEntries.isEmpty })
+}
+
 @Test func importedSuperclassUsesTheCompiledTestImplementation() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

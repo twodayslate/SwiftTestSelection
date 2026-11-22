@@ -360,6 +360,19 @@ import Testing
     @Suite(Mode()) struct Common { @Test func decorated() {} }
     #endif
     @Suite(Mode()) actor Live { @Test func real() {} }
+    actor Host {
+        #if os(macOS)
+        @Testing.Suite(Mode()) struct Nested { @Test func inner() {} }
+        #endif
+    }
+    #if os(macOS)
+    @Suite(Mode())
+    #endif
+    struct Conditional { @Test func active() {} }
+    #if os(iOS)
+    @Suite(Mode())
+    #endif
+    struct OptionalSuite { @Test func ordinary() {} }
     struct Independent { @Test func plainMember() {} }
     @Test func top() {}
     #if os(iOS)
@@ -386,16 +399,18 @@ import Testing
         let fragment = try SILOwnership.resolve(parsed, module: module, compiler: compiler, directory: root)
         for (id, node) in fragment.functions where graph.functions[id] == nil || !node.regions.isEmpty { graph.functions[id] = node }
         tables.merge(fragment.dispatchTargets) { $0.union($1) }
-        sources[module + ":" + path] = .parse(source, path: path, module: module)
+        let snapshot = SwiftSourceSnapshot.parse(source, path: path, module: module)
+        sources[module + ":" + path] = try JSONDecoder().decode(SwiftSourceSnapshot.self, from: JSONEncoder().encode(snapshot))
     }
     let expected: [String: Set<String>] = [
         "Vendor/top()": [], "Vendor/Independent/plainMember()": [],
+        "Vendor/Conditional/active()": ["Vendor"], "Vendor/Host/Nested/inner()": ["Vendor"], "Vendor/OptionalSuite/ordinary()": [],
         "Vendor/Live/real()": ["Vendor"], "Vendor/Common/decorated()": ["Vendor"], "Client/Common/plain()": [], "Client/Decorated/local()": ["Client"],
         "Client/own()": ["Client"], "Client/imported()": ["Vendor"], "Client/both()": ["Client", "Vendor"]
     ]
     XcodeCompilerGraph.resolveDispatch(&graph, tables: tables, compiler: compiler)
     XcodeCompilerGraph.bind(tests: Array(expected.keys), modules: ["Client": "Client", "Vendor": "Vendor"], sources: sources, graph: &graph)
-    for test in ["Client/Common/plain()", "Vendor/top()", "Vendor/Independent/plainMember()"] {
+    for test in ["Client/Common/plain()", "Vendor/top()", "Vendor/Independent/plainMember()", "Vendor/OptionalSuite/ordinary()"] {
         #expect(graph.testDiagnostics[test]?.isEmpty ?? true)
     }
     let activeSuite = try #require(graph.functions.values.first { $0.module == "Vendor" && $0.swiftTestingFactoryType == "Common" &&

@@ -43,7 +43,9 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
                     let callers = functions.filter { unit in
                         lines.contains { $0 >= unit.region.startLine && $0 <= unit.region.endLine }
                     }.map { unit in
-                        let unique = functions.filter { $0.key == unit.key || $0.region.intersects(unit.region) }.count == 1
+                        let unique = functions.filter {
+                            ($0.key == unit.key && $0.conditionalBranch == unit.conditionalBranch) || $0.region.intersects(unit.region)
+                        }.count == 1
                         return Caller(declaration: unit.key, baseRegion: unit.region,
                                survivingTestEntries: unique ? survivingEntries(for: unit, sourceKey: sourceKey, current: current, hierarchy: hierarchy) : [])
                     }.sorted { ($0.baseRegion.startLine, $0.declaration) < ($1.baseRegion.startLine, $1.declaration) }

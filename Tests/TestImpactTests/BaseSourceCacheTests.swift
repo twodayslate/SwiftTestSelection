@@ -337,6 +337,35 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
     #expect(result.diagnostics.isEmpty)
 }
 
+@Test func movingAFunctionBetweenFilesSelectsItsFilePrivateValueConsumer() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let entries = ["UI/Cases/testReading()", "UI/Cases/testOther()"]
+    func capture(implementationIn first: Bool) throws -> XcodeTestGraph {
+        let function = "\nfunc reading() -> Int { value }"
+        let files = [
+            "First.swift": "private let value = 1" + (first ? function : ""),
+            "Second.swift": "private let value = 2" + (first ? "" : function),
+            "Tests.swift": """
+            import XCTest
+            final class Cases: XCTestCase {
+                func testReading() { XCTAssertEqual(reading(), 1) }
+                func testOther() { XCTAssertTrue(true) }
+            }
+            """
+        ]
+        var graph = try boundaryGraph(files, tests: entries, root: repo.root)
+        graph.targets = [.init(name: "UI", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: Set(files.keys))]
+        return graph
+    }
+    let base = try capture(implementationIn: true)
+    let head = try capture(implementationIn: false)
+    let report = XcodeFineSelector.select(current: head, previous: base,
+        changes: [.init(path: "First.swift"), .init(path: "Second.swift")], baseRevision: "base")
+    #expect(report.selectedTests == [entries[0]])
+    #expect(report.explanations.contains { $0.test == entries[0] && $0.kind == "dependency" })
+}
+
 @Test func reorderingConditionalEnumCasesSelectsRawValueConsumers() throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
