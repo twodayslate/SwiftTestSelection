@@ -120,8 +120,15 @@ public enum XcodeFineSelector {
             let branch: String?
         }
         var movedPaths: [String: String] = [:]
-        for change in changes where change.isPureMove {
-            if let previousPath = change.previousPath { movedPaths[previousPath] = change.path }
+        var renameOrigins: [String: String] = [:]
+        for change in changes {
+            guard let before = change.previousPath else { continue }
+            if change.isPureMove {
+                movedPaths[before] = change.path
+            } else if newUnitsByFile[before] == nil && oldUnitsByFile[change.path] == nil {
+                renameOrigins[before] = before
+                renameOrigins[change.path] = before
+            }
         }
         // An archive comparison may have no Git rename record, or the move may
         // include trivia edits. Pair only whole files with the same declarations,
@@ -136,8 +143,8 @@ public enum XcodeFineSelector {
             }
         }
         if let previous, !displacedPaths.isEmpty {
-            let removed = filesBySyntax(previous.sources, paths: displacedPaths.subtracting(movedPaths.keys))
-            let added = filesBySyntax(current.sources, paths: displacedPaths.subtracting(movedPaths.values))
+            let removed = filesBySyntax(previous.sources, paths: displacedPaths.subtracting(movedPaths.keys), renameOrigins: renameOrigins)
+            let added = filesBySyntax(current.sources, paths: displacedPaths.subtracting(movedPaths.values), renameOrigins: renameOrigins)
             for (syntax, before) in removed where before.count == 1 {
                 if let after = added[syntax], after.count == 1 { movedPaths[before[0]] = after[0] }
             }
@@ -699,15 +706,22 @@ public enum XcodeFineSelector {
         return result
     }
 
-    private static func filesBySyntax(_ sources: [String: SwiftSourceSnapshot], paths: Set<String>) -> [[String]: [String]] {
+    private static func filesBySyntax(_ sources: [String: SwiftSourceSnapshot], paths: Set<String>, renameOrigins: [String: String]) -> [[String]: [String]] {
         var signatures: [String: [String]] = [:]
         // A physical file can belong to multiple modules. Use a stable order
         // across snapshots and preserve the parser's declaration order within each.
         for key in sources.keys.sorted() {
             guard let snapshot = sources[key], let path = snapshot.units.first?.region.path, paths.contains(path) else { continue }
+            // A recorded rename may edit a function body while preserving its
+            // enclosing file scope. Pair it only with its stated origin. The
+            // selector still compares each body and its compiled dependencies.
+            let origin = renameOrigins[path]
+            signatures[path, default: []].append(origin ?? "")
             for unit in snapshot.units {
                 signatures[path, default: []].append(unit.key)
-                signatures[path, default: []].append(unit.comparisonFingerprint(.diagnostic))
+                let signature = origin != nil && unit.kind == "function"
+                    ? unit.conditionalBranch ?? "" : unit.comparisonFingerprint(.diagnostic)
+                signatures[path, default: []].append(signature)
             }
         }
         return Dictionary(grouping: signatures.keys, by: { signatures[$0]! })
