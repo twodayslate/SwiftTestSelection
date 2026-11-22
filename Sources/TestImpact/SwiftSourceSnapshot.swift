@@ -651,10 +651,15 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     positions.append(attribute.atSign.positionAfterSkippingLeadingTrivia)
                     positions += attribute.attributeName.tokens(viewMode: .sourceAccurate).map(\.positionAfterSkippingLeadingTrivia)
                 }
-                let bounds = positions.flatMap { position in
-                    // Testing emits physical bounds even under #sourceLocation.
-                    ["line:" + String(locations.location(for: position).line), "filePath:" + path] +
-                        locationNames.sorted().map { $0 + ":" + locationValue($0, at: position) }
+                // Testing emits physical bounds even under #sourceLocation.
+                var bounds: [String] = []
+                let dimensions = locationNames.sorted()
+                for position in positions {
+                    bounds.append("line:" + String(locations.location(for: position).line))
+                    bounds.append("filePath:" + path)
+                    for dimension in dimensions {
+                        bounds.append(dimension + ":" + locationValue(dimension, at: position))
+                    }
                 }
                 let metadata = SwiftTestingSourceDeclarations.Arguments(identity: SourceUnit.withLocations(context, syntax: comments),
                                                                        locations: bounds, calls: [:])
@@ -673,7 +678,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                           calls: callerInfo(expression, includeAllTokens: true).locations)
                 }
             }
-            result.units.append(SourceUnit(
+            var unit = SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
                 kind: kind, scope: scope.joined(separator: "."),
@@ -692,14 +697,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
                 }, swiftTestingRole: testing.role, swiftTestingSuiteName: testing.suiteName,
                 swiftTestingHasArguments: testing.hasArguments, swiftTestingArguments: registrations.isEmpty ? nil : registrations,
-                swiftTestingMetadata: entryMetadata, swiftTestingSuiteMetadata: suiteMetadata,
-                swiftTestingBodyCandidate: entryInputs?.bare == true && testingBodyCandidate ? true : nil,
-                hasInlineBody: node.tokens(viewMode: .sourceAccurate).contains(where: { token in
-                    guard token.tokenKind == .atSign, let attribute = token.parent?.as(AttributeSyntax.self) else { return false }
-                    let name = attribute.attributeName.trimmedDescription
-                    if name == "inline" { return attribute.arguments?.trimmedDescription != "never" }
-                    return ["_transparent", "inlinable", "_alwaysEmitIntoClient"].contains(name)
-                }) ? true : nil,
+                swiftTestingMetadata: entryMetadata,
                 swiftTestingEntryInputs: entryInputs, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,
@@ -711,14 +709,6 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 helperBindingUses: HelperBindingUses(in: node),
                 helperDeclaredMembers: declaredMembers,
                 helperRegionEffectsComplete: regionEffectsComplete(node),
-                helperCallerStatementSignatures: node.as(FunctionDeclSyntax.self).flatMap { function in
-                    guard let body = function.body,
-                          !body.tokens(viewMode: .sourceAccurate).contains(where: { token in
-                              guard let declaration = token.parent?.as(DeclSyntax.self) else { return false }
-                              return !declaration.is(VariableDeclSyntax.self)
-                          }) else { return nil }
-                    return body.statements.map { fingerprint(Syntax($0.item)) }
-                },
                 helperInheritedTypes: (node.as(ClassDeclSyntax.self)?.inheritanceClause
                     ?? node.as(StructDeclSyntax.self)?.inheritanceClause
                     ?? node.as(EnumDeclSyntax.self)?.inheritanceClause
@@ -759,7 +749,24 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                             i == j || parameters[j].defaultValue != nil || parameters[j].ellipsis != nil
                         }
                     }
-                }))
+                })
+            unit.swiftTestingSuiteMetadata = suiteMetadata
+            unit.swiftTestingBodyCandidate = entryInputs?.bare == true && testingBodyCandidate ? true : nil
+            unit.hasInlineBody = node.tokens(viewMode: .sourceAccurate).contains(where: { token in
+                guard token.tokenKind == .atSign, let attribute = token.parent?.as(AttributeSyntax.self) else { return false }
+                let name = attribute.attributeName.trimmedDescription
+                if name == "inline" { return attribute.arguments?.trimmedDescription != "never" }
+                return ["_transparent", "inlinable", "_alwaysEmitIntoClient"].contains(name)
+            }) ? true : nil
+            unit.helperCallerStatementSignatures = node.as(FunctionDeclSyntax.self).flatMap { function in
+                guard let body = function.body,
+                      !body.tokens(viewMode: .sourceAccurate).contains(where: { token in
+                          guard let declaration = token.parent?.as(DeclSyntax.self) else { return false }
+                          return !declaration.is(VariableDeclSyntax.self)
+                      }) else { return nil }
+                return body.statements.map { fingerprint(Syntax($0.item)) }
+            }
+            result.units.append(unit)
         }
         func walk(_ node: Syntax, scope: [String]) {
             if let item = node.as(CodeBlockItemSyntax.self), !item.item.is(DeclSyntax.self) {
