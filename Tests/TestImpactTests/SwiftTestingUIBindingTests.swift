@@ -319,3 +319,60 @@ import Testing
         #expect(decoded.dependencies?.testDiagnostics == current.dependencies?.testDiagnostics)
     }
 }
+
+@Test func sameNamedTraitsAndSuitesBindAcrossCompiledModules() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let flags = ["-g", "-Onone", "-I", root.path, "-plugin-path", plugins.path,
+                 "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib"]
+    let trait = """
+    public struct Mode: TestTrait, SuiteTrait {
+        public init() {}
+        public func prepare(for test: Testing.Test) async throws { hook() }
+    }
+    func hook() {}
+    """
+    let vendor = "import Testing\n" + trait + "\n@Suite(Mode()) struct Common { @Test func decorated() {} }"
+    let client = "import Testing\nimport Vendor\n" + trait.replacingOccurrences(of: "public struct", with: "private struct") + """
+
+    @Suite struct Common { @Test func plain() {} }
+    @Suite(Mode()) struct Decorated { @Test func local() {} }
+    @Test(Mode()) func own() {}
+    @Test(Vendor.Mode()) func imported() {}
+    @Test(Mode(), Vendor.Mode()) func both() {}
+    """
+    var graph = DependencyGraph(), tables: [String: Set<String>] = [:], sources: [String: SwiftSourceSnapshot] = [:]
+    for (module, source) in [("Vendor", vendor), ("Client", client)] {
+        let path = module + ".swift"
+        let file = root.appendingPathComponent(path)
+        try Data(source.utf8).write(to: file)
+        if module == "Vendor" { _ = try CommandRunner.run(compiler, flags + ["-module-name", module, "-emit-module", file.path], at: root) }
+        let sil = root.appendingPathComponent(module + ".sil")
+        _ = try CommandRunner.run(compiler, flags + ["-module-name", module, "-emit-sil", "-whole-module-optimization", file.path, "-o", sil.path], at: root)
+        let parsed = try SILParser.parse(file: sil, module: module, sourceRoot: root)
+        let fragment = try SILOwnership.resolve(parsed, module: module, compiler: compiler, directory: root)
+        for (id, node) in fragment.functions where graph.functions[id] == nil || !node.regions.isEmpty { graph.functions[id] = node }
+        tables.merge(fragment.dispatchTargets) { $0.union($1) }
+        sources[module + ":" + path] = .parse(source, path: path, module: module)
+    }
+    let expected: [String: Set<String>] = [
+        "Vendor/Common/decorated()": ["Vendor"], "Client/Common/plain()": [], "Client/Decorated/local()": ["Client"],
+        "Client/own()": ["Client"], "Client/imported()": ["Vendor"], "Client/both()": ["Client", "Vendor"]
+    ]
+    XcodeCompilerGraph.resolveDispatch(&graph, tables: tables, compiler: compiler)
+    XcodeCompilerGraph.bind(tests: Array(expected.keys), modules: ["Client": "Client", "Vendor": "Vendor"], sources: sources, graph: &graph)
+    #expect(graph.testDiagnostics["Client/Common/plain()"]?.isEmpty ?? true)
+    for module in ["Client", "Vendor"] {
+        let hook = try #require(graph.functions.values.first { $0.module == module && $0.name == "hook()" })
+        let paths = DependencyIndex(graph).paths(to: [hook.id])
+        for (test, modules) in expected {
+            let roots = try #require(graph.tests[test])
+            #expect(!roots.isEmpty, "\(test)")
+            #expect((paths.path(from: roots) != nil) == modules.contains(module), "\(test) to \(module).hook")
+        }
+    }
+}

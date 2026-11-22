@@ -32,6 +32,7 @@ public enum GraphArchive {
         /// Optional for archives written before factory-effect evidence existed.
         var testVTableEntries: [String: Set<String>]?
         var swiftTestingSuiteWitnesses: [String: Set<String>]?
+        var swiftTestingTraitProducers: [String: Set<String>]?
         var swiftTestingExistentialTypes: [String: Set<String>]?
         var swiftTestingFactoryTypes: [String: String]?
         var swiftTestingEmptyFactories: [String: String]?
@@ -69,6 +70,7 @@ public enum GraphArchive {
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
             testVTableEntries = graph.testVTableEntries
             swiftTestingSuiteWitnesses = graph.swiftTestingSuiteWitnesses
+            swiftTestingTraitProducers = graph.functions.compactMapValues(\.swiftTestingTraitProducers)
             swiftTestingExistentialTypes = graph.functions.compactMapValues(\.swiftTestingExistentialTypes)
             swiftTestingFactoryTypes = graph.functions.compactMapValues(\.swiftTestingFactoryType)
             swiftTestingEmptyFactories = graph.functions.compactMapValues(\.swiftTestingEmptyFactory)
@@ -148,6 +150,7 @@ public enum GraphArchive {
                 if cursor < row.count { node.receiverIndirectErrorEffects = try values() }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
                 node.nominalTypeContext = nominalTypeContexts?[node.id]
+                node.swiftTestingTraitProducers = swiftTestingTraitProducers?[node.id]
                 node.swiftTestingExistentialTypes = swiftTestingExistentialTypes?[node.id]
                 node.swiftTestingFactoryType = swiftTestingFactoryTypes?[node.id]
                 node.swiftTestingEmptyFactory = swiftTestingEmptyFactories?[node.id]

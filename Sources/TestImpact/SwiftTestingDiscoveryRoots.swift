@@ -10,30 +10,39 @@ enum SwiftTestingDiscoveryRoots {
     static let missingEvidence = "Swift Testing discovery roots are incomplete; compiler evidence for argument generation and traits is required"
     static let runtimeEvidence = "Swift Testing argument/trait factory roots are bound, but runtime trait/scoping callbacks and generic argument-iteration witnesses remain unproven"
 
-    /// Discovery invokes protocol witnesses outside the generated factory.
-    /// Keep all compiled candidates for the concrete existential payload,
-    /// including same-spelled conformances from different capture modules.
+    /// Both ends of the runtime edge must name the same concrete type.
+    /// The producer can be defined in a different module from the factory.
     static func bindTraitWitnesses(graph: inout DependencyGraph, tables: [String: Set<String>], compiler: String?) {
-        let applied = graph.functions.values.reduce(into: Set<String>()) { types, node in
-            if let payloads = node.swiftTestingExistentialTypes { types.formUnion(payloads) }
+        let producers = graph.functions.values.reduce(into: Set<String>()) { symbols, node in
+            if let applied = node.swiftTestingTraitProducers { symbols.formUnion(applied) }
         }
-        guard !applied.isEmpty else { return }
-        var witnesses: [String: Set<String>] = [:]
+        guard !producers.isEmpty else { return }
         let protocols: Set<Substring> = ["Trait", "SuiteTrait", "TestTrait", "TestScoping"]
-        for (key, targets) in tables {
+        var targets = Set<String>()
+        for (key, symbols) in tables {
             guard let separator = key.range(of: "@witness:"),
                   let owner = key[..<separator.lowerBound].split(separator: ".").first,
                   protocols.contains(owner) else { continue }
-            let payload = String(key[separator.upperBound...])
-            if applied.contains(payload) { witnesses[payload, default: []].formUnion(targets) }
+            targets.formUnion(symbols)
         }
-        let symbols = Set(witnesses.values.flatMap { $0 })
-        let verified = sdkWitnesses(symbols.sorted(), protocols: protocols, compiler: compiler)
-        guard !verified.isEmpty else { return }
-        witnesses = witnesses.mapValues { $0.intersection(verified) }
+        guard !targets.isEmpty else { return }
+        let names = demangledNames(producers.union(targets).sorted(), compiler: compiler)
+        let prefixes = protocols.map { "protocol witness for Testing." + $0 + "." }
+        var witnesses: [String: Set<String>] = [:]
+        for symbol in targets {
+            guard let name = names[symbol], prefixes.contains(where: name.hasPrefix),
+                  let conformance = Pattern.groups(witnessOwner, in: name) else { continue }
+            witnesses[conformance[0], default: []].insert(symbol)
+        }
+        let resultTypes = producers.reduce(into: [String: String]()) { result, symbol in
+            guard let name = names[symbol], let type = Pattern.groups(producerResult, in: name) else { return }
+            result[symbol] = type[0]
+        }
         for (symbol, node) in graph.functions {
-            guard let types = node.swiftTestingExistentialTypes, !types.isEmpty else { continue }
-            let candidates = types.reduce(into: Set<String>()) { $0.formUnion(witnesses[$1] ?? []) }
+            guard let applied = node.swiftTestingTraitProducers, !applied.isEmpty else { continue }
+            let candidates = applied.reduce(into: Set<String>()) { symbols, producer in
+                if let type = resultTypes[producer], let callbacks = witnesses[type] { symbols.formUnion(callbacks) }
+            }
             guard !candidates.isEmpty else { continue }
             if node.compilerReferences?.contains(where: { $0.hasPrefix("$s7Testing4TestV6__type") }) == true {
                 if graph.swiftTestingSuiteWitnesses == nil { graph.swiftTestingSuiteWitnesses = [:] }
@@ -44,10 +53,14 @@ enum SwiftTestingDiscoveryRoots {
         }
     }
 
-    private static func sdkWitnesses(_ symbols: [String], protocols: Set<Substring>, compiler: String?) -> Set<String> {
-        // SIL table headers omit the requirement's module. The compiler's
-        // witness thunk identifies the fully qualified protocol declaration.
-        guard !symbols.isEmpty else { return [] }
+    // Accept concrete qualified nominal types from direct results and getters.
+    // More complex or unknown demanglings keep runtime uncertainty.
+    // Private nominal components include the compiler's file discriminator.
+    private static let nominal = #"\w+(?:\.(?:\w+|\(\w+ in _[A-Fa-f0-9]+\)))+"#
+    private static let producerResult = try! NSRegularExpression(pattern: #"(?: -> |\.getter : )("# + nominal + #")$"#)
+    private static let witnessOwner = try! NSRegularExpression(pattern: #" in conformance ("# + nominal + #") : Testing\.(?:Trait|TestTrait|SuiteTrait|TestScoping) in [\w]+$"#)
+
+    private static func demangledNames(_ symbols: [String], compiler: String?) -> [String: String] {
         let command: [String]
         let sibling = compiler.map { URL(fileURLWithPath: $0).deletingLastPathComponent().appendingPathComponent("swift-demangle").path }
         if compiler?.hasPrefix("/") == true, let sibling, FileManager.default.isExecutableFile(atPath: sibling) {
@@ -60,13 +73,10 @@ enum SwiftTestingDiscoveryRoots {
             #endif
         }
         guard let output = try? CommandRunner.run(command[0], Array(command.dropFirst()) + ["--compact"],
-            at: FileManager.default.temporaryDirectory, input: Data((symbols.joined(separator: "\n") + "\n").utf8)).text else { return [] }
+            at: FileManager.default.temporaryDirectory, input: Data((symbols.joined(separator: "\n") + "\n").utf8)).text else { return [:] }
         let names = output.split(separator: "\n")
-        guard names.count == symbols.count else { return [] }
-        let prefixes = protocols.map { "protocol witness for Testing." + $0 + "." }
-        return Set(zip(symbols, names).compactMap { symbol, name in
-            prefixes.contains(where: name.hasPrefix) ? symbol : nil
-        })
+        guard names.count == symbols.count else { return [:] }
+        return Dictionary(uniqueKeysWithValues: zip(symbols, names.map(String.init)))
     }
 
     static func bind(modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph) {
@@ -115,7 +125,9 @@ enum SwiftTestingDiscoveryRoots {
             suiteWitnesses[suite.module, default: [:]][type, default: []].formUnion(witnesses)
         }
         let traitSuites = suites.values.flatMap { $0 }.compactMap { graph.functions[$0] }.filter { $0.swiftTestingEmptyFactory != "suite" }
-        let suiteTypes = Set(traitSuites.compactMap(\.swiftTestingFactoryType))
+        let suiteTypes = Set(traitSuites.compactMap { suite in
+            suite.swiftTestingFactoryType.map { suite.module + "." + $0 }
+        })
         let suiteTypesComplete = Set(declaredSuites.keys) == Set(suites.keys) && suites.allSatisfy { module, symbols in
             let types = symbols.compactMap { graph.functions[$0]?.swiftTestingFactoryType }
             return currentMetadata.contains(module) && types.count == symbols.count &&
@@ -198,7 +210,7 @@ enum SwiftTestingDiscoveryRoots {
             // imported, class, and generic contexts keep their uncertainty.
             let factoryType = factoryRoots.first.flatMap { graph.functions[$0]?.swiftTestingFactoryType }
             let unrelatedSuites = factoryType.map { type in
-                suiteTypesComplete && !suiteTypes.contains(type) && valueTypes[module]?.contains(type) == true &&
+                suiteTypesComplete && !suiteTypes.contains(module + "." + type) && valueTypes[module]?.contains(type) == true &&
                     roots.contains { id in
                         entryTests[id]?.contains(test) == true && graph.functions[id]?.nominalTypeContext == module + "." + type
                     }

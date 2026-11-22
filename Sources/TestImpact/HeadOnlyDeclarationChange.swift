@@ -63,7 +63,7 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
 
     private static func survivingEntries(for historical: SourceUnit, sourceKey: String, current: XcodeTestGraph, hierarchy: SwiftSuperclassIndex) -> [String] {
         guard let snapshot = current.sources[sourceKey], let graph = current.dependencies else { return [] }
-        let matches = snapshot.units.filter { $0.key == historical.key && $0.region.path == historical.region.path }
+        let matches = snapshot.units.filter { $0.key == historical.key && $0.region.path == historical.region.path && $0.conditionalBranch == historical.conditionalBranch }
         guard matches.count == 1, let unit = matches.first, let name = unit.helperCallableName else { return [] }
         let module = String(sourceKey.prefix { $0 != ":" })
         let owners = current.targets.filter { current.modules[$0.name] == module && $0.sourceFiles.contains(unit.region.path) }

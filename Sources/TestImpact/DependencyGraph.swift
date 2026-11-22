@@ -47,6 +47,8 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// Matching trait witnesses are possible runtime edges, never proof that
     /// the complete set of runtime conformances was captured.
     public var swiftTestingExistentialTypes: Set<String>? = nil
+    /// Direct callees whose results are stored into the SDK traits array.
+    public var swiftTestingTraitProducers: Set<String>? = nil
     /// Full SIL method reference and formal type for every dynamic call.
     /// Nil means legacy or incomplete evidence; display names lose overloads.
     public var dynamicCallSignatures: Set<String>? = nil
@@ -93,6 +95,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
         }
         compilerReferences = union(compilerReferences, other.compilerReferences)
         swiftTestingExistentialTypes = union(swiftTestingExistentialTypes, other.swiftTestingExistentialTypes)
+        swiftTestingTraitProducers = union(swiftTestingTraitProducers, other.swiftTestingTraitProducers)
         if swiftTestingFactoryType != other.swiftTestingFactoryType { swiftTestingFactoryType = nil }
         if swiftTestingEmptyFactory != other.swiftTestingEmptyFactory { swiftTestingEmptyFactory = nil }
         dynamicCallSignatures = union(dynamicCallSignatures, other.dynamicCallSignatures)

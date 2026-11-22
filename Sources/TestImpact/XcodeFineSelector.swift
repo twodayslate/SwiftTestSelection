@@ -77,13 +77,7 @@ public enum XcodeFineSelector {
             locationPolicy = .semantic
         }
         func fingerprint(_ unit: SourceUnit) -> String {
-            switch locationPolicy {
-            case .semantic: return unit.fingerprint
-            case .diagnostic: return unit.syntaxFingerprint ?? unit.fingerprint
-            case .diagnosticLineColumn:
-                guard let files = unit.fileLocationValues else { return unit.fingerprint }
-                return SourceUnit.withLocations(files, syntax: unit.syntaxFingerprint ?? unit.fingerprint)
-            }
+            unit.comparisonFingerprint(locationPolicy)
         }
         let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.units) ?? [], by: \.key)
         let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.units), by: \.key)

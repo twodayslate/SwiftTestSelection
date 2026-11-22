@@ -172,7 +172,7 @@ enum HelperFormattingContracts {
         var identity: [String: String] = [:]
         for (prefix, snapshots) in [("owned:", sources), ("unowned:", unowned)] {
             for (key, snapshot) in snapshots {
-                let units = snapshot.units.map { [$0.key, $0.region.path, $0.syntaxFingerprint ?? $0.fingerprint] }
+                let units = snapshot.units.map { [$0.key, $0.region.path, $0.comparisonFingerprint(.diagnostic)] }
                     .sorted { $0.lexicographicallyPrecedes($1) }
                 identity[prefix + key] = String(decoding: try! JSONEncoder().encode(units), as: UTF8.self)
             }

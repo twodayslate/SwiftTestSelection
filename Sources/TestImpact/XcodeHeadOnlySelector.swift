@@ -11,15 +11,20 @@ private struct HeadOnlySourceComparison {
             ? head?.sourceLocationPolicy ?? .semantic : .semantic
     }
 
-    func fingerprint(_ unit: SourceUnit) -> String {
-        let syntax: String
-        switch locationPolicy {
-        case .semantic: syntax = unit.fingerprint
-        case .diagnostic: return unit.syntaxFingerprint ?? unit.fingerprint
-        case .diagnosticLineColumn:
-            guard let files = unit.fileLocationValues else { return unit.fingerprint }
-            syntax = SourceUnit.withLocations(files, syntax: unit.syntaxFingerprint ?? unit.fingerprint)
+    func equivalent(_ old: [SourceUnit], _ new: [SourceUnit]) -> Bool {
+        guard old.count == new.count else { return false }
+        if old.count == 1 {
+            return old[0].region.path == new[0].region.path && fingerprint(old[0]) == fingerprint(new[0])
         }
+        func alternatives(_ units: [SourceUnit]) -> [String: [String]] {
+            Dictionary(grouping: units, by: \.region.path).mapValues { $0.map(fingerprint).sorted() }
+        }
+        return alternatives(old) == alternatives(new)
+    }
+
+    private func fingerprint(_ unit: SourceUnit) -> String {
+        let syntax = unit.comparisonFingerprint(locationPolicy)
+        if locationPolicy == .diagnostic || (locationPolicy == .diagnosticLineColumn && unit.fileLocationValues == nil) { return syntax }
         // Over-approximate caller defaults without inventing base compiler
         // edges. This also preserves fixture file identity for moved callers.
         return syntax + (unit.callerLocations ?? [:]).filter { key, _ in
@@ -85,13 +90,10 @@ struct XcodeHeadOnlySources {
                 }
             }
             let comparison = HeadOnlySourceComparison(head: current.mappings, base: result.mappings)
-            func alternatives(_ units: [SourceUnit]) -> [String: [String]] {
-                Dictionary(grouping: units, by: \.region.path).mapValues { $0.map(comparison.fingerprint).sorted() }
-            }
             auditCallers = before.contains { key, old in
                 guard let new = after[key], new.count == old.count else { return true }
-                if old.count == 1 { return old[0].region.path != new[0].region.path }
-                return alternatives(old) != alternatives(new)
+                if old.count == 1 { return old[0].region.path != new[0].region.path || old[0].conditionalBranch != new[0].conditionalBranch }
+                return !comparison.equivalent(old, new)
             }
         }
         var basePaths: Set<String>?
@@ -258,7 +260,7 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_unsupported_condition", "\(revision): \(feature.name): \(result.explanation)", tests: uiTests)
             }
         }
-        let fingerprint = HeadOnlySourceComparison(head: current.mappings, base: source.mappings).fingerprint
+        let comparison = HeadOnlySourceComparison(head: current.mappings, base: source.mappings)
         lazy var hierarchy = SwiftSuperclassIndex(sources: current.sources)
         let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
         let old = Dictionary(grouping: source.base.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
@@ -272,7 +274,7 @@ enum XcodeHeadOnlySelector {
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
         for key in Set(old.keys).union(new.keys).sorted() {
             let before = old[key] ?? [], after = new[key] ?? []
-            guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() || policyHelpers.contains(key) else { continue }
+            guard !comparison.equivalent(before, after) || policyHelpers.contains(key) else { continue }
             // Shared keys (notably imports) can span several source dictionaries.
             // Keep every region, but never let dictionary order label a boundary.
             fallbackUnits = (before + after).sorted {
@@ -284,8 +286,9 @@ enum XcodeHeadOnlySelector {
             evaluation.bindingReview = HelperBindingEvaluation(contracts: applyHelperContracts ? bindings.contracts.filter { $0.helper == key } : [], current: current, source: source, digestCache: digestCache)
             evaluations.append(evaluation)
             semanticPaths.formUnion((before + after).map { $0.region.path })
-            if PrivateTestHelperIsolation.provesExtensionHeaders(before + after, current: current, base: source.base) { continue }
-            if after.count == 1, let unit = after.first, (unit.sdkTestHelper != nil || ["XCUIElement", "XCTest.XCUIElement"].contains(unit.scope)),
+            let movedBetweenBranches = before.count == 1 && after.count == 1 && before[0].conditionalBranch != after[0].conditionalBranch
+            if !movedBetweenBranches, PrivateTestHelperIsolation.provesExtensionHeaders(before + after, current: current, base: source.base) { continue }
+            if !movedBetweenBranches, after.count == 1, let unit = after.first, (unit.sdkTestHelper != nil || ["XCUIElement", "XCTest.XCUIElement"].contains(unit.scope)),
                let graph = current.dependencies, let index = dependencyIndex {
                 if let blocker = SDKTestHelperIsolation.blocker(unit, previous: before.count == 1 ? before.first : nil,
                                                                current: current, base: source.base, graph: graph, index: index, unownedBase: source.unownedBaseSources, formattingReview: evaluation) {
@@ -297,7 +300,7 @@ enum XcodeHeadOnlySelector {
                     continue
                 }
             }
-            if before.count <= 1, after.count == 1, let unit = after.first,
+            if !movedBetweenBranches, before.count <= 1, after.count == 1, let unit = after.first,
                let graph = current.dependencies, let index = dependencyIndex {
                 // An added helper needs an isolation proof because no base
                 // compiler edges exist. A surviving body can still use ordinary
@@ -351,7 +354,7 @@ enum XcodeHeadOnlySelector {
                 continue
             }
             guard before.count == 1, after.count == 1, let a = before.first, let b = after.first,
-                  a.kind == "function", b.kind == "function", a.region.path == b.region.path else {
+                  a.kind == "function", b.kind == "function", a.region.path == b.region.path, !movedBetweenBranches else {
                 declarationChanges.append(.describe(key: key, before: before, after: after, source: source, current: current, hierarchy: hierarchy))
                 let affectedPaths = Set(fallbackUnits.map(\.region.path)).sorted()
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
@@ -441,7 +444,7 @@ enum XcodeHeadOnlySelector {
             // already observed helper/fixture dependencies.
             let omittedKeys = Set(excludedChanges.map(\.key))
             for (key, units) in new where !omittedKeys.contains(key) &&
-                ((old[key] ?? []).map(fingerprint).sorted() != units.map(fingerprint).sorted() || policyHelpers.contains(key)) {
+                (!comparison.equivalent(old[key] ?? [], units) || policyHelpers.contains(key)) {
                 for unit in units where unit.kind == "function" {
                     let module = String(unit.key.prefix { $0 != ":" })
                     affected.formUnion((index.byFile[unit.region.path] ?? []).filter { id in

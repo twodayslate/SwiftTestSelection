@@ -290,6 +290,7 @@ public enum SILParser {
                 if let testingFactoryLines, current!.dependencies.contains(where: SwiftTestingFactoryProof.isFactory) {
                     let evidence = SwiftTestingFactoryProof.analyze(testingFactoryLines)
                     current!.swiftTestingExistentialTypes = evidence.traitTypes
+                    current!.swiftTestingTraitProducers = evidence.traitProducers
                     current!.swiftTestingEmptyFactory = evidence.emptyFactory
                     current!.swiftTestingFactoryType = evidence.nominalType
                 }

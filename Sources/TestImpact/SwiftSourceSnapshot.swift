@@ -14,6 +14,8 @@ public struct SourceUnit: Codable, Sendable {
     public var kind: String
     public var scope: String
     public var region: SourceRegion
+    /// Enclosing conditional clauses, from the outermost directive to this declaration.
+    public var conditionalBranch: String? = nil
     /// Present only when evaluated location literals add meaning beyond syntax.
     /// Older graphs lack this evidence and keep their conservative fingerprint.
     public var syntaxFingerprint: String? = nil
@@ -86,6 +88,18 @@ public struct SourceUnit: Codable, Sendable {
     /// Whether this subscript can compete with the SDK identifier getter.
     public var subscriptAcceptsSingleUnlabeledArgument: Bool? = nil
 
+    func comparisonFingerprint(_ policy: UIFeatureMappings.SourceLocationPolicy) -> String {
+        let body: String
+        switch policy {
+        case .semantic: body = fingerprint
+        case .diagnostic: body = syntaxFingerprint ?? fingerprint
+        case .diagnosticLineColumn:
+            body = fileLocationValues.map { Self.withLocations($0, syntax: syntaxFingerprint ?? fingerprint) } ?? fingerprint
+        }
+        guard let conditionalBranch else { return body }
+        return "@if[\(conditionalBranch.utf8.count):\(conditionalBranch)]" + body
+    }
+
     static func withLocations(_ values: [String], syntax: String) -> String {
         values.isEmpty ? syntax : syntax + "@locations[" +
             values.map { "\($0.utf8.count):" + $0 }.joined(separator: "|") + "]"
@@ -96,7 +110,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 4
+    static let currentParserVersion = 5
     public var parserVersion: Int? = nil
     /// Git blob identities of the actual parsed bytes. Archive substitutions,
     /// filters or generated replacements must not authenticate unchanged Git
@@ -400,6 +414,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             return true
         }
+        var branch = ""
         func add(_ node: Syntax, header: Syntax, kind: String, scope: [String], plainExtension: Bool? = nil) {
             var declaredMembers = Set<String>()
             if scope.isEmpty {
@@ -533,6 +548,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 fingerprint: semantic,
                 kind: kind, scope: scope.joined(separator: "."),
                 region: SourceRegion(path: path, startLine: start, endLine: end),
+                conditionalBranch: branch.isEmpty ? nil : branch,
                 syntaxFingerprint: semantic == syntax ? nil : syntax,
                 headOnlyBodySupported: bodySupported,
                 fileLocationValues: values.filter { !$0.hasPrefix("line:") && !$0.hasPrefix("column:") },
@@ -621,7 +637,16 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             } else if let value = node.as(IfConfigDeclSyntax.self) {
                 let header = Syntax(value.with(\.clauses, IfConfigClauseListSyntax(value.clauses.map { $0.with(\.elements, nil) })))
                 add(header, header: header, kind: "configuration", scope: scope)
-                for child in node.children(viewMode: .sourceAccurate) { walk(child, scope: scope) }
+                let enclosing = branch
+                var clauses = ""
+                for clause in value.clauses {
+                    // An #elseif or #else depends on every preceding condition.
+                    let condition = fingerprint(Syntax(clause.with(\.elements, nil)))
+                    clauses += "\(condition.utf8.count):" + condition
+                    branch = enclosing + "[\(clauses)]"
+                    if let elements = clause.elements { walk(Syntax(elements), scope: scope) }
+                }
+                branch = enclosing
             } else if let value = node.as(ClassDeclSyntax.self) {
                 let names = scope + [value.name.text]
                 let className = (scope + [value.name.identifier?.name ?? value.name.text]).joined(separator: ".")

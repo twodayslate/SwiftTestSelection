@@ -17,6 +17,8 @@ enum SwiftTestingFactoryProof {
     private static let value = try! NSRegularExpression(pattern: #"%\d+"#)
 
     private static let existential = try! NSRegularExpression(pattern: #"^init_existential_addr (%\d+), \$([A-Za-z_][A-Za-z_0-9.]*)$"#)
+    private static let store = try! NSRegularExpression(pattern: #"^store (%\d+) to (?:\[\w+\] )?(%\d+)(?: : .*|$)"#)
+    private static let callee = try! NSRegularExpression(pattern: #"^apply (%\d+)(?:<.*>)?\("#)
     private static let indexAddress = try! NSRegularExpression(pattern: #"^index_addr (?:\[stack_protection\] )?(%\d+), %\d+$"#)
     private static let tailAddress = try! NSRegularExpression(pattern: #"^ref_tail_addr (%\d+), \$(any (?:SuiteTrait|TestTrait))$"#)
     private static let arrayStorage = try! NSRegularExpression(pattern: #"^(?:struct_extract|unchecked_ref_cast) (%\d+)(?:, #(?:Array\._buffer|_ArrayBuffer\._storage|_ContiguousArrayBuffer\._storage|_BridgeStorage\.rawValue)| to \$__ContiguousArrayStorageBase)$"#)
@@ -30,18 +32,19 @@ enum SwiftTestingFactoryProof {
         var nominalType: String?
         var emptyFactory: String?
         var traitTypes = Set<String>()
+        var traitProducers = Set<String>()
     }
 
     /// Look backwards from the traits argument passed to Testing. Other arrays
     /// and existential temporaries in this factory can contain ordinary data.
-    private static func appliedTraits(argument: String, element: String, definitions: [String: String],
-                                      references: [String: String]) -> Set<String> {
+    private static func collectAppliedTraits(argument: String, element: String, definitions: [String: String],
+                                             uses: [String: [String]], references: [String: String], evidence: inout Evidence) {
         guard let finalize = definitions[argument].flatMap({ Pattern.groups(application, in: $0) }),
-              references[finalize[0]] == finalizeArray, finalize[1] == element else { return [] }
+              references[finalize[0]] == finalizeArray, finalize[1] == element else { return }
         let array = finalize[2]
         guard let tuple = definitions[array].flatMap({ Pattern.groups(extraction, in: $0)?.first }),
               let allocate = definitions[tuple].flatMap({ Pattern.groups(application, in: $0) }),
-              references[allocate[0]] == allocateArray, allocate[1] == element else { return [] }
+              references[allocate[0]] == allocateArray, allocate[1] == element else { return }
 
         func isElementAddress(_ address: String) -> Bool {
             var id = address, visited = Set<String>()
@@ -70,10 +73,19 @@ enum SwiftTestingFactoryProof {
             }
             return false
         }
-        return Set(definitions.values.compactMap { rhs in
-            guard let payload = Pattern.groups(existential, in: rhs), isElementAddress(payload[0]) else { return nil }
-            return payload[1]
-        })
+        for (slot, rhs) in definitions {
+            guard let payload = Pattern.groups(existential, in: rhs), isElementAddress(payload[0]) else { continue }
+            evidence.traitTypes.insert(payload[1])
+            // SIL can print two distinct nominal types with the same spelling
+            // even in one factory. Follow the value written to this exact slot
+            // to recover its producer's module-qualified result type.
+            for use in uses[slot] ?? [] {
+                guard let stored = Pattern.groups(store, in: use), stored[1] == slot,
+                      let value = definitions[stored[0]], let call = Pattern.groups(callee, in: value),
+                      let producer = references[call[0]] else { continue }
+                evidence.traitProducers.insert(producer)
+            }
+        }
     }
 
     static func analyze(_ lines: [String]) -> Evidence {
@@ -105,8 +117,8 @@ enum SwiftTestingFactoryProof {
         // Parameterized overloads have additional arguments after the traits.
         let traitIndex = suite ? 3 : 5
         if (suite || factory.value.hasPrefix(functionPrefix)), arguments.indices.contains(traitIndex) {
-            evidence.traitTypes = appliedTraits(argument: arguments[traitIndex], element: suite ? "any SuiteTrait" : "any TestTrait",
-                                                definitions: definitions, references: references)
+            collectAppliedTraits(argument: arguments[traitIndex], element: suite ? "any SuiteTrait" : "any TestTrait",
+                                 definitions: definitions, uses: uses, references: references, evidence: &evidence)
         }
         guard (suite && arguments.count == 6) || (function && arguments.count == 10) else { return evidence }
         // The factory must initialize the returned Test directly. A generated

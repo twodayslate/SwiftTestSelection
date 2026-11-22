@@ -247,3 +247,36 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
     let report = XcodeHeadOnlySelector.select(current: current, source: source, changes: changes, baseRevision: base)
     #expect(report.headOnlyDeclarationChanges?.isEmpty ?? true)
 }
+
+@Test func exchangingConditionalBodiesSelectsTheirCompiledCaller() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    func feature(first: Int, second: Int) -> String {
+        """
+        #if DEBUG
+        #if ALTERNATE
+        func reading() -> Int { 0 }
+        #elseif TEST
+        func reading() -> Int { \(first) }
+        #else
+        func reading() -> Int { \(second) }
+        #endif
+        #endif
+        """
+    }
+    let caller = "import XCTest\nfinal class Cases: XCTestCase {\n    func testReading() { XCTAssertEqual(reading(), 1) }\n}"
+    try repo.write("Feature.swift", feature(first: 1, second: 2))
+    try repo.write("Tests.swift", caller)
+    let base = try repo.commit()
+    let entry = "UI/Cases/testReading()"
+    let current = try boundaryGraph(["Feature.swift": feature(first: 2, second: 1), "Tests.swift": caller],
+        tests: [entry], root: repo.root, compilerArguments: ["-D", "DEBUG", "-D", "TEST"])
+    let changes = [FileChange(path: "Feature.swift")]
+    let cache = try XcodeBaseSourceCache(root: repo.root, base: base)
+    let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: base,
+        root: repo.root, mappingPath: "mapping.json", cache: cache)
+    #expect(cache.counts.treeReads == 1)
+    let report = XcodeHeadOnlySelector.select(current: current, source: source, changes: changes, baseRevision: base)
+    #expect(report.selectedTests == [entry])
+    #expect(report.headOnlyDeclarationChanges?.contains { $0.change == "ambiguous" && $0.key.contains("reading") } == true)
+}
