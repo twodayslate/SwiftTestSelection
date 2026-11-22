@@ -272,6 +272,7 @@ enum XcodeHeadOnlySelector {
         let old = scopedUnits(source.base), new = scopedUnits(current.sources)
         let registrations = SwiftTestingRegistrationComparison(before: old, after: new, baseSources: source.base,
             head: current, touching: paths, policy: comparison.locationPolicy)
+        include(registrations.suiteTests, kind: "dependency", reason: "Swift Testing suite metadata changed")
         let entryEdits = registrations.entryEdits
         if let uncertainty = registrations.uncertainty(in: current) {
             fallback("incomplete_testing_registration", uncertainty.message, tests: uncertainty.tests)
@@ -284,7 +285,7 @@ enum XcodeHeadOnlySelector {
         var excludedChanges: [SourceUnit] = []
         var changed: [SourceUnit] = []
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
-        semanticPaths.formUnion(registrations.discoveryPaths.union(registrations.incompletePaths))
+        semanticPaths.formUnion(registrations.suitePaths.union(registrations.discoveryPaths).union(registrations.incompletePaths))
         let legacyConditionalPaths = SwiftSourceSnapshot.legacyConditionalPaths(in: current.sources, touching: paths)
         if !legacyConditionalPaths.isEmpty {
             semanticPaths.formUnion(legacyConditionalPaths)
@@ -379,7 +380,7 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
             }
-            guard entryEdits[key] != nil || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
+            guard entryEdits[key] != nil || registrations.supportedBodies.contains(key) || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
                 fallback("head_only_unsupported_body", "Attributes, macros or opaque result types can change callers outside a surviving body: \(b.region.path):\(b.region.startLine)")
                 continue
             }

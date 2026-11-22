@@ -50,6 +50,9 @@ public struct SourceUnit: Codable, Sendable {
     public var swiftTestingHasArguments: Bool? = nil
     var swiftTestingArguments: [SwiftTestingSourceDeclarations.Arguments]? = nil
     var swiftTestingMetadata: SwiftTestingSourceDeclarations.Arguments? = nil
+    var swiftTestingSuiteMetadata: SwiftTestingSourceDeclarations.Arguments? = nil
+    var swiftTestingBodyCandidate: Bool? = nil
+    var hasInlineBody: Bool? = nil
     var swiftTestingEntryInputs: SwiftTestingSourceDeclarations.EntryInputs? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
     /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
@@ -118,7 +121,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 10
+    static let currentParserVersion = 11
     var swiftTestingDeclarations: SwiftTestingSourceDeclarations? = nil
     public var parserVersion: Int? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
@@ -385,7 +388,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             let positions = offsets.sorted().map { AbsolutePosition(utf8Offset: $0) }
             let valuesByKind = Dictionary(uniqueKeysWithValues: locationNames.map { name in
                 let values = positions.map {
-                    let value = locationValue(name, at: $0)
+                    var value = locationValue(name, at: $0)
+                    if name == "line" { value += "|" + String(locations.location(for: $0).line) }
+                    if name == "filePath" { value += "|" + path }
                     return "\(value.utf8.count):" + value
                 }.joined(separator: "|")
                 #if canImport(CryptoKit)
@@ -530,7 +535,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             let syntax = fingerprint(node)
             let values = locationValues(node)
             let semantic = SourceUnit.withLocations(values, syntax: syntax)
-            var bodySupported = false
+            var bodySupported = false, testingBodyCandidate = false
             if let function = node.as(FunctionDeclSyntax.self) {
                 // Optional, tuple and generic wrappers can hide an opaque result
                 // whose inferred type changes callers without a surviving call edge.
@@ -543,7 +548,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 // Enclosing attached macros may synthesize other declarations
                 // from this body, outside the body's direct dependency paths.
                 var enclosing = node.parent
-                var enclosingSupported = true
+                var enclosingSupported = true, testingEnclosingSupported = true
                 while let ancestor = enclosing {
                     let list = ancestor.as(ClassDeclSyntax.self)?.attributes
                         ?? ancestor.as(StructDeclSyntax.self)?.attributes
@@ -551,12 +556,23 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                         ?? ancestor.as(ExtensionDeclSyntax.self)?.attributes
                         ?? ancestor.as(ProtocolDeclSyntax.self)?.attributes
                     if let list {
+                        testingEnclosingSupported = testingEnclosingSupported && list.allSatisfy {
+                            guard let attribute = $0.as(AttributeSyntax.self) else { return false }
+                            return ["MainActor", "Suite", "Testing.Suite"].contains(attribute.attributeName.trimmedDescription) && attribute.arguments == nil
+                        }
                         enclosingSupported = enclosingSupported && list.allSatisfy {
                             $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor"
                         }
                     }
                     enclosing = ancestor.parent
                 }
+                testingBodyCandidate = testingEnclosingSupported && !hasOpaqueResult &&
+                    attributes.contains(where: { ["Test", "Testing.Test"].contains($0) }) &&
+                    function.body?.tokens(viewMode: .sourceAccurate).allSatisfy { token in
+                        guard token.tokenKind == .pound else { return true }
+                        guard let macro = token.parent?.as(MacroExpansionExprSyntax.self) else { return false }
+                        return locationNames.contains(macro.macroName.text) || ["function", "expect", "require"].contains(macro.macroName.text)
+                    } == true
                 bodySupported = enclosingSupported && attributes.count == function.attributes.count && attributes.allSatisfy { $0 == "MainActor" } &&
                     !hasOpaqueResult && !hasMacro
             }
@@ -595,6 +611,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             let testingScope = node.as(ActorDeclSyntax.self).map { scope + [$0.name.text] } ?? scope
             var registrations: [SwiftTestingSourceDeclarations.Arguments] = []
             var entryMetadata: SwiftTestingSourceDeclarations.Arguments?
+            var suiteMetadata: SwiftTestingSourceDeclarations.Arguments?
             let testing = discovery.record(node, scope: testingScope, conditional: !branch.isEmpty, path: path,
                                           locations: locations, originalAttributes: originalAttributes) { owner, attributes, hasEagerInputs in
                 let syntax = Syntax(attributes)
@@ -635,12 +652,16 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     positions += attribute.attributeName.tokens(viewMode: .sourceAccurate).map(\.positionAfterSkippingLeadingTrivia)
                 }
                 let bounds = positions.flatMap { position in
-                    locationNames.sorted().map { $0 + ":" + locationValue($0, at: position) }
+                    // Testing emits physical bounds even under #sourceLocation.
+                    ["line:" + String(locations.location(for: position).line), "filePath:" + path] +
+                        locationNames.sorted().map { $0 + ":" + locationValue($0, at: position) }
                 }
                 let metadata = SwiftTestingSourceDeclarations.Arguments(identity: SourceUnit.withLocations(context, syntax: comments),
                                                                        locations: bounds, calls: [:])
                 if node.is(FunctionDeclSyntax.self) {
                     entryMetadata = metadata
+                } else if originalAttributes != nil, !hasEagerInputs, branch.isEmpty {
+                    suiteMetadata = metadata
                 } else {
                     // Suite and opaque nested declarations lack a single entry owner.
                     registrations.append(metadata)
@@ -671,7 +692,15 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
                 }, swiftTestingRole: testing.role, swiftTestingSuiteName: testing.suiteName,
                 swiftTestingHasArguments: testing.hasArguments, swiftTestingArguments: registrations.isEmpty ? nil : registrations,
-                swiftTestingMetadata: entryMetadata, swiftTestingEntryInputs: entryInputs, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                swiftTestingMetadata: entryMetadata, swiftTestingSuiteMetadata: suiteMetadata,
+                swiftTestingBodyCandidate: entryInputs?.bare == true && testingBodyCandidate ? true : nil,
+                hasInlineBody: node.tokens(viewMode: .sourceAccurate).contains(where: { token in
+                    guard token.tokenKind == .atSign, let attribute = token.parent?.as(AttributeSyntax.self) else { return false }
+                    let name = attribute.attributeName.trimmedDescription
+                    if name == "inline" { return attribute.arguments?.trimmedDescription != "never" }
+                    return ["_transparent", "inlinable", "_alwaysEmitIntoClient"].contains(name)
+                }) ? true : nil,
+                swiftTestingEntryInputs: entryInputs, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,
                 helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },

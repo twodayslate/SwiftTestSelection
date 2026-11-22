@@ -7,6 +7,9 @@ import Foundation
 /// proof. Everything else contributes its full inputs to shared discovery.
 struct SwiftTestingRegistrationComparison {
     private(set) var entryEdits: [String: String] = [:]
+    private(set) var supportedBodies = Set<String>()
+    private(set) var suiteTests = Set<String>()
+    private(set) var suitePaths = Set<String>()
     private(set) var discoveryPaths = Set<String>()
     private(set) var incompletePaths = Set<String>()
     private let rebound: Bool
@@ -51,6 +54,30 @@ struct SwiftTestingRegistrationComparison {
             }
         }
 
+        var scopedSuites = Set<String>()
+        var headSuites: SuiteIndex?, baseSuites: SuiteIndex?
+        for (key, group) in after where group.count == 1 {
+            let unit = group[0]
+            guard paths.contains(unit.region.path), let previous = before[key], previous.count == 1,
+                  previous[0].region.path == unit.region.path, previous[0].conditionalBranch == unit.conditionalBranch else { continue }
+            if base == nil, unit.swiftTestingBodyCandidate == true, previous[0].swiftTestingBodyCandidate == true,
+               previous[0].fingerprint != unit.fingerprint, headProof.provesInputs(of: unit, requireEmpty: true) {
+                supportedBodies.insert(key)
+            }
+            guard let a = previous[0].swiftTestingSuiteMetadata, let b = unit.swiftTestingSuiteMetadata,
+                  a.comparison(policy) != b.comparison(policy) else { continue }
+            if headSuites == nil { headSuites = SuiteIndex(head) }
+            guard let tests = headSuites?.members(of: unit) else { continue }
+            if let base {
+                if baseSuites == nil { baseSuites = SuiteIndex(base) }
+                guard let oldTests = baseSuites?.members(of: previous[0]) else { continue }
+                suiteTests.formUnion(oldTests)
+            }
+            scopedSuites.insert(key)
+            suitePaths.insert(unit.region.path)
+            suiteTests.formUnion(tests)
+        }
+
         typealias Headers = [String: [[String]: Int]]
         func headers(_ groups: [String: [SourceUnit]], sources: [String: SwiftSourceSnapshot],
                      moves: [String: String], excluding: Set<String>) -> Headers {
@@ -59,15 +86,15 @@ struct SwiftTestingRegistrationComparison {
                 let module = String(key.prefix { $0 != ":" })
                 for unit in group {
                     let path = unit.region.path, destination = moves[path] ?? path
-                    if let records = unit.swiftTestingArguments {
-                        for record in records {
-                            let signature = [module, unit.conditionalBranch ?? ""] + record.comparison(policy)
-                            result[destination, default: [:]][signature, default: 0] += 1
-                        }
+                    let suite = scopedSuites.contains(key) ? nil : unit.swiftTestingSuiteMetadata
+                    for record in (unit.swiftTestingArguments ?? []) + [suite].compactMap({ $0 }) {
+                        let signature = [module, unit.conditionalBranch ?? ""] + record.comparison(policy)
+                        result[destination, default: [:]][signature, default: 0] += 1
                     }
                     if paths.contains(path), let file = sources[module + ":" + path],
                        file.parserVersion != SwiftSourceSnapshot.currentParserVersion,
-                       unit.swiftTestingRole != nil || (unit.kind == "declaration" &&
+                       unit.swiftTestingRole != nil || (unit.kind == "function" && head.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil) ||
+                           (unit.kind == "declaration" &&
                            file.swiftTestingDeclarations?.tests.contains(where: { $0.intersects(unit.region) }) == true) {
                         incompletePaths.insert(destination)
                     }
@@ -93,6 +120,52 @@ struct SwiftTestingRegistrationComparison {
         })
         guard !incomplete.isEmpty else { return nil }
         return ("Swift Testing registration evidence is incomplete for the changed sources or test entries", incomplete)
+    }
+
+    /// Index nominal owners once. A single insertion can move many suite bounds.
+    private struct SuiteIndex {
+        var factories: [String: [String?]] = [:]
+        var testsBySuite: [String: Set<String>] = [:]
+        var unresolved = Set<String>()
+
+        init(_ snapshot: XcodeTestGraph) {
+            guard let graph = snapshot.dependencies else { return }
+            for node in graph.functions.values {
+                guard let type = node.swiftTestingFactoryType,
+                      node.compilerReferences?.contains(where: { $0.hasPrefix("$s7Testing4TestV6__type") }) == true else { continue }
+                factories[node.module + "." + type, default: []].append(node.swiftTestingEmptyFactory)
+            }
+            for test in snapshot.tests {
+                let roots = graph.tests[test] ?? []
+                if roots.isEmpty || graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true {
+                    unresolved.insert(test)
+                    continue
+                }
+                guard roots.contains(SwiftTestingDiscoveryRoots.sharedDiscoveryID) else { continue }
+                let method = test.split(separator: "/").dropFirst().joined(separator: ".")
+                let nodes = roots.compactMap { graph.functions[$0] }
+                let entries = nodes.filter { $0.name == method || $0.name == "static " + method }
+                let owners = entries.compactMap(\.nominalTypeContext).filter { !$0.isEmpty }
+                if (entries.isEmpty || owners.count != entries.count) && !nodes.contains(where: { $0.swiftTestingEmptyFactory == "top-level" }) {
+                    unresolved.insert(test)
+                }
+                // Extensions inherit the nominal owner's suite in its defining module.
+                for owner in owners {
+                    var components = owner.split(separator: ".")[...]
+                    while components.count > 1 {
+                        testsBySuite[components.joined(separator: "."), default: []].insert(test)
+                        components = components.dropLast()
+                    }
+                }
+            }
+        }
+
+        func members(of unit: SourceUnit) -> Set<String>? {
+            guard let name = unit.swiftTestingSuiteName else { return nil }
+            let suite = String(unit.key.prefix { $0 != ":" }) + "." + name
+            guard factories[suite] == ["suite"] else { return nil }
+            return unresolved.union(testsBySuite[suite] ?? [])
+        }
     }
 
     /// Bind an unambiguous source entry to its single compiler-emitted factory.
@@ -129,7 +202,7 @@ struct SwiftTestingRegistrationComparison {
             }
         }
 
-        func provesInputs(of unit: SourceUnit) -> Bool {
+        func provesInputs(of unit: SourceUnit, requireEmpty: Bool = false) -> Bool {
             guard let graph = snapshot.dependencies, let inputs = unit.swiftTestingEntryInputs else { return false }
             let module = String(unit.key.prefix { $0 != ":" }), fileKey = module + ":" + unit.region.path
             let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
@@ -143,8 +216,9 @@ struct SwiftTestingRegistrationComparison {
                 $0.compilerReferences?.contains { $0.hasPrefix("$s7Testing4TestV10__function") } == true
             }
             guard factories.count == 1, let factory = factories.first else { return false }
+            if requireEmpty { return inputs.bare == true && ["member", "top-level"].contains(factory.swiftTestingEmptyFactory) }
             if let conditions = inputs.conditions {
-                return factory.swiftTestingDeferredConditions == conditions &&
+                return factory.swiftTestingDeferredConditions?.matches(conditions) == true &&
                     (inputs.providers == 0 || factory.swiftTestingDeferredProviderCount == inputs.providers)
             }
             if inputs.bare == true { return true }

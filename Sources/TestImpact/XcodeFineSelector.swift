@@ -147,6 +147,7 @@ public enum XcodeFineSelector {
         let registrations = SwiftTestingRegistrationComparison(before: oldUnits, after: newUnits,
             baseSources: previous?.sources ?? [:], base: previous, head: current, moves: movedPaths,
             touching: touchedPaths, policy: locationPolicy)
+        include(registrations.suiteTests, kind: "dependency", reason: "Swift Testing suite metadata changed", revision: "base/head")
         for (headKey, baseKey) in registrations.entryEdits where headKey == baseKey {
             oldChanged += oldUnits[baseKey] ?? []
             newChanged += newUnits[headKey] ?? []
@@ -318,7 +319,7 @@ public enum XcodeFineSelector {
                 fallback("generated_input_changed", "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for \(module).")
             }
         }
-        let semanticPaths = legacyConditionalPaths.union(registrations.discoveryPaths).union(registrations.incompletePaths)
+        let semanticPaths = legacyConditionalPaths.union(registrations.suitePaths).union(registrations.discoveryPaths).union(registrations.incompletePaths)
             .union((oldChanged + newChanged).map { $0.region.path })
         let analyzedPaths = Set((Array(current.sources.keys) + Array(previous?.sources.keys ?? [:].keys)).compactMap { key in
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) }
@@ -343,7 +344,7 @@ public enum XcodeFineSelector {
                 fallback("unclassified_change", "Change lacks a supported semantic source boundary: \(change.path)")
             }
         }
-        let hasSemanticChanges = registrations.changedDiscovery || !oldChanged.isEmpty || !newChanged.isEmpty
+        let hasSemanticChanges = !registrations.suitePaths.isEmpty || registrations.changedDiscovery || !oldChanged.isEmpty || !newChanged.isEmpty
         // A proven test-entry change is invoked by the test runner, not by
         // unrelated tests' opaque SDK calls. Keep explicit callers in the graph,
         // but do not let uncertainty elsewhere expand this into a suite run.
@@ -398,7 +399,16 @@ public enum XcodeFineSelector {
             }
             let index = DependencyIndex(graph)
             var affected = Set<String>()
-            if registrations.changedDiscovery { affected.insert(SwiftTestingDiscoveryRoots.sharedDiscoveryID) }
+            let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
+            if registrations.changedDiscovery { affected.insert(discovery) }
+            if graph.functions[discovery] != nil, units.contains(where: { $0.hasInlineBody == true }) {
+                let consumers = snapshot.tests.filter { test in
+                    let roots = graph.tests[test] ?? []
+                    return roots.isEmpty || roots.contains(discovery) ||
+                        graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true
+                }
+                fallback("swift_testing_inline_origin", "Compiler inlining can erase the origin of a changed body used during Swift Testing discovery", tests: Set(consumers))
+            }
             var productionUnits: [SourceUnit] = []
             var productionAffected = Set<String>()
             var enumModules = Set<String>()
@@ -685,7 +695,8 @@ public enum XcodeFineSelector {
         var unitsBySymbol: [String: Set<String>] = [:]
         // A binary callee can declare a caller-location default absent from
         // captured source. Include transitive calls made during discovery.
-        var pending = [discovery], discoverySymbols = Set<String>()
+        var pending = Array(Set(graph.tests.values.filter { $0.contains(discovery) }.flatMap { $0 }).union([discovery]))
+        var discoverySymbols = Set<String>()
         while let id = pending.popLast() {
             guard discoverySymbols.insert(id).inserted, let node = graph.functions[id] else { continue }
             pending.append(contentsOf: node.dependencies)
@@ -703,6 +714,11 @@ public enum XcodeFineSelector {
                     }
                 }
             }
+        }
+        // Mandatory inlining can erase both the call and its debug origin.
+        // A location-sensitive inline body must still participate in comparison.
+        for unit in units where unit.hasInlineBody == true && graph.functions[discovery] != nil {
+            result[unit.key, default: []].formUnion(unit.callerLocations?.keys.map { $0 } ?? [])
         }
         if defaults.isEmpty {
             for id in discoverySymbols { if let node = graph.functions[id] { index(node) } }

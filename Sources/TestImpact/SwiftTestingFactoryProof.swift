@@ -31,6 +31,12 @@ enum SwiftTestingFactoryProof {
     struct Conditions: Codable, Equatable, Sendable {
         var traitCount = 0
         var predicates: [Int: String] = [:]
+        var commentSlots: Set<Int>?
+
+        func matches(_ source: Conditions) -> Bool {
+            traitCount >= source.traitCount && predicates == source.predicates &&
+                (source.traitCount..<traitCount).allSatisfy { commentSlots?.contains($0) == true }
+        }
     }
 
     struct Evidence {
@@ -132,6 +138,7 @@ enum SwiftTestingFactoryProof {
             }
             return 0 // The validated tail address or allocation pointer denotes element zero.
         }
+        var commentSlots = Set<Int>()
         let count = integerOperand(allocate[2])
         var predicates: [Int: String] = [:]
         for (slot, rhs) in definitions {
@@ -145,10 +152,13 @@ enum SwiftTestingFactoryProof {
                 // remaining constructor operands are eager. Only a capture-free
                 // callback used exclusively in a deferred position proves locality.
                 if let count, let index = elementIndex(payload[0]), index >= 0, index < count,
-                   let call = Pattern.groups(application, in: use), let symbol = references[call[0]],
-                   let condition = conditionName(symbol) {
+                   let call = Pattern.groups(application, in: use), let symbol = references[call[0]] {
                     let operands = call[2].components(separatedBy: ", ")
-                    if operands.count == 5, operands[0] == slot, let conversion = definitions[operands[1]],
+                    if operands.first == slot, payload[1] == "Comment",
+                       ["19__documentationLine", "20__documentationBlock", "6__line", "7__block"].contains(where: {
+                           symbol == "$s7Testing5TraitPA2A7CommentVRszrlE" + $0 + "yAESSFZ"
+                       }) { commentSlots.insert(index) }
+                    if let condition = conditionName(symbol), operands.count == 5, operands[0] == slot, let conversion = definitions[operands[1]],
                        conversion.hasPrefix("thin_to_thick_function "),
                        let closure = Pattern.groups(closureConversion, in: conversion)?.first,
                        let target = references[closure], evidence.deferredReferences.contains(target) {
@@ -162,7 +172,7 @@ enum SwiftTestingFactoryProof {
             }
         }
         guard let count, !predicates.isEmpty else { return nil }
-        return Conditions(traitCount: count, predicates: predicates)
+        return Conditions(traitCount: count, predicates: predicates, commentSlots: commentSlots.isEmpty ? nil : commentSlots)
     }
 
     static func analyze(_ lines: [String]) -> Evidence {

@@ -45,20 +45,21 @@ func evaluate(_ predicate: () -> Bool) -> Bool { predicate() }
 """
 
 
-func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = [], module: String = "UI", target: String = "UI", allowTestDiagnostics: Bool = false) throws -> XcodeTestGraph {
+func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = [], module: String = "UI", target: String = "UI", allowTestDiagnostics: Bool = false, compiler: String? = nil, allowedUnbound: Set<String> = []) throws -> XcodeTestGraph {
     for (path, text) in files { try Data(text.utf8).write(to: root.appendingPathComponent(path)) }
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let sil = root.appendingPathComponent(module + ".sil")
     _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-module-name", module,
         "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib"] + compilerArguments + files.keys.sorted().map { root.appendingPathComponent($0).path } + ["-o", sil.path], at: root)
-    let parsed = try SILParser.parse(file: sil, module: module, sourceRoot: root)
+    var parsed = try SILParser.parse(file: sil, module: module, sourceRoot: root)
+    if let compiler { parsed = try SILOwnership.resolve(parsed, module: module, compiler: compiler, directory: root) }
     var graph = DependencyGraph(functions: parsed.functions)
     XcodeCompilerGraph.resolveDispatch(&graph, tables: parsed.dispatchTargets)
     var current = XcodeTestGraph(targets: [.init(name: target, productType: "com.apple.product-type.bundle.ui-testing", sourceFiles: Set(files.keys))], tests: tests)
     current.modules = [target: module]
     current.sources = Dictionary(uniqueKeysWithValues: files.map { (module + ":" + $0.key, SwiftSourceSnapshot.parse($0.value, path: $0.key, module: module)) })
     XcodeCompilerGraph.bind(tests: tests, modules: current.modules, sources: current.sources, graph: &graph)
-    try #require(tests.allSatisfy { graph.tests[$0]?.isEmpty == false && (allowTestDiagnostics || (graph.testDiagnostics[$0]?.isEmpty ?? true)) })
+    try #require(tests.allSatisfy { (graph.tests[$0]?.isEmpty == false || allowedUnbound.contains($0)) && (allowTestDiagnostics || (graph.testDiagnostics[$0]?.isEmpty ?? true)) })
     current.dependencies = graph
     current.mappings = UIFeatureMappings(features: [])
     current.mappings?.sourceLocationPolicy = .diagnosticLineColumn

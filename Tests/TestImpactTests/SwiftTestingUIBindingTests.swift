@@ -484,7 +484,8 @@ import Testing
 
 @Test(arguments: ["fileMove", "line", "defaultLine", "actor", "display", "annotatedDisplay", "providers",
                   "sdkLocation", "binaryDefault", "escaped", "qualified", "mixedProvider", "mixedTrait",
-                  "comments", "bareLocation", "helperLocation", "enabled", "disabled", "mixedCondition", "customCondition"])
+                  "comments", "bareLocation", "helperLocation", "enabled", "disabled", "mixedCondition", "customCondition",
+                  "physical", "providerHelper", "gateHelper", "transparent", "suiteBody", "documented", "reason", "qualifiedGate", "eagerReason"])
 func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -493,12 +494,15 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
     let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
     let plain = "UI/Common/plain()"
-    let parameterized = ["providers", "mixedProvider", "mixedTrait"].contains(scenario)
+    let parameterized = ["providerHelper", "providers", "mixedProvider", "mixedTrait"].contains(scenario)
     let marked = parameterized ? "UI/Other/marked(value:)" :
         (scenario == "actor" ? "UI/Outer/Other/marked()" : "UI/Other/marked()")
     var flags = ["-plugin-path", plugins.path]
     var runtimeFlags: [String] = []
-    if ["binaryDefault", "helperLocation"].contains(scenario) {
+    let helperEdits = ["helperLocation", "providerHelper", "gateHelper", "transparent"]
+    let predicateEdits = ["enabled", "disabled", "mixedCondition", "documented", "reason", "qualifiedGate"]
+    let localEdits = ["comments", "bareLocation", "physical", "suiteBody", "providerHelper", "gateHelper"] + predicateEdits
+    if scenario == "binaryDefault" || helperEdits.contains(scenario) {
         // The selector cannot discover this default by indexing project sources.
         let vendor = root.appendingPathComponent("BinaryLocation.swift")
         try Data("public func callerLine(_ x: Int = #line) -> Int { x }".utf8).write(to: vendor)
@@ -520,11 +524,11 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
             """
         try Data(manifest.utf8).write(to: package.appendingPathComponent("Package.swift"))
         for (name, text) in files { try Data(text.utf8).write(to: tests.appendingPathComponent(name)) }
-        let method = ["providers", "mixedProvider", "comments", "bareLocation", "enabled", "disabled", "mixedCondition"].contains(scenario) ? "marked" : "plain"
+        let method = (localEdits + ["providers", "mixedProvider"]).contains(scenario) ? "marked" : "plain"
         let run = try CommandRunner.run("xcrun", ["swift", "test", "--filter", method] + runtimeFlags, at: package, allowFailure: true)
         let output = String(decoding: run.stdout + run.stderr, as: UTF8.self)
         try #require((run.status == 0) == !head, "\(output)")
-        let outcome = head ? "failed" : (["enabled", "disabled", "mixedCondition"].contains(scenario) ? "skipped" : "passed")
+        let outcome = head ? "failed" : ((predicateEdits + ["gateHelper"]).contains(scenario) ? "skipped" : "passed")
         try #require(output.components(separatedBy: .newlines).contains {
             $0.contains("Test " + method + "(") && $0.contains(outcome)
         }, "\(output)")
@@ -540,8 +544,27 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
                 @Test func plain() { #expect(UserDefaults.standard.bool(forKey: "\(discoveryKey)")) }
             }
             """]
-        if scenario != "actor" { files["Support.swift"]! += "\nstruct Other {}" }
+        if !["actor", "suiteBody"].contains(scenario) { files["Support.swift"]! += "\nstruct Other {}" }
         switch scenario {
+        case "physical":
+            files["Tests.swift"] = "import Testing\nextension Other {\n" + (head ? "\n" : "") +
+                "#sourceLocation(file: \"Virtual.swift\", line: 101)\n@Test func marked() { #expect(Test.current!.sourceLocation.line == 4) }\n#sourceLocation()\n}"
+        case "suiteBody":
+            files["Tests.swift"] = "import Testing\n@Suite struct Other {\n@Test func marked() {\n" +
+                (head ? "#expect(Bool(false))\n" : "") + "}\n}"
+        case "providerHelper", "gateHelper", "transparent":
+            files["Helper.swift"] = "import BinaryLocation\n" + (head ? "\n" : "") +
+                (scenario == "transparent" ? "@_transparent " : "") + "func flag() -> Bool { callerLine() == 2 }"
+            let declaration: String
+            switch scenario {
+            case "providerHelper": declaration = "@Test(arguments: [flag()]) func marked(value: Bool) { #expect(value) }"
+            case "gateHelper": declaration = "@Test(.disabled(if: flag())) func marked() { #expect(Bool(false)) }"
+            default: declaration = "@Test(Marker(flag())) func marked() {}"
+            }
+            files["Tests.swift"] = "import Testing\nextension Other { " + declaration + " }"
+        case "eagerReason":
+            files["Support.swift"]! += "\nfunc reason(_ flag: Bool) -> Comment { _ = Marker(flag); return \"reason\" }"
+            files["Tests.swift"] = "import Testing\nextension Other { @Test(.enabled(if: true, reason(\(!head)))) func marked() {} }"
         case "comments":
             files["Tests.swift"] = "import Testing\nextension Other {\n/// \(head ? "STOP" : "PASS")\n" +
                 "@Test func marked() { #expect(Test.current!.comments.contains { $0.rawValue.contains(\"PASS\") }) }\n}"
@@ -552,11 +575,14 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
             files["Tests.swift"] = "import Testing\nextension Other { @Test(Marker(flag())) func marked() {} }"
             files["Helper.swift"] = "import BinaryLocation\nfunc flag() -> Bool { inner() }\n" + (head ? "\n" : "") +
                 "func inner() -> Bool { callerLine() == 3 }"
-        case "enabled", "disabled", "mixedCondition":
+        case "enabled", "disabled", "mixedCondition", "documented", "reason", "qualifiedGate":
             let condition = scenario == "disabled" ? "disabled" : "enabled"
             let flag = condition == "enabled" ? head : !head
             let trait = scenario == "mixedCondition" ? "Marker(true), " : ""
-            files["Tests.swift"] = "import Testing\nextension Other { @Test(\(trait).\(condition)(if: \(flag))) func marked() { #expect(Bool(false)) } }"
+            let qualifier = scenario == "qualifiedGate" ? "Testing.ConditionTrait" : ""
+            let reason = scenario == "reason" ? ", \"feature gate\"" : ""
+            let comment = scenario == "documented" ? "/// Explains the gate\n" : ""
+            files["Tests.swift"] = "import Testing\nextension Other {\n\(comment)@Test(\(trait)\(qualifier).\(condition)(if: \(flag)\(reason))) func marked() { #expect(Bool(false)) }\n}"
         case "customCondition":
             files["Support.swift"]! += "\nextension Trait where Self == Marker { static func enabled(if value: Int) -> Self { Marker(value == 1) } }"
             files["Tests.swift"] = "import Testing\nextension Other { @Test(.enabled(if: \(head ? 0 : 1))) func marked() {} }"
@@ -587,21 +613,26 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
             files["Tests.swift"] = "import Testing\nfunc readLine(_ value: Int = #line) -> Int { value }\nextension Other {\n" +
                 (head ? "\n" : "") + "@Test(Marker(\(location) == 4)) func marked() {}\n}"
         }
-        if ["sdkLocation", "binaryDefault", "escaped", "qualified", "comments", "bareLocation", "helperLocation", "enabled", "disabled", "mixedCondition", "customCondition"].contains(scenario) || parameterized {
+        if (localEdits + helperEdits + ["sdkLocation", "binaryDefault", "escaped", "qualified", "customCondition", "eagerReason"]).contains(scenario) || parameterized {
             try verifyRuntime(files, head: head)
         }
-        var graph = try boundaryGraph(files, tests: [plain, marked], root: root, compilerArguments: flags, allowTestDiagnostics: true)
+        var graph = try boundaryGraph(files, tests: [plain, marked], root: root, compilerArguments: flags, allowTestDiagnostics: true,
+                                      compiler: compiler, allowedUnbound: scenario == "physical" ? [marked] : [])
         graph.mappings = nil
         return try GraphArchive.decode(GraphArchive.encode(graph))
     }
     var base = try capture(head: false), head = try capture(head: true)
-    let changes = (scenario == "fileMove" ? ["First.swift", "Second.swift"] : [scenario == "helperLocation" ? "Helper.swift" : "Tests.swift"]).map { FileChange(path: $0) }
+    let changes = (scenario == "fileMove" ? ["First.swift", "Second.swift"] : [helperEdits.contains(scenario) ? "Helper.swift" : "Tests.swift"]).map { FileChange(path: $0) }
     func dual() -> ImpactReport { XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base") }
     let report = dual()
     let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
-    if ["comments", "bareLocation", "enabled", "disabled", "mixedCondition"].contains(scenario) {
-        for result in [report, headOnly] { #expect(result.selectedTests == [marked]) }
-        if ["comments", "bareLocation"].contains(scenario) {
+    if localEdits.contains(scenario) {
+        for result in [report, headOnly] {
+            if scenario == "physical" {
+                #expect(result.selectedTests.contains(marked))
+            } else { #expect(result.selectedTests == [marked]) }
+        }
+        if ["comments", "bareLocation", "physical", "providerHelper", "gateHelper"].contains(scenario) {
             var mappings = UIFeatureMappings(features: [])
             mappings.sourceLocationPolicy = .diagnosticLineColumn
             base.mappings = mappings
@@ -609,7 +640,7 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
             let one = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources, mappings: mappings),
                                                    changes: changes, baseRevision: "base")
             for result in [dual(), one] { #expect(result.selectedTests == (scenario == "comments" ? [marked] : [])) }
-        } else {
+        } else if predicateEdits.contains(scenario) {
             for id in head.dependencies!.functions.keys { head.dependencies!.functions[id]?.swiftTestingDeferredConditions = nil }
             #expect(dual().selectedTests.contains(plain))
             #expect(XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes,
@@ -629,7 +660,9 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
         #expect(XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes,
                                              baseRevision: "base").selectedTests.contains(plain))
     } else {
-        #expect(report.explanations.contains { $0.test == plain && $0.kind == "dependency" })
+        if scenario == "transparent" {
+            #expect(report.diagnostics.contains { $0.code == "swift_testing_inline_origin" && $0.tests.contains(plain) })
+        } else { #expect(report.explanations.contains { $0.test == plain && $0.kind == "dependency" }) }
         #expect(headOnly.selectedTests.contains(plain))
         if ["line", "defaultLine", "binaryDefault", "sdkLocation", "helperLocation"].contains(scenario) {
             var mappings = UIFeatureMappings(features: [])

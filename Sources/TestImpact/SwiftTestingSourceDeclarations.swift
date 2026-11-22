@@ -94,17 +94,28 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
                     providerCount += 1
                 } else if argument.label == nil,
                           let call = argument.expression.as(FunctionCallExprSyntax.self),
-                          let member = call.calledExpression.as(MemberAccessExprSyntax.self), member.base == nil,
+                          let member = call.calledExpression.as(MemberAccessExprSyntax.self), member.base.map({ $0.tokens(viewMode: .sourceAccurate).map(\.text) }).map({
+                              [["ConditionTrait"], ["Testing", ".", "ConditionTrait"]].contains($0)
+                          }) ?? true,
                           ["enabled", "disabled"].contains(member.declName.baseName.text),
                           call.trailingClosure == nil, call.additionalTrailingClosures.isEmpty,
-                          call.arguments.count == 1, let predicate = call.arguments.first, predicate.label?.text == "if" {
+                          let predicate = call.arguments.first, predicate.label?.text == "if" {
                     conditions.predicates[conditions.traitCount] = member.declName.baseName.text
                     conditions.traitCount += 1
                     if !predicate.expression.is(BooleanLiteralExprSyntax.self) {
                         nonliteralPredicates.append(capture(Syntax(predicate.expression)))
                     }
                     let placeholder = predicate.with(\.expression, ExprSyntax(NilLiteralExprSyntax()))
-                    projected[index] = argument.with(\.expression, ExprSyntax(call.with(\.arguments, [placeholder])))
+                    var operands = call.arguments
+                    operands[operands.startIndex] = placeholder
+                    // The SDK evaluates the comment and explicit source location during
+                    // registration. A plain Comment string has no caller expressions.
+                    for operand in operands.dropFirst() {
+                        if let literal = operand.expression.as(StringLiteralExprSyntax.self),
+                           literal.segments.allSatisfy({ $0.is(StringSegmentSyntax.self) }) { continue }
+                        eager.append(capture(Syntax(operand.expression)))
+                    }
+                    projected[index] = argument.with(\.expression, ExprSyntax(call.with(\.arguments, operands)))
                     continue
                 } else if argument.label == nil {
                     conditions.traitCount += 1
