@@ -4,19 +4,36 @@
 /// Source and compiler evidence that can rule out two otherwise unobservable
 /// effects: a removed inline call edge, or a caller-supplied location operand.
 struct SwiftTestingSourceEffects {
-    private(set) var unusedInline = Set<String>()
-    private(set) var positionIndependent = Set<String>()
+    struct Declaration: Hashable {
+        let path: String
+        let key: String
+
+        init(_ unit: SourceUnit) {
+            path = unit.region.path
+            key = unit.key
+        }
+    }
+
+    private(set) var unusedInline = Set<Declaration>()
+    private(set) var positionIndependent = Set<Declaration>()
 
     init(_ snapshot: XcodeTestGraph, touching paths: Set<String>, historical: [String: SwiftSourceSnapshot]? = nil) {
         guard let graph = snapshot.dependencies, graph.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil else { return }
         unusedInline = Self.unusedBodies(snapshot.sources, in: snapshot, touching: paths)
         if let historical { unusedInline.formIntersection(Self.unusedBodies(historical, in: snapshot, touching: paths)) }
 
+        positionIndependent = Self.positionIndependentCallers(snapshot, touching: paths, historical: historical)
+    }
+
+    static func positionIndependentCallers(_ snapshot: XcodeTestGraph, touching paths: Set<String>,
+                                           historical: [String: SwiftSourceSnapshot]?) -> Set<Declaration> {
+        guard let graph = snapshot.dependencies, graph.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil else { return [] }
         let candidates = snapshot.sources.filter {
             guard let path = $0.value.units.first?.region.path, paths.contains(path) else { return false }
             return $0.value.units.contains { $0.hasOnlyDirectSourceCalls == true }
         }
-        guard !candidates.isEmpty else { return }
+        guard !candidates.isEmpty else { return [] }
+        var callers = Set<Declaration>()
         let units = snapshot.sources.values.flatMap(\.units).filter { $0.kind == "function" }
         let functions = Dictionary(grouping: units, by: { $0.helperCallableName ?? "" })
         let oldFunctions = historical.map { sources in
@@ -58,9 +75,10 @@ struct SwiftTestingSourceEffects {
                               oldFunctions?[$0.helperCallableName ?? ""]?.map(\.key) == [$0.key]
                           }) else { continue }
                 }
-                positionIndependent.insert(unit.key)
+                callers.insert(Declaration(unit))
             }
         }
+        return callers
     }
 
     private static func symbol(for unit: SourceUnit, among candidates: [FunctionNode]?) -> FunctionNode? {
@@ -73,30 +91,41 @@ struct SwiftTestingSourceEffects {
         return matches?.count == 1 ? matches?.first : nil
     }
 
-    private static func unusedBodies(_ sources: [String: SwiftSourceSnapshot], in snapshot: XcodeTestGraph, touching paths: Set<String>) -> Set<String> {
-        let candidates = sources.values.flatMap { $0.units.filter { $0.fileUnreferencedInlineName != nil && paths.contains($0.region.path) } }
+    private static func unusedBodies(_ sources: [String: SwiftSourceSnapshot], in snapshot: XcodeTestGraph, touching paths: Set<String>) -> Set<Declaration> {
+        // An expansion in the declaring file could call the function without a
+        // written identifier. Internal functions can also be called by other files.
+        let testingSyntax: Set<String> = ["@Test", "@Testing.Test", "@Suite", "@Testing.Suite", "#expect", "#require", "@inline", "@_transparent"]
+        func hasCompleteNames(_ file: SwiftSourceSnapshot) -> Bool {
+            file.identifierNames != nil && file.diagnostics.isEmpty &&
+                file.helperDeclarationIssues?.allSatisfy { testingSyntax.contains($0.spelling) && $0.kind != "macro-declaration" } == true &&
+                file.units.allSatisfy { $0.receiverUnsupportedImports?.subtracting(["import Testing"]).isEmpty == true }
+        }
+        var unused = Set<Declaration>()
+        var candidates: [SourceUnit] = []
+        for file in sources.values {
+            guard let path = file.units.first?.region.path, paths.contains(path) else { continue }
+            let named = file.units.filter { $0.fileUnreferencedInlineName != nil }
+            guard !named.isEmpty, hasCompleteNames(file) else { continue }
+            for unit in named {
+                if unit.fileProvesUnusedInline == true { unused.insert(Declaration(unit)) }
+                else { candidates.append(unit) }
+            }
+        }
         guard !candidates.isEmpty, snapshot.diagnostics.isEmpty,
               snapshot.unsupportedSourceInputs?.values.allSatisfy(\.isEmpty) != false,
               snapshot.targets.allSatisfy({ target in
                   guard let module = snapshot.modules[target.name] else { return target.sourceFiles.isEmpty }
                   return target.sourceFiles.filter { $0.hasSuffix(".swift") }.allSatisfy { sources[module + ":" + $0] != nil }
-              }) else { return [] }
-        // Unknown expansions or external entry points can introduce calls with
-        // no written identifier. Retain the inline fallback in that case.
-        let testingSyntax: Set<String> = ["@Test", "@Testing.Test", "@Suite", "@Testing.Suite", "#expect", "#require", "@inline", "@_transparent"]
-        guard sources.values.allSatisfy({ file in
-            file.identifierNames != nil && file.diagnostics.isEmpty &&
-                file.helperDeclarationIssues?.allSatisfy { testingSyntax.contains($0.spelling) && $0.kind != "macro-declaration" } == true &&
-                file.units.allSatisfy { $0.receiverUnsupportedImports?.subtracting(["import Testing"]).isEmpty == true }
-        }) else { return [] }
+              }), sources.values.allSatisfy(hasCompleteNames) else { return unused }
         let names = Set(candidates.compactMap(\.fileUnreferencedInlineName))
         var fileCounts: [String: Int] = [:]
         for file in sources.values {
             for name in names.intersection(file.identifierNames ?? []) { fileCounts[name, default: 0] += 1 }
         }
-        return Set(candidates.compactMap { unit in
+        unused.formUnion(candidates.compactMap { unit in
             guard let name = unit.fileUnreferencedInlineName, fileCounts[name] == 1 else { return nil }
-            return unit.key
+            return Declaration(unit)
         })
+        return unused
     }
 }

@@ -127,15 +127,14 @@ enum SwiftTestingDiscoveryRoots {
         guard let root = graph.functions[sharedDiscoveryID] else { return }
         let indirect = "Indirect function invocation"
 
-        // The shared root contains the factories' eager *callees*. Include the
-        // instruction evidence from the factories themselves, and from project
-        // thunks generated for eager expressions with macro-only locations.
+        // Start with eager factory inputs. An indirect call may occur in the
+        // factory, a generated thunk, or any project helper reached from them.
         let factories = graph.functions.values.filter { $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true }
         var pending = Array(root.dependencies), visited = Set<String>()
         var hasIndirect = factories.contains { $0.uncertainties.contains(indirect) }
         while !hasIndirect, let id = pending.popLast() {
-            guard visited.insert(id).inserted, let node = graph.functions[id], node.regions.isEmpty,
-                  id.hasPrefix("$s" + String(node.module.utf8.count) + node.module) else { continue }
+            guard visited.insert(id).inserted, let node = graph.functions[id],
+                  !node.regions.isEmpty || id.hasPrefix("$s" + String(node.module.utf8.count) + node.module) else { continue }
             hasIndirect = node.uncertainties.contains(indirect)
             pending.append(contentsOf: node.dependencies)
         }

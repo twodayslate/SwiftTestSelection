@@ -404,7 +404,7 @@ public enum XcodeFineSelector {
             let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
             if registrations.changedDiscovery { affected.insert(discovery) }
             let unusedInline = revision == "head" ? headEffects.unusedInline : baseEffects?.unusedInline ?? []
-            if graph.functions[discovery] != nil, units.contains(where: { $0.hasInlineBody == true && !unusedInline.contains($0.key) }) {
+            if graph.functions[discovery] != nil, units.contains(where: { $0.hasInlineBody == true && !unusedInline.contains(.init($0)) }) {
                 let consumers = snapshot.tests.filter { test in
                     let roots = graph.tests[test] ?? []
                     return roots.isEmpty || roots.contains(discovery) ||
@@ -708,7 +708,7 @@ public enum XcodeFineSelector {
             for region in node.regions {
                 for unit in byFile[region.path] ?? [] where unit.key.hasPrefix(node.module + ":") &&
                     region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine {
-                    if discoverySymbols.contains(node.id), !effects.positionIndependent.contains(unit.key), let locations = unit.callerLocations, !locations.isEmpty {
+                    if discoverySymbols.contains(node.id), !effects.positionIndependent.contains(.init(unit)), let locations = unit.callerLocations, !locations.isEmpty {
                         result[unit.key, default: []].formUnion(locations.keys)
                     }
                     if !defaults.isEmpty {

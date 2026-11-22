@@ -486,7 +486,7 @@ import Testing
                   "sdkLocation", "binaryDefault", "escaped", "qualified", "mixedProvider", "mixedTrait",
                   "comments", "bareLocation", "helperLocation", "enabled", "disabled", "mixedCondition", "customCondition",
                   "physical", "providerHelper", "gateHelper", "transparent", "suiteBody", "documented", "reason", "qualifiedGate", "eagerReason",
-                  "opaqueCallback", "namedSuite", "docSuite", "serializedSuite", "unusedInline", "localCall"])
+                  "opaqueCallback", "wrappedCallback", "namedSuite", "docSuite", "serializedSuite", "unusedInline", "privateInline", "fileprivateInline", "localCall"])
 func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -501,6 +501,8 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
     var flags = ["-plugin-path", plugins.path]
     var runtimeFlags: [String] = []
     let helperEdits = ["helperLocation", "providerHelper", "gateHelper", "transparent"]
+    let unusedBodies = ["unusedInline", "privateInline", "fileprivateInline"]
+    let callbacks = ["opaqueCallback", "wrappedCallback"]
     let predicateEdits = ["enabled", "disabled", "mixedCondition", "documented", "reason", "qualifiedGate"]
     let suiteBodies = ["suiteBody", "namedSuite", "docSuite", "serializedSuite"]
     let localEdits = suiteBodies + ["comments", "bareLocation", "physical", "providerHelper", "gateHelper"] + predicateEdits
@@ -561,13 +563,37 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
                     func marked() {}
                 }
                 """
-        case "unusedInline", "localCall":
+        case "wrappedCallback":
+            files["Helper.swift"] = """
+                import Darwin
+                import Testing
+                struct Callback {
+                    @Test func update() { setenv("STS_REGISTRATION_FLAG", "\(head ? "0" : "1")", 1) }
+                }
+                """
+            files["Lookup.swift"] = """
+                import Darwin
+                @_cdecl("sts_registration_flag") public func bridge() -> Int32 {
+                    Callback().update()
+                    return getenv("STS_REGISTRATION_FLAG").map { String(cString: $0) == "1" } == true ? 1 : 0
+                }
+                func readFlag() -> Bool {
+                    let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "sts_registration_flag")!
+                    return unsafeBitCast(symbol, to: (@convention(c) () -> Int32).self)() == 1
+                }
+                """
+            files["Tests.swift"] = "import Testing\nextension Other { @Test(Marker(readFlag())) func marked() {} }"
+        case "unusedInline", "privateInline", "fileprivateInline", "localCall":
             let assertion = scenario == "localCall" ? "#expect(helper())" : ""
             files["Support.swift"] = "import Testing\nstruct Common { @Test func plain() { " + assertion + " } }"
             files["Tests.swift"] = "import Testing\nstruct Other { @Test func marked() { " + assertion + " } }"
-            files["Helper.swift"] = scenario == "unusedInline"
-                ? "@inlinable func unused() -> Bool { " + (head ? "false" : "true") + " }"
-                : "func yes() -> Bool { true }\nfunc helper() -> Bool {\n" + (head ? "    " : "  ") + "return yes()\n}"
+            if scenario == "localCall" {
+                files["Helper.swift"] = "func yes() -> Bool { true }\nfunc helper() -> Bool {\n" + (head ? "    " : "  ") + "return yes()\n}"
+            } else {
+                let modifiers = ["privateInline": "@inline(__always) private", "fileprivateInline": "@inline(__always) fileprivate"]
+                files["Helper.swift"] = (modifiers[scenario] ?? "@inlinable") + " func unused() -> Bool { " + (head ? "false" : "true") + " }"
+                if modifiers[scenario] != nil { files["Unrelated.swift"] = "import Darwin\nprivate func unused() {}" }
+            }
         case "suiteBody", "namedSuite", "docSuite", "serializedSuite":
             let suite = ["namedSuite": "@Suite(\"Other tests\")", "docSuite": "/// Other tests\n@Suite", "serializedSuite": "@Suite(.serialized)"][scenario] ?? "@Suite"
             files["Tests.swift"] = "import Testing\n" + suite + " struct Other {\n@Test func marked() {\n" +
@@ -633,22 +659,23 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
             files["Tests.swift"] = "import Testing\nfunc readLine(_ value: Int = #line) -> Int { value }\nextension Other {\n" +
                 (head ? "\n" : "") + "@Test(Marker(\(location) == 4)) func marked() {}\n}"
         }
-        if (localEdits + helperEdits + ["sdkLocation", "binaryDefault", "escaped", "qualified", "customCondition", "eagerReason", "opaqueCallback"]).contains(scenario) || parameterized {
+        if (localEdits + helperEdits + callbacks + ["sdkLocation", "binaryDefault", "escaped", "qualified", "customCondition", "eagerReason"]).contains(scenario) || parameterized {
             try verifyRuntime(files, head: head)
         }
-        var graph = try boundaryGraph(files, tests: [plain, marked], root: root, compilerArguments: flags, allowTestDiagnostics: true,
+        let inventory = scenario == "wrappedCallback" ? [plain, marked, "UI/Callback/update()"] : [plain, marked]
+        var graph = try boundaryGraph(files, tests: inventory, root: root, compilerArguments: flags, allowTestDiagnostics: true,
                                       compiler: compiler, allowedUnbound: scenario == "physical" ? [marked] : [])
         graph.mappings = nil
         return try GraphArchive.decode(GraphArchive.encode(graph))
     }
     var base = try capture(head: false), head = try capture(head: true)
-    let changes = (scenario == "fileMove" ? ["First.swift", "Second.swift"] : [(helperEdits + ["unusedInline", "localCall", "opaqueCallback"]).contains(scenario) ? "Helper.swift" : "Tests.swift"]).map { FileChange(path: $0) }
+    let changes = (scenario == "fileMove" ? ["First.swift", "Second.swift"] : [(helperEdits + unusedBodies + callbacks + ["localCall"]).contains(scenario) ? "Helper.swift" : "Tests.swift"]).map { FileChange(path: $0) }
     func dual() -> ImpactReport { XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base") }
     let report = dual()
     let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
-    if ["unusedInline", "localCall"].contains(scenario) {
+    if (unusedBodies + ["localCall"]).contains(scenario) {
         for result in [report, headOnly] { #expect(result.selectedTests.isEmpty) }
-    } else if scenario == "opaqueCallback" {
+    } else if callbacks.contains(scenario) {
         for result in [report, headOnly] { #expect(result.selectedTests.contains(plain)) }
         // Archives produced before discovery inherited factory uncertainty still
         // contain the original SIL evidence. Restore it during decoding.

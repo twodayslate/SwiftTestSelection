@@ -6,7 +6,7 @@ import Foundation
 private struct HeadOnlySourceComparison {
     let locationPolicy: UIFeatureMappings.SourceLocationPolicy
 
-    var positionIndependent = Set<String>()
+    var positionIndependent = Set<SwiftTestingSourceEffects.Declaration>()
 
     init(head: UIFeatureMappings?, base: UIFeatureMappings?) {
         locationPolicy = .agreed(head: head, base: base)
@@ -25,7 +25,7 @@ private struct HeadOnlySourceComparison {
 
     private func fingerprint(_ unit: SourceUnit) -> String {
         let syntax = unit.comparisonFingerprint(locationPolicy)
-        if positionIndependent.contains(unit.key) || locationPolicy == .diagnostic || (locationPolicy == .diagnosticLineColumn && unit.fileLocationValues == nil) { return syntax }
+        if positionIndependent.contains(.init(unit)) || locationPolicy == .diagnostic || (locationPolicy == .diagnosticLineColumn && unit.fileLocationValues == nil) { return syntax }
         // Over-approximate caller defaults without inventing base compiler
         // edges. This also preserves fixture file identity for moved callers.
         return syntax + (unit.callerLocations ?? [:]).filter { key, _ in
@@ -77,6 +77,7 @@ struct XcodeHeadOnlySources {
             // A removed, duplicated or moved callable needs actual base callers,
             // even when another declaration with the same key survives.
             var before: [String: [SourceUnit]] = [:], after: [String: [SourceUnit]] = [:]
+            var scopedBase: [String: SwiftSourceSnapshot] = [:]
             for (key, head) in current.sources {
                 guard let colon = key.firstIndex(of: ":") else { continue }
                 let path = String(key[key.index(after: colon)...])
@@ -85,22 +86,25 @@ struct XcodeHeadOnlySources {
                     after[unit.key, default: []].append(unit)
                 }
                 if let old = try cache.snapshot(path: path, module: String(key[..<colon])) {
+                    scopedBase[key] = old
                     for unit in old.units where unit.helperCallableName != nil {
                         before[unit.key, default: []].append(unit)
                     }
                 }
             }
             let comparison = HeadOnlySourceComparison(head: current.mappings, base: result.mappings)
+            // Only expand the read if head SIL and the scoped base file admit
+            // a proof. The full audit can then rule out competing base bindings.
+            lazy var eligibleCallers = SwiftTestingSourceEffects.positionIndependentCallers(current, touching: paths, historical: scopedBase)
             auditCallers = before.contains { key, old in
                 guard let new = after[key], new.count == old.count else { return true }
                 if old.count == 1 {
                     let a = old[0], b = new[0]
                     if a.region.path != b.region.path || a.conditionalBranch != b.conditionalBranch { return true }
-                    if current.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil,
-                       b.fileUnreferencedInlineName != nil || (b.hasOnlyDirectSourceCalls == true && a.fingerprint == b.fingerprint) {
-                        return !comparison.equivalent(old, new)
-                    }
-                    return false
+                    guard current.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil,
+                          !comparison.equivalent(old, new) else { return false }
+                    if b.fileUnreferencedInlineName != nil && b.fileProvesUnusedInline != true { return true }
+                    return b.hasOnlyDirectSourceCalls == true && a.fingerprint == b.fingerprint && eligibleCallers.contains(.init(b))
                 }
                 return !comparison.equivalent(old, new)
             }
@@ -392,7 +396,8 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
             }
-            let unusedInline = source.unownedBaseSources.isEmpty && effects.unusedInline.contains(key)
+            let unusedInline = effects.unusedInline.contains(.init(b)) && (source.unownedBaseSources.isEmpty ||
+                (a.fileProvesUnusedInline == true && b.fileProvesUnusedInline == true))
             guard unusedInline || entryEdits[key] != nil || registrations.supportedBodies.contains(key) || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
                 fallback("head_only_unsupported_body", "Attributes, macros or opaque result types can change callers outside a surviving body: \(b.region.path):\(b.region.startLine)")
                 continue

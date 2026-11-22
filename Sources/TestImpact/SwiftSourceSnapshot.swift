@@ -54,6 +54,8 @@ public struct SourceUnit: Codable, Sendable {
     var swiftTestingBodyCandidate: Bool? = nil
     var hasInlineBody: Bool? = nil
     var fileUnreferencedInlineName: String? = nil
+    /// File visibility and a closed expansion inventory allow a file-local unused-body proof.
+    var fileProvesUnusedInline: Bool? = nil
     var hasOnlyDirectSourceCalls: Bool? = nil
     var swiftTestingEntryInputs: SwiftTestingSourceDeclarations.EntryInputs? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
@@ -123,7 +125,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 12
+    static let currentParserVersion = 13
     var swiftTestingDeclarations: SwiftTestingSourceDeclarations? = nil
     public var parserVersion: Int? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
@@ -269,6 +271,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             return declaration.attributes.contains { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "_exported" }
         }
         let declarationIssues = HelperDeclarationInventory.issues(tree, locations: locations, unsupportedImports: unsupportedCallerImports)
+        let onlyCompilerAttributes = declarationIssues.allSatisfy {
+            $0.kind == "unresolved-attribute" && ["@inline", "@_transparent"].contains($0.spelling)
+        }
         result.helperDeclarationIssues = declarationIssues
         result.helperDeclarationsComplete = declarationIssues.isEmpty
         result.helperWrittenOperators = Set(tree.tokens(viewMode: .sourceAccurate).compactMap { token in
@@ -776,6 +781,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                        return ["inline", "_transparent", "inlinable"].contains(attribute.attributeName.trimmedDescription)
                    }) {
                     unit.fileUnreferencedInlineName = name
+                    if onlyCompilerAttributes && function.modifiers.contains(where: { ["private", "fileprivate"].contains($0.name.text) }) {
+                        unit.fileProvesUnusedInline = true
+                    }
                 }
                 // A separate function-value use could account for a surviving
                 // SIL reference after a different call with the same name inlined.

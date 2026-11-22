@@ -53,6 +53,28 @@ private struct SourceRepository {
     #expect(result.base["App:App.swift"]?.units.map(\.fingerprint) == SwiftSourceSnapshot.parse(before, path: "App.swift", module: "App").units.map(\.fingerprint))
 }
 
+@Test(arguments: ["sdk", "local"])
+func scopedIndentationAuditsOnlyEligibleLocalCalls(callee: String) throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let call = callee == "sdk" ? "print(1)" : "local()"
+    let before = "func local() {}\nfunc caller() {\n    " + call + "\n}"
+    let after = before.replacingOccurrences(of: "    ", with: "        ")
+    try repo.write("Caller.swift", before)
+    try repo.write("Unowned.swift", "func other() {}")
+    let base = try repo.commit()
+    var current = try boundaryGraph(["Caller.swift": after], tests: [], root: repo.root)
+    current.mappings = nil
+    let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
+    current.dependencies?.functions[discovery] = FunctionNode(id: discovery, module: "Testing", name: "discovery")
+    let cache = try XcodeBaseSourceCache(root: repo.root, base: base)
+    let result = try XcodeHeadOnlySources.read(current: current, changes: [.init(path: "Caller.swift")], base: base,
+                                                root: repo.root, mappingPath: "mapping.json", cache: cache)
+    #expect(cache.counts.treeReads == (callee == "sdk" ? 0 : 1))
+    #expect(cache.counts.parses == (callee == "sdk" ? 1 : 2))
+    #expect((result.unownedBaseSources["Unowned.swift"] != nil) == (callee == "local"))
+}
+
 @Test(arguments: ["current", "legacy-parser", "missing-head", "archive-substitution"])
 func headSyntaxReuseAuthenticatesFullGitDiffAndParser(scenario: String) throws {
     let repo = try SourceRepository()
