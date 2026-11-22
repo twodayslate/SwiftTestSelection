@@ -32,7 +32,17 @@ enum SwiftTestingDiscoveryRoots {
         for symbol in targets {
             guard let name = names[symbol], prefixes.contains(where: name.hasPrefix),
                   let conformance = Pattern.groups(witnessOwner, in: name) else { continue }
+            // A trait can itself conform to TestScoping while returning another
+            // provider. Only the associated conformance dispatches provideScope.
+            if name.hasPrefix("protocol witness for Testing.TestScoping.") { continue }
             witnesses[conformance[0], default: []].insert(symbol)
+            if name.hasPrefix("protocol witness for Testing.Trait.scopeProvider("),
+               let providers = tables[SILModule.scopeProviderPrefix + symbol], providers.count == 1,
+               let provider = providers.first, let callbacks = tables[provider], callbacks.count == 1,
+               let callback = callbacks.first,
+               names[callback]?.hasPrefix("protocol witness for Testing.TestScoping.provideScope(") == true {
+                witnesses[conformance[0], default: []].insert(callback)
+            }
         }
         let resultTypes = producers.reduce(into: [String: String]()) { result, symbol in
             guard let name = names[symbol], let type = Pattern.groups(producerResult, in: name) else { return }
@@ -128,10 +138,12 @@ enum SwiftTestingDiscoveryRoots {
         let suiteTypes = Set(traitSuites.compactMap { suite in
             suite.swiftTestingFactoryType.map { suite.module + "." + $0 }
         })
-        let suiteTypesComplete = Set(declaredSuites.keys) == Set(suites.keys) && suites.allSatisfy { module, symbols in
+        // A verified locally declared value type only inherits its own suite
+        // traits. Missing factories in unrelated modules cannot apply to it.
+        let completeSuiteModules = currentMetadata.filter { module in
+            let symbols = suites[module] ?? []
             let types = symbols.compactMap { graph.functions[$0]?.swiftTestingFactoryType }
-            return currentMetadata.contains(module) && types.count == symbols.count &&
-                types.sorted() == declaredSuites[module]?.sorted()
+            return types.count == symbols.count && types.sorted() == (declaredSuites[module] ?? []).sorted()
         }
         var discovered: [String: Set<String>] = [:], incompleteFactories = Set<String>()
         let ownedPrefixes = Set(modules.values).map { "$s" + String($0.utf8.count) + $0 }
@@ -210,7 +222,7 @@ enum SwiftTestingDiscoveryRoots {
             // imported, class, and generic contexts keep their uncertainty.
             let factoryType = factoryRoots.first.flatMap { graph.functions[$0]?.swiftTestingFactoryType }
             let unrelatedSuites = factoryType.map { type in
-                suiteTypesComplete && !suiteTypes.contains(module + "." + type) && valueTypes[module]?.contains(type) == true &&
+                completeSuiteModules.contains(module) && !suiteTypes.contains(module + "." + type) && valueTypes[module]?.contains(type) == true &&
                     roots.contains { id in
                         entryTests[id]?.contains(test) == true && graph.functions[id]?.nominalTypeContext == module + "." + type
                     }

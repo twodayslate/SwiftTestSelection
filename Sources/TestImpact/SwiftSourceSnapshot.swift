@@ -112,6 +112,15 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// must be reparsed from Git rather than substituted for historical syntax.
     static let currentParserVersion = 5
     public var parserVersion: Int? = nil
+    /// Older parsers retained the directive but omitted its relationship to declarations.
+    static func legacyConditionalPaths(in sources: [String: Self], touching paths: Set<String>) -> Set<String> {
+        Set(sources.values.compactMap { snapshot in
+            guard (snapshot.parserVersion ?? 0) < 5, let path = snapshot.units.first?.region.path, paths.contains(path),
+                  snapshot.units.contains(where: { $0.kind == "configuration" }) else { return nil }
+            return path
+        })
+    }
+
     /// Git blob identities of the actual parsed bytes. Archive substitutions,
     /// filters or generated replacements must not authenticate unchanged Git
     /// paths as unchanged parsed content. Nil retains historical parsing.

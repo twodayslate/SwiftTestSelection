@@ -94,7 +94,20 @@ import Testing
     struct Other { @Test func unrelatedMember() {} }
     func shadowHook() {}
     protocol Trait { func prepare() }
-    struct RuntimeTrait: TestTrait, Trait {
+    func actualScopeHook() {}
+    func unusedScopeHook() {}
+    struct Provider: TestScoping {
+        func provideScope(for test: Testing.Test, testCase: Testing.Test.Case?, performing run: @Sendable () async throws -> Void) async throws {
+            actualScopeHook()
+            try await run()
+        }
+    }
+    struct RuntimeTrait: TestTrait, Trait, TestScoping {
+        func scopeProvider(for test: Testing.Test, testCase: Testing.Test.Case?) -> Provider? { Provider() }
+        func provideScope(for test: Testing.Test, testCase: Testing.Test.Case?, performing run: @Sendable () async throws -> Void) async throws {
+            unusedScopeHook()
+            try await run()
+        }
         func prepare() { shadowHook() }
         func prepare(for test: Testing.Test) async throws { runtimeHook() }
     }
@@ -151,6 +164,10 @@ import Testing
     #expect(index.paths(to: [incidental]).path(from: graph.tests[tests[5]] ?? []) == nil)
     let shadow = try #require(graph.functions.values.first { $0.name == "shadowHook()" }?.id)
     #expect(index.paths(to: [shadow]).path(from: graph.tests[tests[5]] ?? []) == nil)
+    let provider = try #require(graph.functions.values.first { $0.name == "actualScopeHook()" })
+    let unused = try #require(graph.functions.values.first { $0.name == "unusedScopeHook()" })
+    #expect(index.paths(to: [provider.id]).path(from: graph.tests[tests[5]] ?? []) != nil)
+    #expect(index.paths(to: [unused.id]).path(from: graph.tests[tests[5]] ?? []) == nil)
     let runtimeHook = try #require(graph.functions.values.first { $0.name == "runtimeHook()" }?.id)
     // The runtime invokes prepare through Trait. Bind its emitted witness even
     // while custom scoping and parameter iteration retain uncertainty.
@@ -336,7 +353,13 @@ import Testing
     }
     func hook() {}
     """
-    let vendor = "import Testing\n" + trait + "\n@Suite(Mode()) struct Common { @Test func decorated() {} }"
+    let vendor = "import Testing\n" + trait + """
+
+    @Suite(Mode()) struct Common { @Test func decorated() {} }
+    #if os(iOS)
+    @Suite struct IOSOnly { @Test func platformTest() {} }
+    #endif
+    """
     let client = "import Testing\nimport Vendor\n" + trait.replacingOccurrences(of: "public struct", with: "private struct") + """
 
     @Suite struct Common { @Test func plain() {} }

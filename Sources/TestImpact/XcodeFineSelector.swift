@@ -109,9 +109,29 @@ public enum XcodeFineSelector {
                 return kind + ":" + (value ?? "unknown:" + unit.region.path + ":" + String(unit.region.startLine))
             }.joined(separator: "|") + "]"
         }
+        let touchedPaths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+        let legacyConditionalPaths = SwiftSourceSnapshot.legacyConditionalPaths(in: current.sources, touching: touchedPaths)
+            .union(SwiftSourceSnapshot.legacyConditionalPaths(in: previous?.sources ?? [:], touching: touchedPaths))
+        if !legacyConditionalPaths.isEmpty {
+            fallback("incomplete_conditional_metadata", "Saved snapshots lack conditional branch membership for " + legacyConditionalPaths.sorted().joined(separator: ", ") + ". Regenerate both graphs.")
+        }
+        var movedPaths: [String: String] = [:]
+        for change in changes where change.isPureMove {
+            if let previousPath = change.previousPath { movedPaths[previousPath] = change.path }
+        }
         for key in Set(oldUnits.keys).union(newUnits.keys) {
             let old = oldUnits[key] ?? [], new = newUnits[key] ?? []
-            if old.map(comparisonFingerprint).sorted() != new.map(comparisonFingerprint).sorted() {
+            if old.count > 1 || new.count > 1 {
+                let before = Dictionary(grouping: old) { movedPaths[$0.region.path] ?? $0.region.path }
+                let after = Dictionary(grouping: new, by: \.region.path)
+                for path in Set(before.keys).union(after.keys) {
+                    let lhs = before[path] ?? [], rhs = after[path] ?? []
+                    if lhs.map(comparisonFingerprint).sorted() != rhs.map(comparisonFingerprint).sorted() {
+                        oldChanged += lhs
+                        newChanged += rhs
+                    }
+                }
+            } else if old.first.map(comparisonFingerprint) != new.first.map(comparisonFingerprint) {
                 oldChanged += old; newChanged += new
             }
         }
@@ -157,8 +177,14 @@ public enum XcodeFineSelector {
                 }
             }
         }
-        oldChanged = Dictionary(grouping: oldChanged, by: { $0.key + $0.region.path }).values.compactMap(\.first)
-        newChanged = Dictionary(grouping: newChanged, by: { $0.key + $0.region.path }).values.compactMap(\.first)
+        // Edge and source comparisons can reach the same declaration. Keep distinct
+        // conditional alternatives in the same file so active SIL regions survive.
+        func distinctDeclarations(_ units: [SourceUnit]) -> [SourceUnit] {
+            var regions: [String: Set<SourceRegion>] = [:]
+            return units.filter { regions[$0.key, default: []].insert($0.region).inserted }
+        }
+        oldChanged = distinctDeclarations(oldChanged)
+        newChanged = distinctDeclarations(newChanged)
         let hasConditions = [current.mappings, previous?.mappings].contains {
             $0?.features.contains { $0.when != nil } == true
         }
@@ -259,7 +285,7 @@ public enum XcodeFineSelector {
                 fallback("generated_input_changed", "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for \(module).")
             }
         }
-        let semanticPaths = Set((oldChanged + newChanged).map { $0.region.path })
+        let semanticPaths = legacyConditionalPaths.union((oldChanged + newChanged).map { $0.region.path })
         let analyzedPaths = Set((Array(current.sources.keys) + Array(previous?.sources.keys ?? [:].keys)).compactMap { key in
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) }
         }).union(oldUnits.values.flatMap { $0 }.map { $0.region.path })

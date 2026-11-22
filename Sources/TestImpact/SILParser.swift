@@ -4,6 +4,10 @@
 import Foundation
 
 public struct SILModule: Codable, Sendable {
+    // Join a Trait.scopeProvider witness to its concrete associated conformance
+    // after primary-file and module dispatch tables have been merged.
+    static let scopeProviderPrefix = "@testing-scope-provider:"
+    static let scopeConformancePrefix = "@testing-scope-conformance:"
     static let testVTablePrefix = "@xctest-vtable:"
     /// Bodies imported from another module; source locations alone cannot prove
     /// definition ownership when multiple modules compile the same file.
@@ -123,7 +127,8 @@ public enum SILParser {
         static let method = try! NSRegularExpression(pattern: #"\b(class_method|super_method|witness_method|objc_method|objc_super_method)\b.*#([^\s:]+)"#)
         static let witnessType = try! NSRegularExpression(pattern: #"\bwitness_method \$([\w.]+),"#)
         static let classTable = try! NSRegularExpression(pattern: #"^sil_vtable(?: \[[^\]]+\])* ([\w.]+) \{"#)
-        static let witnessTable = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+)* ([\w.]+): [\w.]+ module [\w]+ \{"#)
+        static let witnessTable = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+)* ([\w.]+): ([\w.]+) module ([\w]+) \{"#)
+        static let associatedScope = try! NSRegularExpression(pattern: #"^associated_conformance \(TestScopeProvider: TestScoping\): ([\w.]+): TestScoping module ([\w]+)$"#)
         static let externalWitness = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+| \[[^\]]+\])* ([\w.]+): ([\w.]+) module ([\w]+)$"#)
         static let value = try! NSRegularExpression(pattern: #"^(%[\w]+) ="#)
         static let conversion = try! NSRegularExpression(pattern: #"^(%[\w]+) = (?:thin_to_thick_function|convert_function|convert_escape_to_noescape|copy_value|move_value|begin_borrow|partial_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
@@ -167,6 +172,8 @@ public enum SILParser {
         var unreachableNilSome = false
         var classTable: String?
         var witnessType: String?
+        var scopeConformance: String?
+        var associatedScope: String?
         var genericParameters: Set<String>?
         var metatypeInputs: [String: Set<String>] = [:]
         var headerMetatypeCounts: [String: Int] = [:]
@@ -212,10 +219,16 @@ public enum SILParser {
             if current == nil {
                 if line.hasPrefix("sil_witness_table") {
                     classTable = nil
-                    witnessType = Pattern.groups(Expressions.witnessTable, in: line)?.first
+                    let table = Pattern.groups(Expressions.witnessTable, in: line)
+                    witnessType = table?.first
+                    scopeConformance = table.flatMap { $0[1] == "TestScoping" ? SILModule.scopeConformancePrefix + $0[2] + ":" + $0[0] : nil }
+                    associatedScope = nil
                     if let fields = Pattern.groups(Expressions.externalWitness, in: line) {
                         externalWitnesses[module + ":" + fields[1] + "@witness:" + fields[0], default: []].insert(fields[2])
                     }
+                } else if witnessType != nil, line.hasPrefix("associated_conformance"),
+                          let provider = Pattern.groups(Expressions.associatedScope, in: line) {
+                    associatedScope = SILModule.scopeConformancePrefix + provider[1] + ":" + provider[0]
                 } else if line.hasPrefix("sil_vtable") {
                     classTable = Pattern.groups(Expressions.classTable, in: line)?.first
                     witnessType = nil
@@ -269,7 +282,15 @@ public enum SILParser {
                        line.contains(" [inherited]") || line.contains(" [override]") {
                         tables[SILModule.testVTablePrefix + module + "." + classTable + "." + member, default: []].insert(match[1])
                     }
-                    if let witnessType { tables[key + "@witness:" + witnessType, default: []].insert(match[1]) }
+                    if let witnessType {
+                        tables[key + "@witness:" + witnessType, default: []].insert(match[1])
+                        if key == "Trait.scopeProvider", let associatedScope {
+                            tables[SILModule.scopeProviderPrefix + match[1], default: []].insert(associatedScope)
+                        }
+                        if key == "TestScoping.provideScope", let scopeConformance {
+                            tables[scopeConformance, default: []].insert(match[1])
+                        }
+                    }
                 }
                 return
             }

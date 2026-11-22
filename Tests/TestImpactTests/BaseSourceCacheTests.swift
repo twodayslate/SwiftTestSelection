@@ -280,3 +280,59 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
     #expect(report.selectedTests == [entry])
     #expect(report.headOnlyDeclarationChanges?.contains { $0.change == "ambiguous" && $0.key.contains("reading") } == true)
 }
+
+@Test func legacyConditionalSnapshotsSelectWhenAnOverloadBecomesInactive() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let overload = "func choose(_ value: Int) -> Int { 1 }"
+    let generic = "func choose<T>(_ value: T) -> Int { 2 }"
+    let before = "#if OPTIONAL\n#endif\n" + overload + "\n" + generic
+    let after = "#if OPTIONAL\n" + overload + "\n#endif\n" + generic
+    let caller = "import XCTest\nfinal class Cases: XCTestCase { func testValue() { XCTAssertEqual(choose(0), 1) } }"
+    try repo.write("Feature.swift", before)
+    try repo.write("Tests.swift", caller)
+    let base = try repo.commit()
+    let entry = "UI/Cases/testValue()"
+    let previous = try boundaryGraph(["Feature.swift": before, "Tests.swift": caller], tests: [entry], root: repo.root)
+    var current = try boundaryGraph(["Feature.swift": after, "Tests.swift": caller], tests: [entry], root: repo.root)
+    var legacy = try #require(current.sources["UI:Feature.swift"])
+    legacy.parserVersion = 4
+    for index in legacy.units.indices { legacy.units[index].conditionalBranch = nil }
+    current.sources["UI:Feature.swift"] = legacy
+    let changes = [FileChange(path: "Feature.swift")]
+    let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: base, root: repo.root, mappingPath: "mapping.json")
+    let head = XcodeHeadOnlySelector.select(current: current, source: source, changes: changes, baseRevision: base)
+    #expect(head.selectedTests == [entry])
+    #expect(head.diagnostics.contains { $0.code == "head_only_conditional_metadata" })
+    let dual = XcodeFineSelector.select(current: current, previous: previous, changes: changes, baseRevision: base)
+    #expect(dual.selectedTests == [entry])
+    #expect(dual.diagnostics.contains { $0.code == "incomplete_conditional_metadata" })
+}
+
+@Test func exchangedFilePrivateBodiesSelectOnlyTheirCompiledCallers() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let entries = ["UI/Cases/testFirst()", "UI/Cases/testSecond()", "UI/Cases/testThird()"]
+    func capture(_ values: [Int]) throws -> XcodeTestGraph {
+        var files = ["Tests.swift": """
+            import XCTest
+            final class Cases: XCTestCase {
+                func testFirst() { XCTAssertEqual(fromFirst(), 1) }
+                func testSecond() { XCTAssertEqual(fromSecond(), 2) }
+                func testThird() { XCTAssertEqual(fromThird(), 3) }
+            }
+            """]
+        for (name, value) in zip(["First", "Second", "Third"], values) {
+            files[name + ".swift"] = "#if DEBUG\nprivate func reading() -> Int { \(value) }\n#endif\nfunc from\(name)() -> Int { reading() }"
+        }
+        var graph = try boundaryGraph(files, tests: entries, root: repo.root, compilerArguments: ["-D", "DEBUG"])
+        graph.targets = [.init(name: "UI", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: Set(files.keys))]
+        return graph
+    }
+    let previous = try capture([1, 2, 3])
+    let current = try capture([2, 1, 3])
+    let result = XcodeFineSelector.select(current: current, previous: previous,
+        changes: [.init(path: "First.swift"), .init(path: "Second.swift")], baseRevision: "base")
+    #expect(result.selectedTests == Array(entries.prefix(2)))
+    #expect(result.diagnostics.isEmpty)
+}

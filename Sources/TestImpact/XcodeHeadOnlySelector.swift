@@ -272,6 +272,11 @@ enum XcodeHeadOnlySelector {
         var excludedChanges: [SourceUnit] = []
         var changed: [SourceUnit] = []
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
+        let legacyConditionalPaths = SwiftSourceSnapshot.legacyConditionalPaths(in: current.sources, touching: paths)
+        if !legacyConditionalPaths.isEmpty {
+            semanticPaths.formUnion(legacyConditionalPaths)
+            fallback("head_only_conditional_metadata", "Saved head snapshot lacks conditional branch membership for " + legacyConditionalPaths.sorted().joined(separator: ", ") + ". Recapture the head graph.")
+        }
         for key in Set(old.keys).union(new.keys).sorted() {
             let before = old[key] ?? [], after = new[key] ?? []
             guard !comparison.equivalent(before, after) || policyHelpers.contains(key) else { continue }
