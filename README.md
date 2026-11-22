@@ -7,8 +7,8 @@ A Swift package providing a `swift-test-impact` executable and reusable `TestImp
 Xcode discovery preserves exact identifiers for top-level, nested, static and
 parameterized Swift Testing entries. Captured test factories contribute argument
 providers and test traits; suite factories are conservatively shared across their
-module's Swift Testing entries. Concrete existential payloads in a factory also
-contribute matching compiled trait and scoping witnesses. Custom traits and
+module's Swift Testing entries. Matching compiled suite-trait and scoping witnesses
+are roots for tests bound to the suite or its nested suites. Custom traits and
 generic argument iteration retain fallback. A plain test on a top-level value
 type can rule out an unrelated suite's traits when the SDK factory metatypes and
 the compiler's test-method owner agree.

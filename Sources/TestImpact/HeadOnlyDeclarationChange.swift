@@ -72,16 +72,19 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
         // Restrict this projection to zero-argument test methods. Match the
         // enumerated ID, compiler root, module, and physical declaration.
         let method = name + "()"
-        let qualified = unit.scope + "." + method
-        return owners.compactMap { owner in
-            let entry = [owner.name, unit.scope, method].joined(separator: "/")
-            guard current.tests.contains(entry), graph.tests[entry]?.contains(where: { id in
-                guard let node = graph.functions[id], node.module == module, node.name == qualified else { return false }
+        let ownerNames = Set(owners.map(\.name))
+        return current.tests.filter { entry in
+            let parts = entry.split(separator: "/")
+            guard let target = parts.first, ownerNames.contains(String(target)), let leaf = parts.last, leaf == method,
+                  parts.dropFirst().dropLast().joined(separator: ".") == unit.scope else { return false }
+            let qualified = parts.dropFirst().joined(separator: ".")
+            return graph.tests[entry]?.contains { id in
+                guard let node = graph.functions[id], node.module == module,
+                      node.name == qualified || node.name == "static " + qualified else { return false }
                 return node.regions.contains { region in
                     region.path == unit.region.path && region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine
                 }
-            }) == true else { return nil }
-            return entry
+            } == true
         }.sorted()
     }
 

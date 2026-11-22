@@ -35,6 +35,7 @@ import Testing
     node.swiftTestingFactoryType = "Example"
     node.swiftTestingExistentialTypes = ["FixtureTrait"]
     graph.dependencies = DependencyGraph(functions: ["a": node], tests: ["Tests/C/test": ["a", "missing"]])
+    graph.dependencies!.swiftTestingSuiteWitnesses = ["suite": ["witness"]]
     graph.dependencies!.testDiagnostics = ["Tests/C/test": ["inherited"]]
     let data = try GraphArchive.encode(graph)
     let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
@@ -44,6 +45,7 @@ import Testing
     #expect(roundTrip.dependencies?.functions["a"]?.resolvedDynamicDeclarations == ["D"])
     #expect(roundTrip.dependencies?.functions["a"]?.regions == node.regions)
     #expect(roundTrip.dependencies?.functions["a"]?.swiftTestingEmptyFactory == "member")
+    #expect(roundTrip.dependencies?.swiftTestingSuiteWitnesses == ["suite": ["witness"]])
     #expect(roundTrip.dependencies?.testDiagnostics == graph.dependencies?.testDiagnostics)
     #expect(roundTrip.tests == graph.tests && roundTrip.diagnostics == graph.diagnostics)
     #expect(try GraphArchive.decode(encoder.encode(graph)).tests == graph.tests)
@@ -54,10 +56,11 @@ import Testing
     let magic = Data("STIGRAPH1\n".utf8)
     var envelope = try #require(PropertyListSerialization.propertyList(from: data.dropFirst(magic.count + 64), format: nil) as? [String: Any])
     var packed = try #require(envelope["graph"] as? [String: Any])
-    for field in ["swiftTestingEmptyFactories", "swiftTestingFactoryTypes", "swiftTestingExistentialTypes"] { packed.removeValue(forKey: field) }
+    for field in ["swiftTestingEmptyFactories", "swiftTestingFactoryTypes", "swiftTestingExistentialTypes", "swiftTestingSuiteWitnesses"] { packed.removeValue(forKey: field) }
     envelope["graph"] = packed
     let payload = try PropertyListSerialization.data(fromPropertyList: envelope, format: .binary, options: 0)
     let legacy = try GraphArchive.decode(magic + Data(XcodeGraphCache.digest(payload).utf8) + payload)
+    #expect(legacy.dependencies?.swiftTestingSuiteWitnesses == nil)
     #expect(legacy.dependencies?.functions["a"]?.swiftTestingEmptyFactory == nil)
     #expect(legacy.dependencies?.functions["a"]?.swiftTestingFactoryType == nil)
     #expect(legacy.dependencies?.functions["a"]?.swiftTestingExistentialTypes == nil)

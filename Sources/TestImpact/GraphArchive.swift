@@ -30,6 +30,7 @@ public enum GraphArchive {
         var dynamicDeclarationModules: [String: [String: Set<String>]]?
         var nominalTypeContexts: [String: String]?
         /// Optional for archives written before factory-effect evidence existed.
+        var swiftTestingSuiteWitnesses: [String: Set<String>]?
         var swiftTestingExistentialTypes: [String: Set<String>]?
         var swiftTestingFactoryTypes: [String: String]?
         var swiftTestingEmptyFactories: [String: String]?
@@ -65,6 +66,7 @@ public enum GraphArchive {
             compilerImplicitImports = graph.compilerImplicitImports
             assertionFormattingSites = graph.functions.compactMapValues(\.assertionFormattingSites)
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
+            swiftTestingSuiteWitnesses = graph.swiftTestingSuiteWitnesses
             swiftTestingExistentialTypes = graph.functions.compactMapValues(\.swiftTestingExistentialTypes)
             swiftTestingFactoryTypes = graph.functions.compactMapValues(\.swiftTestingFactoryType)
             swiftTestingEmptyFactories = graph.functions.compactMapValues(\.swiftTestingEmptyFactory)
@@ -78,6 +80,7 @@ public enum GraphArchive {
             }
             var graph = DependencyGraph(toolchain: toolchain, diagnostics: diagnostics)
             graph.schemaVersion = schema; graph.testDiagnostics = testDiagnostics
+            graph.swiftTestingSuiteWitnesses = swiftTestingSuiteWitnesses
             graph.compilerClassIdentities = compilerClassIdentities
             graph.compilerImplicitImports = compilerImplicitImports
             guard nodes.count.isMultiple(of: 8) else { throw ImpactError("Truncated compact graph integers") }

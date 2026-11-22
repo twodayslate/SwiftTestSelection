@@ -82,13 +82,24 @@ import Testing
     func testEnabled() -> Bool { true }
     func suiteEnabled() -> Bool { true }
     func runtimeHook() {}
+    func suiteRuntimeHook() {}
+    struct RecursiveSuiteTrait: SuiteTrait {
+        var isRecursive: Bool { true }
+        func prepare(for test: Testing.Test) async throws { suiteRuntimeHook() }
+    }
+    func nestedRuntimeHook() {}
+    struct NestedSuiteTrait: SuiteTrait {
+        func prepare(for test: Testing.Test) async throws { nestedRuntimeHook() }
+    }
+    struct Other { @Test func unrelatedMember() {} }
     struct RuntimeTrait: TestTrait {
         func prepare(for test: Testing.Test) async throws { runtimeHook() }
     }
     @Test @MainActor func topLevel() { let app = XCUIApplication(); #expect(app.exists) }
-    @Suite(.enabled(if: suiteEnabled()))
+    @Suite(RecursiveSuiteTrait(), .enabled(if: suiteEnabled()))
     struct Outer {
-        struct Inner {
+        @Test func sibling() {}
+        @Suite(NestedSuiteTrait()) struct Inner {
             @Test @MainActor func instance() { let app = XCUIApplication(); #expect(app.exists) }
             @Test @MainActor static func typeTest() { let app = XCUIApplication(); #expect(app.exists) }
             @Test(RuntimeTrait(), .enabled(if: testEnabled()), arguments: argumentValues()) func arguments(value: Bool) { #expect(value || !value) }
@@ -100,7 +111,7 @@ import Testing
     @Test(RuntimeTrait()) func runtimeOnly() {}
     @Test(arguments: [true]) func argumentsOnly(value: Bool) {}
     """
-    let tests = ["UI/topLevel()", "UI/Outer/Inner/instance()", "UI/Outer/Inner/typeTest()", "UI/Outer/Inner/arguments(value:)", "UI/XCTestSuite/testOrdinary()", "UI/runtimeOnly()", "UI/argumentsOnly(value:)"]
+    let tests = ["UI/topLevel()", "UI/Outer/Inner/instance()", "UI/Outer/Inner/typeTest()", "UI/Outer/Inner/arguments(value:)", "UI/XCTestSuite/testOrdinary()", "UI/runtimeOnly()", "UI/argumentsOnly(value:)", "UI/Other/unrelatedMember()", "UI/Outer/sibling()"]
     try Data(text.utf8).write(to: root.appendingPathComponent("Tests.swift"))
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let sil = root.appendingPathComponent("UI.sil")
@@ -119,7 +130,7 @@ import Testing
     #expect(graph.testDiagnostics[tests[1]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
     #expect(graph.testDiagnostics[tests[3]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
     #expect(graph.testDiagnostics[tests[4]]?.isEmpty ?? true)
-    for test in tests.suffix(2) {
+    for test in tests[5...6] {
         #expect(graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
     }
     // A namesake macro's source spelling cannot hide compiler-emitted traits.
@@ -141,6 +152,35 @@ import Testing
             #expect(index.paths(to: [symbol]).path(from: graph.tests[tests[0]] ?? []) == nil, "\(name)")
         }
     }
+    let suiteHook = try #require(graph.functions.values.first { $0.name == "suiteRuntimeHook()" }?.id)
+    let suiteDiscovery = try #require(graph.functions.values.first { $0.name == "suiteEnabled()" }?.id)
+    let nestedHook = try #require(graph.functions.values.first { $0.name == "nestedRuntimeHook()" }?.id)
+    let outerPaths = index.paths(to: [suiteHook])
+    let nestedPaths = index.paths(to: [nestedHook])
+    let discoveryPaths = index.paths(to: [suiteDiscovery])
+    for test in tests {
+        let roots = graph.tests[test] ?? []
+        #expect((nestedPaths.path(from: roots) != nil) == test.hasPrefix("UI/Outer/Inner/"), "\(test)")
+        #expect((outerPaths.path(from: roots) != nil) == test.hasPrefix("UI/Outer/"), "\(test)")
+        #expect((discoveryPaths.path(from: roots) != nil) == (test != tests[4]), "\(test)")
+    }
+
+    // A deleted helper was called by a top-level test and two nested methods.
+    let before = "private func oldHelper() {}\n" + text.replacingOccurrences(of: "{ let app =", with: "{ oldHelper(); let app =")
+    let base = SwiftSourceSnapshot.parse(before, path: "Tests.swift", module: "UI")
+    var current = XcodeTestGraph(targets: [.init(name: "UI", productType: "com.apple.product-type.bundle.ui-testing", sourceFiles: ["Tests.swift"])], tests: tests)
+    current.modules = ["UI": "UI"]
+    current.sources = ["UI:Tests.swift": source]
+    current.dependencies = graph
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: ["UI:Tests.swift": base]),
+        changes: [.init(path: "Tests.swift")], baseRevision: "base")
+    let removed = try #require(report.headOnlyDeclarationChanges?.first { $0.change == "removed" && $0.key.contains("oldHelper") })
+    let callers = removed.historicalReferences.flatMap { $0.possibleCallers ?? [] }
+    for test in tests.prefix(3) {
+        let method = try #require(test.split(separator: "/").last?.dropLast(2))
+        #expect(callers.contains { $0.declaration.contains(method) && $0.survivingTestEntries == [test] }, "\(test)")
+    }
+
     let testFactories = Set(graph.functions.values.filter {
         $0.compilerReferences?.contains { $0.hasPrefix("$s7Testing4TestV10__function") } == true
     }.map(\.id))

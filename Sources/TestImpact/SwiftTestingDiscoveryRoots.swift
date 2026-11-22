@@ -24,8 +24,14 @@ enum SwiftTestingDiscoveryRoots {
         }
         guard !witnesses.isEmpty else { return }
         for (symbol, node) in graph.functions {
-            for type in node.swiftTestingExistentialTypes ?? [] {
-                if let candidates = witnesses[type] { graph.functions[symbol]?.dependencies.formUnion(candidates) }
+            guard let types = node.swiftTestingExistentialTypes, !types.isEmpty else { continue }
+            let candidates = types.reduce(into: Set<String>()) { $0.formUnion(witnesses[$1] ?? []) }
+            guard !candidates.isEmpty else { continue }
+            if node.compilerReferences?.contains(where: { $0.hasPrefix("$s7Testing4TestV6__type") }) == true {
+                if graph.swiftTestingSuiteWitnesses == nil { graph.swiftTestingSuiteWitnesses = [:] }
+                graph.swiftTestingSuiteWitnesses?[symbol, default: []].formUnion(candidates)
+            } else {
+                graph.functions[symbol]?.dependencies.formUnion(candidates)
             }
         }
     }
@@ -67,8 +73,14 @@ enum SwiftTestingDiscoveryRoots {
                 suites[node.module, default: []].insert(node.id)
             }
         }
-        // Even an unrelated suite factory remains a discovery root. Only the
-        // separate runtime trait diagnostic can be scoped by nominal identity.
+        // Suite construction runs during module-wide discovery. The runtime
+        // callbacks belong to entries in the suite or one of its nested suites.
+        var suiteWitnesses: [String: [String: Set<String>]] = [:]
+        for (id, witnesses) in graph.swiftTestingSuiteWitnesses ?? [:] {
+            guard let suite = graph.functions[id], let type = suite.swiftTestingFactoryType,
+                  declaredSuites[suite.module]?.contains(type) == true else { continue }
+            suiteWitnesses[suite.module, default: [:]][type, default: []].formUnion(witnesses)
+        }
         let traitSuites = suites.values.flatMap { $0 }.compactMap { graph.functions[$0] }.filter { $0.swiftTestingEmptyFactory != "suite" }
         let suiteTypes = Set(traitSuites.compactMap(\.swiftTestingFactoryType))
         let suiteTypesComplete = Set(declaredSuites.keys) == Set(suites.keys) && suites.allSatisfy { module, symbols in
@@ -112,6 +124,18 @@ enum SwiftTestingDiscoveryRoots {
             // overapproximates inherited/custom suite traits rather than guessing
             // a precise hierarchy from generated symbol names.
             graph.tests[test, default: []].formUnion(factoryRoots.union(suites[module] ?? []))
+            // A bound test factory reaches the exact compiler entry named by
+            // this enumerated ID. Only its enclosing scopes can supply these
+            // positive witness roots. Unresolved ownership keeps the diagnostic.
+            if !factoryRoots.isEmpty, let witnesses = suiteWitnesses[module] {
+                var scope = test.split(separator: "/").dropFirst().dropLast()
+                while !scope.isEmpty {
+                    if let callbacks = witnesses[scope.joined(separator: ".")] {
+                        graph.tests[test, default: []].formUnion(callbacks)
+                    }
+                    scope = scope.dropLast()
+                }
+            }
             guard factoryRoots.count == 1, (suiteCounts[module] ?? 0) <= (suites[module]?.count ?? 0),
                   currentMetadata.contains(module),
                   factoryRoots.isDisjoint(with: incompleteFactories),

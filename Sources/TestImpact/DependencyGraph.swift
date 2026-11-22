@@ -148,6 +148,8 @@ public struct DependencyGraph: Codable, Sendable {
     public var tests: [String: Set<String>]
     public var diagnostics: [String]
     public var testDiagnostics: [String: [String]] = [:]
+    /// Runtime witnesses keyed by the suite factory that constructs their trait.
+    public var swiftTestingSuiteWitnesses: [String: Set<String>]? = nil
     /// Compiler-authenticated class identities from the matching built modules.
     public var compilerClassIdentities: [String: CompilerClassIdentity]? = nil
     /// Imports injected by compiler options, including binary modules absent

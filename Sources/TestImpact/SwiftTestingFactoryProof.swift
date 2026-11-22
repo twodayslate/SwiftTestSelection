@@ -21,7 +21,7 @@ enum SwiftTestingFactoryProof {
         Set(lines.compactMap { Pattern.groups(existential, in: $0)?.first })
     }
 
-    private static let simpleType = try! NSRegularExpression(pattern: #"^[A-Za-z_][A-Za-z_0-9]*$"#)
+    private static let nominalPath = try! NSRegularExpression(pattern: #"^[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*$"#)
 
     static func emptyFactory(_ lines: [String], nominalType: inout String?) -> String? {
         nominalType = nil
@@ -60,7 +60,7 @@ enum SwiftTestingFactoryProof {
         // Bind the actual SDK factory argument, including its SSA value. A
         // generic substitution alone cannot distinguish a nil/forwarded type.
         let type = fields[1]
-        if Pattern.groups(simpleType, in: type) != nil {
+        if Pattern.groups(nominalPath, in: type) != nil {
             let literal = "metatype $@thick " + type + ".Type"
             if suite, definitions[arguments[1]] == literal {
                 nominalType = type
