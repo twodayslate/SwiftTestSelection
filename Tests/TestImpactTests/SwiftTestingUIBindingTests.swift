@@ -108,7 +108,12 @@ import Testing
     final class XCTestSuite: XCTestCase {
         func testOrdinary() { XCTAssertTrue(true) }
     }
-    @Test(RuntimeTrait()) func runtimeOnly() {}
+    func incidentalHook() {}
+    struct Incidental: TestTrait {
+        func prepare(for test: Testing.Test) async throws { incidentalHook() }
+    }
+    struct Wrapper: TestTrait { let payload: [any TestTrait] }
+    @Test(Wrapper(payload: [Incidental()]), RuntimeTrait()) func runtimeOnly() {}
     @Test(arguments: [true]) func argumentsOnly(value: Bool) {}
     """
     let tests = ["UI/topLevel()", "UI/Outer/Inner/instance()", "UI/Outer/Inner/typeTest()", "UI/Outer/Inner/arguments(value:)", "UI/XCTestSuite/testOrdinary()", "UI/runtimeOnly()", "UI/argumentsOnly(value:)", "UI/Other/unrelatedMember()", "UI/Outer/sibling()"]
@@ -134,11 +139,13 @@ import Testing
         #expect(graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
     }
     // A namesake macro's source spelling cannot hide compiler-emitted traits.
-    let plainSpelling = SwiftSourceSnapshot.parse(text.replacingOccurrences(of: "@Test(RuntimeTrait())", with: "@Test"), path: "Tests.swift", module: "UI")
+    let plainSpelling = SwiftSourceSnapshot.parse(text.replacingOccurrences(of: "@Test(Wrapper(payload: [Incidental()]), RuntimeTrait())", with: "@Test"), path: "Tests.swift", module: "UI")
     var hiddenTrait = DependencyGraph(functions: parsed.functions)
     XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": plainSpelling], graph: &hiddenTrait)
     #expect(hiddenTrait.testDiagnostics[tests[5]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
     let index = DependencyIndex(graph)
+    let incidental = try #require(graph.functions.values.first { $0.name == "incidentalHook()" }?.id)
+    #expect(index.paths(to: [incidental]).path(from: graph.tests[tests[5]] ?? []) == nil)
     let runtimeHook = try #require(graph.functions.values.first { $0.name == "runtimeHook()" }?.id)
     // The runtime invokes prepare through Trait. Bind its emitted witness even
     // while custom scoping and parameter iteration retain uncertainty.

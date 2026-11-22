@@ -43,7 +43,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     public var swiftTestingEmptyFactory: String? = nil
     /// Unqualified concrete nominal passed as a literal metatype to the SDK factory.
     public var swiftTestingFactoryType: String? = nil
-    /// Concrete existential payloads observed in a Swift Testing factory.
+    /// Concrete payloads stored in the traits array passed to a Swift Testing factory.
     /// Matching trait witnesses are possible runtime edges, never proof that
     /// the complete set of runtime conformances was captured.
     public var swiftTestingExistentialTypes: Set<String>? = nil

@@ -7,16 +7,21 @@ import Testing
 @Test func removedHelpersReportHistoricalReferencesWithoutGuessingRenames() throws {
     let before = """
     import XCTest
-    final class Suite: XCTestCase {
+    class Suite: XCTestCase {
         func testConsumer() { oldHelper() }
         private func oldHelper() { XCTAssertTrue(true) }
+    }
+    final class Inherited: Suite {}
+    final class Unrelated: XCTestCase {
+        func testConsumer() {}
     }
     """
     let after = before.replacingOccurrences(of: "oldHelper", with: "newHelper")
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let current = try boundaryGraph(["UI.swift": after], tests: ["UI/Suite/testConsumer()"], root: root)
+    let inherited = ["UI/Inherited/testConsumer()", "UI/Suite/testConsumer()"]
+    let current = try boundaryGraph(["UI.swift": after], tests: inherited + ["UI/Unrelated/testConsumer()"], root: root)
     let old = SwiftSourceSnapshot.parse(before, path: "UI.swift", module: "UI")
     let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: ["UI:UI.swift": old], mappings: current.mappings), changes: [.init(path: "UI.swift")], baseRevision: "base")
     let removed = try #require(report.headOnlyDeclarationChanges?.first { $0.change == "removed" })
@@ -24,7 +29,7 @@ import Testing
     #expect(removed.headRegions.isEmpty)
     #expect(removed.historicalReferences.contains { $0.sourceKey == "UI:UI.swift" && $0.callerLines.contains(3) })
     #expect(removed.historicalReferences.flatMap { $0.possibleCallers ?? [] }.contains {
-        $0.baseRegion.startLine == 3 && $0.survivingTestEntries == ["UI/Suite/testConsumer()"]
+        $0.baseRegion.startLine == 3 && $0.survivingTestEntries == inherited
     })
     #expect(!removed.missingEvidence.isEmpty)
     #expect(report.selectedTests == current.tests)

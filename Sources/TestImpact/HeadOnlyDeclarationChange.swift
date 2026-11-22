@@ -72,12 +72,12 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
         // Restrict this projection to zero-argument test methods. Match the
         // enumerated ID, compiler root, module, and physical declaration.
         let method = name + "()"
-        let ownerNames = Set(owners.map(\.name))
+        let qualified = unit.scope.isEmpty ? method : unit.scope + "." + method
         return current.tests.filter { entry in
-            let parts = entry.split(separator: "/")
-            guard let target = parts.first, ownerNames.contains(String(target)), let leaf = parts.last, leaf == method,
-                  parts.dropFirst().dropLast().joined(separator: ".") == unit.scope else { return false }
-            let qualified = parts.dropFirst().joined(separator: ".")
+            // XCTest can enumerate this declaration under a subclass, including
+            // one in another test module. Verify the bound implementation below.
+            let leaf = entry.split(separator: "/").last
+            guard leaf == Substring(method) || leaf == Substring(name) else { return false }
             return graph.tests[entry]?.contains { id in
                 guard let node = graph.functions[id], node.module == module,
                       node.name == qualified || node.name == "static " + qualified else { return false }

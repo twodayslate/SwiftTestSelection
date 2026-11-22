@@ -42,19 +42,24 @@ struct XcodeHeadOnlySources {
         let hasContracts = hasBindingContracts || !HelperFormattingContracts.declarations(current.sources, current.mappings).isEmpty || !(result.mappings?.helperFormattingContracts?.isEmpty ?? true)
         var auditCallers = !callerModules.isEmpty || hasContracts || !(current.mappings?.testRuntimeBoundaries?.isEmpty ?? true)
         if !auditCallers {
-            // The last helper in a file can disappear. Read the actual old
-            // declaration before deciding whether other files need a Git audit.
+            // The selector groups declarations across all paths in the scope.
+            // A removed, duplicated or moved callable needs actual base callers,
+            // even when another declaration with the same key survives.
+            var before: [String: [String]] = [:], after: [String: [String]] = [:]
             for (key, head) in current.sources {
                 guard let colon = key.firstIndex(of: ":") else { continue }
                 let path = String(key[key.index(after: colon)...])
-                guard paths.contains(path),
-                      let old = try cache.snapshot(path: path, module: String(key[..<colon])) else { continue }
-                let surviving = Set(head.units.map(\.key))
-                if old.units.contains(where: { $0.helperCallableName != nil && !surviving.contains($0.key) }) {
-                    auditCallers = true
-                    break
+                guard paths.contains(path) else { continue }
+                for unit in head.units where unit.helperCallableName != nil {
+                    after[unit.key, default: []].append(path)
+                }
+                if let old = try cache.snapshot(path: path, module: String(key[..<colon])) {
+                    for unit in old.units where unit.helperCallableName != nil {
+                        before[unit.key, default: []].append(path)
+                    }
                 }
             }
+            auditCallers = before.contains { key, paths in paths.count != 1 || after[key] != paths }
         }
         var basePaths: Set<String>?
         if auditCallers {

@@ -206,3 +206,25 @@ func baseSourceCachePreservesIndependentEvidence(scenario: String) throws {
     let oldCaller = try #require(source.base["UI:Caller.swift"])
     #expect(oldCaller.identifierNames?.contains("removed") == true)
 }
+
+@Test(arguments: [1, 2])
+func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let before = "#if DEBUG\nfunc helper() { print(1) }\n#else\nfunc helper() { print(2) }\n#endif"
+    let after = headAlternatives == 1 ? "func helper() { print(1) }" : before.replacingOccurrences(of: "print(2)", with: "print(3)")
+    try repo.write("Helper.swift", before)
+    try repo.write("Caller.swift", "func original() { helper() }\nfunc added() {}")
+    let base = try repo.commit()
+    var current = XcodeTestGraph(targets: [], tests: [])
+    current.sources = [
+        "UI:Helper.swift": .parse(after, path: "Helper.swift", module: "UI"),
+        "UI:Caller.swift": .parse("func original() {}\nfunc added() { helper() }", path: "Caller.swift", module: "UI")
+    ]
+    let changes = [FileChange(path: "Helper.swift")]
+    let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: base, root: repo.root, mappingPath: "mapping.json")
+    let report = XcodeHeadOnlySelector.select(current: current, source: source, changes: changes, baseRevision: base)
+    let ambiguous = try #require(report.headOnlyDeclarationChanges?.first { $0.change == "ambiguous" && $0.key.contains("helper") })
+    let lines = ambiguous.historicalReferences.filter { $0.sourceKey == "UI:Caller.swift" }.flatMap(\.callerLines)
+    #expect(Set(lines) == [1])
+}

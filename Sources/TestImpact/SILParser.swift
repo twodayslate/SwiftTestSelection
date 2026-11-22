@@ -272,10 +272,10 @@ public enum SILParser {
                 current!.dynamicDeclarationModules = Dictionary(uniqueKeysWithValues: current!.dynamicDeclarations.map { ($0, [module]) })
                 current!.compilerReferences = current!.dependencies
                 if let testingFactoryLines, current!.dependencies.contains(where: SwiftTestingFactoryProof.isFactory) {
-                    current!.swiftTestingExistentialTypes = SwiftTestingFactoryProof.existentialTypes(testingFactoryLines)
-                    var type: String?
-                    current!.swiftTestingEmptyFactory = SwiftTestingFactoryProof.emptyFactory(testingFactoryLines, nominalType: &type)
-                    current!.swiftTestingFactoryType = type
+                    let evidence = SwiftTestingFactoryProof.analyze(testingFactoryLines)
+                    current!.swiftTestingExistentialTypes = evidence.traitTypes
+                    current!.swiftTestingEmptyFactory = evidence.emptyFactory
+                    current!.swiftTestingFactoryType = evidence.nominalType
                 }
                 functions[current!.id] = current!
                 current = nil
