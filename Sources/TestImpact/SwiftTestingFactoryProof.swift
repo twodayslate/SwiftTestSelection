@@ -19,7 +19,7 @@ enum SwiftTestingFactoryProof {
     private static let existential = try! NSRegularExpression(pattern: #"^init_existential_addr (%\d+), \$([A-Za-z_][A-Za-z_0-9.]*)$"#)
     private static let store = try! NSRegularExpression(pattern: #"^store (%\d+) to (?:\[\w+\] )?(%\d+)(?: : .*|$)"#)
     private static let callee = try! NSRegularExpression(pattern: #"^apply (%\d+)(?:<.*>)?\("#)
-    private static let indexAddress = try! NSRegularExpression(pattern: #"^index_addr (?:\[stack_protection\] )?(%\d+), %\d+$"#)
+    private static let indexAddress = try! NSRegularExpression(pattern: #"^index_addr (?:\[stack_protection\] )?(%\d+), (%\d+)$"#)
     private static let tailAddress = try! NSRegularExpression(pattern: #"^ref_tail_addr (%\d+), \$(any (?:SuiteTrait|TestTrait))$"#)
     private static let arrayStorage = try! NSRegularExpression(pattern: #"^(?:struct_extract|unchecked_ref_cast) (%\d+)(?:, #(?:Array\._buffer|_ArrayBuffer\._storage|_ContiguousArrayBuffer\._storage|_BridgeStorage\.rawValue)| to \$__ContiguousArrayStorageBase)$"#)
     private static let pointerAddress = try! NSRegularExpression(pattern: #"^pointer_to_address (%\d+) to (?:\[\w+\] )*\$\*(any (?:SuiteTrait|TestTrait))$"#)
@@ -28,16 +28,29 @@ enum SwiftTestingFactoryProof {
     private static let allocateArray = "$ss27_allocateUninitializedArrayySayxG_BptBwlF"
     private static let finalizeArray = "$ss27_finalizeUninitializedArrayySayxGABnlF"
 
+    struct Conditions: Codable, Equatable, Sendable {
+        var traitCount = 0
+        var predicates: [Int: String] = [:]
+    }
+
     struct Evidence {
         var nominalType: String?
         var emptyFactory: String?
         var deferredProviderCount: Int?
+        var deferredConditions: Conditions?
         var traitTypes = Set<String>()
         var traitProducers = Set<String>()
         var deferredReferences = Set<String>()
     }
 
     private static let closureConversion = try! NSRegularExpression(pattern: #"^(?:thin_to_thick_function |partial_apply (?:\[\w+\] )*)(%\d+)(?: to |\()"#)
+
+    private static func conditionName(_ symbol: String) -> String? {
+        let prefix = "$s7Testing5TraitPA2A09ConditionB0VRszrlE"
+        if symbol.hasPrefix(prefix + "7enabled2if_14sourceLocation") { return "enabled" }
+        if symbol.hasPrefix(prefix + "8disabled2if_14sourceLocation") { return "disabled" }
+        return nil
+    }
 
     /// A function reference is deferred only if every occurrence is used solely
     /// to build a callback handed to the SDK. Captures and constructor arguments
@@ -51,8 +64,7 @@ enum SwiftTestingFactoryProof {
                 callbacks = factoryCallbacks
             } else {
                 guard let fields = Pattern.groups(application, in: instruction), let symbol = references[fields[0]],
-                      symbol.hasPrefix("$s7Testing5TraitPA2A09ConditionB0VRszrlE7enabled2if_14sourceLocation") ||
-                        symbol.hasPrefix("$s7Testing5TraitPA2A09ConditionB0VRszrlE8disabled2if_14sourceLocation") else { continue }
+                      conditionName(symbol) != nil else { continue }
                 let arguments = fields[2].components(separatedBy: ", ")
                 guard arguments.count == 5 else { continue }
                 callbacks = [arguments[1]]
@@ -72,13 +84,13 @@ enum SwiftTestingFactoryProof {
     /// Look backwards from the traits argument passed to Testing. Other arrays
     /// and existential temporaries in this factory can contain ordinary data.
     private static func collectAppliedTraits(argument: String, element: String, definitions: [String: String],
-                                             uses: [String: [String]], references: [String: String], evidence: inout Evidence) {
+                                             uses: [String: [String]], references: [String: String], evidence: inout Evidence) -> Conditions? {
         guard let finalize = definitions[argument].flatMap({ Pattern.groups(application, in: $0) }),
-              references[finalize[0]] == finalizeArray, finalize[1] == element else { return }
+              references[finalize[0]] == finalizeArray, finalize[1] == element else { return nil }
         let array = finalize[2]
         guard let tuple = definitions[array].flatMap({ Pattern.groups(extraction, in: $0)?.first }),
               let allocate = definitions[tuple].flatMap({ Pattern.groups(application, in: $0) }),
-              references[allocate[0]] == allocateArray, allocate[1] == element else { return }
+              references[allocate[0]] == allocateArray, allocate[1] == element else { return nil }
 
         func isElementAddress(_ address: String) -> Bool {
             var id = address, visited = Set<String>()
@@ -107,6 +119,21 @@ enum SwiftTestingFactoryProof {
             }
             return false
         }
+        func integerOperand(_ id: String) -> Int? {
+            let prefix = "integer_literal $Builtin.Word, "
+            guard let literal = definitions[id], literal.hasPrefix(prefix) else { return nil }
+            return Int(literal.dropFirst(prefix.count))
+        }
+        func elementIndex(_ address: String) -> Int? {
+            guard let rhs = definitions[address] else { return nil }
+            if let index = Pattern.groups(indexAddress, in: rhs) {
+                guard let base = definitions[index[0]], Pattern.groups(indexAddress, in: base) == nil else { return nil }
+                return integerOperand(index[1])
+            }
+            return 0 // The validated tail address or allocation pointer denotes element zero.
+        }
+        let count = integerOperand(allocate[2])
+        var predicates: [Int: String] = [:]
         for (slot, rhs) in definitions {
             guard let payload = Pattern.groups(existential, in: rhs), isElementAddress(payload[0]) else { continue }
             evidence.traitTypes.insert(payload[1])
@@ -114,12 +141,28 @@ enum SwiftTestingFactoryProof {
             // even in one factory. Follow the value written to this exact slot
             // to recover its producer's module-qualified result type.
             for use in uses[slot] ?? [] {
+                // Bind the SDK's predicate to its slot in the actual traits array. The
+                // remaining constructor operands are eager. Only a capture-free
+                // callback used exclusively in a deferred position proves locality.
+                if let count, let index = elementIndex(payload[0]), index >= 0, index < count,
+                   let call = Pattern.groups(application, in: use), let symbol = references[call[0]],
+                   let condition = conditionName(symbol) {
+                    let operands = call[2].components(separatedBy: ", ")
+                    if operands.count == 5, operands[0] == slot, let conversion = definitions[operands[1]],
+                       conversion.hasPrefix("thin_to_thick_function "),
+                       let closure = Pattern.groups(closureConversion, in: conversion)?.first,
+                       let target = references[closure], evidence.deferredReferences.contains(target) {
+                        predicates[index] = condition
+                    }
+                }
                 guard let stored = Pattern.groups(store, in: use), stored[1] == slot,
                       let value = definitions[stored[0]], let call = Pattern.groups(callee, in: value),
                       let producer = references[call[0]] else { continue }
                 evidence.traitProducers.insert(producer)
             }
         }
+        guard let count, !predicates.isEmpty else { return nil }
+        return Conditions(traitCount: count, predicates: predicates)
     }
 
     static func analyze(_ lines: [String]) -> Evidence {
@@ -168,8 +211,9 @@ enum SwiftTestingFactoryProof {
         }
         // Parameterized overloads have additional arguments after the traits.
         let traitIndex = suite ? 3 : 5
+        var conditions: Conditions?
         if (suite || factory.value.hasPrefix(functionPrefix)), arguments.indices.contains(traitIndex) {
-            collectAppliedTraits(argument: arguments[traitIndex], element: suite ? "any SuiteTrait" : "any TestTrait",
+            conditions = collectAppliedTraits(argument: arguments[traitIndex], element: suite ? "any SuiteTrait" : "any TestTrait",
                                  definitions: definitions, uses: uses, references: references, evidence: &evidence)
         }
         guard (suite && arguments.count == 6) || (function && arguments.count == 10) || provenProviders != nil else { return evidence }
@@ -181,6 +225,7 @@ enum SwiftTestingFactoryProof {
         }
         guard uses[arguments[0]]?.contains(where: isOutputParameter) == true,
               uses[arguments[0]]?.allSatisfy({ $0 == call || isOutputParameter($0) }) == true else { return evidence }
+        if !suite { evidence.deferredConditions = conditions }
         // A nonempty traits array still permits entry-local provider edits
         // when source comparison preserves every eager trait and its location.
         if !evidence.traitTypes.isEmpty { evidence.deferredProviderCount = provenProviders }

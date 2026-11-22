@@ -39,6 +39,7 @@ public enum GraphArchive {
         var swiftTestingFactoryTypes: [String: String]?
         var swiftTestingEmptyFactories: [String: String]?
         var swiftTestingDeferredProviderCounts: [String: Int]?
+        var swiftTestingConditionsByFunction: [String: SwiftTestingFactoryProof.Conditions]?
         init(_ graph: DependencyGraph) {
             var table: [String] = [], ids: [String: Int] = [:]
             func intern(_ s: String) -> Int {
@@ -80,6 +81,7 @@ public enum GraphArchive {
             swiftTestingFactoryTypes = graph.functions.compactMapValues(\.swiftTestingFactoryType)
             swiftTestingEmptyFactories = graph.functions.compactMapValues(\.swiftTestingEmptyFactory)
             swiftTestingDeferredProviderCounts = graph.functions.compactMapValues(\.swiftTestingDeferredProviderCount)
+            swiftTestingConditionsByFunction = graph.functions.compactMapValues(\.swiftTestingDeferredConditions)
             captureModules = graph.functions.compactMapValues(\.captureModules)
             dynamicDeclarationModules = graph.functions.compactMapValues(\.dynamicDeclarationModules)
         }
@@ -163,6 +165,7 @@ public enum GraphArchive {
                 node.swiftTestingFactoryType = swiftTestingFactoryTypes?[node.id]
                 node.swiftTestingEmptyFactory = swiftTestingEmptyFactories?[node.id]
                 node.swiftTestingDeferredProviderCount = swiftTestingDeferredProviderCounts?[node.id]
+                node.swiftTestingDeferredConditions = swiftTestingConditionsByFunction?[node.id]
                 node.captureModules = captureModules?[node.id]
                 node.assertionFormattingSites = assertionFormattingSites?[node.id]
                 node.dynamicDeclarationModules = dynamicDeclarationModules?[node.id]

@@ -33,6 +33,9 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         let declaration: String
         let providers: Int
         let eager: [Arguments]
+        var bare: Bool?
+        var conditions: SwiftTestingFactoryProof.Conditions?
+        var nonliteralPredicates: [Arguments]?
     }
 
     private static func name(_ attribute: AttributeSyntax) -> [String] {
@@ -61,13 +64,22 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         var attributes = function.attributes
         var providers: Int?
         var eager: [Arguments] = []
+        var bare = false
+        var conditions = SwiftTestingFactoryProof.Conditions()
+        var nonliteralPredicates: [Arguments] = []
         for index in attributes.indices {
             guard let attribute = attributes[index].as(AttributeSyntax.self) else { return nil }
             if !matches(attribute, "Test") {
                 guard isMainActor(attribute) else { return nil }
                 continue
             }
-            guard providers == nil, let args = attribute.arguments?.as(LabeledExprListSyntax.self), !args.isEmpty else { return nil }
+            guard providers == nil else { return nil }
+            if attribute.arguments == nil || attribute.arguments?.as(LabeledExprListSyntax.self)?.isEmpty == true {
+                bare = true
+                providers = 0
+                continue
+            }
+            guard let args = attribute.arguments?.as(LabeledExprListSyntax.self) else { return nil }
             var projected = args
             var providerCount = 0, hasDisplayName = false
             for index in args.indices {
@@ -80,13 +92,28 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
                     providerCount = 1
                 } else if argument.label == nil && providerCount > 0 {
                     providerCount += 1
+                } else if argument.label == nil,
+                          let call = argument.expression.as(FunctionCallExprSyntax.self),
+                          let member = call.calledExpression.as(MemberAccessExprSyntax.self), member.base == nil,
+                          ["enabled", "disabled"].contains(member.declName.baseName.text),
+                          call.trailingClosure == nil, call.additionalTrailingClosures.isEmpty,
+                          call.arguments.count == 1, let predicate = call.arguments.first, predicate.label?.text == "if" {
+                    conditions.predicates[conditions.traitCount] = member.declName.baseName.text
+                    conditions.traitCount += 1
+                    if !predicate.expression.is(BooleanLiteralExprSyntax.self) {
+                        nonliteralPredicates.append(capture(Syntax(predicate.expression)))
+                    }
+                    let placeholder = predicate.with(\.expression, ExprSyntax(NilLiteralExprSyntax()))
+                    projected[index] = argument.with(\.expression, ExprSyntax(call.with(\.arguments, [placeholder])))
+                    continue
                 } else if argument.label == nil {
+                    conditions.traitCount += 1
                     eager.append(capture(Syntax(argument.expression)))
                     continue
                 } else { return nil }
                 projected[index] = argument.with(\.expression, ExprSyntax(NilLiteralExprSyntax()))
             }
-            guard hasDisplayName || providerCount > 0 else { return nil }
+            guard hasDisplayName || providerCount > 0 || !conditions.predicates.isEmpty else { return nil }
             if hasDisplayName && !eager.isEmpty {
                 // A nonempty traits array alone cannot prove how a string
                 // literal was interpreted. Retain its value and caller location.
@@ -97,7 +124,8 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
             attributes[index] = .attribute(attribute.with(\.arguments, .argumentList(projected)))
         }
         return providers.map { EntryInputs(declaration: fingerprint(Syntax(function.with(\.attributes, attributes))),
-                                          providers: $0, eager: eager) }
+                                          providers: $0, eager: eager, bare: bare, conditions: conditions.predicates.isEmpty ? nil : conditions,
+                                          nonliteralPredicates: nonliteralPredicates.isEmpty ? nil : nonliteralPredicates) }
     }
 
     var suites: [Suite] = []
@@ -154,14 +182,13 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
     @discardableResult
     mutating func record(_ node: Syntax, scope: [String], conditional: Bool, path: String,
                          locations: SourceLocationConverter, originalAttributes: AttributeListSyntax? = nil,
-                         onArguments: ([String], AttributeListSyntax) -> Void) -> (role: String?, suiteName: String?, hasArguments: Bool?) {
+                         onArguments: ([String], AttributeListSyntax, Bool) -> Void) -> (role: String?, suiteName: String?, hasArguments: Bool?) {
         if let function = node.as(FunctionDeclSyntax.self), presence(of: "Test", in: function.attributes) != .absent {
             tests.append(.init(path: path, startLine: locations.location(for: function.positionAfterSkippingLeadingTrivia).line,
                                endLine: locations.location(for: function.endPositionBeforeTrailingTrivia).line))
             let arguments = hasArguments("Test", in: function.attributes)
-            if arguments || Self.hasOpaqueSibling(of: "Test", in: function.attributes) {
-                onArguments(scope + [function.name.text] + function.signature.tokens(viewMode: .sourceAccurate).map(\.text), function.attributes)
-            }
+            onArguments(scope + [function.name.text] + function.signature.tokens(viewMode: .sourceAccurate).map(\.text),
+                        function.attributes, arguments || Self.hasOpaqueSibling(of: "Test", in: function.attributes))
             return ("test", nil, arguments)
         }
         guard let group = node.asProtocol(DeclGroupSyntax.self) else { return (nil, nil, nil) }
@@ -174,12 +201,12 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         let name = scope.map(SDKTestHelperSyntax.canonicalName).joined(separator: ".")
         suites.append(Suite(name: name, conditional: conditional || suite == .conditional))
         let arguments = hasArguments("Suite", in: attributes)
-        if arguments || Self.hasOpaqueSibling(of: "Suite", in: attributes) { onArguments(scope, attributes) }
+        onArguments(scope, attributes, arguments || Self.hasOpaqueSibling(of: "Suite", in: attributes))
         return ("suite", name, arguments)
     }
 
     private mutating func recordMember(_ member: DeclSyntax, enclosing: [String], conditional: Bool,
-                                       path: String, locations: SourceLocationConverter, onArguments: ([String], AttributeListSyntax) -> Void) {
+                                       path: String, locations: SourceLocationConverter, onArguments: ([String], AttributeListSyntax, Bool) -> Void) {
         if let directive = member.as(IfConfigDeclSyntax.self) {
             for clause in directive.clauses {
                 guard let members = clause.elements?.as(MemberBlockItemListSyntax.self) else { continue }

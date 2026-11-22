@@ -653,7 +653,8 @@ public enum XcodeFineSelector {
     private static func callerLocationKinds(_ snapshot: XcodeTestGraph) -> [String: Set<String>] {
         let units = snapshot.sources.values.flatMap(\.units)
         let defaults = units.filter { !($0.locationDefaultKinds?.isEmpty ?? true) }
-        guard !defaults.isEmpty else { return [:] }
+        let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
+        guard !defaults.isEmpty || snapshot.dependencies?.functions[discovery] != nil else { return [:] }
         let allKinds = defaults.reduce(into: Set<String>()) { $0.formUnion($1.locationDefaultKinds ?? []) }
         var kindsByName: [String: Set<String>] = [:]
         for unit in defaults {
@@ -682,15 +683,32 @@ public enum XcodeFineSelector {
         let byFile = Dictionary(grouping: units, by: { $0.region.path })
         var symbolsByUnit: [String: Set<String>] = [:]
         var unitsBySymbol: [String: Set<String>] = [:]
-        for node in graph.functions.values {
+        // A binary callee can declare a caller-location default absent from
+        // captured source. Include transitive calls made during discovery.
+        var pending = [discovery], discoverySymbols = Set<String>()
+        while let id = pending.popLast() {
+            guard discoverySymbols.insert(id).inserted, let node = graph.functions[id] else { continue }
+            pending.append(contentsOf: node.dependencies)
+        }
+        func index(_ node: FunctionNode) {
             for region in node.regions {
                 for unit in byFile[region.path] ?? [] where unit.key.hasPrefix(node.module + ":") &&
                     region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine {
-                    symbolsByUnit[unit.key, default: []].insert(node.id)
-                    unitsBySymbol[node.id, default: []].insert(unit.key)
+                    if discoverySymbols.contains(node.id), let locations = unit.callerLocations, !locations.isEmpty {
+                        result[unit.key, default: []].formUnion(locations.keys)
+                    }
+                    if !defaults.isEmpty {
+                        symbolsByUnit[unit.key, default: []].insert(node.id)
+                        unitsBySymbol[node.id, default: []].insert(unit.key)
+                    }
                 }
             }
         }
+        if defaults.isEmpty {
+            for id in discoverySymbols { if let node = graph.functions[id] { index(node) } }
+            return result
+        }
+        for node in graph.functions.values { index(node) }
         var defaultSymbols: [String: Set<String>] = [:]
         var unresolved = Set<String>()
         for unit in defaults {

@@ -17,7 +17,7 @@ struct SwiftTestingRegistrationComparison {
          touching paths: Set<String>, policy: UIFeatureMappings.SourceLocationPolicy) {
         rebound = Self.reboundDiscoveryCall(before: base?.dependencies, after: head.dependencies)
         func signatures(_ unit: SourceUnit) -> [[String]] {
-            (unit.swiftTestingArguments ?? []).map { $0.comparison(policy) }
+            ((unit.swiftTestingArguments ?? []) + [unit.swiftTestingMetadata].compactMap { $0 }).map { $0.comparison(policy) }
         }
         func candidates(_ units: [String: [SourceUnit]], other: [String: [SourceUnit]]) -> [[String]: [SourceUnit]] {
             var result: [[String]: [SourceUnit]] = [:]
@@ -25,9 +25,13 @@ struct SwiftTestingRegistrationComparison {
                 let unit = group[0]
                 guard let inputs = unit.swiftTestingEntryInputs else { continue }
                 if let matches = other[key], matches.count == 1, signatures(unit) == signatures(matches[0]) { continue }
+                // Without a base factory, a changed expression could previously
+                // have selected an eager overload. Boolean literals retain their
+                // type; require all other predicates to compare unchanged.
+                let historical = base == nil ? inputs.nonliteralPredicates ?? [] : []
                 let identity = [String(key.prefix { $0 != ":" }), unit.region.path, unit.scope, unit.conditionalBranch ?? "",
                                 String(inputs.providers), inputs.declaration] +
-                    inputs.eager.map { SourceUnit.withLocations($0.comparison(policy), syntax: "eager") }
+                    (inputs.eager + historical).map { SourceUnit.withLocations($0.comparison(policy), syntax: "eager") }
                 result[identity, default: []].append(unit)
             }
             return result
@@ -139,6 +143,11 @@ struct SwiftTestingRegistrationComparison {
                 $0.compilerReferences?.contains { $0.hasPrefix("$s7Testing4TestV10__function") } == true
             }
             guard factories.count == 1, let factory = factories.first else { return false }
+            if let conditions = inputs.conditions {
+                return factory.swiftTestingDeferredConditions == conditions &&
+                    (inputs.providers == 0 || factory.swiftTestingDeferredProviderCount == inputs.providers)
+            }
+            if inputs.bare == true { return true }
             if inputs.providers == 0 {
                 return inputs.eager.isEmpty && ["member", "top-level"].contains(factory.swiftTestingEmptyFactory)
             }

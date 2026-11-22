@@ -332,6 +332,7 @@ public enum SILParser {
                     current!.swiftTestingTraitProducers = evidence.traitProducers
                     current!.swiftTestingEmptyFactory = evidence.emptyFactory
                     current!.swiftTestingDeferredProviderCount = evidence.deferredProviderCount
+                    current!.swiftTestingDeferredConditions = evidence.deferredConditions
                     current!.swiftTestingFactoryType = evidence.nominalType
                 }
                 functions[current!.id] = current!

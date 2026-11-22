@@ -49,6 +49,7 @@ public struct SourceUnit: Codable, Sendable {
     /// The written discovery attribute has arguments. Nil denotes older evidence.
     public var swiftTestingHasArguments: Bool? = nil
     var swiftTestingArguments: [SwiftTestingSourceDeclarations.Arguments]? = nil
+    var swiftTestingMetadata: SwiftTestingSourceDeclarations.Arguments? = nil
     var swiftTestingEntryInputs: SwiftTestingSourceDeclarations.EntryInputs? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
     /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
@@ -102,8 +103,9 @@ public struct SourceUnit: Codable, Sendable {
         case .diagnosticLineColumn:
             body = fileLocationValues.map { Self.withLocations($0, syntax: syntaxFingerprint ?? fingerprint) } ?? fingerprint
         }
-        guard let conditionalBranch else { return body }
-        return "@if[\(conditionalBranch.utf8.count):\(conditionalBranch)]" + body
+        let registration = swiftTestingMetadata.map { Self.withLocations($0.comparison(policy), syntax: body) } ?? body
+        guard let conditionalBranch else { return registration }
+        return "@if[\(conditionalBranch.utf8.count):\(conditionalBranch)]" + registration
     }
 
     static func withLocations(_ values: [String], syntax: String) -> String {
@@ -116,7 +118,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 9
+    static let currentParserVersion = 10
     var swiftTestingDeclarations: SwiftTestingSourceDeclarations? = nil
     public var parserVersion: Int? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
@@ -592,8 +594,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             let receiverCalls = SDKReceiverCallSyntax.evidence(in: node, locations: physicalLocations ? locations : nil, path: path)
             let testingScope = node.as(ActorDeclSyntax.self).map { scope + [$0.name.text] } ?? scope
             var registrations: [SwiftTestingSourceDeclarations.Arguments] = []
+            var entryMetadata: SwiftTestingSourceDeclarations.Arguments?
             let testing = discovery.record(node, scope: testingScope, conditional: !branch.isEmpty, path: path,
-                                          locations: locations, originalAttributes: originalAttributes) { owner, attributes in
+                                          locations: locations, originalAttributes: originalAttributes) { owner, attributes, hasEagerInputs in
                 let syntax = Syntax(attributes)
                 // Preserve conditional membership inside opaque declarations
                 // such as actors, whose members have no individual source unit.
@@ -609,8 +612,39 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     }
                     ancestor = current.parent
                 }
-                let identity = SourceUnit.withLocations(owner + conditions, syntax: compactFingerprint(syntax))
-                registrations.append(.init(identity: identity, locations: locationValues(syntax), calls: callerInfo(syntax).locations))
+                let context = owner + conditions
+                if hasEagerInputs {
+                    let identity = SourceUnit.withLocations(context, syntax: compactFingerprint(syntax))
+                    registrations.append(.init(identity: identity, locations: locationValues(syntax), calls: callerInfo(syntax).locations))
+                }
+                // Testing exposes the attached declaration's comments and source
+                // bounds through Test.current even when its attribute has no arguments.
+                guard let declaration = syntax.parent else { return }
+                let trivia = declaration.leadingTrivia
+                let firstComment = trivia.firstIndex { piece in
+                    switch piece {
+                    case .lineComment, .docLineComment, .blockComment, .docBlockComment: true
+                    default: false
+                    }
+                }
+                let comments = firstComment.map { Trivia(pieces: trivia[$0...]).description } ?? ""
+                var positions = [declaration.positionAfterSkippingLeadingTrivia, declaration.endPositionBeforeTrailingTrivia]
+                if let name = declaration.asProtocol(NamedDeclSyntax.self)?.name { positions.append(name.positionAfterSkippingLeadingTrivia) }
+                for attribute in attributes.compactMap({ $0.as(AttributeSyntax.self) }) {
+                    positions.append(attribute.atSign.positionAfterSkippingLeadingTrivia)
+                    positions += attribute.attributeName.tokens(viewMode: .sourceAccurate).map(\.positionAfterSkippingLeadingTrivia)
+                }
+                let bounds = positions.flatMap { position in
+                    locationNames.sorted().map { $0 + ":" + locationValue($0, at: position) }
+                }
+                let metadata = SwiftTestingSourceDeclarations.Arguments(identity: SourceUnit.withLocations(context, syntax: comments),
+                                                                       locations: bounds, calls: [:])
+                if node.is(FunctionDeclSyntax.self) {
+                    entryMetadata = metadata
+                } else {
+                    // Suite and opaque nested declarations lack a single entry owner.
+                    registrations.append(metadata)
+                }
             }
             let entryInputs = node.as(FunctionDeclSyntax.self).flatMap {
                 SwiftTestingSourceDeclarations.entryInputs($0, fingerprint: compactFingerprint) { expression in
@@ -637,7 +671,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
                 }, swiftTestingRole: testing.role, swiftTestingSuiteName: testing.suiteName,
                 swiftTestingHasArguments: testing.hasArguments, swiftTestingArguments: registrations.isEmpty ? nil : registrations,
-                swiftTestingEntryInputs: entryInputs, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                swiftTestingMetadata: entryMetadata, swiftTestingEntryInputs: entryInputs, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,
                 helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },

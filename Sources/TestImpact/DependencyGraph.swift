@@ -43,6 +43,8 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     public var swiftTestingEmptyFactory: String? = nil
     /// Capture-free argument providers passed to a verified SDK factory with a recognized traits array.
     public var swiftTestingDeferredProviderCount: Int? = nil
+    /// Capture-free SDK predicates and their positions in the test factory’s traits array.
+    var swiftTestingDeferredConditions: SwiftTestingFactoryProof.Conditions? = nil
     /// Unqualified concrete nominal passed as a literal metatype to the SDK factory.
     public var swiftTestingFactoryType: String? = nil
     /// Concrete payloads stored in the traits array passed to a Swift Testing factory.
@@ -104,6 +106,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
         if swiftTestingFactoryType != other.swiftTestingFactoryType { swiftTestingFactoryType = nil }
         if swiftTestingEmptyFactory != other.swiftTestingEmptyFactory { swiftTestingEmptyFactory = nil }
         if swiftTestingDeferredProviderCount != other.swiftTestingDeferredProviderCount { swiftTestingDeferredProviderCount = nil }
+        if swiftTestingDeferredConditions != other.swiftTestingDeferredConditions { swiftTestingDeferredConditions = nil }
         dynamicCallSignatures = union(dynamicCallSignatures, other.dynamicCallSignatures)
         stateAccesses = union(stateAccesses, other.stateAccesses)
         receiverTypeOrigins = union(receiverTypeOrigins, other.receiverTypeOrigins)
