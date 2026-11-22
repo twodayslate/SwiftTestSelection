@@ -155,6 +155,8 @@ public struct DependencyGraph: Codable, Sendable {
     public var testVTableEntries: [String: Set<String>]? = nil
     /// Runtime witnesses keyed by the suite factory that constructs their trait.
     public var swiftTestingSuiteWitnesses: [String: Set<String>]? = nil
+    /// Complete factory inventories independently reached from compiled test registrations.
+    public var swiftTestingRegisteredFactories: [String: Set<String>]? = nil
     /// Compiler-authenticated class identities from the matching built modules.
     public var compilerClassIdentities: [String: CompilerClassIdentity]? = nil
     /// Imports injected by compiler options, including binary modules absent

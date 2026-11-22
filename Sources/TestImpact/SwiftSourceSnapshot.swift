@@ -121,6 +121,28 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         })
     }
 
+    /// Archives retain units in source order. Fold that order into the enum type
+    /// for comparison, including in saved graphs that predate this selector.
+    var comparisonUnits: [SourceUnit] {
+        var units = self.units
+        var owner: [String: Int] = [:]
+        var cases: [Int: [String]] = [:]
+        for (index, unit) in units.enumerated() {
+            if unit.kind == "type" { owner[unit.scope] = index }
+            guard unit.kind == "declaration", let enumIndex = owner[unit.scope],
+                  unit.helperEnumCaseWithoutDefaults != nil || unit.key.contains(":enumCaseDecl[") else { continue }
+            let signature = unit.comparisonFingerprint(.diagnostic)
+            cases[enumIndex, default: []].append("\(signature.utf8.count):" + signature)
+        }
+        for (index, declarations) in cases {
+            let order = "@enumCases[" + declarations.joined() + "]"
+            let syntax = units[index].syntaxFingerprint ?? units[index].fingerprint
+            units[index].syntaxFingerprint = syntax + order
+            units[index].fingerprint += order
+        }
+        return units
+    }
+
     /// Git blob identities of the actual parsed bytes. Archive substitutions,
     /// filters or generated replacements must not authenticate unchanged Git
     /// paths as unchanged parsed content. Nil retains historical parsing.

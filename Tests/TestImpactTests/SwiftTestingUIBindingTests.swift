@@ -355,7 +355,11 @@ import Testing
     """
     let vendor = "import Testing\n" + trait + """
 
+    #if os(macOS)
     @Suite(Mode()) struct Common { @Test func decorated() {} }
+    #endif
+    struct Independent { @Test func plainMember() {} }
+    @Test func top() {}
     #if os(iOS)
     @Suite struct IOSOnly { @Test func platformTest() {} }
     #endif
@@ -383,12 +387,21 @@ import Testing
         sources[module + ":" + path] = .parse(source, path: path, module: module)
     }
     let expected: [String: Set<String>] = [
+        "Vendor/top()": [], "Vendor/Independent/plainMember()": [],
         "Vendor/Common/decorated()": ["Vendor"], "Client/Common/plain()": [], "Client/Decorated/local()": ["Client"],
         "Client/own()": ["Client"], "Client/imported()": ["Vendor"], "Client/both()": ["Client", "Vendor"]
     ]
     XcodeCompilerGraph.resolveDispatch(&graph, tables: tables, compiler: compiler)
     XcodeCompilerGraph.bind(tests: Array(expected.keys), modules: ["Client": "Client", "Vendor": "Vendor"], sources: sources, graph: &graph)
-    #expect(graph.testDiagnostics["Client/Common/plain()"]?.isEmpty ?? true)
+    for test in ["Client/Common/plain()", "Vendor/top()", "Vendor/Independent/plainMember()"] {
+        #expect(graph.testDiagnostics[test]?.isEmpty ?? true)
+    }
+    let activeSuite = try #require(graph.functions.values.first { $0.module == "Vendor" && $0.swiftTestingFactoryType == "Common" &&
+        $0.compilerReferences?.contains(where: { $0.hasPrefix("$s7Testing4TestV6__type") }) == true })
+    var incomplete = DependencyGraph(functions: graph.functions.filter { $0.key != activeSuite.id })
+    XcodeCompilerGraph.resolveDispatch(&incomplete, tables: tables, compiler: compiler)
+    XcodeCompilerGraph.bind(tests: Array(expected.keys), modules: ["Client": "Client", "Vendor": "Vendor"], sources: sources, graph: &incomplete)
+    #expect(incomplete.testDiagnostics["Vendor/top()"]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true)
     for module in ["Client", "Vendor"] {
         let hook = try #require(graph.functions.values.first { $0.module == module && $0.name == "hook()" })
         let paths = DependencyIndex(graph).paths(to: [hook.id])

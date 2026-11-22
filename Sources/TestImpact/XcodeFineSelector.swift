@@ -79,8 +79,8 @@ public enum XcodeFineSelector {
         func fingerprint(_ unit: SourceUnit) -> String {
             unit.comparisonFingerprint(locationPolicy)
         }
-        let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.units) ?? [], by: \.key)
-        let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.units), by: \.key)
+        let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.comparisonUnits) ?? [], by: \.key)
+        let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.comparisonUnits), by: \.key)
         let sourceUnits: [SourceUnit] = oldUnits.values.flatMap { $0 } + newUnits.values.flatMap { $0 }
         let missingCallerMetadata = sourceUnits.contains { unit in
             unit.locationDefaultKinds == nil || unit.callerLocations == nil ||
@@ -115,6 +115,10 @@ public enum XcodeFineSelector {
         if !legacyConditionalPaths.isEmpty {
             fallback("incomplete_conditional_metadata", "Saved snapshots lack conditional branch membership for " + legacyConditionalPaths.sorted().joined(separator: ", ") + ". Regenerate both graphs.")
         }
+        struct Alternative: Hashable {
+            let path: String
+            let branch: String?
+        }
         var movedPaths: [String: String] = [:]
         for change in changes where change.isPureMove {
             if let previousPath = change.previousPath { movedPaths[previousPath] = change.path }
@@ -122,10 +126,10 @@ public enum XcodeFineSelector {
         for key in Set(oldUnits.keys).union(newUnits.keys) {
             let old = oldUnits[key] ?? [], new = newUnits[key] ?? []
             if old.count > 1 || new.count > 1 {
-                let before = Dictionary(grouping: old) { movedPaths[$0.region.path] ?? $0.region.path }
-                let after = Dictionary(grouping: new, by: \.region.path)
-                for path in Set(before.keys).union(after.keys) {
-                    let lhs = before[path] ?? [], rhs = after[path] ?? []
+                let before = Dictionary(grouping: old) { Alternative(path: movedPaths[$0.region.path] ?? $0.region.path, branch: $0.conditionalBranch) }
+                let after = Dictionary(grouping: new) { Alternative(path: $0.region.path, branch: $0.conditionalBranch) }
+                for alternative in Set(before.keys).union(after.keys) {
+                    let lhs = before[alternative] ?? [], rhs = after[alternative] ?? []
                     if lhs.map(comparisonFingerprint).sorted() != rhs.map(comparisonFingerprint).sorted() {
                         oldChanged += lhs
                         newChanged += rhs

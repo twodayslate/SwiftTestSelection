@@ -31,6 +31,7 @@ public enum GraphArchive {
         var nominalTypeContexts: [String: String]?
         /// Optional for archives written before factory-effect evidence existed.
         var testVTableEntries: [String: Set<String>]?
+        var swiftTestingRegisteredFactories: [String: Set<String>]?
         var swiftTestingSuiteWitnesses: [String: Set<String>]?
         var swiftTestingTraitProducers: [String: Set<String>]?
         var swiftTestingExistentialTypes: [String: Set<String>]?
@@ -69,6 +70,7 @@ public enum GraphArchive {
             assertionFormattingSites = graph.functions.compactMapValues(\.assertionFormattingSites)
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
             testVTableEntries = graph.testVTableEntries
+            swiftTestingRegisteredFactories = graph.swiftTestingRegisteredFactories
             swiftTestingSuiteWitnesses = graph.swiftTestingSuiteWitnesses
             swiftTestingTraitProducers = graph.functions.compactMapValues(\.swiftTestingTraitProducers)
             swiftTestingExistentialTypes = graph.functions.compactMapValues(\.swiftTestingExistentialTypes)
@@ -85,6 +87,7 @@ public enum GraphArchive {
             var graph = DependencyGraph(toolchain: toolchain, diagnostics: diagnostics)
             graph.schemaVersion = schema; graph.testDiagnostics = testDiagnostics
             graph.testVTableEntries = testVTableEntries
+            graph.swiftTestingRegisteredFactories = swiftTestingRegisteredFactories
             graph.swiftTestingSuiteWitnesses = swiftTestingSuiteWitnesses
             graph.compilerClassIdentities = compilerClassIdentities
             graph.compilerImplicitImports = compilerImplicitImports

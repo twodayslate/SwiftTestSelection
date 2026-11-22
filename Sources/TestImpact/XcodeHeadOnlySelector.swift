@@ -263,8 +263,14 @@ enum XcodeHeadOnlySelector {
         let comparison = HeadOnlySourceComparison(head: current.mappings, base: source.mappings)
         lazy var hierarchy = SwiftSuperclassIndex(sources: current.sources)
         let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
-        let old = Dictionary(grouping: source.base.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
-        let new = Dictionary(grouping: current.sources.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
+        func scopedUnits(_ sources: [String: SwiftSourceSnapshot]) -> [String: [SourceUnit]] {
+            let files = sources.values.filter { snapshot in
+                guard let path = snapshot.units.first?.region.path else { return false }
+                return paths.contains(path)
+            }
+            return Dictionary(grouping: files.flatMap(\.comparisonUnits), by: \.key)
+        }
+        let old = scopedUnits(source.base), new = scopedUnits(current.sources)
         let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries, index: dependencyIndex)
         var isolatedHelpers = Set<String>(), isolatedSDKHelpers = Set<String>()
         var declarationAudits: [HelperDeclarationAudit] = []

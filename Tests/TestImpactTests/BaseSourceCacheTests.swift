@@ -323,7 +323,7 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
             }
             """]
         for (name, value) in zip(["First", "Second", "Third"], values) {
-            files[name + ".swift"] = "#if DEBUG\nprivate func reading() -> Int { \(value) }\n#endif\nfunc from\(name)() -> Int { reading() }"
+            files[name + ".swift"] = "#if DEBUG\nprivate func reading() -> Int { \(value) }\n#else\nprivate func reading() -> Int { 91 }\n#endif\nfunc from\(name)() -> Int { reading() }"
         }
         var graph = try boundaryGraph(files, tests: entries, root: repo.root, compilerArguments: ["-D", "DEBUG"])
         graph.targets = [.init(name: "UI", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: Set(files.keys))]
@@ -335,4 +335,33 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
         changes: [.init(path: "First.swift"), .init(path: "Second.swift")], baseRevision: "base")
     #expect(result.selectedTests == Array(entries.prefix(2)))
     #expect(result.diagnostics.isEmpty)
+}
+
+@Test func reorderingConditionalEnumCasesSelectsRawValueConsumers() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let entry = "UI/Cases/testRawValue()"
+    let caller = "import XCTest\nfinal class Cases: XCTestCase { func testRawValue() { XCTAssertEqual(Mode.enabled.rawValue, 0) } }"
+    let conditional = "#if DEBUG\ncase enabled\n#endif"
+    let before = "enum Mode: Int {\n" + conditional + "\ncase disabled\n}"
+    let after = "enum Mode: Int {\ncase disabled\n" + conditional + "\n}"
+    try repo.write("Mode.swift", before)
+    try repo.write("Tests.swift", caller)
+    let base = try repo.commit()
+    func capture(_ text: String) throws -> XcodeTestGraph {
+        let files = ["Mode.swift": text, "Tests.swift": caller]
+        var graph = try boundaryGraph(files, tests: [entry], root: repo.root, compilerArguments: ["-D", "DEBUG"])
+        graph.targets = [.init(name: "UI", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: Set(files.keys))]
+        return graph
+    }
+    let old = try GraphArchive.decode(GraphArchive.encode(capture(before)))
+    let head = try GraphArchive.decode(GraphArchive.encode(capture(after)))
+    let changes = [FileChange(path: "Mode.swift")]
+    let source = try XcodeHeadOnlySources.read(current: head, changes: changes, base: base, root: repo.root, mappingPath: "mapping.json")
+    let reports = [XcodeFineSelector.select(current: head, previous: old, changes: changes, baseRevision: base),
+                   XcodeHeadOnlySelector.select(current: head, source: source, changes: changes, baseRevision: base)]
+    for report in reports {
+        #expect(report.selectedTests == [entry])
+        #expect(!report.ignoredChanges.contains("Mode.swift"))
+    }
 }

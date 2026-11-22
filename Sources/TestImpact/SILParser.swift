@@ -8,6 +8,7 @@ public struct SILModule: Codable, Sendable {
     // after primary-file and module dispatch tables have been merged.
     static let scopeProviderPrefix = "@testing-scope-provider:"
     static let scopeConformancePrefix = "@testing-scope-conformance:"
+    static let testingRecordPrefix = "@testing-record:"
     static let testVTablePrefix = "@xctest-vtable:"
     /// Bodies imported from another module; source locations alone cannot prove
     /// definition ownership when multiple modules compile the same file.
@@ -158,6 +159,7 @@ public enum SILParser {
         var sharedSymbols = Set<String>()
         var functions: [String: FunctionNode] = [:]
         var tables: [String: Set<String>] = [:]
+        var testingRecord: String?
         var externalWitnesses: [String: Set<String>] = [:]
         var current: FunctionNode?
         var testingFactoryLines: [String]?
@@ -217,6 +219,21 @@ public enum SILParser {
             let line = raw.trimmingSILWhitespace()
             guard !line.isEmpty else { return }
             if current == nil {
+                if let record = testingRecord {
+                    if line == "}" { testingRecord = nil }
+                    else if let reference = Pattern.groups(Expressions.reference, in: line) {
+                        tables[record, default: []].insert(reference[1])
+                    }
+                    return
+                }
+                if line.hasPrefix("sil_global "), line.contains("__swift5_tests"), line.contains("[section "),
+                   let symbol = Pattern.groups(Expressions.function, in: line)?.first {
+                    // An unsupported initializer leaves an empty record. Its
+                    // module cannot use registrations to waive a missing suite.
+                    let key = SILModule.testingRecordPrefix + module + ":" + symbol
+                    tables[key] = []
+                    if line.hasSuffix("= {") { testingRecord = key }
+                }
                 if line.hasPrefix("sil_witness_table") {
                     classTable = nil
                     let table = Pattern.groups(Expressions.witnessTable, in: line)

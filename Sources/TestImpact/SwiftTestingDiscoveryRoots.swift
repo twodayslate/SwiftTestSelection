@@ -10,6 +10,37 @@ enum SwiftTestingDiscoveryRoots {
     static let missingEvidence = "Swift Testing discovery roots are incomplete; compiler evidence for argument generation and traits is required"
     static let runtimeEvidence = "Swift Testing argument/trait factory roots are bound, but runtime trait/scoping callbacks and generic argument-iteration witnesses remain unproven"
 
+    /// Follow each Mach-O test record's C accessor to the function supplied to
+    /// Testing.Test.__store. Unknown lowering or a missing record body leaves
+    /// the module on the conservative source-inventory check.
+    static func registeredFactories(tables: [String: Set<String>], graph: DependencyGraph) -> [String: Set<String>]? {
+        var inventories: [String: Set<String>] = [:], incomplete = Set<String>()
+        let store = "$s7Testing4TestV7__store_4into8asTypeAt"
+        func registeredFactory(from accessor: String, module: String) -> String? {
+            var id = accessor, visited = Set<String>(), reachedStore = false
+            while visited.insert(id).inserted, let node = graph.functions[id],
+                  node.module == module, node.regions.isEmpty, var references = node.compilerReferences {
+                if reachedStore, references.contains(where: SwiftTestingFactoryProof.isFactory) { return id }
+                if let sdk = references.first(where: { $0.hasPrefix(store) }) {
+                    guard !reachedStore else { return nil }
+                    reachedStore = true
+                    references.remove(sdk)
+                }
+                guard references.count == 1, let next = references.first else { return nil }
+                id = next
+            }
+            return nil
+        }
+        for (key, accessors) in tables where key.hasPrefix(SILModule.testingRecordPrefix) {
+            let module = String(key.dropFirst(SILModule.testingRecordPrefix.count).prefix { $0 != ":" })
+            guard accessors.count == 1, let accessor = accessors.first,
+                  let factory = registeredFactory(from: accessor, module: module),
+                  inventories[module, default: []].insert(factory).inserted else { incomplete.insert(module); continue }
+        }
+        for module in incomplete { inventories.removeValue(forKey: module) }
+        return inventories.isEmpty ? nil : inventories
+    }
+
     /// Both ends of the runtime edge must name the same concrete type.
     /// The producer can be defined in a different module from the factory.
     static func bindTraitWitnesses(graph: inout DependencyGraph, tables: [String: Set<String>], compiler: String?) {
@@ -93,7 +124,8 @@ enum SwiftTestingDiscoveryRoots {
         guard !Set(modules.values).contains("Testing") else { return }
         let entries = graph.tests
         let sourceModules = Dictionary(grouping: sources, by: { String($0.key.prefix { $0 != ":" }) })
-        var testRegions: [String: [String: [SourceRegion]]] = [:], suiteCounts: [String: Int] = [:]
+        var testRegions: [String: [String: [SourceRegion]]] = [:]
+        var conditionalSuites: [String: [String]] = [:]
         var valueTypes: [String: Set<String>] = [:], declaredSuites: [String: [String]] = [:]
         var currentMetadata = Set<String>()
         for (module, files) in sourceModules {
@@ -104,8 +136,8 @@ enum SwiftTestingDiscoveryRoots {
                 }
                 if unit.swiftTestingRole == "test" { testRegions[module, default: [:]][unit.region.path, default: []].append(unit.region) }
                 if unit.swiftTestingRole == "suite" {
-                    suiteCounts[module, default: 0] += 1
                     declaredSuites[module, default: []].append(unit.scope)
+                    if unit.conditionalBranch != nil { conditionalSuites[module, default: []].append(unit.scope) }
                 }
             }
         }
@@ -140,10 +172,26 @@ enum SwiftTestingDiscoveryRoots {
         })
         // A verified locally declared value type only inherits its own suite
         // traits. Missing factories in unrelated modules cannot apply to it.
-        let completeSuiteModules = currentMetadata.filter { module in
+        var completeSuiteModules = Set<String>()
+        for module in currentMetadata {
             let symbols = suites[module] ?? []
             let types = symbols.compactMap { graph.functions[$0]?.swiftTestingFactoryType }
-            return types.count == symbols.count && types.sorted() == (declaredSuites[module] ?? []).sorted()
+            let declared = declaredSuites[module] ?? []
+            guard types.count == symbols.count else { continue }
+            if types.sorted() == declared.sorted() { completeSuiteModules.insert(module); continue }
+            // Conditional source is parsed on every platform. An omitted suite
+            // is benign only when every emitted registration has a bound factory
+            // and every unmatched declaration could be inactive.
+            guard let conditional = conditionalSuites[module],
+                  graph.swiftTestingRegisteredFactories?[module] == symbols.union(factories[module] ?? []) else { continue }
+            func counts(_ names: [String]) -> [String: Int] { Dictionary(grouping: names, by: { $0 }).mapValues(\.count) }
+            let captured = counts(types)
+            let conditionalCounts = counts(conditional)
+            let written = counts(declared)
+            if captured.allSatisfy({ $0.value <= written[$0.key, default: 0] }) &&
+                written.allSatisfy({ $0.value - conditionalCounts[$0.key, default: 0] <= captured[$0.key, default: 0] }) {
+                completeSuiteModules.insert(module)
+            }
         }
         var discovered: [String: Set<String>] = [:], incompleteFactories = Set<String>()
         let ownedPrefixes = Set(modules.values).map { "$s" + String($0.utf8.count) + $0 }
@@ -193,7 +241,7 @@ enum SwiftTestingDiscoveryRoots {
                     scope = scope.dropLast()
                 }
             }
-            guard factoryRoots.count == 1, (suiteCounts[module] ?? 0) <= (suites[module]?.count ?? 0),
+            guard factoryRoots.count == 1, completeSuiteModules.contains(module) || (declaredSuites[module]?.count ?? 0) <= (suites[module]?.count ?? 0),
                   currentMetadata.contains(module),
                   factoryRoots.isDisjoint(with: incompleteFactories),
                   (suites[module] ?? []).isDisjoint(with: incompleteFactories),

@@ -226,6 +226,7 @@ enum XcodeCompilerGraph {
             if graph.testVTableEntries == nil { graph.testVTableEntries = [:] }
             graph.testVTableEntries?[String(key.dropFirst(SILModule.testVTablePrefix.count)), default: []].formUnion(symbols)
         }
+        graph.swiftTestingRegisteredFactories = SwiftTestingDiscoveryRoots.registeredFactories(tables: tables, graph: graph)
         SwiftTestingDiscoveryRoots.bindTraitWitnesses(graph: &graph, tables: tables, compiler: compiler)
         let localModules = projectModules ?? Set(graph.functions.values.filter { !$0.regions.isEmpty }.map(\.module))
         for symbol in graph.functions.keys {
