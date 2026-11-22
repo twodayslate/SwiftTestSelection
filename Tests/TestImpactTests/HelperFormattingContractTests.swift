@@ -141,6 +141,21 @@ private func formattingFixture(before: String = formattingBefore) throws -> (URL
     }
 }
 
+@Test func enumCaseReorderInvalidatesReviewedFormattingContract() throws {
+    let before = formattingBefore + "\nenum Mode: Int { case enabled; case disabled }"
+    let (root, fixture, source, contract) = try formattingFixture(before: before)
+    defer { try? FileManager.default.removeItem(at: root) }
+    var current = fixture
+    current.mappings!.helperFormattingContracts = [contract]
+    let reviewed = HelperFormattingContracts.validate(current: current, source: source, baseRevision: "base")
+    #expect(reviewed.contracts.count == 1)
+    let reordered = formattingAfter + "\nenum Mode: Int { case disabled; case enabled }"
+    current.sources["UI:UI.swift"] = .parse(reordered, path: "UI.swift", module: "UI")
+    let stale = HelperFormattingContracts.validate(current: current, source: source, baseRevision: "base")
+    #expect(stale.contracts.isEmpty)
+    #expect(stale.decisions.contains { $0.failures.contains { $0.hasPrefix("Head source binding is stale") } })
+}
+
 @Test func formattingContractCommentsAreNativeParsedAndSemantic() throws {
     let (root, fixture, source, contract) = try formattingFixture()
     defer { try? FileManager.default.removeItem(at: root) }

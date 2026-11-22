@@ -367,6 +367,7 @@ public enum XcodeFineSelector {
             var affected = Set<String>()
             var productionUnits: [SourceUnit] = []
             var productionAffected = Set<String>()
+            var enumModules = Set<String>()
             for unit in units {
                 let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
                 let production = owners.isEmpty || owners.contains { !$0.isTest }
@@ -401,7 +402,11 @@ public enum XcodeFineSelector {
                     }
                     include(tests, kind: "dependency", reason: "Changed class state, inheritance, or file-level declaration", revision: revision, path: [unit.region.path, unit.scope])
                 }
-                if ids.isEmpty {
+                if unit.kind == "type" && unit.fingerprint.hasPrefix("enumDecl[") {
+                    // Synthesized witnesses and inlined case construction can consume
+                    // layout without a member reference, even when other members bind.
+                    enumModules.insert(String(unit.key.prefix { $0 != ":" }))
+                } else if ids.isEmpty {
                     let tests = Set(snapshot.tests.filter { test in owners.contains { $0.name == target(of: test) } })
                     fallback("unresolved_declaration", "Cannot associate changed declaration with compiled functions: \(unit.region.path):\(unit.region.startLine)", tests: production ? inventory : tests)
                 }
@@ -457,19 +462,25 @@ public enum XcodeFineSelector {
                     newChanged.allSatisfy { isProduction($0, in: current) || isTestEntry($0, in: current) }
                 let changedModules = Set((oldChanged + newChanged).map { String($0.key.prefix { $0 != ":" }) })
                 var bounded: [String: [String]] = [:]
-                for test in snapshot.tests where inventory.contains(test) {
-                    if declaredUIRuntime && uiTests.contains(test) { continue }
-                    if let path = uncertainPaths.path(from: graph.tests[test] ?? []) {
-                        if changesHaveIsolatedOwnership, let boundary = boundedTargets[target(of: test)],
-                           changedModules.isDisjoint(with: boundary.modules) {
-                            bounded[boundary.target, default: []].append(test)
-                        } else {
-                            let uncertainty = graph.functions[path.last!]!.uncertainties
-                            let missingImplementation = uncertainty.contains { $0.hasPrefix("Imported conformance:") }
-                                ? " Imported conformance ownership is known; its implementation body/runtime effects are unavailable." : ""
-                            fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test); no validated boundary excludes changed modules [\(changedModules.sorted().joined(separator: ", "))]: \(uncertainty.sorted().joined(separator: "; "))" + missingImplementation, tests: [test])
-                        }
+                var layoutConsumers = Set<String>()
+                for test in inventory {
+                    let path = declaredUIRuntime && uiTests.contains(test) ? nil : uncertainPaths.path(from: graph.tests[test] ?? [])
+                    guard !enumModules.isEmpty || path != nil else { continue }
+                    if changesHaveIsolatedOwnership, let boundary = boundedTargets[target(of: test)],
+                       changedModules.isDisjoint(with: boundary.modules) {
+                        bounded[boundary.target, default: []].append(test)
+                        continue
                     }
+                    if !enumModules.isEmpty { layoutConsumers.insert(test) }
+                    if let path {
+                        let uncertainty = graph.functions[path.last!]!.uncertainties
+                        let missingImplementation = uncertainty.contains { $0.hasPrefix("Imported conformance:") }
+                            ? " Imported conformance ownership is known; its implementation body/runtime effects are unavailable." : ""
+                        fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test); no validated boundary excludes changed modules [\(changedModules.sorted().joined(separator: ", "))]: \(uncertainty.sorted().joined(separator: "; "))" + missingImplementation, tests: [test])
+                    }
+                }
+                if !layoutConsumers.isEmpty {
+                    fallback("enum_layout_change", "\(revision): Enum declaration or case layout changed in \(enumModules.sorted().joined(separator: ", ")). Compiled member references do not cover every representation or protocol witness consumer.", tests: layoutConsumers)
                 }
                 for (target, tests) in bounded {
                     let boundary = boundedTargets[target]!

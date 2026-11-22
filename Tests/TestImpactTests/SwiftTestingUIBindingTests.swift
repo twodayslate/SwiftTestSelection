@@ -349,6 +349,7 @@ import Testing
     let trait = """
     public struct Mode: TestTrait, SuiteTrait {
         public init() {}
+        public var isRecursive: Bool { true }
         public func prepare(for test: Testing.Test) async throws { hook() }
     }
     func hook() {}
@@ -358,6 +359,7 @@ import Testing
     #if os(macOS)
     @Suite(Mode()) struct Common { @Test func decorated() {} }
     #endif
+    @Suite(Mode()) actor Live { @Test func real() {} }
     struct Independent { @Test func plainMember() {} }
     @Test func top() {}
     #if os(iOS)
@@ -388,7 +390,7 @@ import Testing
     }
     let expected: [String: Set<String>] = [
         "Vendor/top()": [], "Vendor/Independent/plainMember()": [],
-        "Vendor/Common/decorated()": ["Vendor"], "Client/Common/plain()": [], "Client/Decorated/local()": ["Client"],
+        "Vendor/Live/real()": ["Vendor"], "Vendor/Common/decorated()": ["Vendor"], "Client/Common/plain()": [], "Client/Decorated/local()": ["Client"],
         "Client/own()": ["Client"], "Client/imported()": ["Vendor"], "Client/both()": ["Client", "Vendor"]
     ]
     XcodeCompilerGraph.resolveDispatch(&graph, tables: tables, compiler: compiler)

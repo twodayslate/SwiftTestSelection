@@ -340,17 +340,24 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
 @Test func reorderingConditionalEnumCasesSelectsRawValueConsumers() throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
-    let entry = "UI/Cases/testRawValue()"
-    let caller = "import XCTest\nfinal class Cases: XCTestCase { func testRawValue() { XCTAssertEqual(Mode.enabled.rawValue, 0) } }"
+    let entries = ["UI/Cases/testEncodedValue()", "UI/Cases/testRawValue()"]
+    let caller = """
+    import XCTest
+    final class Cases: XCTestCase {
+        func testRawValue() { XCTAssertEqual(Mode.enabled.rawValue, 0) }
+        func testEncodedValue() throws { XCTAssertEqual(try encodeEnabled(), "0") }
+    }
+    """
     let conditional = "#if DEBUG\ncase enabled\n#endif"
-    let before = "enum Mode: Int {\n" + conditional + "\ncase disabled\n}"
-    let after = "enum Mode: Int {\ncase disabled\n" + conditional + "\n}"
+    let encoder = "\nfunc encodeEnabled() throws -> String { String(decoding: try JSONEncoder().encode(Mode.enabled), as: UTF8.self) }"
+    let before = "import Foundation\nenum Mode: Int, Codable {\n" + conditional + "\ncase disabled\n}" + encoder
+    let after = "import Foundation\nenum Mode: Int, Codable {\ncase disabled\n" + conditional + "\n}" + encoder
     try repo.write("Mode.swift", before)
     try repo.write("Tests.swift", caller)
     let base = try repo.commit()
     func capture(_ text: String) throws -> XcodeTestGraph {
         let files = ["Mode.swift": text, "Tests.swift": caller]
-        var graph = try boundaryGraph(files, tests: [entry], root: repo.root, compilerArguments: ["-D", "DEBUG"])
+        var graph = try boundaryGraph(files, tests: entries, root: repo.root, compilerArguments: ["-D", "DEBUG"])
         graph.targets = [.init(name: "UI", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: Set(files.keys))]
         return graph
     }
@@ -361,7 +368,7 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
     let reports = [XcodeFineSelector.select(current: head, previous: old, changes: changes, baseRevision: base),
                    XcodeHeadOnlySelector.select(current: head, source: source, changes: changes, baseRevision: base)]
     for report in reports {
-        #expect(report.selectedTests == [entry])
+        #expect(report.selectedTests == entries)
         #expect(!report.ignoredChanges.contains("Mode.swift"))
     }
 }

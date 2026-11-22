@@ -44,6 +44,8 @@ public struct SourceUnit: Codable, Sendable {
     /// Written Testing attributes identify candidates, not authenticated macro
     /// identities. Compiler-generated discovery roots must agree separately.
     public var swiftTestingRole: String? = nil
+    /// Qualified suite name, including actors whose source unit covers the whole declaration.
+    public var swiftTestingSuiteName: String? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
     /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
     public var bodylessProtocolRequirement: String? = nil
@@ -110,7 +112,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 5
+    static let currentParserVersion = 6
     public var parserVersion: Int? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
     static func legacyConditionalPaths(in sources: [String: Self], touching paths: Set<String>) -> Set<String> {
@@ -574,6 +576,16 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 }
             }
             let receiverCalls = SDKReceiverCallSyntax.evidence(in: node, locations: physicalLocations ? locations : nil, path: path)
+            let actor = node.as(ActorDeclSyntax.self)
+            let attributes = node.as(StructDeclSyntax.self)?.attributes ?? node.as(ClassDeclSyntax.self)?.attributes
+                ?? node.as(EnumDeclSyntax.self)?.attributes ?? actor?.attributes
+            let suiteName: String?
+            if attributes?.contains(where: {
+                ["Suite", "Testing.Suite"].contains($0.as(AttributeSyntax.self)?.attributeName.trimmedDescription ?? "")
+            }) == true {
+                let names = scope + (actor.map { [$0.name.text] } ?? [])
+                suiteName = names.map(SDKTestHelperSyntax.canonicalName).joined(separator: ".")
+            } else { suiteName = nil }
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
@@ -595,13 +607,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     if let function = node.as(FunctionDeclSyntax.self), function.attributes.contains(where: {
                         ["Test", "Testing.Test"].contains($0.as(AttributeSyntax.self)?.attributeName.trimmedDescription ?? "")
                     }) { return "test" }
-                    let attributes = node.as(StructDeclSyntax.self)?.attributes ?? node.as(ClassDeclSyntax.self)?.attributes
-                        ?? node.as(EnumDeclSyntax.self)?.attributes ?? node.as(ActorDeclSyntax.self)?.attributes
-                    if attributes?.contains(where: {
-                        ["Suite", "Testing.Suite"].contains($0.as(AttributeSyntax.self)?.attributeName.trimmedDescription ?? "")
-                    }) == true { return "suite" }
-                    return nil
-                }(), sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                    return suiteName == nil ? nil : "suite"
+                }(), swiftTestingSuiteName: suiteName, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,
                 helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },

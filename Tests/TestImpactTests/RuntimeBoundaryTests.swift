@@ -54,6 +54,22 @@ private func labelEdit(_ old: XcodeTestGraph) -> XcodeTestGraph {
     #expect(try GraphArchive.decode(GraphArchive.encode(current)).runtimeInventory?.hosts == current.runtimeInventory?.hosts)
 }
 
+@Test func enumLayoutFallbackRespectsClosedRuntimeModules() {
+    var base = boundaryFixture()
+    let path = "App.swift"
+    let before = "enum Mode: Int { case first; case second }"
+    let after = "enum Mode: Int { case second; case first }"
+    base.sources["App:App.swift"] = .parse(before, path: path, module: "App")
+    base.dependencies!.functions["shared"]!.uncertainties = []
+    var head = base
+    head.sources["App:App.swift"] = .parse(after, path: path, module: "App")
+    let report = XcodeFineSelector.select(current: head, previous: base, changes: [.init(path: path)], baseRevision: "base")
+    #expect(report.selectedTests == ["Hosted/Labels/testLabel()"])
+    #expect(report.diagnostics.contains { $0.code == "enum_layout_change" })
+    #expect(report.runtimeBoundaryDecisions?.count == 2)
+    #expect(report.runtimeBoundaryDecisions?.allSatisfy { $0.boundedUncertaintyTests == ["Tests/Other/testOther()"] } == true)
+}
+
 @Test(arguments: ["missingBase", "missingInventory", "missingImports", "underdeclared", "unknownModule", "host", "visibleEdge", "incomplete", "unbound", "policyChanged"])
 func invalidBoundaryCannotSuppressFallback(failure: String) {
     var old = boundaryFixture()

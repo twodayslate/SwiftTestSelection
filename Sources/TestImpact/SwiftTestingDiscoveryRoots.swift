@@ -135,9 +135,9 @@ enum SwiftTestingDiscoveryRoots {
                     valueTypes[module, default: []].insert(unit.scope)
                 }
                 if unit.swiftTestingRole == "test" { testRegions[module, default: [:]][unit.region.path, default: []].append(unit.region) }
-                if unit.swiftTestingRole == "suite" {
-                    declaredSuites[module, default: []].append(unit.scope)
-                    if unit.conditionalBranch != nil { conditionalSuites[module, default: []].append(unit.scope) }
+                if unit.swiftTestingRole == "suite", let name = unit.swiftTestingSuiteName ?? (unit.kind == "type" ? unit.scope : nil) {
+                    declaredSuites[module, default: []].append(name)
+                    if unit.conditionalBranch != nil { conditionalSuites[module, default: []].append(name) }
                 }
             }
         }
