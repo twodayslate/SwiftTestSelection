@@ -271,6 +271,8 @@ enum XcodeHeadOnlySelector {
             return Dictionary(grouping: files.flatMap(\.comparisonUnits), by: \.key)
         }
         let old = scopedUnits(source.base), new = scopedUnits(current.sources)
+        let displayEdits = SwiftTestingDiscoveryRoots.displayNameEdits(before: old, after: new, head: current)
+        let replacedDisplayKeys = Set(displayEdits.values)
         let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries, index: dependencyIndex)
         var isolatedHelpers = Set<String>(), isolatedSDKHelpers = Set<String>()
         var declarationAudits: [HelperDeclarationAudit] = []
@@ -284,7 +286,8 @@ enum XcodeHeadOnlySelector {
             fallback("head_only_conditional_metadata", "Saved head snapshot lacks conditional branch membership for " + legacyConditionalPaths.sorted().joined(separator: ", ") + ". Recapture the head graph.")
         }
         for key in Set(old.keys).union(new.keys).sorted() {
-            let before = old[key] ?? [], after = new[key] ?? []
+            if replacedDisplayKeys.contains(key) { continue }
+            let before = old[displayEdits[key] ?? key] ?? [], after = new[key] ?? []
             guard !comparison.equivalent(before, after) || policyHelpers.contains(key) else { continue }
             // Shared keys (notably imports) can span several source dictionaries.
             // Keep every region, but never let dictionary order label a boundary.
@@ -371,7 +374,7 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
             }
-            guard a.headOnlyBodySupported == true && b.headOnlyBodySupported == true else {
+            guard displayEdits[key] != nil || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
                 fallback("head_only_unsupported_body", "Attributes, macros or opaque result types can change callers outside a surviving body: \(b.region.path):\(b.region.startLine)")
                 continue
             }
@@ -424,6 +427,7 @@ enum XcodeHeadOnlySelector {
             let index = dependencyIndex!
             if let mappings = current.mappings { mappingIndex = MappingIndex(mappings, snapshot: current, graph: graph, index: index) }
             var affected = Set<String>(), isolatedSymbols = Set<String>(), sdkSymbols = Set<String>(), production: [SourceUnit] = []
+            var displaySymbols = Set<String>()
             for unit in changed {
                 fallbackUnits = [unit]
                 let module = String(unit.key.prefix { $0 != ":" })
@@ -446,6 +450,7 @@ enum XcodeHeadOnlySelector {
                 })
                 if ids.isEmpty { fallback("head_only_unresolved_body", "No compiled function for surviving body \(unit.region.path):\(unit.region.startLine)") }
                 affected.formUnion(ids)
+                if displayEdits[unit.key] != nil { displaySymbols.formUnion(ids) }
                 if isolatedHelpers.contains(unit.key) { isolatedSymbols.formUnion(ids) }
                 if isolatedSDKHelpers.contains(unit.key) { sdkSymbols.formUnion(ids) }
                 if owners.contains(where: { !$0.isTest }) { production.append(unit) }
@@ -468,7 +473,17 @@ enum XcodeHeadOnlySelector {
             let affectedPaths = index.paths(to: affected)
             for test in inventory.sorted() {
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
-                    include([test], kind: "dependency", reason: path.last.map(sdkSymbols.contains) == true ? "Head compiler dependencies reach a changed SDK test helper; source/compiler query and caller checks passed; consult helperContractDecisions for any reviewed formatting assumptions" : path.last.map(isolatedSymbols.contains) == true ? "Head compiler dependencies reach a changed body; private helper isolation passed source/compiler checks; consult helperContractDecisions for any reviewed formatting assumptions" : "Head compiler dependencies reach a surviving body with an unchanged declaration header", path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
+                    let reason: String
+                    if path.last.map(displaySymbols.contains) == true {
+                        reason = "Compiled dependency reaches a test whose literal display name changed"
+                    } else if path.last.map(sdkSymbols.contains) == true {
+                        reason = "Head compiler dependencies reach a changed SDK test helper; source/compiler query and caller checks passed; consult helperContractDecisions for any reviewed formatting assumptions"
+                    } else if path.last.map(isolatedSymbols.contains) == true {
+                        reason = "Head compiler dependencies reach a changed body; private helper isolation passed source/compiler checks; consult helperContractDecisions for any reviewed formatting assumptions"
+                    } else {
+                        reason = "Head compiler dependencies reach a surviving body with an unchanged declaration header"
+                    }
+                    include([test], kind: "dependency", reason: reason, path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
                 if !changed.isEmpty || !excludedChanges.isEmpty {
                     let roots = graph.tests[test] ?? []

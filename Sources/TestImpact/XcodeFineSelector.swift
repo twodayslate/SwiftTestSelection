@@ -343,16 +343,35 @@ public enum XcodeFineSelector {
             }
         }
         let hasSemanticChanges = !oldChanged.isEmpty || !newChanged.isEmpty
-        // Header keys include attribute expressions. Changing or removing an
-        // argument can alter discovery even when its constructor is unchanged.
-        func discoveryHeaders(_ units: [SourceUnit]) -> [String: Int] {
-            var counts: [String: Int] = [:]
-            for unit in units where unit.swiftTestingRole != nil && unit.swiftTestingHasArguments != false {
-                counts[unit.key + (unit.conditionalBranch ?? ""), default: 0] += 1
+        let displayEdits = SwiftTestingDiscoveryRoots.displayNameEdits(before: oldUnits, after: newUnits, head: current, base: previous)
+        func discoveryHeaders(_ units: [SourceUnit], snapshot: XcodeTestGraph?, moves: [String: String],
+                              excluding displayKeys: Set<String>) -> [[String]: Int] {
+            var counts: [[String]: Int] = [:]
+            for unit in units where !displayKeys.contains(unit.key) {
+                let module = String(unit.key.prefix { $0 != ":" })
+                let path = unit.region.path
+                let context = [module, moves[path] ?? path, unit.conditionalBranch ?? ""]
+                if let registrations = unit.swiftTestingArguments {
+                    for registration in registrations {
+                        let signature = registration.comparison(locationPolicy, callerKinds: callerKinds[unit.key] ?? [])
+                        counts[context + signature, default: 0] += 1
+                    }
+                } else if let file = snapshot?.sources[module + ":" + path],
+                          file.parserVersion != SwiftSourceSnapshot.currentParserVersion {
+                    // Historical captures lack argument-level locations and opaque
+                    // member headers. Retain the enclosing change in those files.
+                    let nested = unit.kind == "declaration" &&
+                        file.swiftTestingDeclarations?.tests.contains(where: { $0.intersects(unit.region) }) == true
+                    if nested || (unit.swiftTestingRole != nil && unit.swiftTestingHasArguments != false) {
+                        counts[context + [comparisonFingerprint(unit)], default: 0] += 1
+                    }
+                }
             }
             return counts
         }
-        let changedDiscoveryHeaders = discoveryHeaders(oldChanged) != discoveryHeaders(newChanged)
+        let changedDiscovery = SwiftTestingDiscoveryRoots.reboundDiscoveryCall(before: previous?.dependencies, after: current.dependencies) ||
+            discoveryHeaders(oldChanged, snapshot: previous, moves: movedPaths, excluding: Set(displayEdits.values)) !=
+                discoveryHeaders(newChanged, snapshot: current, moves: [:], excluding: Set(displayEdits.keys))
         // A proven test-entry change is invoked by the test runner, not by
         // unrelated tests' opaque SDK calls. Keep explicit callers in the graph,
         // but do not let uncertainty elsewhere expand this into a suite run.
@@ -404,7 +423,7 @@ public enum XcodeFineSelector {
             }
             let index = DependencyIndex(graph)
             var affected = Set<String>()
-            if changedDiscoveryHeaders { affected.insert(SwiftTestingDiscoveryRoots.sharedDiscoveryID) }
+            if changedDiscovery { affected.insert(SwiftTestingDiscoveryRoots.sharedDiscoveryID) }
             var productionUnits: [SourceUnit] = []
             var productionAffected = Set<String>()
             var enumModules = Set<String>()
@@ -768,7 +787,7 @@ public enum XcodeFineSelector {
             let name = (unit.scope.isEmpty ? "" : unit.scope + ".") +
                 (method.contains("(") ? method : method + "()")
             return (graph.tests[test] ?? []).contains { id in
-                guard let node = graph.functions[id], node.name == name,
+                guard let node = graph.functions[id], node.name == name || node.name == "static " + name,
                       owners.contains(where: { snapshot.modules[$0.name] == node.module }) else { return false }
                 return node.regions.contains { $0.path == unit.region.path &&
                     $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }

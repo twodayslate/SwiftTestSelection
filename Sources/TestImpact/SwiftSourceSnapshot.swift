@@ -48,6 +48,8 @@ public struct SourceUnit: Codable, Sendable {
     public var swiftTestingSuiteName: String? = nil
     /// The written discovery attribute has arguments. Nil denotes older evidence.
     public var swiftTestingHasArguments: Bool? = nil
+    var swiftTestingArguments: [SwiftTestingSourceDeclarations.Arguments]? = nil
+    var swiftTestingDisplayComparison: String? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
     /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
     public var bodylessProtocolRequirement: String? = nil
@@ -114,7 +116,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 7
+    static let currentParserVersion = 8
     var swiftTestingDeclarations: SwiftTestingSourceDeclarations? = nil
     public var parserVersion: Int? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
@@ -307,6 +309,14 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             if let token = node.as(TokenSyntax.self) { return "\(token.tokenKind):\(token.text.utf8.count):\(token.text)" }
             return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(fingerprint).joined(separator: "|") + "]"
         }
+        func compactFingerprint(_ node: Syntax) -> String {
+            let value = fingerprint(node)
+            #if canImport(CryptoKit)
+            return Data(SHA256.hash(data: Data(value.utf8))).base64EncodedString()
+            #else
+            return value
+            #endif
+        }
         let locationNames: Set<String> = ["line", "column", "file", "fileID", "filePath"]
         func bareDefault(_ macro: MacroExpansionExprSyntax) -> Bool {
             macro.parent?.is(InitializerClauseSyntax.self) == true &&
@@ -452,7 +462,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         }
         var discovery = SwiftTestingSourceDeclarations()
         var branch = ""
-        func add(_ node: Syntax, header: Syntax, kind: String, scope: [String], plainExtension: Bool? = nil) {
+        func add(_ node: Syntax, header: Syntax, kind: String, scope: [String], originalAttributes: AttributeListSyntax? = nil, plainExtension: Bool? = nil) {
             var declaredMembers = Set<String>()
             if scope.isEmpty {
                 if let function = node.as(FunctionDeclSyntax.self) {
@@ -581,7 +591,29 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             let receiverCalls = SDKReceiverCallSyntax.evidence(in: node, locations: physicalLocations ? locations : nil, path: path)
             let testingScope = node.as(ActorDeclSyntax.self).map { scope + [$0.name.text] } ?? scope
-            let testing = discovery.record(node, scope: testingScope, conditional: !branch.isEmpty, path: path, locations: locations)
+            var registrations: [SwiftTestingSourceDeclarations.Arguments] = []
+            let testing = discovery.record(node, scope: testingScope, conditional: !branch.isEmpty, path: path,
+                                          locations: locations, originalAttributes: originalAttributes) { owner, attributes in
+                let syntax = Syntax(attributes)
+                // Preserve conditional membership inside opaque declarations
+                // such as actors, whose members have no individual source unit.
+                var conditions: [String] = []
+                var ancestor = syntax.parent
+                while let current = ancestor {
+                    if let clause = current.as(IfConfigClauseSyntax.self),
+                       let siblings = clause.parent?.as(IfConfigClauseListSyntax.self) {
+                        for sibling in siblings {
+                            conditions.append(fingerprint(Syntax(sibling.with(\.elements, nil))))
+                            if sibling.id == clause.id { break }
+                        }
+                    }
+                    ancestor = current.parent
+                }
+                let identity = SourceUnit.withLocations(owner + conditions, syntax: compactFingerprint(syntax))
+                registrations.append(.init(identity: identity, locations: locationValues(syntax), calls: callerInfo(syntax).locations))
+            }
+            let displayComparison = node.as(FunctionDeclSyntax.self).flatMap(SwiftTestingSourceDeclarations.ignoringLiteralDisplayName)
+                .map { compactFingerprint(Syntax($0)) }
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
@@ -600,7 +632,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 independentAddedTestEntry: node.as(FunctionDeclSyntax.self).flatMap {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
                 }, swiftTestingRole: testing.role, swiftTestingSuiteName: testing.suiteName,
-                swiftTestingHasArguments: testing.hasArguments, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                swiftTestingHasArguments: testing.hasArguments, swiftTestingArguments: registrations.isEmpty ? nil : registrations,
+                swiftTestingDisplayComparison: displayComparison, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,
                 helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },
@@ -685,29 +718,29 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     result.helperSafeClasses![module + "." + value.name.text] = parent
                 }
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "type", scope: names)
+                add(header, header: header, kind: "type", scope: names, originalAttributes: value.attributes)
                 result.inheritance[module + "." + names.joined(separator: "."), default: []] += value.inheritanceClause?.inheritedTypes.map { $0.type.trimmedDescription } ?? []
                 result.superclasses![module + "." + names.joined(separator: "."), default: []] += value.inheritanceClause?.inheritedTypes.first.map { [$0.type.trimmedDescription] } ?? []
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(ProtocolDeclSyntax.self) {
                 let names = scope + [value.name.text]
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "type", scope: names)
+                add(header, header: header, kind: "type", scope: names, originalAttributes: value.attributes)
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(StructDeclSyntax.self) {
                 let names = scope + [value.name.text]
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "type", scope: names)
+                add(header, header: header, kind: "type", scope: names, originalAttributes: value.attributes)
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(EnumDeclSyntax.self) {
                 let names = scope + [value.name.text]
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "type", scope: names)
+                add(header, header: header, kind: "type", scope: names, originalAttributes: value.attributes)
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(ExtensionDeclSyntax.self) {
                 let names = [value.extendedType.trimmedDescription]
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "extension", scope: names, plainExtension: PrivateTestHelperSyntax.isPlainExtension(value))
+                add(header, header: header, kind: "extension", scope: names, originalAttributes: value.attributes, plainExtension: PrivateTestHelperSyntax.isPlainExtension(value))
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(FunctionDeclSyntax.self) {
                 add(node, header: Syntax(value.with(\.body, nil)), kind: "function", scope: scope)

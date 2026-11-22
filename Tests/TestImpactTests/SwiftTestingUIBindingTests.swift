@@ -481,3 +481,78 @@ import Testing
         }
     }
 }
+
+@Test(arguments: ["fileMove", "line", "defaultLine", "actor", "display"])
+func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let plain = "UI/Common/plain()", marked = scenario == "actor" ? "UI/Outer/Other/marked()" : "UI/Other/marked()"
+    func capture(head: Bool) throws -> XcodeTestGraph {
+        var files = ["Support.swift": """
+            import Foundation
+            import Testing
+            struct Marker: TestTrait {
+                init(_ flag: Bool) { UserDefaults.standard.set(flag, forKey: "discovery") }
+            }
+            struct Common {
+                @Test func plain() { #expect(UserDefaults.standard.bool(forKey: "discovery")) }
+            }
+            """]
+        if scenario != "actor" { files["Support.swift"]! += "\nstruct Other {}" }
+        switch scenario {
+        case "fileMove":
+            for (file, value) in [("First.swift", true), ("Second.swift", false)] {
+                let method = value != head ? "@Test(Marker(flag())) func marked() {}" : ""
+                files[file] = "import Testing\nprivate func flag() -> Bool { \(value) }\nextension Other {\n\(method)\n}"
+            }
+        case "actor":
+            files["Tests.swift"] = "import Testing\nstruct Outer { actor Other { @Test(Marker(\(!head))) func marked() {} } }"
+        case "display":
+            files["Tests.swift"] = "import Testing\nextension Other { @Test(\"\(head ? "New" : "Old")\") static func marked() {} }"
+        default:
+            let location = scenario == "line" ? "#line" : "readLine()"
+            files["Tests.swift"] = "import Testing\nfunc readLine(_ value: Int = #line) -> Int { value }\nextension Other {\n" +
+                (head ? "\n" : "") + "@Test(Marker(\(location) == 4)) func marked() {}\n}"
+        }
+        var graph = try boundaryGraph(files, tests: [plain, marked], root: root, compilerArguments: ["-plugin-path", plugins.path], allowTestDiagnostics: true)
+        graph.mappings = nil
+        return try GraphArchive.decode(GraphArchive.encode(graph))
+    }
+    var base = try capture(head: false), head = try capture(head: true)
+    let changes = (scenario == "fileMove" ? ["First.swift", "Second.swift"] : ["Tests.swift"]).map { FileChange(path: $0) }
+    func dual() -> ImpactReport { XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base") }
+    let report = dual()
+    let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
+    if scenario == "display" {
+        for result in [report, headOnly] {
+            #expect(result.selectedTests == [marked])
+            #expect(result.diagnostics.isEmpty)
+        }
+        // Source spelling alone cannot authenticate an empty Testing factory.
+        for id in head.dependencies!.functions.keys where head.dependencies!.functions[id]?.swiftTestingEmptyFactory == "member" {
+            head.dependencies!.functions[id]?.swiftTestingEmptyFactory = nil
+        }
+        #expect(dual().selectedTests.contains(plain))
+    } else {
+        #expect(report.explanations.contains { $0.test == plain && $0.kind == "dependency" })
+        #expect(headOnly.selectedTests.contains(plain))
+        if ["line", "defaultLine"].contains(scenario) {
+            var mappings = UIFeatureMappings(features: [])
+            mappings.sourceLocationPolicy = .diagnosticLineColumn
+            base.mappings = mappings
+            head.mappings = mappings
+            #expect(dual().selectedTests.isEmpty)
+        } else if scenario == "actor" {
+            for key in [String](head.sources.keys) {
+                head.sources[key]?.parserVersion = 7
+                for i in head.sources[key]!.units.indices {
+                    head.sources[key]!.units[i].swiftTestingArguments = nil
+                }
+            }
+            #expect(dual().selectedTests.contains(plain))
+        }
+    }
+}

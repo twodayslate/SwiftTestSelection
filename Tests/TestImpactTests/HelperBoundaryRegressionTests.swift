@@ -45,7 +45,7 @@ func evaluate(_ predicate: () -> Bool) -> Bool { predicate() }
 """
 
 
-func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = [], module: String = "UI", target: String = "UI") throws -> XcodeTestGraph {
+func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = [], module: String = "UI", target: String = "UI", allowTestDiagnostics: Bool = false) throws -> XcodeTestGraph {
     for (path, text) in files { try Data(text.utf8).write(to: root.appendingPathComponent(path)) }
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let sil = root.appendingPathComponent(module + ".sil")
@@ -58,7 +58,7 @@ func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compil
     current.modules = [target: module]
     current.sources = Dictionary(uniqueKeysWithValues: files.map { (module + ":" + $0.key, SwiftSourceSnapshot.parse($0.value, path: $0.key, module: module)) })
     XcodeCompilerGraph.bind(tests: tests, modules: current.modules, sources: current.sources, graph: &graph)
-    try #require(tests.allSatisfy { graph.tests[$0]?.isEmpty == false && graph.testDiagnostics[$0]?.isEmpty ?? true })
+    try #require(tests.allSatisfy { graph.tests[$0]?.isEmpty == false && (allowTestDiagnostics || (graph.testDiagnostics[$0]?.isEmpty ?? true)) })
     current.dependencies = graph
     current.mappings = UIFeatureMappings(features: [])
     current.mappings?.sourceLocationPolicy = .diagnosticLineColumn
