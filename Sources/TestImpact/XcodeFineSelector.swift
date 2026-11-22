@@ -68,14 +68,7 @@ public enum XcodeFineSelector {
         }
         // Both revisions must opt into treating source locations as diagnostics.
         // Explicit macro/directive syntax remains executable under either policy.
-        let locationPolicy: UIFeatureMappings.SourceLocationPolicy
-        if let head = current.mappings, let base = previous?.mappings,
-           let policy = head.sourceLocationPolicy, base.sourceLocationPolicy == policy,
-           (try? head.validate()) != nil, (try? base.validate()) != nil {
-            locationPolicy = policy
-        } else {
-            locationPolicy = .semantic
-        }
+        let locationPolicy = UIFeatureMappings.SourceLocationPolicy.agreed(head: current.mappings, base: previous?.mappings)
         func fingerprint(_ unit: SourceUnit) -> String {
             unit.comparisonFingerprint(locationPolicy)
         }
@@ -150,6 +143,13 @@ public enum XcodeFineSelector {
             for (syntax, before) in removed where before.count == 1 {
                 if let after = added[syntax], after.count == 1 { movedPaths[before[0]] = after[0] }
             }
+        }
+        let registrations = SwiftTestingRegistrationComparison(before: oldUnits, after: newUnits,
+            baseSources: previous?.sources ?? [:], base: previous, head: current, moves: movedPaths,
+            touching: touchedPaths, policy: locationPolicy)
+        for (headKey, baseKey) in registrations.entryEdits where headKey == baseKey {
+            oldChanged += oldUnits[baseKey] ?? []
+            newChanged += newUnits[headKey] ?? []
         }
         for key in Set(oldUnits.keys).union(newUnits.keys) {
             let old = oldUnits[key] ?? [], new = newUnits[key] ?? []
@@ -318,7 +318,8 @@ public enum XcodeFineSelector {
                 fallback("generated_input_changed", "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for \(module).")
             }
         }
-        let semanticPaths = legacyConditionalPaths.union((oldChanged + newChanged).map { $0.region.path })
+        let semanticPaths = legacyConditionalPaths.union(registrations.discoveryPaths).union(registrations.incompletePaths)
+            .union((oldChanged + newChanged).map { $0.region.path })
         let analyzedPaths = Set((Array(current.sources.keys) + Array(previous?.sources.keys ?? [:].keys)).compactMap { key in
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) }
         }).union(oldUnits.values.flatMap { $0 }.map { $0.region.path })
@@ -342,36 +343,7 @@ public enum XcodeFineSelector {
                 fallback("unclassified_change", "Change lacks a supported semantic source boundary: \(change.path)")
             }
         }
-        let hasSemanticChanges = !oldChanged.isEmpty || !newChanged.isEmpty
-        let displayEdits = SwiftTestingDiscoveryRoots.displayNameEdits(before: oldUnits, after: newUnits, head: current, base: previous)
-        func discoveryHeaders(_ units: [SourceUnit], snapshot: XcodeTestGraph?, moves: [String: String],
-                              excluding displayKeys: Set<String>) -> [[String]: Int] {
-            var counts: [[String]: Int] = [:]
-            for unit in units where !displayKeys.contains(unit.key) {
-                let module = String(unit.key.prefix { $0 != ":" })
-                let path = unit.region.path
-                let context = [module, moves[path] ?? path, unit.conditionalBranch ?? ""]
-                if let registrations = unit.swiftTestingArguments {
-                    for registration in registrations {
-                        let signature = registration.comparison(locationPolicy, callerKinds: callerKinds[unit.key] ?? [])
-                        counts[context + signature, default: 0] += 1
-                    }
-                } else if let file = snapshot?.sources[module + ":" + path],
-                          file.parserVersion != SwiftSourceSnapshot.currentParserVersion {
-                    // Historical captures lack argument-level locations and opaque
-                    // member headers. Retain the enclosing change in those files.
-                    let nested = unit.kind == "declaration" &&
-                        file.swiftTestingDeclarations?.tests.contains(where: { $0.intersects(unit.region) }) == true
-                    if nested || (unit.swiftTestingRole != nil && unit.swiftTestingHasArguments != false) {
-                        counts[context + [comparisonFingerprint(unit)], default: 0] += 1
-                    }
-                }
-            }
-            return counts
-        }
-        let changedDiscovery = SwiftTestingDiscoveryRoots.reboundDiscoveryCall(before: previous?.dependencies, after: current.dependencies) ||
-            discoveryHeaders(oldChanged, snapshot: previous, moves: movedPaths, excluding: Set(displayEdits.values)) !=
-                discoveryHeaders(newChanged, snapshot: current, moves: [:], excluding: Set(displayEdits.keys))
+        let hasSemanticChanges = registrations.changedDiscovery || !oldChanged.isEmpty || !newChanged.isEmpty
         // A proven test-entry change is invoked by the test runner, not by
         // unrelated tests' opaque SDK calls. Keep explicit callers in the graph,
         // but do not let uncertainty elsewhere expand this into a suite run.
@@ -421,9 +393,12 @@ public enum XcodeFineSelector {
                     fallback("unsupported_source_ownership", "Changed module \(module) also compiles inputs without a repository semantic boundary: " + inputs.joined(separator: ", "))
                 }
             }
+            if let uncertainty = registrations.uncertainty(in: snapshot) {
+                fallback("incomplete_testing_registration", uncertainty.message, tests: uncertainty.tests)
+            }
             let index = DependencyIndex(graph)
             var affected = Set<String>()
-            if changedDiscovery { affected.insert(SwiftTestingDiscoveryRoots.sharedDiscoveryID) }
+            if registrations.changedDiscovery { affected.insert(SwiftTestingDiscoveryRoots.sharedDiscoveryID) }
             var productionUnits: [SourceUnit] = []
             var productionAffected = Set<String>()
             var enumModules = Set<String>()
@@ -478,7 +453,8 @@ public enum XcodeFineSelector {
                     }
                 }
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
-                    include([test], kind: "dependency", reason: "Compiled dependency reaches a changed declaration", revision: revision,
+                    let reason = path.last == SwiftTestingDiscoveryRoots.sharedDiscoveryID ? "Swift Testing discovery inputs changed before test filtering" : "Compiled dependency reaches a changed declaration"
+                    include([test], kind: "dependency", reason: reason, revision: revision,
                             path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
                 if hasSemanticChanges && (graph.tests[test]?.isEmpty ?? true) {

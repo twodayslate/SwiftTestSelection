@@ -7,8 +7,11 @@ A Swift package providing a `swift-test-impact` executable and reusable `TestImp
 Xcode discovery preserves exact identifiers for top-level, nested, static and
 parameterized Swift Testing entries. Swift Testing constructs traits before filtering
 tests, so selection shares discovery-time dependencies across captured modules.
-Compiler-identified test bodies and deferred argument providers stay with their
-own entries. Suite-trait and scoping callbacks follow the suite's declaring
+Both Xcode selection modes compare registration inputs independently of test-body
+edits. Under the default location policy, moving a trait expression can affect
+discovery even when its callee comes from a precompiled module. A literal display
+name or a capture-free argument provider stays with its entry when the source
+declaration and the compiled SDK factory prove that scope. Suite-trait and scoping callbacks follow the suite's declaring
 module, including tests added in an extension from another module. Custom traits and
 generic argument iteration retain fallback. A plain test on a top-level value
 type can rule out an unrelated suite's traits when the SDK factory metatypes and

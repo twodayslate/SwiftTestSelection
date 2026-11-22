@@ -7,8 +7,7 @@ private struct HeadOnlySourceComparison {
     let locationPolicy: UIFeatureMappings.SourceLocationPolicy
 
     init(head: UIFeatureMappings?, base: UIFeatureMappings?) {
-        locationPolicy = head?.sourceLocationPolicy == base?.sourceLocationPolicy
-            ? head?.sourceLocationPolicy ?? .semantic : .semantic
+        locationPolicy = .agreed(head: head, base: base)
     }
 
     func equivalent(_ old: [SourceUnit], _ new: [SourceUnit]) -> Bool {
@@ -271,8 +270,13 @@ enum XcodeHeadOnlySelector {
             return Dictionary(grouping: files.flatMap(\.comparisonUnits), by: \.key)
         }
         let old = scopedUnits(source.base), new = scopedUnits(current.sources)
-        let displayEdits = SwiftTestingDiscoveryRoots.displayNameEdits(before: old, after: new, head: current)
-        let replacedDisplayKeys = Set(displayEdits.values)
+        let registrations = SwiftTestingRegistrationComparison(before: old, after: new, baseSources: source.base,
+            head: current, touching: paths, policy: comparison.locationPolicy)
+        let entryEdits = registrations.entryEdits
+        if let uncertainty = registrations.uncertainty(in: current) {
+            fallback("incomplete_testing_registration", uncertainty.message, tests: uncertainty.tests)
+        }
+        let replacedEntryKeys = Set(entryEdits.compactMap { $0.key == $0.value ? nil : $0.value })
         let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries, index: dependencyIndex)
         var isolatedHelpers = Set<String>(), isolatedSDKHelpers = Set<String>()
         var declarationAudits: [HelperDeclarationAudit] = []
@@ -280,15 +284,16 @@ enum XcodeHeadOnlySelector {
         var excludedChanges: [SourceUnit] = []
         var changed: [SourceUnit] = []
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
+        semanticPaths.formUnion(registrations.discoveryPaths.union(registrations.incompletePaths))
         let legacyConditionalPaths = SwiftSourceSnapshot.legacyConditionalPaths(in: current.sources, touching: paths)
         if !legacyConditionalPaths.isEmpty {
             semanticPaths.formUnion(legacyConditionalPaths)
             fallback("head_only_conditional_metadata", "Saved head snapshot lacks conditional branch membership for " + legacyConditionalPaths.sorted().joined(separator: ", ") + ". Recapture the head graph.")
         }
         for key in Set(old.keys).union(new.keys).sorted() {
-            if replacedDisplayKeys.contains(key) { continue }
-            let before = old[displayEdits[key] ?? key] ?? [], after = new[key] ?? []
-            guard !comparison.equivalent(before, after) || policyHelpers.contains(key) else { continue }
+            if replacedEntryKeys.contains(key) { continue }
+            let before = old[entryEdits[key] ?? key] ?? [], after = new[key] ?? []
+            guard entryEdits[key] != nil || !comparison.equivalent(before, after) || policyHelpers.contains(key) else { continue }
             // Shared keys (notably imports) can span several source dictionaries.
             // Keep every region, but never let dictionary order label a boundary.
             fallbackUnits = (before + after).sorted {
@@ -374,7 +379,7 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
             }
-            guard displayEdits[key] != nil || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
+            guard entryEdits[key] != nil || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
                 fallback("head_only_unsupported_body", "Attributes, macros or opaque result types can change callers outside a surviving body: \(b.region.path):\(b.region.startLine)")
                 continue
             }
@@ -427,7 +432,8 @@ enum XcodeHeadOnlySelector {
             let index = dependencyIndex!
             if let mappings = current.mappings { mappingIndex = MappingIndex(mappings, snapshot: current, graph: graph, index: index) }
             var affected = Set<String>(), isolatedSymbols = Set<String>(), sdkSymbols = Set<String>(), production: [SourceUnit] = []
-            var displaySymbols = Set<String>()
+            if registrations.changedDiscovery { affected.insert(SwiftTestingDiscoveryRoots.sharedDiscoveryID) }
+            var entrySymbols = Set<String>()
             for unit in changed {
                 fallbackUnits = [unit]
                 let module = String(unit.key.prefix { $0 != ":" })
@@ -450,7 +456,7 @@ enum XcodeHeadOnlySelector {
                 })
                 if ids.isEmpty { fallback("head_only_unresolved_body", "No compiled function for surviving body \(unit.region.path):\(unit.region.startLine)") }
                 affected.formUnion(ids)
-                if displayEdits[unit.key] != nil { displaySymbols.formUnion(ids) }
+                if entryEdits[unit.key] != nil { entrySymbols.formUnion(ids) }
                 if isolatedHelpers.contains(unit.key) { isolatedSymbols.formUnion(ids) }
                 if isolatedSDKHelpers.contains(unit.key) { sdkSymbols.formUnion(ids) }
                 if owners.contains(where: { !$0.isTest }) { production.append(unit) }
@@ -474,8 +480,10 @@ enum XcodeHeadOnlySelector {
             for test in inventory.sorted() {
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
                     let reason: String
-                    if path.last.map(displaySymbols.contains) == true {
-                        reason = "Compiled dependency reaches a test whose literal display name changed"
+                    if path.last == SwiftTestingDiscoveryRoots.sharedDiscoveryID {
+                        reason = "Swift Testing discovery inputs changed before test filtering"
+                    } else if path.last.map(entrySymbols.contains) == true {
+                        reason = "Compiled dependency reaches a test whose entry inputs changed"
                     } else if path.last.map(sdkSymbols.contains) == true {
                         reason = "Head compiler dependencies reach a changed SDK test helper; source/compiler query and caller checks passed; consult helperContractDecisions for any reviewed formatting assumptions"
                     } else if path.last.map(isolatedSymbols.contains) == true {

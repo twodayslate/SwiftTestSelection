@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 import Foundation
 
-/// A small, fail-closed proof for the SDK's nonparameterized factories. Source
+/// Bounded SIL proofs for the SDK's test and suite factories. Source
 /// attribute spelling and generated function names do not establish this fact.
 /// Unsupported lowering, escaping arrays, and legacy captures retain fallback.
 enum SwiftTestingFactoryProof {
@@ -31,6 +31,7 @@ enum SwiftTestingFactoryProof {
     struct Evidence {
         var nominalType: String?
         var emptyFactory: String?
+        var deferredProviderCount: Int?
         var traitTypes = Set<String>()
         var traitProducers = Set<String>()
         var deferredReferences = Set<String>()
@@ -150,12 +151,20 @@ enum SwiftTestingFactoryProof {
         let parameterized = locations.contains {
             factory.value.hasPrefix(functionPrefix + "9arguments") && factory.value.contains($0 + "10parameters12testFunction")
         }
+        var provenProviders: Int?
         if (function && arguments.count == 10) || (parameterized && arguments.count > 10) {
             // The argument providers follow traits. The final four operands
             // are the source location/bounds, parameters, test body, and Self.
             let callbacks = Array(arguments[6..<(arguments.count - 4)]) + [arguments[arguments.count - 2]]
             evidence.deferredReferences = deferredReferences(factoryCall: call, factoryCallbacks: callbacks,
                 definitions: definitions, uses: uses, references: references)
+            let providers = callbacks.dropLast()
+            if parameterized && providers.allSatisfy({ argument in
+                guard let conversion = definitions[argument], conversion.hasPrefix("thin_to_thick_function "),
+                      let id = Pattern.groups(closureConversion, in: conversion)?.first,
+                      let symbol = references[id] else { return false }
+                return evidence.deferredReferences.contains(symbol)
+            }) { provenProviders = providers.count }
         }
         // Parameterized overloads have additional arguments after the traits.
         let traitIndex = suite ? 3 : 5
@@ -163,7 +172,7 @@ enum SwiftTestingFactoryProof {
             collectAppliedTraits(argument: arguments[traitIndex], element: suite ? "any SuiteTrait" : "any TestTrait",
                                  definitions: definitions, uses: uses, references: references, evidence: &evidence)
         }
-        guard (suite && arguments.count == 6) || (function && arguments.count == 10) else { return evidence }
+        guard (suite && arguments.count == 6) || (function && arguments.count == 10) || provenProviders != nil else { return evidence }
         // The factory must initialize the returned Test directly. A generated
         // wrapper that mutates/escapes the result may install traits afterward.
         let outputHeader = "bb0(" + arguments[0] + " : $*Test"
@@ -172,8 +181,10 @@ enum SwiftTestingFactoryProof {
         }
         guard uses[arguments[0]]?.contains(where: isOutputParameter) == true,
               uses[arguments[0]]?.allSatisfy({ $0 == call || isOutputParameter($0) }) == true else { return evidence }
-        // Bind the actual SDK factory argument, including its SSA value. A
-        // generic substitution alone cannot distinguish a nil/forwarded type.
+        // A nonempty traits array still permits entry-local provider edits
+        // when source comparison preserves every eager trait and its location.
+        if !evidence.traitTypes.isEmpty { evidence.deferredProviderCount = provenProviders }
+        // Bind the actual SDK metatype operand as well as its generic substitution.
         let type = fields[1]
         if Pattern.groups(nominalPath, in: type) != nil {
             let literal = "metatype $@thick " + type + ".Type"
@@ -198,7 +209,9 @@ enum SwiftTestingFactoryProof {
         else { return evidence }
         // Never is the SDK's top-level sentinel, authenticated here by both the
         // generic substitution and the actual optional metatype argument.
-        if suite {
+        if let provenProviders {
+            evidence.deferredProviderCount = provenProviders
+        } else if suite {
             evidence.emptyFactory = "suite"
         } else if fields[1] == "Never", definitions[arguments[2]] == "enum $Optional<@thick Never.Type>, #Optional.none!enumelt" {
             evidence.emptyFactory = "top-level"

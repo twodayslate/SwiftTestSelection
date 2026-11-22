@@ -9,6 +9,12 @@ public struct UIFeatureMappings: Codable, Sendable {
     }
     public enum SourceLocationPolicy: String, Codable, Sendable {
         case semantic, diagnosticLineColumn, diagnostic
+
+        static func agreed(head: UIFeatureMappings?, base: UIFeatureMappings?) -> Self {
+            guard let head, let base, let policy = head.sourceLocationPolicy, base.sourceLocationPolicy == policy,
+                  (try? head.validate()) != nil, (try? base.validate()) != nil else { return .semantic }
+            return policy
+        }
     }
     /// Opt in only when the ignored location kinds are diagnostic, never behavior.
     public var sourceLocationPolicy: SourceLocationPolicy? = nil

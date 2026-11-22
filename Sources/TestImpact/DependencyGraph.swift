@@ -41,6 +41,8 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// A bounded SIL proof of an SDK factory with literal empty traits and no
     /// argument producer: "top-level", "member", or "suite". Nil is unproven.
     public var swiftTestingEmptyFactory: String? = nil
+    /// Capture-free argument providers passed to a verified SDK factory with a recognized traits array.
+    public var swiftTestingDeferredProviderCount: Int? = nil
     /// Unqualified concrete nominal passed as a literal metatype to the SDK factory.
     public var swiftTestingFactoryType: String? = nil
     /// Concrete payloads stored in the traits array passed to a Swift Testing factory.
@@ -101,6 +103,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
         swiftTestingDiscoveryReferences = union(swiftTestingDiscoveryReferences, other.swiftTestingDiscoveryReferences)
         if swiftTestingFactoryType != other.swiftTestingFactoryType { swiftTestingFactoryType = nil }
         if swiftTestingEmptyFactory != other.swiftTestingEmptyFactory { swiftTestingEmptyFactory = nil }
+        if swiftTestingDeferredProviderCount != other.swiftTestingDeferredProviderCount { swiftTestingDeferredProviderCount = nil }
         dynamicCallSignatures = union(dynamicCallSignatures, other.dynamicCallSignatures)
         stateAccesses = union(stateAccesses, other.stateAccesses)
         receiverTypeOrigins = union(receiverTypeOrigins, other.receiverTypeOrigins)

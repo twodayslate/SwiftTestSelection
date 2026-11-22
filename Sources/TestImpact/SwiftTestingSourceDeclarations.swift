@@ -14,26 +14,90 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         let locations: [String]
         let calls: [String: String]
 
-        func comparison(_ policy: UIFeatureMappings.SourceLocationPolicy, callerKinds: Set<String>) -> [String] {
+        func comparison(_ policy: UIFeatureMappings.SourceLocationPolicy) -> [String] {
             guard policy != .diagnostic else { return [identity] }
             let ignorePosition = policy == .diagnosticLineColumn
             let literals = locations.filter { !ignorePosition || !($0.hasPrefix("line:") || $0.hasPrefix("column:")) }
-            let defaults = callerKinds.sorted().compactMap { kind in
+            // Imported defaults and macro expansions can observe the caller even
+            // when no definition or explicit location literal appears in source.
+            let defaults = calls.keys.sorted().compactMap { kind in
                 ignorePosition && ["line", "column"].contains(kind) ? nil : calls[kind].map { kind + ":" + $0 }
             }
             return [identity] + literals + defaults
         }
     }
 
-    /// Only a single, noninterpolated string literal can be paired as a
-    /// display-name edit. Retain the entire remaining declaration for comparison.
-    static func ignoringLiteralDisplayName(_ function: FunctionDeclSyntax) -> FunctionDeclSyntax? {
-        guard function.attributes.count == 1, let attribute = function.attributes.first?.as(AttributeSyntax.self),
-              ["Test", "Testing.Test"].contains(attribute.attributeName.trimmedDescription),
-              let args = attribute.arguments?.as(LabeledExprListSyntax.self), args.count == 1,
-              let arg = args.first, arg.label == nil, let literal = arg.expression.as(StringLiteralExprSyntax.self),
-              literal.segments.allSatisfy({ $0.is(StringSegmentSyntax.self) }) else { return nil }
-        return function.with(\.attributes, [AttributeListSyntax.Element.attribute(attribute.with(\.arguments, nil))])
+    /// The source projection retains the signature, body and sibling attributes.
+    /// Its erased inputs are entry-local only with a matching SDK factory proof.
+    struct EntryInputs: Codable, Sendable {
+        let declaration: String
+        let providers: Int
+        let eager: [Arguments]
+    }
+
+    private static func name(_ attribute: AttributeSyntax) -> [String] {
+        attribute.attributeName.tokens(viewMode: .sourceAccurate).map { $0.identifier?.name ?? $0.text }
+    }
+
+    private static func matches(_ attribute: AttributeSyntax, _ expected: String) -> Bool {
+        let tokens = name(attribute)
+        return tokens == [expected] || tokens == ["Testing", ".", expected]
+    }
+
+    private static func isMainActor(_ attribute: AttributeSyntax) -> Bool {
+        [["MainActor"], ["Swift", ".", "MainActor"]].contains(name(attribute)) && attribute.arguments == nil
+    }
+
+    /// Sibling macros can participate in registration even on an argumentless test.
+    private static func hasOpaqueSibling(of expected: String, in attributes: AttributeListSyntax) -> Bool {
+        attributes.contains { element in
+            guard let attribute = element.as(AttributeSyntax.self) else { return true }
+            return !matches(attribute, expected) && !isMainActor(attribute)
+        }
+    }
+
+    static func entryInputs(_ function: FunctionDeclSyntax, fingerprint: (Syntax) -> String,
+                            capture: (Syntax) -> Arguments) -> EntryInputs? {
+        var attributes = function.attributes
+        var providers: Int?
+        var eager: [Arguments] = []
+        for index in attributes.indices {
+            guard let attribute = attributes[index].as(AttributeSyntax.self) else { return nil }
+            if !matches(attribute, "Test") {
+                guard isMainActor(attribute) else { return nil }
+                continue
+            }
+            guard providers == nil, let args = attribute.arguments?.as(LabeledExprListSyntax.self), !args.isEmpty else { return nil }
+            var projected = args
+            var providerCount = 0, hasDisplayName = false
+            for index in args.indices {
+                let argument = args[index]
+                if index == args.startIndex, argument.label == nil,
+                   let literal = argument.expression.as(StringLiteralExprSyntax.self),
+                   literal.segments.allSatisfy({ $0.is(StringSegmentSyntax.self) }) {
+                    hasDisplayName = true
+                } else if argument.label?.text == "arguments" && providerCount == 0 {
+                    providerCount = 1
+                } else if argument.label == nil && providerCount > 0 {
+                    providerCount += 1
+                } else if argument.label == nil {
+                    eager.append(capture(Syntax(argument.expression)))
+                    continue
+                } else { return nil }
+                projected[index] = argument.with(\.expression, ExprSyntax(NilLiteralExprSyntax()))
+            }
+            guard hasDisplayName || providerCount > 0 else { return nil }
+            if hasDisplayName && !eager.isEmpty {
+                // A nonempty traits array alone cannot prove how a string
+                // literal was interpreted. Retain its value and caller location.
+                projected[args.startIndex] = args[args.startIndex]
+                eager.append(capture(Syntax(args[args.startIndex].expression)))
+            }
+            providers = providerCount
+            attributes[index] = .attribute(attribute.with(\.arguments, .argumentList(projected)))
+        }
+        return providers.map { EntryInputs(declaration: fingerprint(Syntax(function.with(\.attributes, attributes))),
+                                          providers: $0, eager: eager) }
     }
 
     var suites: [Suite] = []
@@ -56,7 +120,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         var result = AttributePresence.absent
         for element in attributes {
             if let attribute = element.as(AttributeSyntax.self),
-               [name, "Testing." + name].contains(attribute.attributeName.trimmedDescription) { return .unconditional }
+               Self.matches(attribute, name) { return .unconditional }
             if let directive = element.as(IfConfigDeclSyntax.self) {
                 let branches = directive.clauses.map { clause in
                     clause.elements?.as(AttributeListSyntax.self).map { presence(of: name, in: $0) } ?? .absent
@@ -75,7 +139,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
     private func hasArguments(_ name: String, in attributes: AttributeListSyntax) -> Bool {
         attributes.contains { element in
             if let attribute = element.as(AttributeSyntax.self) {
-                return [name, "Testing." + name].contains(attribute.attributeName.trimmedDescription) &&
+                return Self.matches(attribute, name) &&
                     attribute.arguments?.firstToken(viewMode: .sourceAccurate) != nil
             }
             return element.as(IfConfigDeclSyntax.self)?.clauses.contains { clause in
@@ -95,7 +159,9 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
             tests.append(.init(path: path, startLine: locations.location(for: function.positionAfterSkippingLeadingTrivia).line,
                                endLine: locations.location(for: function.endPositionBeforeTrailingTrivia).line))
             let arguments = hasArguments("Test", in: function.attributes)
-            if arguments { onArguments(scope + [function.name.text] + function.signature.tokens(viewMode: .sourceAccurate).map(\.text), function.attributes) }
+            if arguments || Self.hasOpaqueSibling(of: "Test", in: function.attributes) {
+                onArguments(scope + [function.name.text] + function.signature.tokens(viewMode: .sourceAccurate).map(\.text), function.attributes)
+            }
             return ("test", nil, arguments)
         }
         guard let group = node.asProtocol(DeclGroupSyntax.self) else { return (nil, nil, nil) }
@@ -108,7 +174,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         let name = scope.map(SDKTestHelperSyntax.canonicalName).joined(separator: ".")
         suites.append(Suite(name: name, conditional: conditional || suite == .conditional))
         let arguments = hasArguments("Suite", in: attributes)
-        if arguments { onArguments(scope, attributes) }
+        if arguments || Self.hasOpaqueSibling(of: "Suite", in: attributes) { onArguments(scope, attributes) }
         return ("suite", name, arguments)
     }
 

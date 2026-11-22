@@ -49,7 +49,7 @@ public struct SourceUnit: Codable, Sendable {
     /// The written discovery attribute has arguments. Nil denotes older evidence.
     public var swiftTestingHasArguments: Bool? = nil
     var swiftTestingArguments: [SwiftTestingSourceDeclarations.Arguments]? = nil
-    var swiftTestingDisplayComparison: String? = nil
+    var swiftTestingEntryInputs: SwiftTestingSourceDeclarations.EntryInputs? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
     /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
     public var bodylessProtocolRequirement: String? = nil
@@ -116,7 +116,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 8
+    static let currentParserVersion = 9
     var swiftTestingDeclarations: SwiftTestingSourceDeclarations? = nil
     public var parserVersion: Int? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
@@ -343,7 +343,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             return "*"
         }
-        func callerInfo(_ node: Syntax) -> (locations: [String: String], names: Set<String>) {
+        func callerInfo(_ node: Syntax, includeAllTokens: Bool = false) -> (locations: [String: String], names: Set<String>) {
             var offsets = Set<Int>()
             var names = Set<String>()
             func calledName(_ expression: ExprSyntax) -> String {
@@ -378,7 +378,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 }
                 for child in node.children(viewMode: .sourceAccurate) { visit(child) }
             }
-            visit(node)
+            if includeAllTokens { record(node.tokens(viewMode: .sourceAccurate)) } else { visit(node) }
             guard !offsets.isEmpty else { return ([:], names) }
             let positions = offsets.sorted().map { AbsolutePosition(utf8Offset: $0) }
             let valuesByKind = Dictionary(uniqueKeysWithValues: locationNames.map { name in
@@ -612,8 +612,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 let identity = SourceUnit.withLocations(owner + conditions, syntax: compactFingerprint(syntax))
                 registrations.append(.init(identity: identity, locations: locationValues(syntax), calls: callerInfo(syntax).locations))
             }
-            let displayComparison = node.as(FunctionDeclSyntax.self).flatMap(SwiftTestingSourceDeclarations.ignoringLiteralDisplayName)
-                .map { compactFingerprint(Syntax($0)) }
+            let entryInputs = node.as(FunctionDeclSyntax.self).flatMap {
+                SwiftTestingSourceDeclarations.entryInputs($0, fingerprint: compactFingerprint) { expression in
+                    .init(identity: compactFingerprint(expression), locations: locationValues(expression),
+                          calls: callerInfo(expression, includeAllTokens: true).locations)
+                }
+            }
             result.units.append(SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
@@ -633,7 +637,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
                 }, swiftTestingRole: testing.role, swiftTestingSuiteName: testing.suiteName,
                 swiftTestingHasArguments: testing.hasArguments, swiftTestingArguments: registrations.isEmpty ? nil : registrations,
-                swiftTestingDisplayComparison: displayComparison, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                swiftTestingEntryInputs: entryInputs, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,
                 helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },

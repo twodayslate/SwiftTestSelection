@@ -482,23 +482,61 @@ import Testing
     }
 }
 
-@Test(arguments: ["fileMove", "line", "defaultLine", "actor", "display"])
+@Test(arguments: ["fileMove", "line", "defaultLine", "actor", "display", "annotatedDisplay", "providers",
+                  "sdkLocation", "binaryDefault", "escaped", "qualified", "mixedProvider", "mixedTrait"])
 func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
+    let discoveryKey = "registration-" + UUID().uuidString
     let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
-    let plain = "UI/Common/plain()", marked = scenario == "actor" ? "UI/Outer/Other/marked()" : "UI/Other/marked()"
+    let plain = "UI/Common/plain()"
+    let parameterized = ["providers", "mixedProvider", "mixedTrait"].contains(scenario)
+    let marked = parameterized ? "UI/Other/marked(value:)" :
+        (scenario == "actor" ? "UI/Outer/Other/marked()" : "UI/Other/marked()")
+    var flags = ["-plugin-path", plugins.path]
+    var runtimeFlags: [String] = []
+    if scenario == "binaryDefault" {
+        // The selector cannot discover this default by indexing project sources.
+        let vendor = root.appendingPathComponent("BinaryLocation.swift")
+        try Data("public func callerLine(_ x: Int = #line) -> Int { x }".utf8).write(to: vendor)
+        let archive = root.appendingPathComponent("libBinaryLocation.a")
+        let architecture = try CommandRunner.run("uname", ["-m"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try CommandRunner.run(compiler, ["-target", architecture + "-apple-macosx13.0", "-emit-library", "-static",
+            "-emit-module", "-module-name", "BinaryLocation", vendor.path, "-o", archive.path], at: root)
+        flags += ["-I", root.path]
+        runtimeFlags = ["-Xswiftc", "-I", "-Xswiftc", root.path, "-Xlinker", archive.path]
+    }
+    func verifyRuntime(_ files: [String: String], head: Bool) throws {
+        let package = root.appendingPathComponent("Runtime")
+        let tests = package.appendingPathComponent("Tests/RegistrationTests")
+        try FileManager.default.createDirectory(at: tests, withIntermediateDirectories: true)
+        let manifest = """
+            // swift-tools-version: 6.0
+            import PackageDescription
+            let package = Package(name: "Runtime", platforms: [.macOS(.v13)], targets: [.testTarget(name: "RegistrationTests")])
+            """
+        try Data(manifest.utf8).write(to: package.appendingPathComponent("Package.swift"))
+        for (name, text) in files { try Data(text.utf8).write(to: tests.appendingPathComponent(name)) }
+        let method = ["providers", "mixedProvider"].contains(scenario) ? "marked" : "plain"
+        let run = try CommandRunner.run("xcrun", ["swift", "test", "--filter", method] + runtimeFlags, at: package, allowFailure: true)
+        let output = String(decoding: run.stdout + run.stderr, as: UTF8.self)
+        try #require((run.status == 0) == !head, "\(output)")
+        let outcome = head ? "failed" : "passed"
+        try #require(output.components(separatedBy: .newlines).contains {
+            $0.contains("Test " + method + "(") && $0.contains(outcome)
+        }, "\(output)")
+    }
     func capture(head: Bool) throws -> XcodeTestGraph {
         var files = ["Support.swift": """
             import Foundation
             import Testing
             struct Marker: TestTrait {
-                init(_ flag: Bool) { UserDefaults.standard.set(flag, forKey: "discovery") }
+                init(_ flag: Bool) { UserDefaults.standard.set(flag, forKey: "\(discoveryKey)") }
             }
             struct Common {
-                @Test func plain() { #expect(UserDefaults.standard.bool(forKey: "discovery")) }
+                @Test func plain() { #expect(UserDefaults.standard.bool(forKey: "\(discoveryKey)")) }
             }
             """]
         if scenario != "actor" { files["Support.swift"]! += "\nstruct Other {}" }
@@ -510,14 +548,30 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
             }
         case "actor":
             files["Tests.swift"] = "import Testing\nstruct Outer { actor Other { @Test(Marker(\(!head))) func marked() {} } }"
-        case "display":
-            files["Tests.swift"] = "import Testing\nextension Other { @Test(\"\(head ? "New" : "Old")\") static func marked() {} }"
+        case "providers", "mixedProvider", "mixedTrait":
+            let trait = scenario == "providers" ? "" : "Marker(\(scenario != "mixedTrait" || !head)), "
+            let value = head && scenario != "mixedTrait" ? 0 : 1
+            files["Tests.swift"] = "import Testing\nextension Other { @Test(\(trait)arguments: [\(value)]) func marked(value: Int) { #expect(value > 0) } }"
+        case "escaped", "qualified":
+            let name = scenario == "escaped" ? "`Test`" : "Testing /* module */ .Test"
+            files["Tests.swift"] = "import Testing\nextension Other { @\(name)(Marker(\(!head))) func marked() {} }"
+        case "sdkLocation", "binaryDefault":
+            let prefix = scenario == "binaryDefault" ? "import BinaryLocation" : "// SDK macro"
+            let expression = scenario == "binaryDefault" ? "callerLine()" : "(#_sourceLocation).line"
+            files["Tests.swift"] = "import Testing\n" + prefix + "\nextension Other {\n" + (head ? "\n" : "") +
+                "@Test(Marker(\(expression) == 4)) func marked() {}\n}"
+        case "display", "annotatedDisplay":
+            let isolation = scenario == "display" ? "" : "@MainActor "
+            files["Tests.swift"] = "import Testing\nextension Other { \(isolation)@Test(\"\(head ? "New" : "Old")\") static func marked() {} }"
         default:
             let location = scenario == "line" ? "#line" : "readLine()"
             files["Tests.swift"] = "import Testing\nfunc readLine(_ value: Int = #line) -> Int { value }\nextension Other {\n" +
                 (head ? "\n" : "") + "@Test(Marker(\(location) == 4)) func marked() {}\n}"
         }
-        var graph = try boundaryGraph(files, tests: [plain, marked], root: root, compilerArguments: ["-plugin-path", plugins.path], allowTestDiagnostics: true)
+        if ["sdkLocation", "binaryDefault", "escaped", "qualified"].contains(scenario) || parameterized {
+            try verifyRuntime(files, head: head)
+        }
+        var graph = try boundaryGraph(files, tests: [plain, marked], root: root, compilerArguments: flags, allowTestDiagnostics: true)
         graph.mappings = nil
         return try GraphArchive.decode(GraphArchive.encode(graph))
     }
@@ -526,25 +580,43 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
     func dual() -> ImpactReport { XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base") }
     let report = dual()
     let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
-    if scenario == "display" {
+    if ["display", "annotatedDisplay", "providers", "mixedProvider"].contains(scenario) {
         for result in [report, headOnly] {
             #expect(result.selectedTests == [marked])
-            #expect(result.diagnostics.isEmpty)
+            if !parameterized { #expect(result.diagnostics.isEmpty) }
         }
-        // Source spelling alone cannot authenticate an empty Testing factory.
-        for id in head.dependencies!.functions.keys where head.dependencies!.functions[id]?.swiftTestingEmptyFactory == "member" {
+        // Discarding the compiler proof restores conservative discovery coverage.
+        for id in head.dependencies!.functions.keys {
             head.dependencies!.functions[id]?.swiftTestingEmptyFactory = nil
+            head.dependencies!.functions[id]?.swiftTestingDeferredProviderCount = nil
         }
         #expect(dual().selectedTests.contains(plain))
+        #expect(XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes,
+                                             baseRevision: "base").selectedTests.contains(plain))
     } else {
         #expect(report.explanations.contains { $0.test == plain && $0.kind == "dependency" })
         #expect(headOnly.selectedTests.contains(plain))
-        if ["line", "defaultLine"].contains(scenario) {
+        if ["line", "defaultLine", "binaryDefault", "sdkLocation"].contains(scenario) {
             var mappings = UIFeatureMappings(features: [])
             mappings.sourceLocationPolicy = .diagnosticLineColumn
             base.mappings = mappings
             head.mappings = mappings
             #expect(dual().selectedTests.isEmpty)
+            let one = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources, mappings: mappings),
+                                                   changes: changes, baseRevision: "base")
+            #expect(one.selectedTests.isEmpty)
+        } else if scenario == "escaped" {
+            // An unfamiliar source macro may still produce a real SDK factory.
+            // Losing that source association must preserve discovery coverage.
+            let key = "UI:Tests.swift"
+            for i in head.sources[key]!.units.indices { head.sources[key]!.units[i].swiftTestingArguments = nil }
+            for i in base.sources[key]!.units.indices { base.sources[key]!.units[i].swiftTestingArguments = nil }
+            head.sources[key]?.swiftTestingDeclarations?.tests = []
+            base.sources[key]?.swiftTestingDeclarations?.tests = []
+            let one = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
+            for result in [dual(), one] {
+                #expect(result.diagnostics.contains { $0.code == "incomplete_testing_registration" && $0.tests.contains(plain) })
+            }
         } else if scenario == "actor" {
             for key in [String](head.sources.keys) {
                 head.sources[key]?.parserVersion = 7
