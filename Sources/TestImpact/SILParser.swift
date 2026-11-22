@@ -4,6 +4,7 @@
 import Foundation
 
 public struct SILModule: Codable, Sendable {
+    static let testVTablePrefix = "@xctest-vtable:"
     /// Bodies imported from another module; source locations alone cannot prove
     /// definition ownership when multiple modules compile the same file.
     public var importedSymbols: Set<String>? = nil
@@ -121,6 +122,7 @@ public enum SILParser {
         static let reference = try! NSRegularExpression(pattern: #"^(%[\w]+) = (?:function_ref|dynamic_function_ref|previous_dynamic_function_ref) @([^\s:]+)"#)
         static let method = try! NSRegularExpression(pattern: #"\b(class_method|super_method|witness_method|objc_method|objc_super_method)\b.*#([^\s:]+)"#)
         static let witnessType = try! NSRegularExpression(pattern: #"\bwitness_method \$([\w.]+),"#)
+        static let classTable = try! NSRegularExpression(pattern: #"^sil_vtable(?: \[[^\]]+\])* ([\w.]+) \{"#)
         static let witnessTable = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+)* ([\w.]+): [\w.]+ module [\w]+ \{"#)
         static let externalWitness = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+| \[[^\]]+\])* ([\w.]+): ([\w.]+) module ([\w]+)$"#)
         static let value = try! NSRegularExpression(pattern: #"^(%[\w]+) ="#)
@@ -163,6 +165,7 @@ public enum SILParser {
         var currentBlock = ""
         var nilSomePredecessors: [String: String] = [:]
         var unreachableNilSome = false
+        var classTable: String?
         var witnessType: String?
         var genericParameters: Set<String>?
         var metatypeInputs: [String: Set<String>] = [:]
@@ -208,11 +211,18 @@ public enum SILParser {
             guard !line.isEmpty else { return }
             if current == nil {
                 if line.hasPrefix("sil_witness_table") {
+                    classTable = nil
                     witnessType = Pattern.groups(Expressions.witnessTable, in: line)?.first
                     if let fields = Pattern.groups(Expressions.externalWitness, in: line) {
                         externalWitnesses[module + ":" + fields[1] + "@witness:" + fields[0], default: []].insert(fields[2])
                     }
-                } else if line.hasPrefix("sil_vtable") || line == "}" { witnessType = nil }
+                } else if line.hasPrefix("sil_vtable") {
+                    classTable = Pattern.groups(Expressions.classTable, in: line)?.first
+                    witnessType = nil
+                } else if line == "}" {
+                    classTable = nil
+                    witnessType = nil
+                }
                 if line.hasPrefix("// "), !line.hasPrefix("// Isolation:") {
                     let name = String(line.dropFirst(3))
                     pendingName = name.components(separatedBy: ", loc ")[0].components(separatedBy: ", scope ")[0]
@@ -253,6 +263,12 @@ public enum SILParser {
                 } else if line.containsASCII("#"), let match = Pattern.groups(Expressions.dispatch, in: line) {
                     let key = match[0].components(separatedBy: "!")[0]
                     tables[key, default: []].insert(match[1])
+                    // Retain the concrete implementation selected for inherited
+                    // XCTest entries, including methods from another module.
+                    if let classTable, let member = key.split(separator: ".").last, member.hasPrefix("test"),
+                       line.contains(" [inherited]") || line.contains(" [override]") {
+                        tables[SILModule.testVTablePrefix + module + "." + classTable + "." + member, default: []].insert(match[1])
+                    }
                     if let witnessType { tables[key + "@witness:" + witnessType, default: []].insert(match[1]) }
                 }
                 return

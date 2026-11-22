@@ -66,7 +66,8 @@ public struct PackageAnalyzer {
         for missing in modules.subtracting(seenModules).sorted() {
             graph.diagnostics.append("No compiler invocation was found for target \(missing).")
         }
-        XcodeCompilerGraph.resolveDispatch(&graph, tables: dispatchTargets, externalWitnesses: externalWitnesses)
+        XcodeCompilerGraph.resolveDispatch(&graph, tables: dispatchTargets, externalWitnesses: externalWitnesses,
+            compiler: build.swiftCommands.values.first?.executable)
 
         progress("Discovering test identifiers…")
         let listing = try CommandRunner.run("swift", ["test"] + common + ["list", "--skip-build"], at: packagePath).text

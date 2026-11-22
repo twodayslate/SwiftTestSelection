@@ -45,18 +45,18 @@ func evaluate(_ predicate: () -> Bool) -> Bool { predicate() }
 """
 
 
-func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = []) throws -> XcodeTestGraph {
+func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = [], module: String = "UI", target: String = "UI") throws -> XcodeTestGraph {
     for (path, text) in files { try Data(text.utf8).write(to: root.appendingPathComponent(path)) }
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
-    let sil = root.appendingPathComponent("UI.sil")
-    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-module-name", "UI",
+    let sil = root.appendingPathComponent(module + ".sil")
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-module-name", module,
         "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib"] + compilerArguments + files.keys.sorted().map { root.appendingPathComponent($0).path } + ["-o", sil.path], at: root)
-    let parsed = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
+    let parsed = try SILParser.parse(file: sil, module: module, sourceRoot: root)
     var graph = DependencyGraph(functions: parsed.functions)
     XcodeCompilerGraph.resolveDispatch(&graph, tables: parsed.dispatchTargets)
-    var current = XcodeTestGraph(targets: [.init(name: "UI", productType: "com.apple.product-type.bundle.ui-testing", sourceFiles: Set(files.keys))], tests: tests)
-    current.modules = ["UI": "UI"]
-    current.sources = Dictionary(uniqueKeysWithValues: files.map { ("UI:" + $0.key, SwiftSourceSnapshot.parse($0.value, path: $0.key, module: "UI")) })
+    var current = XcodeTestGraph(targets: [.init(name: target, productType: "com.apple.product-type.bundle.ui-testing", sourceFiles: Set(files.keys))], tests: tests)
+    current.modules = [target: module]
+    current.sources = Dictionary(uniqueKeysWithValues: files.map { (module + ":" + $0.key, SwiftSourceSnapshot.parse($0.value, path: $0.key, module: module)) })
     XcodeCompilerGraph.bind(tests: tests, modules: current.modules, sources: current.sources, graph: &graph)
     try #require(tests.allSatisfy { graph.tests[$0]?.isEmpty == false && graph.testDiagnostics[$0]?.isEmpty ?? true })
     current.dependencies = graph

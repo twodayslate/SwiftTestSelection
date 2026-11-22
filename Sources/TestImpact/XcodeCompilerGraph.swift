@@ -178,7 +178,7 @@ enum XcodeCompilerGraph {
             graph.diagnostics = ["Compiler dependency extraction failed: \(error)"]
             return graph
         }
-        resolveDispatch(&graph, tables: dispatch, externalWitnesses: externalWitnesses, projectModules: Set(jobs.map(\.module)))
+        resolveDispatch(&graph, tables: dispatch, externalWitnesses: externalWitnesses, projectModules: Set(jobs.map(\.module)), compiler: jobs.first?.compiler)
 
         return graph
     }
@@ -221,8 +221,12 @@ enum XcodeCompilerGraph {
     }
 
     static func resolveDispatch(_ graph: inout DependencyGraph, tables: [String: Set<String>],
-                                externalWitnesses: [String: Set<String>] = [:], projectModules: Set<String>? = nil) {
-        SwiftTestingDiscoveryRoots.bindTraitWitnesses(graph: &graph, tables: tables)
+                                externalWitnesses: [String: Set<String>] = [:], projectModules: Set<String>? = nil, compiler: String? = nil) {
+        for (key, symbols) in tables where key.hasPrefix(SILModule.testVTablePrefix) {
+            if graph.testVTableEntries == nil { graph.testVTableEntries = [:] }
+            graph.testVTableEntries?[String(key.dropFirst(SILModule.testVTablePrefix.count)), default: []].formUnion(symbols)
+        }
+        SwiftTestingDiscoveryRoots.bindTraitWitnesses(graph: &graph, tables: tables, compiler: compiler)
         let localModules = projectModules ?? Set(graph.functions.values.filter { !$0.regions.isEmpty }.map(\.module))
         for symbol in graph.functions.keys {
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
@@ -296,54 +300,7 @@ enum XcodeCompilerGraph {
         let declarations = Set(graph.functions.values.flatMap(\.dynamicDeclarations))
         // Imported Objective-C methods have no project Swift vtable slot. A
         // dispatch through the base class must still reach declared overrides.
-        let superclasses = sources.values.reduce(into: [String: [String]]()) { result, file in
-            result.merge(file.superclasses ?? file.inheritance) { Array(Set($0 + $1)) }
-        }
-        let nominalParents = Dictionary(uniqueKeysWithValues: Set(superclasses.values.flatMap { $0 }).compactMap { spelling in
-            SwiftSourceSnapshot.nominalTypeName(spelling).map { (spelling, $0) }
-        })
-        let typeAliases = Set(sources.values.flatMap { $0.typeAliases ?? [] })
-        let nominalTypes = Set(sources.values.flatMap { file in
-            file.units.filter { $0.kind == "type" }.map {
-                String($0.key.prefix { $0 != ":" }) + "." + $0.scope
-            }
-        })
-        func containsAlias(_ name: String) -> Bool {
-            typeAliases.contains(name) || name.indices.contains {
-                name[$0] == "." && typeAliases.contains(String(name[..<$0]))
-            }
-        }
-        func resolveSuperclass(_ parent: String, of owner: String) -> (candidates: [String], complete: Bool) {
-            // Swift resolves an unqualified name from its enclosing scopes
-            // outward. A module-level class must not hide a nested superclass.
-            var scope = owner.split(separator: ".").dropLast()
-            let qualifier = parent.firstIndex(of: ".").map { String(parent[..<$0]) }
-            while !scope.isEmpty {
-                let enclosingType = scope.joined(separator: ".")
-                let prefix = enclosingType + "."
-                let candidate = prefix + parent
-                if containsAlias(candidate) { return ([], false) }
-                if superclasses[candidate] != nil { return ([candidate], true) }
-                // A nearer nominal qualifier shadows outer names even if its
-                // member is inherited and absent from this declaration index.
-                // Keep that ancestry unknown instead of choosing an unrelated
-                // outer class with the same qualified spelling.
-                if let qualifier, nominalTypes.contains(prefix + qualifier) { return ([], false) }
-                // Inherited members of the enclosing class precede outer
-                // lexical scopes too. This includes unqualified nested classes,
-                // aliases, and the first component of a qualified name. Their
-                // absence from the declaration index does not prove absence
-                // from the inherited scope, so do not accept an outer match.
-                if let parents = superclasses[enclosingType], !parents.isEmpty { return ([], false) }
-                scope = scope.dropLast()
-            }
-            if containsAlias(parent) { return ([], false) }
-            if superclasses[parent] != nil { return ([parent], true) }
-            let candidates = superclasses.keys.filter { $0.hasSuffix("." + parent) }
-            // Imports are not resolved by this index. Retain possible imported
-            // classes without treating a same-named class as proof of ancestry.
-            return (candidates, candidates.isEmpty)
-        }
+        let hierarchy = SwiftSuperclassIndex(sources: sources)
         let declarationsByMember = Dictionary(grouping: declarations, by: { $0.split(separator: ".").last.map(String.init) ?? $0 })
         var overrides: [String: Set<String>] = [:]
         var unresolvedOverrideDeclarations = Set<String>()
@@ -359,11 +316,11 @@ enum XcodeCompilerGraph {
                 var complete = true
                 while let type = pending.popLast() {
                     guard visited.insert(type).inserted else { continue }
-                    guard let parents = superclasses[type] else { complete = false; continue }
+                    guard let parents = hierarchy.superclasses[type] else { complete = false; continue }
                     for spelling in parents {
-                        guard let parent = nominalParents[spelling] else { complete = false; continue }
+                        guard let parent = hierarchy.nominalParents[spelling] else { complete = false; continue }
                         names.insert(parent)
-                        let resolution = resolveSuperclass(parent, of: type)
+                        let resolution = hierarchy.resolveSuperclass(parent, of: type)
                         let candidates = resolution.candidates
                         if !resolution.complete { complete = false }
                         for candidate in candidates {

@@ -92,7 +92,10 @@ import Testing
         func prepare(for test: Testing.Test) async throws { nestedRuntimeHook() }
     }
     struct Other { @Test func unrelatedMember() {} }
-    struct RuntimeTrait: TestTrait {
+    func shadowHook() {}
+    protocol Trait { func prepare() }
+    struct RuntimeTrait: TestTrait, Trait {
+        func prepare() { shadowHook() }
         func prepare(for test: Testing.Test) async throws { runtimeHook() }
     }
     @Test @MainActor func topLevel() { let app = XCUIApplication(); #expect(app.exists) }
@@ -146,6 +149,8 @@ import Testing
     let index = DependencyIndex(graph)
     let incidental = try #require(graph.functions.values.first { $0.name == "incidentalHook()" }?.id)
     #expect(index.paths(to: [incidental]).path(from: graph.tests[tests[5]] ?? []) == nil)
+    let shadow = try #require(graph.functions.values.first { $0.name == "shadowHook()" }?.id)
+    #expect(index.paths(to: [shadow]).path(from: graph.tests[tests[5]] ?? []) == nil)
     let runtimeHook = try #require(graph.functions.values.first { $0.name == "runtimeHook()" }?.id)
     // The runtime invokes prepare through Trait. Bind its emitted witness even
     // while custom scoping and parameter iteration retain uncertainty.

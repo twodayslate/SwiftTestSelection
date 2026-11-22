@@ -13,16 +13,24 @@ enum SwiftTestingDiscoveryRoots {
     /// Discovery invokes protocol witnesses outside the generated factory.
     /// Keep all compiled candidates for the concrete existential payload,
     /// including same-spelled conformances from different capture modules.
-    static func bindTraitWitnesses(graph: inout DependencyGraph, tables: [String: Set<String>]) {
+    static func bindTraitWitnesses(graph: inout DependencyGraph, tables: [String: Set<String>], compiler: String?) {
+        let applied = graph.functions.values.reduce(into: Set<String>()) { types, node in
+            if let payloads = node.swiftTestingExistentialTypes { types.formUnion(payloads) }
+        }
+        guard !applied.isEmpty else { return }
         var witnesses: [String: Set<String>] = [:]
         let protocols: Set<Substring> = ["Trait", "SuiteTrait", "TestTrait", "TestScoping"]
         for (key, targets) in tables {
             guard let separator = key.range(of: "@witness:"),
                   let owner = key[..<separator.lowerBound].split(separator: ".").first,
                   protocols.contains(owner) else { continue }
-            witnesses[String(key[separator.upperBound...]), default: []].formUnion(targets)
+            let payload = String(key[separator.upperBound...])
+            if applied.contains(payload) { witnesses[payload, default: []].formUnion(targets) }
         }
-        guard !witnesses.isEmpty else { return }
+        let symbols = Set(witnesses.values.flatMap { $0 })
+        let verified = sdkWitnesses(symbols.sorted(), protocols: protocols, compiler: compiler)
+        guard !verified.isEmpty else { return }
+        witnesses = witnesses.mapValues { $0.intersection(verified) }
         for (symbol, node) in graph.functions {
             guard let types = node.swiftTestingExistentialTypes, !types.isEmpty else { continue }
             let candidates = types.reduce(into: Set<String>()) { $0.formUnion(witnesses[$1] ?? []) }
@@ -34,6 +42,31 @@ enum SwiftTestingDiscoveryRoots {
                 graph.functions[symbol]?.dependencies.formUnion(candidates)
             }
         }
+    }
+
+    private static func sdkWitnesses(_ symbols: [String], protocols: Set<Substring>, compiler: String?) -> Set<String> {
+        // SIL table headers omit the requirement's module. The compiler's
+        // witness thunk identifies the fully qualified protocol declaration.
+        guard !symbols.isEmpty else { return [] }
+        let command: [String]
+        let sibling = compiler.map { URL(fileURLWithPath: $0).deletingLastPathComponent().appendingPathComponent("swift-demangle").path }
+        if compiler?.hasPrefix("/") == true, let sibling, FileManager.default.isExecutableFile(atPath: sibling) {
+            command = [sibling]
+        } else {
+            #if os(macOS)
+            command = ["xcrun", "swift-demangle"]
+            #else
+            command = ["swift-demangle"]
+            #endif
+        }
+        guard let output = try? CommandRunner.run(command[0], Array(command.dropFirst()) + ["--compact"],
+            at: FileManager.default.temporaryDirectory, input: Data((symbols.joined(separator: "\n") + "\n").utf8)).text else { return [] }
+        let names = output.split(separator: "\n")
+        guard names.count == symbols.count else { return [] }
+        let prefixes = protocols.map { "protocol witness for Testing." + $0 + "." }
+        return Set(zip(symbols, names).compactMap { symbol, name in
+            prefixes.contains(where: name.hasPrefix) ? symbol : nil
+        })
     }
 
     static func bind(modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph) {

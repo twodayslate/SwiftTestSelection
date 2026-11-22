@@ -3,6 +3,31 @@
 
 import Foundation
 
+private struct HeadOnlySourceComparison {
+    let locationPolicy: UIFeatureMappings.SourceLocationPolicy
+
+    init(head: UIFeatureMappings?, base: UIFeatureMappings?) {
+        locationPolicy = head?.sourceLocationPolicy == base?.sourceLocationPolicy
+            ? head?.sourceLocationPolicy ?? .semantic : .semantic
+    }
+
+    func fingerprint(_ unit: SourceUnit) -> String {
+        let syntax: String
+        switch locationPolicy {
+        case .semantic: syntax = unit.fingerprint
+        case .diagnostic: return unit.syntaxFingerprint ?? unit.fingerprint
+        case .diagnosticLineColumn:
+            guard let files = unit.fileLocationValues else { return unit.fingerprint }
+            syntax = SourceUnit.withLocations(files, syntax: unit.syntaxFingerprint ?? unit.fingerprint)
+        }
+        // Over-approximate caller defaults without inventing base compiler
+        // edges. This also preserves fixture file identity for moved callers.
+        return syntax + (unit.callerLocations ?? [:]).filter { key, _ in
+            locationPolicy != .diagnosticLineColumn || !["line", "column"].contains(key)
+        }.sorted { $0.key < $1.key }.map { "@\($0.key)=\($0.value)" }.joined()
+    }
+}
+
 /// Source evidence only. No compiler graph, ownership, imports or test inventory
 /// is manufactured for the base. Unchanged files may share the head's syntax
 /// snapshot because Git proves identical bytes, not because imports prove edges.
@@ -45,21 +70,29 @@ struct XcodeHeadOnlySources {
             // The selector groups declarations across all paths in the scope.
             // A removed, duplicated or moved callable needs actual base callers,
             // even when another declaration with the same key survives.
-            var before: [String: [String]] = [:], after: [String: [String]] = [:]
+            var before: [String: [SourceUnit]] = [:], after: [String: [SourceUnit]] = [:]
             for (key, head) in current.sources {
                 guard let colon = key.firstIndex(of: ":") else { continue }
                 let path = String(key[key.index(after: colon)...])
                 guard paths.contains(path) else { continue }
                 for unit in head.units where unit.helperCallableName != nil {
-                    after[unit.key, default: []].append(path)
+                    after[unit.key, default: []].append(unit)
                 }
                 if let old = try cache.snapshot(path: path, module: String(key[..<colon])) {
                     for unit in old.units where unit.helperCallableName != nil {
-                        before[unit.key, default: []].append(path)
+                        before[unit.key, default: []].append(unit)
                     }
                 }
             }
-            auditCallers = before.contains { key, paths in paths.count != 1 || after[key] != paths }
+            let comparison = HeadOnlySourceComparison(head: current.mappings, base: result.mappings)
+            func alternatives(_ units: [SourceUnit]) -> [String: [String]] {
+                Dictionary(grouping: units, by: \.region.path).mapValues { $0.map(comparison.fingerprint).sorted() }
+            }
+            auditCallers = before.contains { key, old in
+                guard let new = after[key], new.count == old.count else { return true }
+                if old.count == 1 { return old[0].region.path != new[0].region.path }
+                return alternatives(old) != alternatives(new)
+            }
         }
         var basePaths: Set<String>?
         if auditCallers {
@@ -225,23 +258,8 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_unsupported_condition", "\(revision): \(feature.name): \(result.explanation)", tests: uiTests)
             }
         }
-        let locationPolicy = current.mappings?.sourceLocationPolicy == source.mappings?.sourceLocationPolicy
-            ? current.mappings?.sourceLocationPolicy ?? .semantic : .semantic
-        func fingerprint(_ unit: SourceUnit) -> String {
-            let syntax: String
-            switch locationPolicy {
-            case .semantic: syntax = unit.fingerprint
-            case .diagnostic: return unit.syntaxFingerprint ?? unit.fingerprint
-            case .diagnosticLineColumn:
-                guard let files = unit.fileLocationValues else { return unit.fingerprint }
-                syntax = SourceUnit.withLocations(files, syntax: unit.syntaxFingerprint ?? unit.fingerprint)
-            }
-            // Over-approximate caller defaults without inventing base compiler
-            // edges. This also preserves fixture file identity for moved callers.
-            return syntax + (unit.callerLocations ?? [:]).filter { key, _ in
-                locationPolicy != .diagnosticLineColumn || !["line", "column"].contains(key)
-            }.sorted { $0.key < $1.key }.map { "@\($0.key)=\($0.value)" }.joined()
-        }
+        let fingerprint = HeadOnlySourceComparison(head: current.mappings, base: source.mappings).fingerprint
+        lazy var hierarchy = SwiftSuperclassIndex(sources: current.sources)
         let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
         let old = Dictionary(grouping: source.base.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
         let new = Dictionary(grouping: current.sources.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
@@ -334,7 +352,7 @@ enum XcodeHeadOnlySelector {
             }
             guard before.count == 1, after.count == 1, let a = before.first, let b = after.first,
                   a.kind == "function", b.kind == "function", a.region.path == b.region.path else {
-                declarationChanges.append(.describe(key: key, before: before, after: after, source: source, current: current))
+                declarationChanges.append(.describe(key: key, before: before, after: after, source: source, current: current, hierarchy: hierarchy))
                 let affectedPaths = Set(fallbackUnits.map(\.region.path)).sorted()
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue

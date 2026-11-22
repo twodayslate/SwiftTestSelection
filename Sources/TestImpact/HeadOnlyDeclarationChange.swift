@@ -27,7 +27,7 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
     public var historicalReferences: [Reference]
     public var missingEvidence: [String]
 
-    static func describe(key: String, before: [SourceUnit], after: [SourceUnit], source: XcodeHeadOnlySources, current: XcodeTestGraph) -> Self {
+    static func describe(key: String, before: [SourceUnit], after: [SourceUnit], source: XcodeHeadOnlySources, current: XcodeTestGraph, hierarchy: SwiftSuperclassIndex) -> Self {
         let names = Set(before.compactMap(\.helperCallableName))
         let sources = source.base.map { ($0.key, $0.value) } + source.unownedBaseSources.map { ("unowned:" + $0.key, $0.value) }
         var references: [Reference] = []
@@ -45,7 +45,7 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
                     }.map { unit in
                         let unique = functions.filter { $0.key == unit.key || $0.region.intersects(unit.region) }.count == 1
                         return Caller(declaration: unit.key, baseRegion: unit.region,
-                               survivingTestEntries: unique ? survivingEntries(for: unit, sourceKey: sourceKey, current: current) : [])
+                               survivingTestEntries: unique ? survivingEntries(for: unit, sourceKey: sourceKey, current: current, hierarchy: hierarchy) : [])
                     }.sorted { ($0.baseRegion.startLine, $0.declaration) < ($1.baseRegion.startLine, $1.declaration) }
                     references.append(.init(sourceKey: sourceKey, signature: signature, callerLines: uses.callers.sorted(),
                         unsupportedLines: uses.unsupportedLines.sorted(), incomplete: uses.unsupported, possibleCallers: callers))
@@ -61,13 +61,13 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
             ])
     }
 
-    private static func survivingEntries(for historical: SourceUnit, sourceKey: String, current: XcodeTestGraph) -> [String] {
+    private static func survivingEntries(for historical: SourceUnit, sourceKey: String, current: XcodeTestGraph, hierarchy: SwiftSuperclassIndex) -> [String] {
         guard let snapshot = current.sources[sourceKey], let graph = current.dependencies else { return [] }
         let matches = snapshot.units.filter { $0.key == historical.key && $0.region.path == historical.region.path }
         guard matches.count == 1, let unit = matches.first, let name = unit.helperCallableName else { return [] }
         let module = String(sourceKey.prefix { $0 != ":" })
-        let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
-        guard !owners.isEmpty, owners.allSatisfy({ $0.isTest && current.modules[$0.name] == module }),
+        let owners = current.targets.filter { current.modules[$0.name] == module && $0.sourceFiles.contains(unit.region.path) }
+        guard !owners.isEmpty, owners.allSatisfy(\.isTest),
               snapshot.units.filter({ $0.kind == "function" && $0.region.intersects(unit.region) }).count == 1 else { return [] }
         // Restrict this projection to zero-argument test methods. Match the
         // enumerated ID, compiler root, module, and physical declaration.
@@ -76,15 +76,42 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
         return current.tests.filter { entry in
             // XCTest can enumerate this declaration under a subclass, including
             // one in another test module. Verify the bound implementation below.
-            let leaf = entry.split(separator: "/").last
-            guard leaf == Substring(method) || leaf == Substring(name) else { return false }
-            return graph.tests[entry]?.contains { id in
-                guard let node = graph.functions[id], node.module == module,
-                      node.name == qualified || node.name == "static " + qualified else { return false }
-                return node.regions.contains { region in
-                    region.path == unit.region.path && region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine
-                }
-            } == true
+            let parts = entry.split(separator: "/")
+            guard let target = parts.first, let entryModule = current.modules[String(target)],
+                  parts.last == Substring(method) || parts.last == Substring(name) else { return false }
+            let roots = (graph.tests[entry] ?? []).compactMap { graph.functions[$0] }
+            let matches = roots.filter { node in
+                node.module == module && (node.name == qualified || node.name == "static " + qualified) &&
+                    node.regions.contains { region in
+                        region.path == unit.region.path && region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine
+                    }
+            }
+            guard !matches.isEmpty else { return false }
+
+            // Selection retains superclass methods alongside overrides. Report
+            // only the first bound implementation on the entry's class chain.
+            let scope = parts.dropFirst().dropLast().joined(separator: ".")
+            if scope == unit.scope && entryModule == module { return true }
+            guard !scope.isEmpty, !unit.scope.isEmpty else { return false }
+            var owner = entryModule + "." + scope
+            if let slots = graph.testVTableEntries?[owner + "." + name] {
+                // Overloads share a SIL slot basename. Only the enumerated
+                // zero-argument signature can identify this implementation.
+                guard slots.allSatisfy({ graph.functions[$0] != nil }) else { return false }
+                let implementations = slots.filter { graph.functions[$0]?.name.hasSuffix("." + method) == true }
+                if !implementations.isEmpty { return implementations.isSubset(of: Set(matches.map(\.id))) }
+            }
+            var visited = Set<String>()
+            while visited.insert(owner).inserted {
+                if owner == module + "." + unit.scope { return true }
+                if roots.contains(where: { node in
+                    let name = node.name.hasPrefix("static ") ? String(node.name.dropFirst(7)) : node.name
+                    return !node.regions.isEmpty && node.module + "." + name == owner + "." + method
+                }) { return false }
+                guard let candidate = hierarchy.verifiedSuperclass(of: owner, identities: graph.compilerClassIdentities) else { return false }
+                owner = candidate
+            }
+            return false
         }.sorted()
     }
 

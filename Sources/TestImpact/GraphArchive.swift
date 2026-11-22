@@ -30,6 +30,7 @@ public enum GraphArchive {
         var dynamicDeclarationModules: [String: [String: Set<String>]]?
         var nominalTypeContexts: [String: String]?
         /// Optional for archives written before factory-effect evidence existed.
+        var testVTableEntries: [String: Set<String>]?
         var swiftTestingSuiteWitnesses: [String: Set<String>]?
         var swiftTestingExistentialTypes: [String: Set<String>]?
         var swiftTestingFactoryTypes: [String: String]?
@@ -66,6 +67,7 @@ public enum GraphArchive {
             compilerImplicitImports = graph.compilerImplicitImports
             assertionFormattingSites = graph.functions.compactMapValues(\.assertionFormattingSites)
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
+            testVTableEntries = graph.testVTableEntries
             swiftTestingSuiteWitnesses = graph.swiftTestingSuiteWitnesses
             swiftTestingExistentialTypes = graph.functions.compactMapValues(\.swiftTestingExistentialTypes)
             swiftTestingFactoryTypes = graph.functions.compactMapValues(\.swiftTestingFactoryType)
@@ -80,6 +82,7 @@ public enum GraphArchive {
             }
             var graph = DependencyGraph(toolchain: toolchain, diagnostics: diagnostics)
             graph.schemaVersion = schema; graph.testDiagnostics = testDiagnostics
+            graph.testVTableEntries = testVTableEntries
             graph.swiftTestingSuiteWitnesses = swiftTestingSuiteWitnesses
             graph.compilerClassIdentities = compilerClassIdentities
             graph.compilerImplicitImports = compilerImplicitImports

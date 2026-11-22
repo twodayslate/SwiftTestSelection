@@ -12,28 +12,111 @@ import Testing
         private func oldHelper() { XCTAssertTrue(true) }
     }
     final class Inherited: Suite {}
+    class Overriding: Suite {
+        override func testConsumer() { overrideHelper() }
+        private func overrideHelper() {}
+    }
+    final class Grandchild: Overriding {}
     final class Unrelated: XCTestCase {
         func testConsumer() {}
     }
     """
     let after = before.replacingOccurrences(of: "oldHelper", with: "newHelper")
+        .replacingOccurrences(of: "overrideHelper", with: "newOverrideHelper")
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let inherited = ["UI/Inherited/testConsumer()", "UI/Suite/testConsumer()"]
-    let current = try boundaryGraph(["UI.swift": after], tests: inherited + ["UI/Unrelated/testConsumer()"], root: root)
+    let overriding = ["UI/Grandchild/testConsumer()", "UI/Overriding/testConsumer()"]
+    let current = try boundaryGraph(["UI.swift": after], tests: inherited + overriding + ["UI/Unrelated/testConsumer()"], root: root)
     let old = SwiftSourceSnapshot.parse(before, path: "UI.swift", module: "UI")
     let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: ["UI:UI.swift": old], mappings: current.mappings), changes: [.init(path: "UI.swift")], baseRevision: "base")
-    let removed = try #require(report.headOnlyDeclarationChanges?.first { $0.change == "removed" })
+    let removed = try #require(report.headOnlyDeclarationChanges?.first { $0.change == "removed" && $0.key.contains("oldHelper") })
     #expect(removed.baseRegions.first?.startLine == 4)
     #expect(removed.headRegions.isEmpty)
     #expect(removed.historicalReferences.contains { $0.sourceKey == "UI:UI.swift" && $0.callerLines.contains(3) })
     #expect(removed.historicalReferences.flatMap { $0.possibleCallers ?? [] }.contains {
         $0.baseRegion.startLine == 3 && $0.survivingTestEntries == inherited
     })
+    let overrideHelper = try #require(report.headOnlyDeclarationChanges?.first { $0.key.contains("overrideHelper") })
+    let overrideCallers = overrideHelper.historicalReferences.flatMap { $0.possibleCallers ?? [] }
+    #expect(!overrideCallers.isEmpty)
+    #expect(overrideCallers.allSatisfy { $0.survivingTestEntries == overriding })
     #expect(!removed.missingEvidence.isEmpty)
-    #expect(report.selectedTests == current.tests)
+    #expect(report.selectedTests == current.tests.sorted())
     #expect(report.diagnostics.contains { $0.code == "head_only_declaration_change" })
+}
+
+@Test func importedSuperclassUsesTheCompiledTestImplementation() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let head = "import XCTest\nopen class Suite: XCTestCase {\n    open func testReading() {}\n}"
+    let old = head.replacingOccurrences(of: "testReading() {}", with: "testReading() { oldHelper() }") + "\nprivate func oldHelper() {}"
+    let baseEntry = "BaseKit/Suite/testReading()"
+    var current = try boundaryGraph(["Base.swift": head], tests: [baseEntry], root: root, module: "BaseKit", target: "BaseKit")
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "BaseKit",
+        "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", "Base.swift"], at: root)
+    let classes = """
+    import BaseKit
+    final class Inherited: Suite {}
+    class Overriding: Suite { override func testReading() {} }
+    final class Grandchild: Overriding {}
+    """
+    let child = try boundaryGraph(["Child.swift": classes], tests: [], root: root, compilerArguments: ["-I", root.path])
+    current.targets += child.targets
+    current.modules.merge(child.modules) { first, _ in first }
+    current.sources.merge(child.sources) { first, _ in first }
+    current.tests += ["Inherited", "Overriding", "Grandchild"].map { "UI/" + $0 + "/testReading()" }
+    var graph = try #require(child.dependencies)
+    let baseGraph = try #require(current.dependencies)
+    graph.functions.merge(baseGraph.functions) { _, base in base }
+    XcodeCompilerGraph.bind(tests: current.tests, modules: current.modules, sources: current.sources, graph: &graph)
+    current.dependencies = graph
+    var previous = current.sources
+    previous["BaseKit:Base.swift"] = .parse(old, path: "Base.swift", module: "BaseKit")
+    let retained = try GraphArchive.decode(GraphArchive.encode(current))
+    let report = XcodeHeadOnlySelector.select(current: retained, source: .init(base: previous),
+        changes: [.init(path: "Base.swift")], baseRevision: "base")
+    let removed = try #require(report.headOnlyDeclarationChanges?.first { $0.change == "removed" })
+    let callers = removed.historicalReferences.flatMap { $0.possibleCallers ?? [] }
+    #expect(!callers.isEmpty)
+    #expect(callers.allSatisfy { $0.survivingTestEntries == [baseEntry, "UI/Inherited/testReading()"] })
+}
+
+@Test func sharedTestSourceProjectsHistoricalCallersWithinEachCompiledModule() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let head = "import XCTest\nfinal class Suite: XCTestCase {\n    func testReading() {}\n}"
+    let old = head.replacingOccurrences(of: "testReading() {}", with: "testReading() { oldHelper() }") + "\nprivate func oldHelper() {}"
+    var current = XcodeTestGraph(targets: [], tests: [])
+    var graph = DependencyGraph(), base: [String: SwiftSourceSnapshot] = [:]
+    for module in ["MacTests", "MobileTests"] {
+        let target = module + "Target"
+        let entry = target + "/Suite/testReading()"
+        let capture = try boundaryGraph(["Shared.swift": head], tests: [entry], root: root, module: module, target: target)
+        current.targets += capture.targets
+        current.tests.append(entry)
+        current.modules[target] = module
+        let key = module + ":Shared.swift"
+        current.sources[key] = capture.sources[key]
+        base[key] = .parse(old, path: "Shared.swift", module: module)
+        let fragment = try #require(capture.dependencies)
+        graph.functions.merge(fragment.functions) { existing, _ in existing }
+        graph.tests[entry] = fragment.tests[entry]
+    }
+    current.dependencies = graph
+    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base),
+        changes: [.init(path: "Shared.swift")], baseRevision: "base")
+    let removed = try #require(report.headOnlyDeclarationChanges?.first { $0.change == "removed" })
+    for (target, module) in current.modules {
+        let references = removed.historicalReferences.filter { $0.sourceKey == module + ":Shared.swift" }
+        let callers = references.flatMap { $0.possibleCallers ?? [] }
+        #expect(!callers.isEmpty)
+        #expect(callers.allSatisfy { $0.survivingTestEntries == [target + "/Suite/testReading()"] })
+    }
 }
 
 @Test func historicalChainedAndEscapedUsesRetainOwnersWithoutGuessingRenamedEntries() throws {

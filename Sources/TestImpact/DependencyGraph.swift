@@ -148,6 +148,8 @@ public struct DependencyGraph: Codable, Sendable {
     public var tests: [String: Set<String>]
     public var diagnostics: [String]
     public var testDiagnostics: [String: [String]] = [:]
+    /// Module-qualified XCTest class and method to inherited or overriding vtable implementations.
+    public var testVTableEntries: [String: Set<String>]? = nil
     /// Runtime witnesses keyed by the suite factory that constructs their trait.
     public var swiftTestingSuiteWitnesses: [String: Set<String>]? = nil
     /// Compiler-authenticated class identities from the matching built modules.

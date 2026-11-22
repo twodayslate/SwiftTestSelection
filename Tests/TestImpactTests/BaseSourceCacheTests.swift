@@ -228,3 +228,22 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
     let lines = ambiguous.historicalReferences.filter { $0.sourceKey == "UI:Caller.swift" }.flatMap(\.callerLines)
     #expect(Set(lines) == [1])
 }
+
+@Test func unchangedConditionalAlternativesKeepBaseReadsScoped() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let before = "#if DEBUG\nfunc helper() { print(1) }\n#else\nfunc helper() { print(2) }\n#endif\nfunc touched() {}"
+    try repo.write("Conditional.swift", before)
+    try repo.write("Unowned.swift", "func unrelated() {}")
+    let base = try repo.commit()
+    var current = XcodeTestGraph(targets: [], tests: [])
+    let after = before.replacingOccurrences(of: "touched() {}", with: "touched() { print(3) }")
+    current.sources["UI:Conditional.swift"] = .parse(after, path: "Conditional.swift", module: "UI")
+    let changes = [FileChange(path: "Conditional.swift")]
+    let cache = try XcodeBaseSourceCache(root: repo.root, base: base)
+    let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: base, root: repo.root, mappingPath: "mapping.json", cache: cache)
+    #expect(cache.counts.parses == 1)
+    #expect(cache.counts.treeReads == 0)
+    let report = XcodeHeadOnlySelector.select(current: current, source: source, changes: changes, baseRevision: base)
+    #expect(report.headOnlyDeclarationChanges?.isEmpty ?? true)
+}
