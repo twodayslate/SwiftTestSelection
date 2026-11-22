@@ -193,8 +193,13 @@ public enum GraphArchive {
     /// Previous captures stored only the test's own factories. Rebind once on
     /// load so comparing retained graphs also includes eager discovery effects.
     private static func upgradeDiscovery(_ snapshot: inout XcodeTestGraph) {
-        guard var graph = snapshot.dependencies, !graph.tests.isEmpty, graph.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] == nil,
-              graph.functions.values.contains(where: { $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true }) else { return }
+        guard var graph = snapshot.dependencies, !graph.tests.isEmpty else { return }
+        if graph.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil {
+            SwiftTestingDiscoveryRoots.restoreIndirectDiscoveryCalls(&graph)
+            snapshot.dependencies = graph
+            return
+        }
+        guard graph.functions.values.contains(where: { $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true }) else { return }
         SwiftTestingDiscoveryRoots.bind(modules: snapshot.modules, sources: snapshot.sources, graph: &graph)
         graph.testDiagnostics = graph.testDiagnostics.mapValues { diagnostics in
             var seen = Set<String>()

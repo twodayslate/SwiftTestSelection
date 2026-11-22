@@ -59,6 +59,11 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         }
     }
 
+    static func hasSuiteOwner(_ attributes: AttributeListSyntax) -> Bool {
+        attributes.contains { $0.as(AttributeSyntax.self).map { matches($0, "Suite") } == true } &&
+            !hasOpaqueSibling(of: "Suite", in: attributes)
+    }
+
     static func entryInputs(_ function: FunctionDeclSyntax, fingerprint: (Syntax) -> String,
                             capture: (Syntax) -> Arguments) -> EntryInputs? {
         var attributes = function.attributes

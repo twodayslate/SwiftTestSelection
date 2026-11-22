@@ -6,6 +6,8 @@ import Foundation
 private struct HeadOnlySourceComparison {
     let locationPolicy: UIFeatureMappings.SourceLocationPolicy
 
+    var positionIndependent = Set<String>()
+
     init(head: UIFeatureMappings?, base: UIFeatureMappings?) {
         locationPolicy = .agreed(head: head, base: base)
     }
@@ -23,7 +25,7 @@ private struct HeadOnlySourceComparison {
 
     private func fingerprint(_ unit: SourceUnit) -> String {
         let syntax = unit.comparisonFingerprint(locationPolicy)
-        if locationPolicy == .diagnostic || (locationPolicy == .diagnosticLineColumn && unit.fileLocationValues == nil) { return syntax }
+        if positionIndependent.contains(unit.key) || locationPolicy == .diagnostic || (locationPolicy == .diagnosticLineColumn && unit.fileLocationValues == nil) { return syntax }
         // Over-approximate caller defaults without inventing base compiler
         // edges. This also preserves fixture file identity for moved callers.
         return syntax + (unit.callerLocations ?? [:]).filter { key, _ in
@@ -91,7 +93,15 @@ struct XcodeHeadOnlySources {
             let comparison = HeadOnlySourceComparison(head: current.mappings, base: result.mappings)
             auditCallers = before.contains { key, old in
                 guard let new = after[key], new.count == old.count else { return true }
-                if old.count == 1 { return old[0].region.path != new[0].region.path || old[0].conditionalBranch != new[0].conditionalBranch }
+                if old.count == 1 {
+                    let a = old[0], b = new[0]
+                    if a.region.path != b.region.path || a.conditionalBranch != b.conditionalBranch { return true }
+                    if current.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil,
+                       b.fileUnreferencedInlineName != nil || (b.hasOnlyDirectSourceCalls == true && a.fingerprint == b.fingerprint) {
+                        return !comparison.equivalent(old, new)
+                    }
+                    return false
+                }
                 return !comparison.equivalent(old, new)
             }
         }
@@ -259,9 +269,11 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_unsupported_condition", "\(revision): \(feature.name): \(result.explanation)", tests: uiTests)
             }
         }
-        let comparison = HeadOnlySourceComparison(head: current.mappings, base: source.mappings)
+        var comparison = HeadOnlySourceComparison(head: current.mappings, base: source.mappings)
         lazy var hierarchy = SwiftSuperclassIndex(sources: current.sources)
         let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
+        let effects = SwiftTestingSourceEffects(current, touching: paths, historical: source.base)
+        if source.unownedBaseSources.isEmpty { comparison.positionIndependent = effects.positionIndependent }
         func scopedUnits(_ sources: [String: SwiftSourceSnapshot]) -> [String: [SourceUnit]] {
             let files = sources.values.filter { snapshot in
                 guard let path = snapshot.units.first?.region.path else { return false }
@@ -380,7 +392,8 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
             }
-            guard entryEdits[key] != nil || registrations.supportedBodies.contains(key) || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
+            let unusedInline = source.unownedBaseSources.isEmpty && effects.unusedInline.contains(key)
+            guard unusedInline || entryEdits[key] != nil || registrations.supportedBodies.contains(key) || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
                 fallback("head_only_unsupported_body", "Attributes, macros or opaque result types can change callers outside a surviving body: \(b.region.path):\(b.region.startLine)")
                 continue
             }

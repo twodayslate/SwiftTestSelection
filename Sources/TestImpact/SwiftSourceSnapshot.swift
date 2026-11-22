@@ -53,6 +53,8 @@ public struct SourceUnit: Codable, Sendable {
     var swiftTestingSuiteMetadata: SwiftTestingSourceDeclarations.Arguments? = nil
     var swiftTestingBodyCandidate: Bool? = nil
     var hasInlineBody: Bool? = nil
+    var fileUnreferencedInlineName: String? = nil
+    var hasOnlyDirectSourceCalls: Bool? = nil
     var swiftTestingEntryInputs: SwiftTestingSourceDeclarations.EntryInputs? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
     /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
@@ -121,7 +123,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 11
+    static let currentParserVersion = 12
     var swiftTestingDeclarations: SwiftTestingSourceDeclarations? = nil
     public var parserVersion: Int? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
@@ -348,7 +350,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             return "*"
         }
-        func callerInfo(_ node: Syntax, includeAllTokens: Bool = false) -> (locations: [String: String], names: Set<String>) {
+        func callerInfo(_ node: Syntax, includeAllTokens: Bool = false) -> (locations: [String: String], names: Set<String>, direct: Bool) {
+            var direct = true
             var offsets = Set<Int>()
             var names = Set<String>()
             func calledName(_ expression: ExprSyntax) -> String {
@@ -362,29 +365,35 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             func visit(_ node: Syntax) {
                 if let call = node.as(FunctionCallExprSyntax.self) {
-                    names.insert(calledName(call.calledExpression))
+                    let name = calledName(call.calledExpression)
+                    if !names.insert(name).inserted || !call.calledExpression.is(DeclReferenceExprSyntax.self) {
+                        direct = false
+                    }
                     record(call.calledExpression.tokens(viewMode: .sourceAccurate))
                     for token in [call.leftParen, call.rightParen].compactMap({ $0 }) {
                         offsets.insert(token.positionAfterSkippingLeadingTrivia.utf8Offset)
                     }
                 } else if let call = node.as(SubscriptCallExprSyntax.self) {
+                    direct = false
                     names.insert("subscript")
                     record(call.calledExpression.tokens(viewMode: .sourceAccurate))
                     offsets.insert(call.leftSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
                     offsets.insert(call.rightSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
                 } else if let attribute = node.as(AttributeSyntax.self) {
+                    direct = false
                     names.insert(attribute.attributeName.trimmedDescription)
                     record(attribute.tokens(viewMode: .sourceAccurate))
                 } else if let macro = node.as(MacroExpansionExprSyntax.self),
                           !locationNames.contains(macro.macroName.text) && macro.macroName.text != "function" {
                     // A source macro can synthesize a call that subsequently inlines.
+                    direct = false
                     names.insert("*")
                     record(macro.tokens(viewMode: .sourceAccurate))
                 }
                 for child in node.children(viewMode: .sourceAccurate) { visit(child) }
             }
             if includeAllTokens { record(node.tokens(viewMode: .sourceAccurate)) } else { visit(node) }
-            guard !offsets.isEmpty else { return ([:], names) }
+            guard !offsets.isEmpty else { return ([:], names, false) }
             let positions = offsets.sorted().map { AbsolutePosition(utf8Offset: $0) }
             let valuesByKind = Dictionary(uniqueKeysWithValues: locationNames.map { name in
                 let values = positions.map {
@@ -400,7 +409,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 return (name, values)
                 #endif
             })
-            return (valuesByKind, names)
+            return (valuesByKind, names, direct && !names.isEmpty)
         }
         func locationValues(_ node: Syntax) -> [String] {
             var values: [String] = []
@@ -556,10 +565,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                         ?? ancestor.as(ExtensionDeclSyntax.self)?.attributes
                         ?? ancestor.as(ProtocolDeclSyntax.self)?.attributes
                     if let list {
-                        testingEnclosingSupported = testingEnclosingSupported && list.allSatisfy {
+                        testingEnclosingSupported = testingEnclosingSupported && (SwiftTestingSourceDeclarations.hasSuiteOwner(list) || list.allSatisfy {
                             guard let attribute = $0.as(AttributeSyntax.self) else { return false }
                             return ["MainActor", "Suite", "Testing.Suite"].contains(attribute.attributeName.trimmedDescription) && attribute.arguments == nil
-                        }
+                        })
                         enclosingSupported = enclosingSupported && list.allSatisfy {
                             $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor"
                         }
@@ -665,7 +674,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                                                                        locations: bounds, calls: [:])
                 if node.is(FunctionDeclSyntax.self) {
                     entryMetadata = metadata
-                } else if originalAttributes != nil, !hasEagerInputs, branch.isEmpty {
+                } else if originalAttributes != nil, SwiftTestingSourceDeclarations.hasSuiteOwner(attributes), branch.isEmpty {
                     suiteMetadata = metadata
                 } else {
                     // Suite and opaque nested declarations lack a single entry owner.
@@ -758,6 +767,27 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 if name == "inline" { return attribute.arguments?.trimmedDescription != "never" }
                 return ["_transparent", "inlinable", "_alwaysEmitIntoClient"].contains(name)
             }) ? true : nil
+            if let function = node.as(FunctionDeclSyntax.self), scope.isEmpty, branch.isEmpty,
+               let name = function.name.identifier?.name {
+                if unit.hasInlineBody == true, identifiers[name]?.count == 1,
+                   function.modifiers.allSatisfy({ ["private", "fileprivate", "internal"].contains($0.name.text) }),
+                   function.attributes.allSatisfy({ element in
+                       guard let attribute = element.as(AttributeSyntax.self) else { return false }
+                       return ["inline", "_transparent", "inlinable"].contains(attribute.attributeName.trimmedDescription)
+                   }) {
+                    unit.fileUnreferencedInlineName = name
+                }
+                // A separate function-value use could account for a surviving
+                // SIL reference after a different call with the same name inlined.
+                if bodySupported && calls.direct {
+                    var seen = Set<String>()
+                    let unique = function.tokens(viewMode: .sourceAccurate).allSatisfy { token in
+                        guard let name = token.identifier?.name, calls.names.contains(name) else { return true }
+                        return seen.insert(name).inserted
+                    }
+                    unit.hasOnlyDirectSourceCalls = unique ? true : nil
+                }
+            }
             unit.helperCallerStatementSignatures = node.as(FunctionDeclSyntax.self).flatMap { function in
                 guard let body = function.body,
                       !body.tokens(viewMode: .sourceAccurate).contains(where: { token in

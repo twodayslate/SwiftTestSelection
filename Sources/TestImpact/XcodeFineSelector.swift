@@ -91,8 +91,11 @@ public enum XcodeFineSelector {
         // and dependency edges can both stay identical while that value changes.
         // Match source invocations as well as compiler edges: transparent helpers
         // and enum constructors can lose their call edges even under -Onone.
-        let callerKinds = locationPolicy == .diagnostic ? [:] : callerLocationKinds(current)
-            .merging(previous.map(callerLocationKinds) ?? [:], uniquingKeysWith: { $0.union($1) })
+        let touchedPaths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+        let headEffects = SwiftTestingSourceEffects(current, touching: touchedPaths)
+        let baseEffects = previous.map { SwiftTestingSourceEffects($0, touching: touchedPaths) }
+        let callerKinds = locationPolicy == .diagnostic ? [:] : callerLocationKinds(current, effects: headEffects)
+            .merging(previous.map { callerLocationKinds($0, effects: baseEffects!) } ?? [:], uniquingKeysWith: { $0.union($1) })
         func comparisonFingerprint(_ unit: SourceUnit) -> String {
             var kinds = callerKinds[unit.key] ?? []
             if locationPolicy == .diagnosticLineColumn { kinds.subtract(["line", "column"]) }
@@ -102,7 +105,6 @@ public enum XcodeFineSelector {
                 return kind + ":" + (value ?? "unknown:" + unit.region.path + ":" + String(unit.region.startLine))
             }.joined(separator: "|") + "]"
         }
-        let touchedPaths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
         let legacyConditionalPaths = SwiftSourceSnapshot.legacyConditionalPaths(in: current.sources, touching: touchedPaths)
             .union(SwiftSourceSnapshot.legacyConditionalPaths(in: previous?.sources ?? [:], touching: touchedPaths))
         if !legacyConditionalPaths.isEmpty {
@@ -401,7 +403,8 @@ public enum XcodeFineSelector {
             var affected = Set<String>()
             let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
             if registrations.changedDiscovery { affected.insert(discovery) }
-            if graph.functions[discovery] != nil, units.contains(where: { $0.hasInlineBody == true }) {
+            let unusedInline = revision == "head" ? headEffects.unusedInline : baseEffects?.unusedInline ?? []
+            if graph.functions[discovery] != nil, units.contains(where: { $0.hasInlineBody == true && !unusedInline.contains($0.key) }) {
                 let consumers = snapshot.tests.filter { test in
                     let roots = graph.tests[test] ?? []
                     return roots.isEmpty || roots.contains(discovery) ||
@@ -660,7 +663,7 @@ public enum XcodeFineSelector {
         return report
     }
 
-    private static func callerLocationKinds(_ snapshot: XcodeTestGraph) -> [String: Set<String>] {
+    private static func callerLocationKinds(_ snapshot: XcodeTestGraph, effects: SwiftTestingSourceEffects) -> [String: Set<String>] {
         let units = snapshot.sources.values.flatMap(\.units)
         let defaults = units.filter { !($0.locationDefaultKinds?.isEmpty ?? true) }
         let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
@@ -705,7 +708,7 @@ public enum XcodeFineSelector {
             for region in node.regions {
                 for unit in byFile[region.path] ?? [] where unit.key.hasPrefix(node.module + ":") &&
                     region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine {
-                    if discoverySymbols.contains(node.id), let locations = unit.callerLocations, !locations.isEmpty {
+                    if discoverySymbols.contains(node.id), !effects.positionIndependent.contains(unit.key), let locations = unit.callerLocations, !locations.isEmpty {
                         result[unit.key, default: []].formUnion(locations.keys)
                     }
                     if !defaults.isEmpty {

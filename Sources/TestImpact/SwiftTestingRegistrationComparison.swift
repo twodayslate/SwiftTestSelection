@@ -124,7 +124,7 @@ struct SwiftTestingRegistrationComparison {
 
     /// Index nominal owners once. A single insertion can move many suite bounds.
     private struct SuiteIndex {
-        var factories: [String: [String?]] = [:]
+        var factories: [String: Int] = [:]
         var testsBySuite: [String: Set<String>] = [:]
         var unresolved = Set<String>()
 
@@ -133,7 +133,7 @@ struct SwiftTestingRegistrationComparison {
             for node in graph.functions.values {
                 guard let type = node.swiftTestingFactoryType,
                       node.compilerReferences?.contains(where: { $0.hasPrefix("$s7Testing4TestV6__type") }) == true else { continue }
-                factories[node.module + "." + type, default: []].append(node.swiftTestingEmptyFactory)
+                factories[node.module + "." + type, default: 0] += 1
             }
             for test in snapshot.tests {
                 let roots = graph.tests[test] ?? []
@@ -163,7 +163,7 @@ struct SwiftTestingRegistrationComparison {
         func members(of unit: SourceUnit) -> Set<String>? {
             guard let name = unit.swiftTestingSuiteName else { return nil }
             let suite = String(unit.key.prefix { $0 != ":" }) + "." + name
-            guard factories[suite] == ["suite"] else { return nil }
+            guard factories[suite] == 1 else { return nil }
             return unresolved.union(testsBySuite[suite] ?? [])
         }
     }

@@ -121,6 +121,35 @@ enum SwiftTestingDiscoveryRoots {
         return Dictionary(uniqueKeysWithValues: zip(symbols, names.map(String.init)))
     }
 
+    /// Instructions in the registration factory itself execute during discovery.
+    /// Its generated debug locations are outside the project source tree.
+    static func restoreIndirectDiscoveryCalls(_ graph: inout DependencyGraph) {
+        guard let root = graph.functions[sharedDiscoveryID] else { return }
+        let indirect = "Indirect function invocation"
+
+        // The shared root contains the factories' eager *callees*. Include the
+        // instruction evidence from the factories themselves, and from project
+        // thunks generated for eager expressions with macro-only locations.
+        let factories = graph.functions.values.filter { $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true }
+        var pending = Array(root.dependencies), visited = Set<String>()
+        var hasIndirect = factories.contains { $0.uncertainties.contains(indirect) }
+        while !hasIndirect, let id = pending.popLast() {
+            guard visited.insert(id).inserted, let node = graph.functions[id], node.regions.isEmpty,
+                  id.hasPrefix("$s" + String(node.module.utf8.count) + node.module) else { continue }
+            hasIndirect = node.uncertainties.contains(indirect)
+            pending.append(contentsOf: node.dependencies)
+        }
+        guard hasIndirect else { return }
+        graph.functions[sharedDiscoveryID]?.uncertainties.insert(indirect)
+        // An entry or independently executed helper can itself be the callback.
+        // Preserve this uncertainty when ordinary opaque-body selection is waived.
+        let diagnostic = "Swift Testing discovery invokes an indirect callback before test filtering"
+        for (test, roots) in graph.tests where roots.contains(sharedDiscoveryID) &&
+            graph.testDiagnostics[test]?.contains(diagnostic) != true {
+            graph.testDiagnostics[test, default: []].append(diagnostic)
+        }
+    }
+
     static func bind(modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph) {
         guard !Set(modules.values).contains("Testing") else { return }
         let entries = graph.tests
@@ -306,5 +335,6 @@ enum SwiftTestingDiscoveryRoots {
                 graph.testDiagnostics[test, default: []].append(runtimeEvidence)
             }
         }
+        restoreIndirectDiscoveryCalls(&graph)
     }
 }

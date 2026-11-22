@@ -131,7 +131,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
         uncertainties.contains {
             // Imported implementations can call project code even without local
             // debug locations. Known ownership does not close that runtime edge.
-            $0.hasPrefix("Imported conformance:") || hasProjectRuntimeContext &&
+            $0.hasPrefix("Imported conformance:") || (hasProjectRuntimeContext || id == SwiftTestingDiscoveryRoots.sharedDiscoveryID) &&
             ($0 == "Indirect function invocation" || $0 == "Raw pointer operation" ||
              $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:"))
         }
