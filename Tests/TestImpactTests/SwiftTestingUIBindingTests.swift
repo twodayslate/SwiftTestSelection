@@ -882,8 +882,10 @@ private func verifyDiscoveryEdit(scenario: String) throws {
         if scenario == "externalWitness" {
             for result in [report, headOnly] {
                 #expect(result.selectedTests == [plain, marked].sorted())
-                #expect(result.diagnostics.contains { $0.message.contains(SwiftTestingDiscoveryRoots.unresolvedEffects) && $0.tests.contains(plain) })
+                let shared = result.diagnostics.filter { $0.code == "swift_testing_discovery_effects" }
+                #expect(!shared.isEmpty && shared.allSatisfy { $0.tests == [plain, marked].sorted() })
             }
+            #expect(headOnly.diagnostics.filter { $0.code == "swift_testing_discovery_effects" }.count == 1)
         }
         // Archives produced before discovery inherited factory uncertainty still
         // contain the original SIL evidence. Restore it during decoding.

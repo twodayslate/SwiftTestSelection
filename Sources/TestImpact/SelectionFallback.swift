@@ -21,7 +21,10 @@ public struct SelectionFallback: Codable, Sendable {
     static func explain(code: String, message: String, units: [SourceUnit] = [], path: [String] = [], allTests: Bool = true) -> Self {
         let category: String, resolution: String, evidence: String
         var declaration: String?
-        if code.contains("helper_contract") || code.contains("helper_binding_contract") {
+        if code == "swift_testing_discovery_effects" {
+            category = "discoveryEffects"; resolution = "compilerEvidence"
+            evidence = "Establish the callees and cleanup effects of eager registration across the shared Swift Testing discovery scope."
+        } else if code.contains("helper_contract") || code.contains("helper_binding_contract") {
             category = "declarationValidation"; resolution = "reviewedDeclaration"
             evidence = "Correct the reported binding or revision failure and review the declaration again. Invalid or stale declarations cannot narrow selection."
         } else if message.contains("runtime formatting conformances") {

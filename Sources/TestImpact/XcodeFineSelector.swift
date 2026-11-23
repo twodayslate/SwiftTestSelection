@@ -459,10 +459,12 @@ public enum XcodeFineSelector {
                 }
             }
             let affectedPaths = index.paths(to: affected)
+            var uncertainDiscoveryTests = Set<String>()
             for test in snapshot.tests where inventory.contains(test) {
                 if hasSemanticChanges {
                     for diagnostic in graph.testDiagnostics[test] ?? [] {
-                        fallback("unresolved_inheritance", diagnostic + " for " + test, tests: [test])
+                        if diagnostic == SwiftTestingDiscoveryRoots.unresolvedEffects { uncertainDiscoveryTests.insert(test) }
+                        else { fallback("unresolved_inheritance", diagnostic + " for " + test, tests: [test]) }
                     }
                 }
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
@@ -473,6 +475,9 @@ public enum XcodeFineSelector {
                 if hasSemanticChanges && (graph.tests[test]?.isEmpty ?? true) {
                     fallback("unresolved_test", "Cannot resolve compiled entry point: \(test)", tests: [test])
                 }
+            }
+            if !uncertainDiscoveryTests.isEmpty {
+                fallback("swift_testing_discovery_effects", SwiftTestingDiscoveryRoots.unresolvedEffects, tests: uncertainDiscoveryTests)
             }
             if hasSemanticChanges && !testEntriesOnly {
                 // Runtime dispatch to known project declarations is represented by

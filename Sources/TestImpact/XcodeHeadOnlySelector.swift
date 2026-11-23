@@ -495,6 +495,7 @@ enum XcodeHeadOnlySelector {
             }
             fallbackUnits = changed + excludedChanges
             let affectedPaths = index.paths(to: affected)
+            var uncertainDiscoveryTests = Set<String>()
             for test in inventory.sorted() {
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
                     let reason: String
@@ -516,8 +517,14 @@ enum XcodeHeadOnlySelector {
                     if roots.isEmpty || roots.contains(where: { graph.functions[$0] == nil }) {
                         fallback("head_only_unresolved_test", "Missing or incomplete compiled head entry for \(test)", tests: [test])
                     }
-                    for message in graph.testDiagnostics[test] ?? [] { fallback("head_only_unresolved_test", message, tests: [test]) }
+                    for message in graph.testDiagnostics[test] ?? [] {
+                        if message == SwiftTestingDiscoveryRoots.unresolvedEffects { uncertainDiscoveryTests.insert(test) }
+                        else { fallback("head_only_unresolved_test", message, tests: [test]) }
+                    }
                 }
+            }
+            if !uncertainDiscoveryTests.isEmpty {
+                fallback("swift_testing_discovery_effects", SwiftTestingDiscoveryRoots.unresolvedEffects, tests: uncertainDiscoveryTests)
             }
             let entriesOnly = !changed.isEmpty && changed.allSatisfy { isolatedHelpers.contains($0.key) || XcodeFineSelector.isTestEntry($0, in: current) }
             if !changed.isEmpty && !entriesOnly {
