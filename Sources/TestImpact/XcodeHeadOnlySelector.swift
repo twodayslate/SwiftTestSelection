@@ -289,7 +289,7 @@ enum XcodeHeadOnlySelector {
         let registrations = SwiftTestingRegistrationComparison(before: old, after: new, baseSources: source.base,
             head: current, touching: paths, policy: comparison.locationPolicy)
         include(registrations.suiteTests, kind: "dependency", reason: "Swift Testing suite metadata changed")
-        let entryEdits = registrations.entryEdits
+        let entryEdits = registrations.entryEdits.merging(registrations.registrationEdits) { local, _ in local }
         if let uncertainty = registrations.uncertainty(in: current) {
             fallback("incomplete_testing_registration", uncertainty.message, tests: uncertainty.tests)
         }
@@ -450,7 +450,7 @@ enum XcodeHeadOnlySelector {
             let index = dependencyIndex!
             if let mappings = current.mappings { mappingIndex = MappingIndex(mappings, snapshot: current, graph: graph, index: index) }
             var affected = Set<String>(), isolatedSymbols = Set<String>(), sdkSymbols = Set<String>(), production: [SourceUnit] = []
-            if registrations.changedDiscovery { affected.insert(SwiftTestingDiscoveryRoots.sharedDiscoveryID) }
+            affected.formUnion(registrations.discoveryRoots(in: graph))
             var entrySymbols = Set<String>()
             for unit in changed {
                 fallbackUnits = [unit]
@@ -499,7 +499,7 @@ enum XcodeHeadOnlySelector {
             for test in inventory.sorted() {
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
                     let reason: String
-                    if path.last == SwiftTestingDiscoveryRoots.sharedDiscoveryID {
+                    if path.last.map(SwiftTestingDiscoveryRoots.isDiscoveryRoot) == true {
                         reason = "Swift Testing discovery inputs changed before test filtering"
                     } else if path.last.map(entrySymbols.contains) == true {
                         reason = "Compiled dependency reaches a test whose entry inputs changed"

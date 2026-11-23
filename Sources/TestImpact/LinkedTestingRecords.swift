@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Zachary Gorak
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+import CoreFoundation
 import Foundation
 
 /// Inventory the final images, after the linker has selected archive members.
@@ -58,6 +59,8 @@ enum LinkedTestingRecords {
         }
         var recordsByTarget: [String: Set<String>] = [:], incomplete = Set<String>()
         for configuration in configurations {
+            if let enabled = configuration["IsEnabled"] as? NSNumber,
+               CFGetTypeID(enabled) == CFBooleanGetTypeID(), !enabled.boolValue { continue }
             guard let targets = configuration["TestTargets"] as? [[String: Any]], !targets.isEmpty else { return nil }
             for target in targets {
                 guard let name = target["BlueprintName"] as? String, !name.isEmpty else { return nil }

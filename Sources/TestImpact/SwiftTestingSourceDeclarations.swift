@@ -68,6 +68,18 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
             !hasOpaqueSibling(of: "Suite", in: attributes)
     }
 
+    /// Match a surviving declaration across edits to its registration. A match
+    /// preserves the test body and signature. Eager arguments are still compared
+    /// separately, with their locations, for every process that loads the factory.
+    static func registrationDeclaration(_ function: FunctionDeclSyntax, fingerprint: (Syntax) -> String) -> String? {
+        var attributes = function.attributes
+        let tests = attributes.indices.filter { attributes[$0].as(AttributeSyntax.self).map { matches($0, "Test") } == true }
+        guard tests.count == 1, let index = tests.first, let test = attributes[index].as(AttributeSyntax.self),
+              !hasOpaqueSibling(of: "Test", in: attributes) else { return nil }
+        attributes[index] = .attribute(test.with(\.arguments, nil).with(\.leftParen, nil).with(\.rightParen, nil))
+        return fingerprint(Syntax(function.with(\.attributes, attributes)))
+    }
+
     static func entryInputs(_ function: FunctionDeclSyntax, fingerprint: (Syntax) -> String,
                             capture: (Syntax) -> Arguments) -> EntryInputs? {
         var attributes = function.attributes

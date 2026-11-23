@@ -402,7 +402,7 @@ public enum XcodeFineSelector {
             let index = DependencyIndex(graph)
             var affected = Set<String>()
             let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
-            if registrations.changedDiscovery { affected.insert(discovery) }
+            affected.formUnion(registrations.discoveryRoots(in: graph, base: revision == "base"))
             let unusedInline = revision == "head" ? headEffects.unusedInline : baseEffects?.unusedInline ?? []
             if graph.functions[discovery] != nil, units.contains(where: { $0.hasInlineBody == true && !unusedInline.contains(.init($0)) }) {
                 let consumers = snapshot.tests.filter { test in
@@ -468,7 +468,7 @@ public enum XcodeFineSelector {
                     }
                 }
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
-                    let reason = path.last == SwiftTestingDiscoveryRoots.sharedDiscoveryID ? "Swift Testing discovery inputs changed before test filtering" : "Compiled dependency reaches a changed declaration"
+                    let reason = path.last.map(SwiftTestingDiscoveryRoots.isDiscoveryRoot) == true ? "Swift Testing discovery inputs changed before test filtering" : "Compiled dependency reaches a changed declaration"
                     include([test], kind: "dependency", reason: reason, revision: revision,
                             path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }

@@ -58,6 +58,7 @@ public struct SourceUnit: Codable, Sendable {
     var fileProvesUnusedInline: Bool? = nil
     var filePrivateInlineWithTests: Bool? = nil
     var hasOnlyDirectSourceCalls: Bool? = nil
+    var swiftTestingRegistrationDeclaration: String? = nil
     var swiftTestingEntryInputs: SwiftTestingSourceDeclarations.EntryInputs? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
     /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
@@ -126,7 +127,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 14
+    static let currentParserVersion = 15
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -721,6 +722,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 }, swiftTestingRole: testing.role, swiftTestingSuiteName: testing.suiteName,
                 swiftTestingHasArguments: testing.hasArguments, swiftTestingArguments: registrations.isEmpty ? nil : registrations,
                 swiftTestingMetadata: entryMetadata,
+                swiftTestingRegistrationDeclaration: testingBodyCandidate ? node.as(FunctionDeclSyntax.self).flatMap {
+                    SwiftTestingSourceDeclarations.registrationDeclaration($0, fingerprint: compactFingerprint)
+                } : nil,
                 swiftTestingEntryInputs: entryInputs, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,

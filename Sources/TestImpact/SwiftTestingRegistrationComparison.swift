@@ -12,13 +12,15 @@ struct SwiftTestingRegistrationComparison {
     private(set) var suitePaths = Set<String>()
     private(set) var discoveryPaths = Set<String>()
     private(set) var incompletePaths = Set<String>()
-    private let rebound: Bool
+    private(set) var registrationEdits: [String: String] = [:]
+    private var baseDiscovery = DiscoveryChange()
+    private var headDiscovery = DiscoveryChange()
+    private var rebound = false
     var changedDiscovery: Bool { rebound || !discoveryPaths.isEmpty || !incompletePaths.isEmpty }
 
     init(before: [String: [SourceUnit]], after: [String: [SourceUnit]], baseSources: [String: SwiftSourceSnapshot],
          base: XcodeTestGraph? = nil, head: XcodeTestGraph, moves: [String: String] = [:],
          touching paths: Set<String>, policy: UIFeatureMappings.SourceLocationPolicy) {
-        rebound = Self.reboundDiscoveryCall(before: base?.dependencies, after: head.dependencies)
         func signatures(_ unit: SourceUnit) -> [[String]] {
             ((unit.swiftTestingArguments ?? []) + [unit.swiftTestingMetadata].compactMap { $0 }).map { $0.comparison(policy) }
         }
@@ -54,6 +56,32 @@ struct SwiftTestingRegistrationComparison {
             }
         }
 
+        // A changed eager trait can change the source-unit key even though the
+        // callable survives intact. Only pair unique, compiler-bound entries.
+        func declarations(_ groups: [String: [SourceUnit]]) -> [[String]: [SourceUnit]] {
+            var result: [[String]: [SourceUnit]] = [:]
+            for (key, group) in groups where group.count == 1 {
+                let unit = group[0]
+                guard paths.contains(unit.region.path), let declaration = unit.swiftTestingRegistrationDeclaration else { continue }
+                let identity = [String(key.prefix { $0 != ":" }), unit.region.path, unit.scope, unit.conditionalBranch ?? "", declaration]
+                result[identity, default: []].append(unit)
+            }
+            return result
+        }
+        var survivingFactories: [String: String] = [:]
+        if base == nil {
+            let previous = declarations(before)
+            for (identity, units) in declarations(after) {
+                guard units.count == 1, let prior = previous[identity], prior.count == 1,
+                      entryEdits[units[0].key] == nil,
+                      (prior[0].swiftTestingArguments ?? []).map({ $0.comparison(policy) }) !=
+                        (units[0].swiftTestingArguments ?? []).map({ $0.comparison(policy) }),
+                      let factory = headProof.factory(of: units[0]) else { continue }
+                survivingFactories[prior[0].key] = factory.id
+                registrationEdits[units[0].key] = prior[0].key
+            }
+        }
+
         var scopedSuites = Set<String>()
         var headSuites: SuiteIndex?, baseSuites: SuiteIndex?
         for (key, group) in after where group.count == 1 {
@@ -78,7 +106,7 @@ struct SwiftTestingRegistrationComparison {
             suiteTests.formUnion(tests)
         }
 
-        typealias Headers = [String: [[String]: Int]]
+        typealias Headers = [String: [[String]: [SourceUnit]]]
         func headers(_ groups: [String: [SourceUnit]], sources: [String: SwiftSourceSnapshot],
                      moves: [String: String], excluding: Set<String>) -> Headers {
             var result: Headers = [:]
@@ -89,7 +117,7 @@ struct SwiftTestingRegistrationComparison {
                     let suite = scopedSuites.contains(key) ? nil : unit.swiftTestingSuiteMetadata
                     for record in (unit.swiftTestingArguments ?? []) + [suite].compactMap({ $0 }) {
                         let signature = [module, unit.conditionalBranch ?? ""] + record.comparison(policy)
-                        result[destination, default: [:]][signature, default: 0] += 1
+                        result[destination, default: [:]][signature, default: []].append(unit)
                     }
                     if paths.contains(path), let file = sources[module + ":" + path],
                        !file.hasSwiftTestingRegistrationMetadata,
@@ -104,7 +132,66 @@ struct SwiftTestingRegistrationComparison {
         }
         let lhs = headers(before, sources: baseSources, moves: moves, excluding: Set(entryEdits.values))
         let rhs = headers(after, sources: head.sources, moves: [:], excluding: Set(entryEdits.keys))
-        discoveryPaths = Set(lhs.keys).union(rhs.keys).filter { lhs[$0] != rhs[$0] }
+        for path in Set(lhs.keys).union(rhs.keys) {
+            let left = lhs[path] ?? [:], right = rhs[path] ?? [:]
+            for signature in Set(left.keys).union(right.keys) {
+                let a = left[signature] ?? [], b = right[signature] ?? []
+                guard a.count != b.count else { continue }
+                discoveryPaths.insert(path)
+                for unit in b { headDiscovery.record(unit, using: headProof) }
+                for unit in a {
+                    if let baseProof { baseDiscovery.record(unit, using: baseProof) }
+                    else if let factory = survivingFactories[unit.key] {
+                        headDiscovery.factories.insert(factory)
+                    } else {
+                        // The head image cannot place a historical registration
+                        // without a matching source declaration.
+                        headDiscovery.unbounded = true
+                    }
+                }
+            }
+        }
+        if let before = base?.dependencies, let after = head.dependencies {
+            for (old, new) in Self.reboundDiscoveryCalls(before: before, after: after) {
+                rebound = true
+                baseDiscovery.factories.insert(old)
+                headDiscovery.factories.insert(new)
+            }
+        }
+    }
+
+    private struct DiscoveryChange {
+        var factories = Set<String>()
+        var modules = Set<String>()
+        var unbounded = false
+
+        mutating func record(_ unit: SourceUnit, using index: FactoryIndex) {
+            if let factory = index.factory(of: unit) { factories.insert(factory.id) }
+            else { modules.insert(String(unit.key.prefix { $0 != ":" })) }
+        }
+    }
+
+    func discoveryRoots(in graph: DependencyGraph, base: Bool = false) -> Set<String> {
+        guard changedDiscovery else { return [] }
+        let change = base ? baseDiscovery : headDiscovery
+        let shared = SwiftTestingDiscoveryRoots.sharedDiscoveryID
+        guard !change.unbounded, incompletePaths.isEmpty, let inventories = graph.swiftTestingFactoriesByTarget else { return [shared] }
+        guard !change.factories.isEmpty || !change.modules.isEmpty else { return [] }
+        var targets = Set<String>()
+        for (test, roots) in graph.tests where roots.contains(shared) {
+            let target = String(test.prefix { $0 != "/" })
+            guard roots.contains(SwiftTestingDiscoveryRoots.processRoot(target)) else { return [shared] }
+            targets.insert(target)
+        }
+        var result = Set<String>()
+        for target in targets {
+            let process = SwiftTestingDiscoveryRoots.processRoot(target)
+            guard let linked = inventories[target] else { result.insert(process); continue }
+            if !linked.isDisjoint(with: change.factories) || (!change.modules.isEmpty && linked.contains {
+                graph.functions[$0].map { change.modules.contains($0.module) } ?? true
+            }) { result.insert(process) }
+        }
+        return result
     }
 
     func uncertainty(in snapshot: XcodeTestGraph) -> (message: String, tests: Set<String>)? {
@@ -216,20 +303,24 @@ struct SwiftTestingRegistrationComparison {
             return current.allSatisfy { provesInputs(of: $0, requireEmpty: true) }
         }
 
-        func provesInputs(of unit: SourceUnit, requireEmpty: Bool = false) -> Bool {
-            guard let graph = snapshot.dependencies, let inputs = unit.swiftTestingEntryInputs else { return false }
+        func factory(of unit: SourceUnit) -> FunctionNode? {
+            guard unit.swiftTestingRole == "test", let graph = snapshot.dependencies else { return nil }
             let module = String(unit.key.prefix { $0 != ":" }), fileKey = module + ":" + unit.region.path
             let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
             guard !owners.isEmpty, owners.allSatisfy(\.isTest),
                   let file = snapshot.sources[fileKey], file.hasSwiftTestingRegistrationMetadata,
-                  file.units.filter({ $0.kind == "function" && $0.region.intersects(unit.region) }).count == 1 else { return false }
+                  file.units.filter({ $0.kind == "function" && $0.region.intersects(unit.region) }).count == 1 else { return nil }
             let matches = Set((entries[fileKey] ?? []).compactMap { $0.0.intersects(unit.region) ? $0.1 : nil })
             guard matches.count == 1, let test = matches.first,
-                  graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) != true else { return false }
+                  graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) != true else { return nil }
             let factories = (graph.tests[test] ?? []).compactMap { graph.functions[$0] }.filter {
                 $0.compilerReferences?.contains { $0.hasPrefix("$s7Testing4TestV10__function") } == true
             }
-            guard factories.count == 1, let factory = factories.first else { return false }
+            return factories.count == 1 ? factories.first : nil
+        }
+
+        func provesInputs(of unit: SourceUnit, requireEmpty: Bool = false) -> Bool {
+            guard let inputs = unit.swiftTestingEntryInputs, let factory = factory(of: unit) else { return false }
             if requireEmpty { return inputs.hasNoRuntimeInputs && ["member", "top-level"].contains(factory.swiftTestingEmptyFactory) }
             if let conditions = inputs.conditions {
                 return factory.swiftTestingDeferredConditions?.matches(conditions) == true &&
@@ -247,18 +338,20 @@ struct SwiftTestingRegistrationComparison {
     /// Moving a registration can change its generated symbol while keeping the
     /// enumerated entry stable. Compare its eager callees by compiler identity.
     /// Surviving symbols distinguish rebinding from a whole-file private rename.
-    private static func reboundDiscoveryCall(before: DependencyGraph?, after: DependencyGraph?) -> Bool {
-        guard let before, let after, before.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil, after.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil else { return false }
-        func references(_ roots: Set<String>, in graph: DependencyGraph) -> Set<String>? {
-            let factories = roots.compactMap { graph.functions[$0]?.swiftTestingDiscoveryReferences }
-            return factories.count == 1 ? factories[0] : nil
+    private static func reboundDiscoveryCalls(before: DependencyGraph, after: DependencyGraph) -> [(String, String)] {
+        let shared = SwiftTestingDiscoveryRoots.sharedDiscoveryID
+        guard before.functions[shared] != nil, after.functions[shared] != nil else { return [] }
+        func factory(_ roots: Set<String>, in graph: DependencyGraph) -> FunctionNode? {
+            let factories = roots.compactMap { graph.functions[$0] }.filter { $0.swiftTestingDiscoveryReferences != nil }
+            return factories.count == 1 ? factories.first : nil
         }
-        return before.tests.contains { test, roots in
-            guard let current = after.tests[test], let old = references(roots, in: before),
-                  let new = references(current, in: after), old != new else { return false }
-            return old.symmetricDifference(new).contains { symbol in
-                before.functions[symbol]?.regions.isEmpty == false && after.functions[symbol]?.regions.isEmpty == false
-            }
+        return before.tests.compactMap { test, roots in
+            guard let current = after.tests[test], let old = factory(roots, in: before), let new = factory(current, in: after),
+                  let lhs = old.swiftTestingDiscoveryReferences, let rhs = new.swiftTestingDiscoveryReferences,
+                  lhs.symmetricDifference(rhs).contains(where: {
+                      before.functions[$0]?.regions.isEmpty == false && after.functions[$0]?.regions.isEmpty == false
+                  }) else { return nil }
+            return (old.id, new.id)
         }
     }
 }
