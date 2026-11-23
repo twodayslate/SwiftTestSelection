@@ -258,3 +258,35 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         }
     }
 }
+
+/// Written suites include every compilation branch. SIL names only emitted
+/// nominal types, so a conditional declaration needs a unique written owner.
+struct SwiftTestingSuiteDeclarations {
+    var names: [String: [String]] = [:]
+    var conditional: [String: [String]] = [:]
+    var completeModules = Set<String>()
+    private var counts: [String: Int] = [:]
+
+    init(_ sources: [String: SwiftSourceSnapshot]) {
+        var incomplete = Set<String>()
+        for (key, file) in sources {
+            let module = String(key.prefix { $0 != ":" })
+            completeModules.insert(module)
+            if !file.hasSwiftTestingRegistrationMetadata { incomplete.insert(module) }
+            let declarations = file.swiftTestingDeclarations ?? SwiftTestingSourceDeclarations(legacyUnits: file.units)
+            for suite in declarations.suites {
+                names[module, default: []].append(suite.name)
+                counts[module + "." + suite.name, default: 0] += 1
+                if suite.conditional { conditional[module, default: []].append(suite.name) }
+            }
+        }
+        completeModules.subtract(incomplete)
+    }
+
+    func canBind(_ unit: SourceUnit) -> Bool {
+        guard unit.conditionalBranch != nil else { return true }
+        let module = String(unit.key.prefix { $0 != ":" })
+        guard let name = unit.swiftTestingSuiteName, completeModules.contains(module) else { return false }
+        return counts[module + "." + name] == 1
+    }
+}

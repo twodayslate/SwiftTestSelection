@@ -69,6 +69,7 @@ struct SwiftTestingRegistrationComparison {
             return result
         }
         var headSuites: SuiteIndex?, baseSuites: SuiteIndex?
+        lazy var historicalSuites = SwiftTestingSuiteDeclarations(baseSources)
         func factory(of unit: SourceUnit, historical: Bool) -> String? {
             if unit.swiftTestingRole == "suite" {
                 // Opaque declarations can carry nested entries in the same source
@@ -92,6 +93,7 @@ struct SwiftTestingRegistrationComparison {
                       entryEdits[units[0].key] == nil,
                       (prior[0].swiftTestingArguments ?? []).map({ $0.comparison(policy) }) !=
                         (units[0].swiftTestingArguments ?? []).map({ $0.comparison(policy) }),
+                      (prior[0].swiftTestingRole != "suite" || historicalSuites.canBind(prior[0])),
                       let factory = factory(of: units[0], historical: false) else { continue }
                 survivingFactories[prior[0].key] = factory
                 registrationEdits[units[0].key] = prior[0].key
@@ -110,7 +112,7 @@ struct SwiftTestingRegistrationComparison {
             guard let a = previous[0].swiftTestingSuiteMetadata, let b = unit.swiftTestingSuiteMetadata,
                   a.comparison(policy) != b.comparison(policy) else { continue }
             if headSuites == nil { headSuites = SuiteIndex(head) }
-            guard let tests = headSuites?.members(of: unit) else { continue }
+            guard historicalSuites.canBind(previous[0]), let tests = headSuites?.members(of: unit) else { continue }
             if let base {
                 if baseSuites == nil { baseSuites = SuiteIndex(base) }
                 guard let oldTests = baseSuites?.members(of: previous[0]) else { continue }
@@ -227,11 +229,13 @@ struct SwiftTestingRegistrationComparison {
 
     /// Index nominal owners once. A single insertion can move many suite bounds.
     private struct SuiteIndex {
+        let written: SwiftTestingSuiteDeclarations
         var factories: [String: [String]] = [:]
         var testsBySuite: [String: Set<String>] = [:]
         var unresolved = Set<String>()
 
         init(_ snapshot: XcodeTestGraph) {
+            written = SwiftTestingSuiteDeclarations(snapshot.sources)
             guard let graph = snapshot.dependencies else { return }
             for node in graph.functions.values {
                 guard let type = node.swiftTestingFactoryType,
@@ -264,7 +268,7 @@ struct SwiftTestingRegistrationComparison {
         }
 
         func factory(of unit: SourceUnit) -> String? {
-            guard let name = unit.swiftTestingSuiteName,
+            guard written.canBind(unit), let name = unit.swiftTestingSuiteName,
                   let matches = factories[String(unit.key.prefix { $0 != ":" }) + "." + name], matches.count == 1 else { return nil }
             return matches.first
         }

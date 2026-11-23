@@ -5,10 +5,11 @@ import Testing
 @testable import TestImpact
 
 private enum ProcessEdit: CaseIterable {
+    case archivedPredicate, guardedSuite, ambiguousSuite
     case bodyWithOpaqueCompanion, archivedBody, eagerTrait, eagerTraitInCompanionHost, pluginHost, suiteTrait, nestedMainActorSuite, registrationLocation
 }
 
-@Test(arguments: ProcessEdit.allCases)
+@Test(.serialized, arguments: ProcessEdit.allCases)
 private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -22,7 +23,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent("lib/swift/host/plugins/testing")
     func arguments(_ name: String) -> [String] {
-        [compiler, "-sdk", sdk, "-module-name", name, "-whole-module-optimization", "-g", "-Onone", "-plugin-path", plugins.path,
+        [compiler, "-sdk", sdk, "-module-name", name, "-whole-module-optimization", "-g", "-Onone", "-plugin-path", plugins.path, "-I", root.path,
          "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib",
          root.appendingPathComponent(name + ".swift").path]
     }
@@ -33,7 +34,26 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     let plain = "LocalTests/Common/plain()"
     let nested = edit == .nestedMainActorSuite
     let marked = nested ? "LocalTests/Outer/Other/marked()" : "LocalTests/Other/marked()"
-    let ordinary = "CompanionTests/Case/testIndependent()", observer = "CompanionTests/Foreign/observe()"
+    let predicate = edit == .archivedPredicate
+    let guarded = edit == .guardedSuite || edit == .ambiguousSuite
+    let ordinary = "CompanionTests/Case/testIndependent()"
+    let observer = predicate ? "CompanionTests/Other/observe()" : "CompanionTests/Foreign/observe()"
+    func suiteWithPredicate(_ value: Bool) -> String {
+        """
+        import Testing
+        func gate() -> Bool { \(value) }
+        struct Common { @Test func plain() {} }
+        @Suite(.enabled(if: gate())) public struct Other {
+            public init() {}
+            @Test func marked() {}
+        }
+        """
+    }
+    if predicate {
+        try Data(suiteWithPredicate(true).utf8).write(to: root.appendingPathComponent("Local.swift"))
+        _ = try query(arguments("Local") + ["-parse-as-library", "-emit-module", "-emit-module-path",
+                                           root.appendingPathComponent("Local.swiftmodule").path])
+    }
     let opaque = edit == .bodyWithOpaqueCompanion
     let plugin = edit == .pluginHost
     let appHosted = plugin || edit == .eagerTraitInCompanionHost
@@ -43,17 +63,21 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     import XCTest
     \(opaque ? #"@_silgen_name("support") func support() -> Int32"# : "")
     \(opaque ? #"struct Marker: SuiteTrait { init() { UserDefaults.standard.set(support(), forKey: "startup") } }"# : "")
-    \(opaque ? "@Suite(Marker()) " : "")struct Foreign { @Test func observe() { \(plugin ? #"#expect(UserDefaults.standard.bool(forKey: "pluginFlag"))"# : "") } }
+    \(predicate ? "import Local" : "")
+    \(opaque ? "@Suite(Marker()) " : "")\(predicate ? "extension Local.Other" : "struct Foreign") { @Test func observe() { \(plugin ? #"#expect(UserDefaults.standard.bool(forKey: "pluginFlag"))"# : "") } }
     final class Case: XCTestCase { func testIndependent() {} }
     """
     try Data(companion.utf8).write(to: root.appendingPathComponent("Companion.swift"))
     try Data("int support(void) { return 1; }".utf8).write(to: root.appendingPathComponent("support.c"))
     _ = try query(["clang", "-dynamiclib", "support.c", "-install_name", "@rpath/libSupport.dylib", "-o", "libSupport.dylib"])
-    _ = try linkedFixtureRecords(arguments("Companion"), linkArguments: opaque ? ["-L", root.path, "-lSupport", "-Xlinker", "-rpath", "-Xlinker", root.path] : [],
+    var linkArguments = opaque ? ["-L", root.path, "-lSupport", "-Xlinker", "-rpath", "-Xlinker", root.path] : []
+    if predicate { linkArguments = ["-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup"] }
+    _ = try linkedFixtureRecords(arguments("Companion"), linkArguments: linkArguments,
         root: root.appendingPathComponent("Companion"), target: "CompanionTests")
     let localTarget = ["BlueprintName": "LocalTests", "TestBundlePath": "__TESTROOT__/Local/Fixture.xctest"]
     let companionTarget = ["BlueprintName": "CompanionTests", "TestBundlePath": "__TESTROOT__/Companion/Fixture.xctest"]
     let run = root.appendingPathComponent("Both.xctestrun")
+    var migratedPredicates: [Bool: XcodeTestGraph] = [:]
     func capture(_ value: Bool, includeObserver: Bool) throws -> XcodeTestGraph {
         let source: String
         switch edit {
@@ -66,13 +90,18 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             struct Common { @Test func plain() {} }
             \(padding)struct Other { @Test(Marker(\(argument))) func marked() {} }
             """
-        case .suiteTrait, .nestedMainActorSuite:
+        case .archivedPredicate:
+            source = suiteWithPredicate(value)
+        case .suiteTrait, .nestedMainActorSuite, .guardedSuite, .ambiguousSuite:
             source = """
             import Testing
             struct Marker: SuiteTrait { let value: Bool }
             struct Common { @Test func plain() {} }
             \(nested ? "@MainActor struct Outer {" : "")
+            \(guarded ? "#if canImport(Testing)" : "")
             @Suite(Marker(value: \(value))) struct Other { @Test func marked() {} }
+            \(edit == .ambiguousSuite ? "#else\n@Suite struct Other {}" : "")
+            \(guarded ? "#endif" : "")
             \(nested ? "}" : "")
             """
         case .pluginHost:
@@ -140,7 +169,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         let disabled: [String: Any] = ["TestTargets": [hosted], "IsEnabled": false]
         let linked = try records([["IsEnabled": false], active, disabled])
         #expect(linked == (try records([disabled, ["TestTargets": [localTarget, companionRun]]])))
-        #expect(linked["LocalTests"]?.count == (edit == .suiteTrait || nested ? 3 : 2))
+        #expect(linked["LocalTests"]?.count == (edit == .suiteTrait || nested || guarded || predicate ? 3 : 2))
         #expect((linked["CompanionTests"] == nil) == (opaque || appHosted))
         #expect(try records([active, ["TestTargets": [hosted]]])["LocalTests"] == nil)
         #expect(try records([active, ["IsEnabled": 0, "TestTargets": [hosted]]])["LocalTests"] == nil)
@@ -152,21 +181,66 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         snapshot.modules = modules
         snapshot.sources = ["Local:Local.swift": .parse(source, path: "Local.swift", module: "Local"),
                             "Companion:Companion.swift": .parse(companion, path: "Companion.swift", module: "Companion")]
-        XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: snapshot.sources, graph: &graph)
+        if predicate {
+            // An old app-host inventory bounded each bundle by its own records.
+            // Compare its migration with a fresh bind of the same compiler input
+            // with unknown process linkage.
+            var legacyGraph = graph
+            XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: snapshot.sources, graph: &legacyGraph)
+            let gate = try #require(graph.functions.values.first { $0.name == "gate()" }?.id)
+            #expect(legacyGraph.dependencyPath(from: legacyGraph.tests[observer] ?? [], to: [gate]) == nil)
+            legacyGraph.swiftTestingPlatformAgentInventory = nil
+            legacyGraph.swiftTestingEntryRoots = nil
+            var legacy = snapshot
+            legacy.dependencies = legacyGraph
+            graph.swiftTestingFactoriesByTarget = nil
+            graph.swiftTestingPlatformAgentInventory = nil
+            XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: snapshot.sources, graph: &graph)
+            #expect(graph.dependencyPath(from: graph.tests[observer] ?? [], to: [gate]) != nil)
+            for data in [try JSONEncoder().encode(legacy), try GraphArchive.encode(legacy)] {
+                let migrated = try GraphArchive.decode(data)
+                migratedPredicates[value] = migrated
+                let restored = try #require(migrated.dependencies)
+                #expect(restored.tests == graph.tests)
+                #expect(restored.testDiagnostics == graph.testDiagnostics)
+                #expect(restored.dependencyPath(from: restored.tests[observer] ?? [], to: [gate]) ==
+                        graph.dependencyPath(from: graph.tests[observer] ?? [], to: [gate]))
+            }
+        } else {
+            XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: snapshot.sources, graph: &graph)
+        }
         snapshot.dependencies = graph
-        return try GraphArchive.decode(GraphArchive.encode(snapshot))
+        let restored = try GraphArchive.decode(GraphArchive.encode(snapshot))
+        #expect(restored.dependencies?.tests == graph.tests)
+        #expect(restored.dependencies?.testDiagnostics == graph.testDiagnostics)
+        return restored
     }
     for includeObserver in (opaque ? [false, true] : [true]) {
         let base = try capture(true, includeObserver: includeObserver)
         let head = try capture(false, includeObserver: includeObserver)
         let changes = [FileChange(path: "Local.swift")]
-        let reports = [XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base"),
-                       XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")]
+        func selections(_ head: XcodeTestGraph, _ base: XcodeTestGraph) -> [ImpactReport] {
+            [XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base"),
+             XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")]
+        }
+        let reports = selections(head, base)
+        if predicate {
+            let migrated = try selections(#require(migratedPredicates[false]), #require(migratedPredicates[true]))
+            for (fresh, restored) in zip(reports, migrated) {
+                #expect(restored.selectedTests == fresh.selectedTests)
+                func reasons(_ report: ImpactReport) -> [[String]] {
+                    report.explanations.map { [$0.test, $0.kind, $0.reason, $0.revision] + $0.path }
+                        .sorted { $0.lexicographicallyPrecedes($1) }
+                }
+                #expect(reasons(restored) == reasons(fresh))
+            }
+        }
         if edit == .archivedBody {
             func migrated(_ snapshot: XcodeTestGraph, compact: Bool, previouslyMigrated: Bool) throws -> XcodeTestGraph {
                 var snapshot = snapshot
                 var graph = try #require(snapshot.dependencies)
                 graph.swiftTestingPlatformAgentInventory = nil
+                graph.swiftTestingEntryRoots = nil
                 if previouslyMigrated {
                     // The old reader could persist these edges after dropping its linkage flags.
                     graph.swiftTestingFactoriesByTarget = nil
@@ -225,6 +299,11 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         for report in reports {
             let expected: [String]
             switch edit {
+            case .archivedPredicate:
+                #expect(report.explanations.contains { $0.test == observer && $0.kind == "dependency" && $0.path.contains("Local.gate()") })
+                expected = [plain, marked, observer]
+            case .ambiguousSuite:
+                expected = report.analysisMode == "head-only-git-syntax" ? [plain, marked, observer, ordinary] : [plain, marked]
             case .archivedBody: expected = [marked]
             case .bodyWithOpaqueCompanion: expected = includeObserver ? [marked, observer] : [marked]
             default: expected = [plain, marked]
@@ -238,7 +317,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             }
             if opaque {
                 #expect(Set(fallback.flatMap(\.tests)) == Set(includeObserver ? [observer] : []))
-            } else if edit != .archivedBody {
+            } else if edit != .archivedBody && !predicate && edit != .ambiguousSuite {
                 #expect(report.explanations.contains {
                     $0.test == plain && $0.kind == "dependency" && $0.path.contains("Testing.discovery in LocalTests")
                 })

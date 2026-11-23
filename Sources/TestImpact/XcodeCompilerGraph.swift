@@ -460,7 +460,7 @@ enum XcodeCompilerGraph {
                 parts = [parts[0], parts.dropFirst().dropLast().joined(separator: "."), parts.last!]
             }
             if parts.last?.contains(":") == true {
-                graph.testDiagnostics[test, default: []].append("Parameterized test arguments may execute outside the test body; compiler evidence for argument generation and traits is required")
+                graph.testDiagnostics[test, default: []].append(SwiftTestingDiscoveryRoots.parameterizedArguments)
             }
             if parts.count == 2, let module = modules[parts[0]], parts[1].hasSuffix(")") {
                 graph.tests[test] = entries[module]?[parts[1]] ?? []

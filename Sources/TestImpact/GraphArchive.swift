@@ -32,6 +32,7 @@ public enum GraphArchive {
         var nominalTypeContexts: [String: String]?
         /// Optional for archives written before factory-effect evidence existed.
         var testVTableEntries: [String: Set<String>]?
+        var swiftTestingEntryRoots: [String: [Int]]?
         var swiftTestingPlatformAgentInventory: Bool?
         var swiftTestingFactoriesByTarget: [String: Set<String>]?
         var swiftTestingLinkedRecordsVerified: Bool?
@@ -73,6 +74,7 @@ public enum GraphArchive {
             }
             nodes = words.withUnsafeBytes { Data($0) }
             tests = graph.tests.mapValues { $0.sorted().map(intern) }
+            swiftTestingEntryRoots = graph.swiftTestingEntryRoots?.mapValues { $0.sorted().map(intern) }
             strings = table; toolchain = graph.toolchain; schema = graph.schemaVersion
             diagnostics = graph.diagnostics; testDiagnostics = graph.testDiagnostics
             compilerClassIdentities = graph.compilerClassIdentities
@@ -196,6 +198,7 @@ public enum GraphArchive {
                 node.dynamicDeclarationModules = dynamicDeclarationModules?[node.id]
                 graph.functions[node.id] = node
             }
+            graph.swiftTestingEntryRoots = try swiftTestingEntryRoots?.mapValues { try Set($0.map(string)) }
             graph.tests = try tests.mapValues { try Set($0.map(string)) }
             return graph
         }
@@ -215,28 +218,9 @@ public enum GraphArchive {
         let payload = try encoder.encode(envelope)
         return magic + Data(XcodeGraphCache.digest(payload).utf8) + payload
     }
-    /// Previous captures stored only the test's own factories. Rebind once on
-    /// load so comparing retained graphs also includes eager discovery effects.
     private static func upgradeDiscovery(_ snapshot: inout XcodeTestGraph) {
         guard var graph = snapshot.dependencies, !graph.tests.isEmpty else { return }
-        let shared = SwiftTestingDiscoveryRoots.sharedDiscoveryID
-        SwiftTestingDiscoveryRoots.restoreUnverifiedConstruction(&graph, sources: snapshot.sources)
-        if graph.functions[shared] != nil {
-            SwiftTestingDiscoveryRoots.restoreDiscoveryEffects(&graph)
-            snapshot.dependencies = graph
-            return
-        }
-        let hasRegistrations = graph.functions.values.contains {
-            $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true
-        }
-        guard hasRegistrations || snapshot.sources.values.contains(where: {
-            $0.swiftTestingDeclarations?.tests.isEmpty == false || $0.units.contains { $0.swiftTestingRole == "test" }
-        }) else { return }
-        SwiftTestingDiscoveryRoots.bind(modules: snapshot.modules, sources: snapshot.sources, graph: &graph)
-        graph.testDiagnostics = graph.testDiagnostics.mapValues { diagnostics in
-            var seen = Set<String>()
-            return diagnostics.filter { seen.insert($0).inserted }
-        }
+        SwiftTestingDiscoveryRoots.restore(modules: snapshot.modules, sources: snapshot.sources, graph: &graph)
         snapshot.dependencies = graph
     }
 

@@ -228,10 +228,9 @@ enum SwiftTestingDiscoveryRoots {
         graph.functions[rootID]?.uncertainties.remove("Indirect function invocation")
         if unresolved { graph.functions[rootID]?.uncertainties.insert(unresolvedEffects) }
         else { graph.functions[rootID]?.uncertainties.remove(unresolvedEffects) }
-        let legacy = "Swift Testing discovery invokes an indirect callback before test filtering"
         for test in tests {
-            if graph.testDiagnostics[test]?.contains(legacy) == true {
-                graph.testDiagnostics[test]?.removeAll { $0 == legacy }
+            if graph.testDiagnostics[test]?.contains(legacyIndirectCallback) == true {
+                graph.testDiagnostics[test]?.removeAll { $0 == legacyIndirectCallback }
             }
             if unresolved {
                 if graph.testDiagnostics[test]?.contains(unresolvedEffects) != true {
@@ -273,45 +272,64 @@ enum SwiftTestingDiscoveryRoots {
         }
     }
 
-    /// Older captures could narrow linkage using only the host's static images.
-    /// Retain other evidence on the root, including destructor edges, and repair
-    /// archives already re-encoded with direct edges to every factory.
-    static func restoreUnverifiedConstruction(_ graph: inout DependencyGraph, sources: [String: SwiftSourceSnapshot]) {
-        guard graph.swiftTestingPlatformAgentInventory != true else { return }
-        graph.swiftTestingFactoriesByTarget = nil
-        graph.swiftTestingLinkedRecordsVerified = nil
-        guard var root = graph.functions[sharedDiscoveryID] else { return }
-        var declaredSuites: [String: [String]] = [:]
-        for (key, file) in sources {
-            let declarations = file.swiftTestingDeclarations ?? SwiftTestingSourceDeclarations(legacyUnits: file.units)
-            declaredSuites[String(key.prefix { $0 != ":" }), default: []].append(contentsOf: declarations.suites.map(\.name))
+    private static let legacyIndirectCallback = "Swift Testing discovery invokes an indirect callback before test filtering"
+    static let parameterizedArguments = "Parameterized test arguments may execute outside the test body; compiler evidence for argument generation and traits is required"
+
+    /// Restore compiler inputs before binding. Older archives mixed entry and
+    /// discovery roots in one set and could count an app host's static images as complete.
+    static func restore(modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph) {
+        guard !modules.values.contains("Testing") else { return }
+        if graph.swiftTestingPlatformAgentInventory != true {
+            graph.swiftTestingFactoriesByTarget = nil
+            graph.swiftTestingLinkedRecordsVerified = nil
         }
-        let registration = FactoryConstruction(graph, declaredSuites: declaredSuites)
-        root.dependencies.subtract(registration.eager.keys)
-        for dependencies in registration.eager.values { root.dependencies.formUnion(dependencies) }
-        graph.functions[sharedDiscoveryID] = root
+        // New archives retain the binder inputs directly. For older ones the
+        // reserved discovery nodes, compiler factories and bound witnesses are
+        // the only additions the discovery binder made to an entry.
+        let saved = graph.swiftTestingEntryRoots
+        let factories = Set(graph.functions.values.filter {
+            $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true
+        }.map(\.id))
+        guard saved != nil || graph.functions[sharedDiscoveryID] != nil || !factories.isEmpty || sources.values.contains(where: {
+            $0.swiftTestingDeclarations?.tests.isEmpty == false || $0.units.contains { $0.swiftTestingRole == "test" }
+        }) else { return }
+
+        let generated = factories.union(graph.swiftTestingSuiteWitnesses?.values.flatMap { $0 } ?? [])
+        let derivedDiagnostics: Set<String> = [missingEvidence, runtimeEvidence, unresolvedEffects, legacyIndirectCallback]
+        var archived: [String: Set<String>] = [:]
+        for (test, roots) in graph.tests {
+            if let original = saved?[test] {
+                graph.tests[test] = original
+                archived[test] = []
+            } else {
+                let prior = roots.intersection(generated)
+                guard roots.contains(sharedDiscoveryID) || !prior.isEmpty else { continue }
+                graph.tests[test] = roots.subtracting(prior).filter { !isDiscoveryRoot($0) }
+                archived[test] = prior
+            }
+            graph.testDiagnostics[test]?.removeAll(where: derivedDiagnostics.contains)
+        }
+        bind(modules: modules, sources: sources, graph: &graph, archived: archived)
     }
 
-    static func bind(modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph) {
+    static func bind(modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph,
+                     archived: [String: Set<String>] = [:]) {
         guard !Set(modules.values).contains("Testing") else { return }
         let entries = graph.tests
+        var compilerRoots: [String: Set<String>] = [:]
+        for id in graph.functions.keys where isDiscoveryRoot(id) { graph.functions.removeValue(forKey: id) }
         let sourceModules = Dictionary(grouping: sources, by: { String($0.key.prefix { $0 != ":" }) })
         var testRegions: [String: [String: [SourceRegion]]] = [:]
-        var conditionalSuites: [String: [String]] = [:]
-        var valueTypes: [String: Set<String>] = [:], declaredSuites: [String: [String]] = [:]
-        var currentMetadata = Set<String>()
+        let written = SwiftTestingSuiteDeclarations(sources)
+        let declaredSuites = written.names
+        var valueTypes: [String: Set<String>] = [:]
         for (module, files) in sourceModules {
-            if files.allSatisfy({ $0.value.hasSwiftTestingRegistrationMetadata }) { currentMetadata.insert(module) }
             for (_, file) in files {
                 for unit in file.units where unit.kind == "type" && unit.receiverValueType == true && !unit.scope.contains(".") {
                     valueTypes[module, default: []].insert(unit.scope)
                 }
                 let declarations = file.swiftTestingDeclarations ?? SwiftTestingSourceDeclarations(legacyUnits: file.units)
                 for region in declarations.tests { testRegions[module, default: [:]][region.path, default: []].append(region) }
-                for suite in declarations.suites {
-                    declaredSuites[module, default: []].append(suite.name)
-                    if suite.conditional { conditionalSuites[module, default: []].append(suite.name) }
-                }
             }
         }
         var entryTests: [String: Set<String>] = [:]
@@ -354,7 +372,7 @@ enum SwiftTestingDiscoveryRoots {
         // A verified locally declared value type only inherits its own suite
         // traits. Missing factories in unrelated modules cannot apply to it.
         var completeSuiteModules = Set<String>()
-        for module in currentMetadata {
+        for module in written.completeModules {
             let symbols = suites[module] ?? []
             let types = symbols.compactMap { graph.functions[$0]?.swiftTestingFactoryType }
             let declared = declaredSuites[module] ?? []
@@ -363,7 +381,7 @@ enum SwiftTestingDiscoveryRoots {
             // Conditional source is parsed on every platform. An omitted suite
             // is benign only when every emitted registration has a bound factory
             // and every unmatched declaration could be inactive.
-            guard let conditional = conditionalSuites[module],
+            guard let conditional = written.conditional[module],
                   graph.swiftTestingRegisteredFactories?[module] == symbols.union(factories[module] ?? []) else { continue }
             func counts(_ names: [String]) -> [String: Int] { Dictionary(grouping: names, by: { $0 }).mapValues(\.count) }
             let captured = counts(types)
@@ -398,16 +416,17 @@ enum SwiftTestingDiscoveryRoots {
             }
         }
         for (test, roots) in entries {
-            guard let module = modules[String(test.prefix { $0 != "/" })] else { continue }
+            let target = String(test.prefix { $0 != "/" })
+            let module = modules[target] ?? ""
             let isWrittenTest = roots.contains { id in
                 entryTests[id]?.contains(test) == true && graph.functions[id]?.regions.contains { region in
                     testRegions[module]?[region.path]?.contains { $0.intersects(region) } == true
                 } == true
             }
-            guard isWrittenTest || discovered[test] != nil else { continue }
+            guard isWrittenTest || discovered[test] != nil || archived[test] != nil else { continue }
+            compilerRoots[test] = roots
             let factoryRoots = discovered[test] ?? []
             graph.tests[test, default: []].formUnion(factoryRoots)
-            let target = String(test.prefix { $0 != "/" })
             let linked = graph.swiftTestingFactoriesByTarget?[target]
             if !construction.isEmpty {
                 graph.tests[test, default: []].insert(sharedDiscoveryID)
@@ -453,10 +472,20 @@ enum SwiftTestingDiscoveryRoots {
                 }
             }
             guard factoryRoots.count == 1, completeSuiteModules.contains(module) || (declaredSuites[module]?.count ?? 0) <= (suites[module]?.count ?? 0),
-                  currentMetadata.contains(module),
+                  written.completeModules.contains(module),
                   factoryRoots.isDisjoint(with: incompleteFactories),
                   (suites[module] ?? []).isDisjoint(with: incompleteFactories),
                   !roots.isEmpty, graph.diagnostics.isEmpty else {
+                // If early archives lack the inputs to reproduce an observed
+                // per-entry edge, retain that positive evidence across re-encoding.
+                if let prior = archived[test], !prior.isEmpty {
+                    graph.tests[test]?.formUnion(prior)
+                    compilerRoots[test]?.formUnion(prior)
+                }
+                if test.split(separator: "/").last?.contains(":") == true,
+                   graph.testDiagnostics[test]?.contains(parameterizedArguments) != true {
+                    graph.testDiagnostics[test, default: []].append(parameterizedArguments)
+                }
                 graph.testDiagnostics[test, default: []].append(missingEvidence)
                 continue
             }
@@ -465,7 +494,7 @@ enum SwiftTestingDiscoveryRoots {
             // Keep explicit uncertainty even for nonparameterized trait-bearing
             // tests; finding a constructor is not a lifecycle/effect proof.
             graph.testDiagnostics[test]?.removeAll {
-                $0 == "Parameterized test arguments may execute outside the test body; compiler evidence for argument generation and traits is required"
+                $0 == parameterizedArguments
             }
             let factoryKind = factory?.swiftTestingEmptyFactory
             let emptySuites = (suites[module] ?? []).allSatisfy { graph.functions[$0]?.swiftTestingEmptyFactory == "suite" }
@@ -484,6 +513,7 @@ enum SwiftTestingDiscoveryRoots {
                 graph.testDiagnostics[test, default: []].append(runtimeEvidence)
             }
         }
+        graph.swiftTestingEntryRoots = compilerRoots.isEmpty ? nil : compilerRoots
         restoreDiscoveryEffects(&graph)
     }
 }
