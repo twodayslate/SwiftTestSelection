@@ -127,7 +127,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 15
+    static let currentParserVersion = 16
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -162,6 +162,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             let syntax = units[index].syntaxFingerprint ?? units[index].fingerprint
             units[index].syntaxFingerprint = syntax + order
             units[index].fingerprint += order
+            units[index].swiftTestingRegistrationDeclaration? += order
         }
         return units
     }
@@ -702,6 +703,22 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                           calls: callerInfo(expression, includeAllTokens: true).locations)
                 }
             }
+            var registrationDeclaration: String?
+            if testingBodyCandidate {
+                registrationDeclaration = SwiftTestingSourceDeclarations.registrationDeclaration(node, attribute: "Test", fingerprint: compactFingerprint)
+            } else if suiteMetadata != nil, originalAttributes != nil, kind == "type" || kind == "extension" {
+                // Members of these nominal headers have their own source units.
+                // An enclosing macro could also derive declarations from the edit.
+                var ancestor = originalAttributes?.parent?.parent
+                while let current = ancestor {
+                    if let group = current.asProtocol(DeclGroupSyntax.self), !group.attributes.isEmpty,
+                       !SwiftTestingSourceDeclarations.hasSuiteOwner(group.attributes) { break }
+                    ancestor = current.parent
+                }
+                if ancestor == nil {
+                    registrationDeclaration = SwiftTestingSourceDeclarations.registrationDeclaration(node, attribute: "Suite", fingerprint: compactFingerprint)
+                }
+            }
             var unit = SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
@@ -722,9 +739,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 }, swiftTestingRole: testing.role, swiftTestingSuiteName: testing.suiteName,
                 swiftTestingHasArguments: testing.hasArguments, swiftTestingArguments: registrations.isEmpty ? nil : registrations,
                 swiftTestingMetadata: entryMetadata,
-                swiftTestingRegistrationDeclaration: testingBodyCandidate ? node.as(FunctionDeclSyntax.self).flatMap {
-                    SwiftTestingSourceDeclarations.registrationDeclaration($0, fingerprint: compactFingerprint)
-                } : nil,
+                swiftTestingRegistrationDeclaration: registrationDeclaration,
                 swiftTestingEntryInputs: entryInputs, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,

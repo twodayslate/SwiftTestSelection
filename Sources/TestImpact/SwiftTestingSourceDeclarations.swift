@@ -71,13 +71,17 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
     /// Match a surviving declaration across edits to its registration. A match
     /// preserves the test body and signature. Eager arguments are still compared
     /// separately, with their locations, for every process that loads the factory.
-    static func registrationDeclaration(_ function: FunctionDeclSyntax, fingerprint: (Syntax) -> String) -> String? {
-        var attributes = function.attributes
-        let tests = attributes.indices.filter { attributes[$0].as(AttributeSyntax.self).map { matches($0, "Test") } == true }
-        guard tests.count == 1, let index = tests.first, let test = attributes[index].as(AttributeSyntax.self),
-              !hasOpaqueSibling(of: "Test", in: attributes) else { return nil }
-        attributes[index] = .attribute(test.with(\.arguments, nil).with(\.leftParen, nil).with(\.rightParen, nil))
-        return fingerprint(Syntax(function.with(\.attributes, attributes)))
+    static func registrationDeclaration(_ node: Syntax, attribute expected: String, fingerprint: (Syntax) -> String) -> String? {
+        guard var declaration = node.asProtocol(WithAttributesSyntax.self) else { return nil }
+        var attributes = declaration.attributes
+        let matches = attributes.indices.filter { index in
+            attributes[index].as(AttributeSyntax.self).map { Self.matches($0, expected) } == true
+        }
+        guard matches.count == 1, let index = matches.first, let attribute = attributes[index].as(AttributeSyntax.self),
+              !hasOpaqueSibling(of: expected, in: attributes) else { return nil }
+        attributes[index] = .attribute(attribute.with(\.arguments, nil).with(\.leftParen, nil).with(\.rightParen, nil))
+        declaration.attributes = attributes
+        return fingerprint(Syntax(declaration))
     }
 
     static func entryInputs(_ function: FunctionDeclSyntax, fingerprint: (Syntax) -> String,

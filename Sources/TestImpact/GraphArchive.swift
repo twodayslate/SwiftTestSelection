@@ -32,6 +32,7 @@ public enum GraphArchive {
         var nominalTypeContexts: [String: String]?
         /// Optional for archives written before factory-effect evidence existed.
         var testVTableEntries: [String: Set<String>]?
+        var swiftTestingPlatformAgentInventory: Bool?
         var swiftTestingFactoriesByTarget: [String: Set<String>]?
         var swiftTestingLinkedRecordsVerified: Bool?
         var swiftTestingRegisteredFactories: [String: Set<String>]?
@@ -80,6 +81,7 @@ public enum GraphArchive {
             modeledDiscoveryBodies = Set(graph.functions.values.filter { $0.hasModeledDiscoveryInstructions == true }.map { ids[$0.id]! })
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
             testVTableEntries = graph.testVTableEntries
+            swiftTestingPlatformAgentInventory = graph.swiftTestingPlatformAgentInventory
             swiftTestingFactoriesByTarget = graph.swiftTestingFactoriesByTarget
             swiftTestingLinkedRecordsVerified = graph.swiftTestingLinkedRecordsVerified
             swiftTestingRegisteredFactories = graph.swiftTestingRegisteredFactories
@@ -103,6 +105,7 @@ public enum GraphArchive {
             var graph = DependencyGraph(toolchain: toolchain, diagnostics: diagnostics)
             graph.schemaVersion = schema; graph.testDiagnostics = testDiagnostics
             graph.testVTableEntries = testVTableEntries
+            graph.swiftTestingPlatformAgentInventory = swiftTestingPlatformAgentInventory
             graph.swiftTestingFactoriesByTarget = swiftTestingFactoriesByTarget
             graph.swiftTestingLinkedRecordsVerified = swiftTestingLinkedRecordsVerified
             graph.swiftTestingRegisteredFactories = swiftTestingRegisteredFactories
@@ -216,7 +219,19 @@ public enum GraphArchive {
     /// load so comparing retained graphs also includes eager discovery effects.
     private static func upgradeDiscovery(_ snapshot: inout XcodeTestGraph) {
         guard var graph = snapshot.dependencies, !graph.tests.isEmpty else { return }
-        if graph.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil {
+        let shared = SwiftTestingDiscoveryRoots.sharedDiscoveryID
+        if graph.swiftTestingPlatformAgentInventory != true,
+           graph.swiftTestingFactoriesByTarget != nil || graph.swiftTestingLinkedRecordsVerified == true {
+            // Older archives did not retain whether the host could load plug-ins.
+            // Restore possible factory paths as well as the uncertainty diagnostic.
+            graph.swiftTestingFactoriesByTarget = nil
+            graph.swiftTestingLinkedRecordsVerified = nil
+            let factories = graph.functions.values.filter {
+                $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true
+            }.map(\.id)
+            graph.functions[shared]?.dependencies.formUnion(factories)
+        }
+        if graph.functions[shared] != nil {
             SwiftTestingDiscoveryRoots.restoreDiscoveryEffects(&graph)
             snapshot.dependencies = graph
             return

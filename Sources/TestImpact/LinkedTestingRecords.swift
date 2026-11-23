@@ -20,11 +20,11 @@ enum LinkedTestingRecords {
               let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
               let configurations = plist["TestConfigurations"] as? [[String: Any]], !configurations.isEmpty else { return nil }
         let root = run.deletingLastPathComponent()
-        func product(_ path: String, host: URL? = nil) -> URL? {
+        func product(_ path: String) -> URL? {
             let parts = path.split(separator: "/", maxSplits: 1)
             guard parts.count == 2, !parts[1].split(separator: "/").contains("..") else { return nil }
-            let directory = parts[0] == "__TESTROOT__" ? root : (parts[0] == "__TESTHOST__" ? host : nil)
-            return directory?.appendingPathComponent(String(parts[1]))
+            guard parts[0] == "__TESTROOT__" else { return nil }
+            return root.appendingPathComponent(String(parts[1]))
         }
         // A test target runs its bundle in its own host process. Repeated plan
         // configurations may load different images for the same target.
@@ -45,17 +45,13 @@ enum LinkedTestingRecords {
                        !$0.hasPrefix("/usr/lib/") && !$0.hasPrefix("__SIMRUNTIMEROOT__/usr/lib/")
                    }) { return nil }
             }
-            var host: URL?, hostRecords = Set<String>()
-            if let path = target["TestHostPath"] as? String, !platformTestAgents.contains(path) {
-                guard let bundle = product(path), let image = Bundle(url: bundle)?.executableURL,
-                      let symbols = records(in: image) else { return nil }
-                host = bundle
-                hostRecords = symbols
-            }
-            guard let path = target["TestBundlePath"] as? String, let bundle = product(path, host: host),
-                  let image = Bundle(url: bundle)?.executableURL, let symbols = records(in: image),
-                  hostRecords.isDisjoint(with: symbols) else { return nil }
-            return hostRecords.union(symbols)
+            // Application startup can load plug-ins before discovery. The host's
+            // static load commands cannot establish which registrations will run.
+            if let path = target["TestHostPath"] as? String, !platformTestAgents.contains(path) { return nil }
+            guard target["IsAppHostedTestBundle"] as? Bool != true, target["UseDestinationArtifacts"] as? Bool != true,
+                  let path = target["TestBundlePath"] as? String, let bundle = product(path),
+                  let image = Bundle(url: bundle)?.executableURL else { return nil }
+            return records(in: image)
         }
         var recordsByTarget: [String: Set<String>] = [:], incomplete = Set<String>()
         for configuration in configurations {
@@ -102,6 +98,14 @@ enum LinkedTestingRecords {
         }
 
         let fields = layout.split(separator: "\n").map { $0.split(whereSeparator: \.isWhitespace) }
+        // A bundle initializer or Objective-C +load method can load another
+        // image before the platform agent begins Swift Testing discovery.
+        for field in fields {
+            if field == ["cmd", "LC_ROUTINES_64"] || field == ["sectname", "__objc_nlclslist"] ||
+                field == ["sectname", "__objc_nlcatlist"] { return nil }
+            // Mach-O section type (low byte): S_MOD_INIT_FUNC_POINTERS or S_INIT_FUNC_OFFSETS.
+            if let flags = hexField(field, name: "flags"), [0x09, 0x16].contains(flags & 0xff) { return nil }
+        }
         let sections = fields.indices.filter { fields[$0] == ["sectname", "__swift5_tests"] }
         if sections.isEmpty { return [] }
         guard sections.count == 1, let index = sections.first, index + 3 < fields.count,

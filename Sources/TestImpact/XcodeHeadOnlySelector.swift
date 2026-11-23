@@ -310,6 +310,9 @@ enum XcodeHeadOnlySelector {
         for key in Set(old.keys).union(new.keys).sorted() {
             if replacedEntryKeys.contains(key) { continue }
             let before = old[entryEdits[key] ?? key] ?? [], after = new[key] ?? []
+            // The suite header differs only in registration inputs. Discovery
+            // accounts for them and member declarations are compared separately.
+            if registrations.registrationEdits[key] != nil, after.first?.swiftTestingRole == "suite" { continue }
             guard entryEdits[key] != nil || !comparison.equivalent(before, after) || policyHelpers.contains(key) else { continue }
             // Shared keys (notably imports) can span several source dictionaries.
             // Keep every region, but never let dictionary order label a boundary.

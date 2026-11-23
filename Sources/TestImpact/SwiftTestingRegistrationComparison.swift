@@ -68,6 +68,22 @@ struct SwiftTestingRegistrationComparison {
             }
             return result
         }
+        var headSuites: SuiteIndex?, baseSuites: SuiteIndex?
+        func factory(of unit: SourceUnit, historical: Bool) -> String? {
+            if unit.swiftTestingRole == "suite" {
+                // Opaque declarations can carry nested entries in the same source
+                // unit. Only a separately modeled suite header owns all its inputs.
+                guard unit.swiftTestingSuiteMetadata != nil else { return nil }
+                if historical, let base {
+                    if baseSuites == nil { baseSuites = SuiteIndex(base) }
+                    return baseSuites?.factory(of: unit)
+                }
+                if headSuites == nil { headSuites = SuiteIndex(head) }
+                return headSuites?.factory(of: unit)
+            }
+            return (historical ? baseProof : headProof)?.factory(of: unit)?.id
+        }
+
         var survivingFactories: [String: String] = [:]
         if base == nil {
             let previous = declarations(before)
@@ -76,17 +92,16 @@ struct SwiftTestingRegistrationComparison {
                       entryEdits[units[0].key] == nil,
                       (prior[0].swiftTestingArguments ?? []).map({ $0.comparison(policy) }) !=
                         (units[0].swiftTestingArguments ?? []).map({ $0.comparison(policy) }),
-                      let factory = headProof.factory(of: units[0]) else { continue }
-                survivingFactories[prior[0].key] = factory.id
+                      let factory = factory(of: units[0], historical: false) else { continue }
+                survivingFactories[prior[0].key] = factory
                 registrationEdits[units[0].key] = prior[0].key
             }
         }
 
         var scopedSuites = Set<String>()
-        var headSuites: SuiteIndex?, baseSuites: SuiteIndex?
         for (key, group) in after where group.count == 1 {
             let unit = group[0]
-            guard paths.contains(unit.region.path), let previous = before[key], previous.count == 1,
+            guard paths.contains(unit.region.path), let previous = before[registrationEdits[key] ?? key], previous.count == 1,
                   previous[0].region.path == unit.region.path, previous[0].conditionalBranch == unit.conditionalBranch else { continue }
             if base == nil, unit.swiftTestingBodyCandidate == true, previous[0].swiftTestingBodyCandidate == true,
                previous[0].fingerprint != unit.fingerprint, headProof.provesInputs(of: unit, requireEmpty: true) {
@@ -102,6 +117,7 @@ struct SwiftTestingRegistrationComparison {
                 suiteTests.formUnion(oldTests)
             }
             scopedSuites.insert(key)
+            scopedSuites.insert(previous[0].key)
             suitePaths.insert(unit.region.path)
             suiteTests.formUnion(tests)
         }
@@ -138,9 +154,9 @@ struct SwiftTestingRegistrationComparison {
                 let a = left[signature] ?? [], b = right[signature] ?? []
                 guard a.count != b.count else { continue }
                 discoveryPaths.insert(path)
-                for unit in b { headDiscovery.record(unit, using: headProof) }
+                for unit in b { headDiscovery.record(unit, factory: factory(of: unit, historical: false)) }
                 for unit in a {
-                    if let baseProof { baseDiscovery.record(unit, using: baseProof) }
+                    if base != nil { baseDiscovery.record(unit, factory: factory(of: unit, historical: true)) }
                     else if let factory = survivingFactories[unit.key] {
                         headDiscovery.factories.insert(factory)
                     } else {
@@ -165,8 +181,8 @@ struct SwiftTestingRegistrationComparison {
         var modules = Set<String>()
         var unbounded = false
 
-        mutating func record(_ unit: SourceUnit, using index: FactoryIndex) {
-            if let factory = index.factory(of: unit) { factories.insert(factory.id) }
+        mutating func record(_ unit: SourceUnit, factory: String?) {
+            if let factory { factories.insert(factory) }
             else { modules.insert(String(unit.key.prefix { $0 != ":" })) }
         }
     }
@@ -211,7 +227,7 @@ struct SwiftTestingRegistrationComparison {
 
     /// Index nominal owners once. A single insertion can move many suite bounds.
     private struct SuiteIndex {
-        var factories: [String: Int] = [:]
+        var factories: [String: [String]] = [:]
         var testsBySuite: [String: Set<String>] = [:]
         var unresolved = Set<String>()
 
@@ -220,7 +236,7 @@ struct SwiftTestingRegistrationComparison {
             for node in graph.functions.values {
                 guard let type = node.swiftTestingFactoryType,
                       node.compilerReferences?.contains(where: { $0.hasPrefix("$s7Testing4TestV6__type") }) == true else { continue }
-                factories[node.module + "." + type, default: 0] += 1
+                factories[node.module + "." + type, default: []].append(node.id)
             }
             for test in snapshot.tests {
                 let roots = graph.tests[test] ?? []
@@ -247,10 +263,16 @@ struct SwiftTestingRegistrationComparison {
             }
         }
 
+        func factory(of unit: SourceUnit) -> String? {
+            guard let name = unit.swiftTestingSuiteName,
+                  let matches = factories[String(unit.key.prefix { $0 != ":" }) + "." + name], matches.count == 1 else { return nil }
+            return matches.first
+        }
+
         func members(of unit: SourceUnit) -> Set<String>? {
             guard let name = unit.swiftTestingSuiteName else { return nil }
             let suite = String(unit.key.prefix { $0 != ":" }) + "." + name
-            guard factories[suite] == 1 else { return nil }
+            guard factory(of: unit) != nil else { return nil }
             return unresolved.union(testsBySuite[suite] ?? [])
         }
     }

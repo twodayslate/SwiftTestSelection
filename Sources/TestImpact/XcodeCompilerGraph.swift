@@ -229,6 +229,7 @@ enum XcodeCompilerGraph {
         }
         let inventory = SwiftTestingDiscoveryRoots.registrationInventory(tables: tables, graph: graph)
         graph.swiftTestingRegisteredFactories = inventory.factories
+        graph.swiftTestingPlatformAgentInventory = linkedTestingRecords.map { _ in true }
         graph.swiftTestingFactoriesByTarget = linkedTestingRecords?.compactMapValues { records in
             let factories = Set(records.compactMap { inventory.byRecord[$0] })
             return factories.count == records.count ? factories : nil
