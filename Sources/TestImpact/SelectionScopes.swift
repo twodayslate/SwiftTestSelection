@@ -82,7 +82,8 @@ extension XcodeHeadOnlySelector {
             let roots = graph.tests[test] ?? []
             guard !roots.isEmpty, roots.allSatisfy({ graph.functions[$0] != nil }) else { return [] }
             let diagnostics = graph.testDiagnostics[test] ?? []
-            guard diagnostics.allSatisfy({ $0 == SwiftTestingDiscoveryRoots.runtimeEvidence }) else { return [] }
+            guard diagnostics.allSatisfy({ $0 == SwiftTestingDiscoveryRoots.runtimeEvidence ||
+                ($0 == SwiftTestingDiscoveryRoots.unresolvedEffects && roots.contains(SwiftTestingDiscoveryRoots.sharedDiscoveryID)) }) else { return [] }
             if !diagnostics.isEmpty { uncertain.insert(test) }
         }
         let entries = entries.subtracting(uncertain)

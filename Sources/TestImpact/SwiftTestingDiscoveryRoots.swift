@@ -138,112 +138,70 @@ enum SwiftTestingDiscoveryRoots {
         }
     }
 
-    /// Objective-C selector invocation/registration and Foundation key-value
-    /// coding can call project implementations absent from the SIL call graph.
-    private static func mayInvokeForeignCallback(_ call: String, in node: FunctionNode) -> Bool {
-        guard call.hasPrefix("objc_method ") || call.hasPrefix("objc_super_method "),
-              let space = call.firstIndex(of: " ") else { return false }
-        let signature = call[call.index(after: space)...]
-        if signature == "NSObject.responds!foreign : (NSObject) -> (Selector?) -> Bool" ||
-            signature == "NSObject.instancesRespond!foreign : (NSObject.Type) -> (Selector!) -> Bool" ||
-            signature == "NSObject.instancesRespond!foreign : (NSObject.Type) -> (Selector?) -> Bool" {
-            // A subclass may run +resolveInstanceMethod: or +resolveClassMethod:
-            // even when it inherits the query implementation from NSObject.
-            let declaration = signature.prefix { $0 != "!" }
-            return node.selectorQueriesUseNSObject != true ||
-                node.uncertainties.contains { $0.hasPrefix("Unresolved project dispatch: " + declaration) }
-        }
-        let declaration = signature.prefix { $0 != "!" && $0 != " " }
-        let path = declaration.split(separator: ".")
-        if path.count == 2, let abi = signature.range(of: "!foreign : (" + path[0] + ") -> ") {
-            let parametersAndResult = signature[abi.upperBound...]
-            if foundationEvaluators[declaration]?.contains(parametersAndResult) == true { return true }
-            if keyValueOwners.contains(path[0]), keyValueMethods[path[1]]?.contains(parametersAndResult) == true { return true }
-        }
-        return signature.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "_" }).contains("Selector")
-    }
+    static let unresolvedEffects = "Swift Testing discovery may execute unmodeled code before test filtering"
 
-    // Foundation performs these evaluations inside the framework. SIL at the
-    // call site contains neither the predicate's getter nor its block callback.
-    private static let foundationEvaluators: [Substring: Set<Substring>] = [
-        "NSPredicate.evaluate": ["(Any?) -> Bool", "(Any?, [String : Any]?) -> Bool"],
-        "NSExpression.expressionValue": ["(Any?, NSMutableDictionary?) -> Any?"],
-        "NSArray.filtered": ["(NSPredicate) -> [Any]"],
-        "NSMutableArray.filter": ["(NSPredicate) -> ()"],
-        "NSSet.filtered": ["(NSPredicate) -> Set<AnyHashable>"],
-        "NSMutableSet.filter": ["(NSPredicate) -> ()"],
-        "NSOrderedSet.filtered": ["(NSPredicate) -> NSOrderedSet"],
-        "NSMutableOrderedSet.filter": ["(NSPredicate) -> ()"],
-    ]
-
-    private static let keyValueOwners: Set<Substring> = [
-        "NSObject", "NSArray", "NSMutableArray", "NSSet", "NSMutableSet", "NSOrderedSet",
-        "NSMutableOrderedSet", "NSDictionary", "NSMutableDictionary", "NSUserDefaults", "UserDefaults", "NSManagedObject",
-    ]
-
-    private static let keyValueMethods: [Substring: Set<Substring>] = [
-        "value": ["(String) -> Any?", "(String) -> Any"],
-        "setValue": ["(Any?, String) -> ()"],
-        "validateValue": ["(AutoreleasingUnsafeMutablePointer<AnyObject?>, String) throws -> ()"],
-        "dictionaryWithValues": ["([String]) -> [String : Any]"],
-        "setValuesForKeys": ["([String : Any]) -> ()"],
-        "mutableArrayValue": ["(String) -> NSMutableArray"],
-        "mutableSetValue": ["(String) -> NSMutableSet"],
-        "mutableOrderedSetValue": ["(String) -> NSMutableOrderedSet"],
-        "setNilValueForKey": ["(String) -> ()"],
-    ]
-
-    static func restoreIndirectDiscoveryCalls(_ graph: inout DependencyGraph) {
+    /// Follow eager construction only. The ordinary graph keeps known witness
+    /// and destructor edges even when another part of the same path is opaque.
+    static func restoreDiscoveryEffects(_ graph: inout DependencyGraph) {
         guard let root = graph.functions[sharedDiscoveryID] else { return }
-        let indirect = "Indirect function invocation"
-        let diagnostic = "Swift Testing discovery invokes an indirect callback before test filtering"
-
-        func mayInvokeCallback(_ node: FunctionNode) -> Bool {
-            if node.uncertainties.contains(indirect) { return true }
-            if (node.compilerReferences ?? node.dependencies).contains(where: isStringFormatting) {
-                guard let requirements = node.swiftTestingFormattingRequirements, !requirements.isEmpty,
-                      requirements.isSubset(of: node.resolvedDynamicDeclarations) else { return true }
-            }
-            if let calls = node.dynamicCallSignatures {
-                return calls.contains { mayInvokeForeignCallback($0, in: node) }
-            }
-            return node.uncertainties.contains { $0.hasPrefix("Dynamic dispatch: objc_method ") || $0.hasPrefix("Dynamic dispatch: objc_super_method ") }
-        }
-
-        // ARC can destroy an erased value, an aggregate member or a subclass.
-        // Its dynamic type is not necessarily the static type of the operand.
-        // Include captured destructors once, and follow their ordinary callees.
-        let destructors = Set(graph.functions.values.filter {
-            $0.hasProjectRuntimeContext && ($0.name.hasSuffix(".deinit") || $0.name.hasSuffix(".__deallocating_deinit"))
+        let factories = Set(graph.functions.values.filter {
+            $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true
         }.map(\.id))
-        let factories = graph.functions.values.filter { $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true }
-        var pending = Array(root.dependencies), visited = Set<String>()
-        var hasIndirect = factories.contains(where: mayInvokeCallback)
-        var hasCleanup = factories.contains { $0.mayDestroyValue != false }
-        var includedDestructors = false
-        while !pending.isEmpty || (hasCleanup && !includedDestructors) {
-            if hasCleanup && !includedDestructors {
-                includedDestructors = true
-                pending.append(contentsOf: destructors)
-            }
-            guard let id = pending.popLast() else { break }
-            guard visited.insert(id).inserted, let node = graph.functions[id],
-                  node.hasProjectRuntimeContext || id.hasPrefix("$s" + String(node.module.utf8.count) + node.module) else { continue }
-            if hasIndirect && (includedDestructors || destructors.isEmpty) { break }
-            hasIndirect = hasIndirect || mayInvokeCallback(node)
-            hasCleanup = hasCleanup || node.mayDestroyValue != false
-            pending.append(contentsOf: node.dependencies)
+        // Older roots can contain additional construction edges. Audit those
+        // too, preserving the caller context for flattened factory references.
+        var extraRoots = root.dependencies.subtracting(factories)
+        for id in factories {
+            if let eager = graph.functions[id]?.swiftTestingDiscoveryReferences { extraRoots.subtract(eager) }
         }
-        if includedDestructors { graph.functions[sharedDiscoveryID]?.dependencies.formUnion(destructors) }
-        if hasIndirect { graph.functions[sharedDiscoveryID]?.uncertainties.insert(indirect) }
-        else { graph.functions[sharedDiscoveryID]?.uncertainties.remove(indirect) }
+        var pending = Array(factories.union(extraRoots)), visited = Set<String>()
+        var unresolved = factories.isEmpty || graph.testDiagnostics.values.contains { $0.contains(missingEvidence) }
+        if let recorded = graph.swiftTestingRegisteredFactories,
+           recorded.values.contains(where: { !$0.isSubset(of: factories) }) { unresolved = true }
+        var destructorEdges = Set<String>()
+        while let id = pending.popLast() {
+            guard visited.insert(id).inserted else { continue }
+            guard let node = graph.functions[id], let references = node.compilerReferences else {
+                unresolved = true
+                continue
+            }
+            if node.hasModeledDiscoveryInstructions != true { unresolved = true }
+            if node.mayDestroyValue != false {
+                // Captured destructors give positive paths. The dynamic value
+                // can also have an imported deinitializer with no captured body.
+                unresolved = true
+                destructorEdges = Set(graph.functions.values.filter {
+                    $0.hasProjectRuntimeContext && ($0.name.hasSuffix(".deinit") || $0.name.hasSuffix(".__deallocating_deinit"))
+                }.map(\.id))
+                break // All remaining possible effects are already represented.
+            }
+            let factory = factories.contains(id)
+            if factory && node.swiftTestingDiscoveryReferences == nil { unresolved = true }
+            let eager = factory ? node.swiftTestingDiscoveryReferences ?? references : references
+            for callee in eager {
+                // At capture a modeled factory validated the SDK call and its
+                // deferred operands. All other eager calls need a body or contract.
+                if factory && SwiftTestingFactoryProof.isFactory(callee) { continue }
+                if SwiftTestingDiscoveryEffects.metadataCallees.contains(callee) { continue }
+                pending.append(callee)
+            }
+            pending.append(contentsOf: node.dependencies.subtracting(references))
+        }
+        graph.functions[sharedDiscoveryID]?.dependencies.formUnion(destructorEdges)
+        // Drop derived state from pre-effect-summary captures before recomputing.
+        graph.functions[sharedDiscoveryID]?.uncertainties.remove("Indirect function invocation")
+        if unresolved { graph.functions[sharedDiscoveryID]?.uncertainties.insert(unresolvedEffects) }
+        else { graph.functions[sharedDiscoveryID]?.uncertainties.remove(unresolvedEffects) }
+        let legacy = "Swift Testing discovery invokes an indirect callback before test filtering"
         for (test, roots) in graph.tests where roots.contains(sharedDiscoveryID) {
-            if hasIndirect {
-                if graph.testDiagnostics[test]?.contains(diagnostic) != true {
-                    graph.testDiagnostics[test, default: []].append(diagnostic)
+            if graph.testDiagnostics[test]?.contains(legacy) == true {
+                graph.testDiagnostics[test]?.removeAll { $0 == legacy }
+            }
+            if unresolved {
+                if graph.testDiagnostics[test]?.contains(unresolvedEffects) != true {
+                    graph.testDiagnostics[test, default: []].append(unresolvedEffects)
                 }
-            } else if graph.testDiagnostics[test]?.contains(diagnostic) == true {
-                graph.testDiagnostics[test]?.removeAll { $0 == diagnostic }
+            } else if graph.testDiagnostics[test]?.contains(unresolvedEffects) == true {
+                graph.testDiagnostics[test]?.removeAll { $0 == unresolvedEffects }
             }
         }
     }
@@ -433,6 +391,6 @@ enum SwiftTestingDiscoveryRoots {
                 graph.testDiagnostics[test, default: []].append(runtimeEvidence)
             }
         }
-        restoreIndirectDiscoveryCalls(&graph)
+        restoreDiscoveryEffects(&graph)
     }
 }

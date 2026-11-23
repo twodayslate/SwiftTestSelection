@@ -28,7 +28,7 @@ public enum GraphArchive {
         var assertionFormattingSites: [String: Set<String>]?
         var captureModules: [String: Set<String>]?
         var dynamicDeclarationModules: [String: [String: Set<String>]]?
-        var concreteSelectorQueryFunctions: Set<String>?
+        var modeledDiscoveryBodies: Set<Int>?
         var nominalTypeContexts: [String: String]?
         /// Optional for archives written before factory-effect evidence existed.
         var testVTableEntries: [String: Set<String>]?
@@ -75,7 +75,7 @@ public enum GraphArchive {
             compilerClassIdentities = graph.compilerClassIdentities
             compilerImplicitImports = graph.compilerImplicitImports
             assertionFormattingSites = graph.functions.compactMapValues(\.assertionFormattingSites)
-            concreteSelectorQueryFunctions = Set(graph.functions.values.filter { $0.selectorQueriesUseNSObject == true }.map(\.id))
+            modeledDiscoveryBodies = Set(graph.functions.values.filter { $0.hasModeledDiscoveryInstructions == true }.map { ids[$0.id]! })
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
             testVTableEntries = graph.testVTableEntries
             swiftTestingRegisteredFactories = graph.swiftTestingRegisteredFactories
@@ -172,7 +172,7 @@ public enum GraphArchive {
                     cursor += 1
                 }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
-                if concreteSelectorQueryFunctions?.contains(node.id) == true { node.selectorQueriesUseNSObject = true }
+                if modeledDiscoveryBodies?.contains(row[0]) == true { node.hasModeledDiscoveryInstructions = true }
                 node.nominalTypeContext = nominalTypeContexts?[node.id]
                 node.swiftTestingFormattingRequirements = swiftTestingFormattingRequirements?[node.id]
                 node.swiftTestingDiscoveryReferences = swiftTestingDiscoveryReferences?[node.id]
@@ -211,11 +211,16 @@ public enum GraphArchive {
     private static func upgradeDiscovery(_ snapshot: inout XcodeTestGraph) {
         guard var graph = snapshot.dependencies, !graph.tests.isEmpty else { return }
         if graph.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil {
-            SwiftTestingDiscoveryRoots.restoreIndirectDiscoveryCalls(&graph)
+            SwiftTestingDiscoveryRoots.restoreDiscoveryEffects(&graph)
             snapshot.dependencies = graph
             return
         }
-        guard graph.functions.values.contains(where: { $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true }) else { return }
+        let hasRegistrations = graph.functions.values.contains {
+            $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true
+        }
+        guard hasRegistrations || snapshot.sources.values.contains(where: {
+            $0.swiftTestingDeclarations?.tests.isEmpty == false || $0.units.contains { $0.swiftTestingRole == "test" }
+        }) else { return }
         SwiftTestingDiscoveryRoots.bind(modules: snapshot.modules, sources: snapshot.sources, graph: &graph)
         graph.testDiagnostics = graph.testDiagnostics.mapValues { diagnostics in
             var seen = Set<String>()

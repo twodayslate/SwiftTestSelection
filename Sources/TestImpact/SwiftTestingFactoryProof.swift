@@ -40,6 +40,7 @@ enum SwiftTestingFactoryProof {
     }
 
     struct Evidence {
+        var verifiedFactoryCall = false
         var cleanupIsSDKMetadata = false
         var nominalType: String?
         var emptyFactory: String?
@@ -196,7 +197,7 @@ enum SwiftTestingFactoryProof {
         }
         func isMetatype(_ id: String) -> Bool {
             if definitions[id]?.hasPrefix("metatype ") == true { return true }
-            guard let start = header.range(of: id + " : $@thin ")?.upperBound else { return false }
+            guard let start = (header.range(of: id + " : $@thin ") ?? header.range(of: id + " : $@thick "))?.upperBound else { return false }
             return header[start...].prefix { $0 != "," && $0 != ")" }.hasSuffix(".Type")
         }
         func locationInitializer(_ slot: String, consumer: String) -> (String, [String])? {
@@ -241,13 +242,46 @@ enum SwiftTestingFactoryProof {
         }
     }
 
+    /// In an SDK-only factory every owned operand originates here. Inputs are
+    /// the output slot and (for members) the suite metatype. With just literal
+    /// metadata, SDK constructors and deferred thunks there is no user value
+    /// whose cleanup could dispatch. Reject additional sources of values.
+    private static func constructsOnlyMetadata(header: String, definitions: [String: String],
+                                               eager: Set<String>, factory: String) -> Bool {
+        guard header.range(of: #"^bb0\(%\d+ : \$\*Test(?:, %\d+ : \$@(?:thin|thick) [^,()]+\.Type)?\):"#,
+                           options: .regularExpression) != nil,
+              eager.subtracting([factory]).isSubset(of: SwiftTestingDiscoveryEffects.metadataCallees) else { return false }
+        for rhs in definitions.values {
+            let opcode = rhs.prefix { $0 != " " }
+            switch opcode {
+            case "apply", "function_ref", "thin_to_thick_function", "partial_apply",
+                 "integer_literal", "string_literal", "metatype", "init_existential_metatype",
+                 "tuple_extract", "struct_extract", "ref_tail_addr", "index_addr", "tuple_element_addr",
+                 "init_existential_addr", "init_enum_data_addr", "mark_dependence", "pointer_to_address":
+                continue
+            case "enum":
+                guard rhs.hasPrefix("enum $Optional<") else { return false }
+            case "struct":
+                guard rhs.hasPrefix("struct $Int (") else { return false }
+            case "tuple":
+                guard rhs == "tuple ()" else { return false }
+            case "alloc_stack":
+                guard ["alloc_stack $SourceLocation", "alloc_stack $__SourceBounds", "alloc_stack $Optional<Comment>"].contains(rhs) else { return false }
+            case "unchecked_ref_cast":
+                guard rhs.hasSuffix(" to $__ContiguousArrayStorageBase") else { return false }
+            default: return false
+            }
+        }
+        return true
+    }
+
     static func isCleanup(_ instruction: String) -> Bool {
         instruction.hasPrefix("strong_release ") || instruction.hasPrefix("release_value ") ||
             instruction.hasPrefix("destroy_value ") || instruction.hasPrefix("destroy_addr ") ||
             instruction.hasPrefix("unmanaged_release ") || instruction.hasPrefix("end_lifetime ")
     }
 
-    static func analyze(_ lines: [String]) -> Evidence {
+    static func analyze(_ lines: [String], modeledInstructions: Bool) -> Evidence {
         var evidence = Evidence()
         var releases: [String] = [], header = ""
         var definitions: [String: String] = [:], uses: [String: [String]] = [:]
@@ -310,7 +344,12 @@ enum SwiftTestingFactoryProof {
         }
         guard uses[arguments[0]]?.contains(where: isOutputParameter) == true,
               uses[arguments[0]]?.allSatisfy({ $0 == call || isOutputParameter($0) }) == true else { return evidence }
+        evidence.verifiedFactoryCall = true
         evidence.cleanupIsSDKMetadata = metadataCleanup(releases, factory: call, definitions: definitions, uses: uses, references: references, header: header)
+        if modeledInstructions && !evidence.cleanupIsSDKMetadata {
+            evidence.cleanupIsSDKMetadata = constructsOnlyMetadata(header: header, definitions: definitions,
+                eager: Set(references.values).subtracting(evidence.deferredReferences), factory: factory.value)
+        }
         if !suite { evidence.deferredConditions = conditions }
         // A nonempty traits array still permits entry-local provider edits
         // when source comparison preserves every eager trait and its location.

@@ -80,12 +80,12 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// An empty set proves only error propagation, never callback purity or origin.
     /// Nil denotes legacy/missing evidence.
     public var receiverIndirectErrorEffects: Set<String>? = nil
+    /// Every instruction has a modeled discovery effect. Direct calls and ARC
+    /// still require their own evidence. Missing proof includes older captures.
+    var hasModeledDiscoveryInstructions: Bool? = nil
     /// ARC cleanup can run a project deinitializer without a function reference.
     /// Nil means the capture predates lifetime evidence.
     public var mayDestroyValue: Bool? = nil
-    /// Every observed selector query in this body used a concrete NSObject receiver.
-    /// Nil includes older captures without receiver evidence.
-    public var selectorQueriesUseNSObject: Bool? = nil
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>
@@ -93,7 +93,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// Combine evidence rather than choosing one imported implementation. Missing
     /// optional proof stays missing; an empty body never establishes purity.
     mutating func mergeEvidence(_ other: FunctionNode) {
-        if selectorQueriesUseNSObject != other.selectorQueriesUseNSObject { selectorQueriesUseNSObject = nil }
+        if hasModeledDiscoveryInstructions != other.hasModeledDiscoveryInstructions { hasModeledDiscoveryInstructions = nil }
         if mayDestroyValue != other.mayDestroyValue {
             mayDestroyValue = mayDestroyValue == true || other.mayDestroyValue == true ? true : nil
         }
@@ -146,7 +146,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
             // Imported implementations can call project code even without local
             // debug locations. Known ownership does not close that runtime edge.
             $0.hasPrefix("Imported conformance:") || (hasProjectRuntimeContext || id == SwiftTestingDiscoveryRoots.sharedDiscoveryID) &&
-            ($0 == "Indirect function invocation" || $0 == "Raw pointer operation" ||
+            ($0 == SwiftTestingDiscoveryRoots.unresolvedEffects || $0 == "Indirect function invocation" || $0 == "Raw pointer operation" ||
              $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:"))
         }
     }

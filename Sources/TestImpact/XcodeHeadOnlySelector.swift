@@ -511,7 +511,7 @@ enum XcodeHeadOnlySelector {
                     }
                     include([test], kind: "dependency", reason: reason, path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
-                if !changed.isEmpty || !excludedChanges.isEmpty {
+                if !changed.isEmpty || !excludedChanges.isEmpty || registrations.changedDiscovery || !registrations.suitePaths.isEmpty {
                     let roots = graph.tests[test] ?? []
                     if roots.isEmpty || roots.contains(where: { graph.functions[$0] == nil }) {
                         fallback("head_only_unresolved_test", "Missing or incomplete compiled head entry for \(test)", tests: [test])
