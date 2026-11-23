@@ -6,7 +6,7 @@ import Foundation
 /// Unknown dylibs, image layouts and stripped registration symbols leave
 /// discovery open. A source import list cannot establish these facts.
 enum LinkedTestingRecords {
-    static func capture(testRun: URL?, products: URL) -> Set<String>? {
+    static func capture(testRun: URL?, products: URL) -> [String: Set<String>]? {
         let run: URL
         if let testRun { run = testRun }
         else {
@@ -25,34 +25,51 @@ enum LinkedTestingRecords {
             let directory = parts[0] == "__TESTROOT__" ? root : (parts[0] == "__TESTHOST__" ? host : nil)
             return directory?.appendingPathComponent(String(parts[1]))
         }
-        var images = Set<URL>()
+        // A test target runs its bundle in its own host process. Repeated plan
+        // configurations may load different images for the same target.
+        var inspected: [URL: Set<String>] = [:], opaqueImages = Set<URL>()
+        func records(in image: URL) -> Set<String>? {
+            if let cached = inspected[image] { return cached }
+            guard !opaqueImages.contains(image), let symbols = recordsInImage(image) else {
+                opaqueImages.insert(image)
+                return nil
+            }
+            inspected[image] = symbols
+            return symbols
+        }
+        func processRecords(_ target: [String: Any]) -> Set<String>? {
+            for key in ["TestingEnvironmentVariables", "EnvironmentVariables"] {
+                if let environment = target[key] as? [String: String], let injection = environment["DYLD_INSERT_LIBRARIES"],
+                   injection.split(separator: ":").contains(where: {
+                       !$0.hasPrefix("/usr/lib/") && !$0.hasPrefix("__SIMRUNTIMEROOT__/usr/lib/")
+                   }) { return nil }
+            }
+            var host: URL?, hostRecords = Set<String>()
+            if let path = target["TestHostPath"] as? String, !platformTestAgents.contains(path) {
+                guard let bundle = product(path), let image = Bundle(url: bundle)?.executableURL,
+                      let symbols = records(in: image) else { return nil }
+                host = bundle
+                hostRecords = symbols
+            }
+            guard let path = target["TestBundlePath"] as? String, let bundle = product(path, host: host),
+                  let image = Bundle(url: bundle)?.executableURL, let symbols = records(in: image),
+                  hostRecords.isDisjoint(with: symbols) else { return nil }
+            return hostRecords.union(symbols)
+        }
+        var recordsByTarget: [String: Set<String>] = [:], incomplete = Set<String>()
         for configuration in configurations {
             guard let targets = configuration["TestTargets"] as? [[String: Any]], !targets.isEmpty else { return nil }
             for target in targets {
-                for key in ["TestingEnvironmentVariables", "EnvironmentVariables"] {
-                    if let environment = target[key] as? [String: String], let injection = environment["DYLD_INSERT_LIBRARIES"],
-                       injection.split(separator: ":").contains(where: {
-                           !$0.hasPrefix("/usr/lib/") && !$0.hasPrefix("__SIMRUNTIMEROOT__/usr/lib/")
-                       }) { return nil }
+                guard let name = target["BlueprintName"] as? String, !name.isEmpty else { return nil }
+                guard !incomplete.contains(name) else { continue }
+                if let records = processRecords(target) { recordsByTarget[name, default: []].formUnion(records) }
+                else {
+                    incomplete.insert(name)
+                    recordsByTarget.removeValue(forKey: name)
                 }
-                var host: URL?
-                if let path = target["TestHostPath"] as? String,
-                   !platformTestAgents.contains(path) {
-                    guard let bundle = product(path), let image = Bundle(url: bundle)?.executableURL else { return nil }
-                    host = bundle
-                    images.insert(image)
-                }
-                guard let path = target["TestBundlePath"] as? String, let bundle = product(path, host: host),
-                      let image = Bundle(url: bundle)?.executableURL else { return nil }
-                images.insert(image)
             }
         }
-        var records = Set<String>()
-        for image in images {
-            guard let symbols = recordsInImage(image), records.isDisjoint(with: symbols) else { return nil }
-            records.formUnion(symbols)
-        }
-        return records
+        return recordsByTarget
     }
 
     private static let platformTestAgents = Set(["MacOSX", "iPhoneSimulator", "AppleTVSimulator",

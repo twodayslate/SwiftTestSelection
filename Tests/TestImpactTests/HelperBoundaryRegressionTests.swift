@@ -45,7 +45,7 @@ func evaluate(_ predicate: () -> Bool) -> Bool { predicate() }
 """
 
 
-func linkedFixtureRecords(_ arguments: [String], linkArguments: [String] = [], root: URL) throws -> Set<String> {
+func linkedFixtureRecords(_ arguments: [String], linkArguments: [String] = [], root: URL, target: String) throws -> [String: Set<String>] {
     let bundle = root.appendingPathComponent("Fixture.xctest/Contents")
     let binaryDirectory = bundle.appendingPathComponent("MacOS")
     try FileManager.default.createDirectory(at: binaryDirectory, withIntermediateDirectories: true)
@@ -56,7 +56,7 @@ func linkedFixtureRecords(_ arguments: [String], linkArguments: [String] = [], r
     _ = try CommandRunner.run("xcrun", arguments + ["-parse-as-library", "-Xlinker", "-bundle", "-L", platform + "/Developer/usr/lib"] +
         linkArguments + ["-o", executable.path], at: root)
     let run = root.appendingPathComponent("Fixture.xctestrun")
-    let plan = ["TestConfigurations": [["TestTargets": [["TestBundlePath": "__TESTROOT__/Fixture.xctest",
+    let plan = ["TestConfigurations": [["TestTargets": [["BlueprintName": target, "TestBundlePath": "__TESTROOT__/Fixture.xctest",
         "TestHostPath": "__PLATFORMS__/MacOSX.platform/Developer/Library/Xcode/Agents/xctest"]]]]]
     try PropertyListSerialization.data(fromPropertyList: plan, format: .binary, options: 0).write(to: run)
     return try #require(LinkedTestingRecords.capture(testRun: run, products: root))
@@ -69,10 +69,10 @@ func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compil
     let arguments = ["swiftc", "-whole-module-optimization", "-Onone", "-g", "-module-name", module,
         "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib"] + compilerArguments + files.keys.sorted().map { root.appendingPathComponent($0).path }
     _ = try CommandRunner.run("xcrun", arguments + ["-emit-sil", "-o", sil.path], at: root)
-    var records: Set<String>?
+    var records: [String: Set<String>]?
     var parsed = try SILParser.parse(file: sil, module: module, sourceRoot: root)
     if parsed.dispatchTargets.keys.contains(where: { $0.hasPrefix(SILModule.testingRecordPrefix) }) {
-        records = try linkedFixtureRecords(arguments, linkArguments: linkArguments, root: root)
+        records = try linkedFixtureRecords(arguments, linkArguments: linkArguments, root: root, target: target)
     }
     if let compiler { parsed = try SILOwnership.resolve(parsed, module: module, compiler: compiler, directory: root) }
     var graph = DependencyGraph(functions: parsed.functions)

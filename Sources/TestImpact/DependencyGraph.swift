@@ -145,7 +145,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
         uncertainties.contains {
             // Imported implementations can call project code even without local
             // debug locations. Known ownership does not close that runtime edge.
-            $0.hasPrefix("Imported conformance:") || (hasProjectRuntimeContext || id == SwiftTestingDiscoveryRoots.sharedDiscoveryID) &&
+            $0.hasPrefix("Imported conformance:") || (hasProjectRuntimeContext || SwiftTestingDiscoveryRoots.isDiscoveryRoot(id)) &&
             ($0 == SwiftTestingDiscoveryRoots.unresolvedEffects || $0 == "Indirect function invocation" || $0 == "Raw pointer operation" ||
              $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:"))
         }
@@ -180,7 +180,10 @@ public struct DependencyGraph: Codable, Sendable {
     public var swiftTestingSuiteWitnesses: [String: Set<String>]? = nil
     /// Complete factory inventories independently reached from compiled test registrations.
     public var swiftTestingRegisteredFactories: [String: Set<String>]? = nil
-    /// The linked images and captured test registration records agree.
+    /// Factories reached from all linked bundle and host records, keyed by the
+    /// Xcode target identifier. An absent key has incomplete linkage evidence.
+    public var swiftTestingFactoriesByTarget: [String: Set<String>]? = nil
+    /// Whole-plan evidence recorded by older archives.
     public var swiftTestingLinkedRecordsVerified: Bool? = nil
     /// Compiler-authenticated class identities from the matching built modules.
     public var compilerClassIdentities: [String: CompilerClassIdentity]? = nil

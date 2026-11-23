@@ -35,7 +35,7 @@ import Testing
     let tests = ["Tests/unrelated()", "Tests/Case/testEdited()", "Tests/Independent/plainMember()"]
     let sources = ["Tests:Tests.swift": SwiftSourceSnapshot.parse(after, path: "Tests.swift", module: "Tests")]
     let base = XcodeHeadOnlySources(base: ["Tests:Tests.swift": .parse(before, path: "Tests.swift", module: "Tests")])
-    let records = try linkedFixtureRecords(arguments, root: root)
+    let records = try linkedFixtureRecords(arguments, root: root, target: "Tests")
     var reference: DependencyGraph?
     for workers in [1, 2] {
         let scratch = root.appendingPathComponent("extract-\(workers)")
@@ -290,7 +290,7 @@ import Testing
         let source = SwiftSourceSnapshot.parse(text, path: "Tests.swift", module: "UI")
         var graph = DependencyGraph(functions: restored.functions)
         let records = try linkedFixtureRecords(compilerArguments + ["-module-name", "UI", "-I", root.path,
-            root.appendingPathComponent("Tests.swift").path], linkArguments: [root.appendingPathComponent("libExternal.a").path], root: root)
+            root.appendingPathComponent("Tests.swift").path], linkArguments: [root.appendingPathComponent("libExternal.a").path], root: root, target: "UI")
         XcodeCompilerGraph.resolveDispatch(&graph, tables: restored.dispatchTargets, linkedTestingRecords: records)
         XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": source], graph: &graph)
         var current = XcodeTestGraph(targets: [.init(name: "UI", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: ["Tests.swift"])], tests: tests)
@@ -376,7 +376,7 @@ import Testing
     let factory = try #require(current.dependencies?.functions.values.first { $0.swiftTestingEmptyFactory == "top-level" })
     missingBodyProof.dependencies?.functions[factory.id]?.hasModeledDiscoveryInstructions = nil
     var missingLinkProof = current
-    missingLinkProof.dependencies?.swiftTestingLinkedRecordsVerified = nil
+    missingLinkProof.dependencies?.swiftTestingFactoriesByTarget = nil
     let incomplete = try [missingBodyProof, missingLinkProof].flatMap { [try JSONEncoder().encode($0), try GraphArchive.encode($0)] }
     for data in incomplete {
         let restored = try GraphArchive.decode(data)
@@ -858,7 +858,7 @@ private func verifyDiscoveryEdit(scenario: String) throws {
         }
         var graph = try boundaryGraph(files, tests: inventory, root: root, compilerArguments: flags, allowTestDiagnostics: true,
                                       compiler: compiler, allowedUnbound: scenario == "physical" ? [marked] : [], linkArguments: linkArguments)
-        #expect(graph.dependencies?.swiftTestingLinkedRecordsVerified == (scenario != "linkedSuite"))
+        #expect((graph.dependencies?.swiftTestingFactoriesByTarget?["UI"] != nil) == (scenario != "linkedSuite"))
         graph.mappings = nil
         if scenario == "retainedV12" {
             for key in Array(graph.sources.keys) { graph.sources[key]?.parserVersion = 12 }
@@ -894,7 +894,7 @@ private func verifyDiscoveryEdit(scenario: String) throws {
         // Retained graphs without the binding must still select the sibling.
         for id in head.dependencies!.functions.keys { head.dependencies!.functions[id]?.swiftTestingFormattingRequirements = nil }
         let legacy = try GraphArchive.decode(GraphArchive.encode(head))
-        #expect(legacy.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID]?.hasOpaqueRuntimeDependency == true)
+        #expect(legacy.dependencies?.functions[SwiftTestingDiscoveryRoots.processRoot("UI")]?.hasOpaqueRuntimeDependency == true)
     } else if scenario == "destruction" {
         for result in [report, headOnly] {
             #expect(result.explanations.contains {
@@ -902,7 +902,7 @@ private func verifyDiscoveryEdit(scenario: String) throws {
             })
         }
         // A retained graph predating lifetime capture must recover this path.
-        let root = SwiftTestingDiscoveryRoots.sharedDiscoveryID
+        let root = SwiftTestingDiscoveryRoots.processRoot("UI")
         for id in head.dependencies!.functions.keys {
             head.dependencies!.functions[id]?.mayDestroyValue = nil
         }
@@ -922,9 +922,9 @@ private func verifyDiscoveryEdit(scenario: String) throws {
         }
         // Archives produced before discovery inherited factory uncertainty still
         // contain the original SIL evidence. Restore it during decoding.
-        head.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID]?.uncertainties = []
+        head.dependencies?.functions[SwiftTestingDiscoveryRoots.processRoot("UI")]?.uncertainties = []
         let restored = try GraphArchive.decode(GraphArchive.encode(head))
-        #expect(restored.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID]?.hasOpaqueRuntimeDependency == true)
+        #expect(restored.dependencies?.functions[SwiftTestingDiscoveryRoots.processRoot("UI")]?.hasOpaqueRuntimeDependency == true)
     } else if ["mixedCondition", "mixedProvider", "projectValue", "selectorQuery"].contains(scenario) {
         // The edited test is local, but another registration runs UserDefaults
         // or Objective-C code whose callbacks can also consume the edit.

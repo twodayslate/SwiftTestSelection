@@ -8,6 +8,12 @@ import Foundation
 /// from a macro's generated display name or a source spelling alone.
 enum SwiftTestingDiscoveryRoots {
     static let sharedDiscoveryID = "swift-testing:discovery"
+    static func processRoot(_ target: String) -> String { sharedDiscoveryID + ":" + target }
+
+    static func isDiscoveryRoot(_ id: String) -> Bool {
+        id == sharedDiscoveryID || id.hasPrefix(sharedDiscoveryID + ":")
+    }
+
     static let missingEvidence = "Swift Testing discovery roots are incomplete; compiler evidence for argument generation and traits is required"
     static let runtimeEvidence = "Swift Testing argument/trait factory roots are bound, but runtime trait/scoping callbacks and generic argument-iteration witnesses remain unproven"
 
@@ -15,7 +21,7 @@ enum SwiftTestingDiscoveryRoots {
     /// Testing.Test.__store. Unknown lowering or a missing record body leaves
     /// the module on the conservative source-inventory check.
     static func registrationInventory(tables: [String: Set<String>], graph: DependencyGraph)
-        -> (factories: [String: Set<String>]?, records: Set<String>?) {
+        -> (factories: [String: Set<String>]?, byRecord: [String: String]) {
         var inventories: [String: Set<String>] = [:], incomplete = Set<String>()
         let store = "$s7Testing4TestV7__store_4into8asTypeAt"
         func registeredFactory(from accessor: String, module: String) -> String? {
@@ -33,18 +39,20 @@ enum SwiftTestingDiscoveryRoots {
             }
             return nil
         }
-        var records = Set<String>()
+        var byRecord: [String: String] = [:], seen = Set<String>(), ambiguous = Set<String>()
         for (key, accessors) in tables where key.hasPrefix(SILModule.testingRecordPrefix) {
             let fields = key.dropFirst(SILModule.testingRecordPrefix.count).split(separator: ":", maxSplits: 1)
-            guard fields.count == 2 else { return (nil, nil) }
-            let module = String(fields[0])
+            guard fields.count == 2 else { return (nil, [:]) }
+            let module = String(fields[0]), record = String(fields[1])
+            if !seen.insert(record).inserted { ambiguous.insert(record) }
             guard accessors.count == 1, let accessor = accessors.first,
                   let factory = registeredFactory(from: accessor, module: module),
                   inventories[module, default: []].insert(factory).inserted else { incomplete.insert(module); continue }
-            records.insert(String(fields[1]))
+            byRecord[record] = factory
         }
         for module in incomplete { inventories.removeValue(forKey: module) }
-        return (inventories.isEmpty ? nil : inventories, incomplete.isEmpty ? records : nil)
+        for record in ambiguous { byRecord.removeValue(forKey: record) }
+        return (inventories.isEmpty ? nil : inventories, byRecord)
     }
 
     /// Both ends of the runtime edge must name the same concrete type.
@@ -148,10 +156,34 @@ enum SwiftTestingDiscoveryRoots {
     /// Follow eager construction only. The ordinary graph keeps known witness
     /// and destructor edges even when another part of the same path is opaque.
     static func restoreDiscoveryEffects(_ graph: inout DependencyGraph) {
-        guard let root = graph.functions[sharedDiscoveryID] else { return }
+        guard graph.functions[sharedDiscoveryID] != nil else { return }
         let factories = Set(graph.functions.values.filter {
             $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true
         }.map(\.id))
+        let tests = graph.tests.filter { $0.value.contains(sharedDiscoveryID) }
+        let byRoot = Dictionary(grouping: tests.keys) { test in
+            let id = processRoot(String(test.prefix { $0 != "/" }))
+            return tests[test]?.contains(id) == true ? id : sharedDiscoveryID
+        }
+        for (id, entries) in byRoot {
+            let linked: Set<String>?
+            if id == sharedDiscoveryID {
+                linked = graph.swiftTestingLinkedRecordsVerified == true ? factories : nil
+            } else {
+                linked = graph.swiftTestingFactoriesByTarget?[String(id.dropFirst(sharedDiscoveryID.count + 1))]
+            }
+            let incomplete = id == sharedDiscoveryID
+                ? graph.testDiagnostics.values.contains { $0.contains(missingEvidence) }
+                : entries.contains { graph.testDiagnostics[$0]?.contains(missingEvidence) == true }
+            let verified = linked.flatMap { !$0.isEmpty && $0.isSubset(of: factories) ? $0 : nil }
+            restoreEffects(rootID: id, tests: entries, factories: verified ?? factories,
+                complete: verified != nil && !incomplete, graph: &graph)
+        }
+    }
+
+    private static func restoreEffects(rootID: String, tests: [String], factories: Set<String>, complete: Bool,
+                                       graph: inout DependencyGraph) {
+        guard let root = graph.functions[rootID] else { return }
         // Older roots can contain additional construction edges. Audit those
         // too, preserving the caller context for flattened factory references.
         var extraRoots = root.dependencies.subtracting(factories)
@@ -159,8 +191,8 @@ enum SwiftTestingDiscoveryRoots {
             if let eager = graph.functions[id]?.swiftTestingDiscoveryReferences { extraRoots.subtract(eager) }
         }
         var pending = Array(factories.union(extraRoots)), visited = Set<String>()
-        var unresolved = graph.swiftTestingLinkedRecordsVerified != true || factories.isEmpty || graph.testDiagnostics.values.contains { $0.contains(missingEvidence) }
-        if let recorded = graph.swiftTestingRegisteredFactories,
+        var unresolved = !complete
+        if rootID == sharedDiscoveryID, let recorded = graph.swiftTestingRegisteredFactories,
            recorded.values.contains(where: { !$0.isSubset(of: factories) }) { unresolved = true }
         var destructorEdges = Set<String>()
         while let id = pending.popLast() {
@@ -191,13 +223,13 @@ enum SwiftTestingDiscoveryRoots {
             }
             pending.append(contentsOf: node.dependencies.subtracting(references))
         }
-        graph.functions[sharedDiscoveryID]?.dependencies.formUnion(destructorEdges)
+        graph.functions[rootID]?.dependencies.formUnion(destructorEdges)
         // Drop derived state from pre-effect-summary captures before recomputing.
-        graph.functions[sharedDiscoveryID]?.uncertainties.remove("Indirect function invocation")
-        if unresolved { graph.functions[sharedDiscoveryID]?.uncertainties.insert(unresolvedEffects) }
-        else { graph.functions[sharedDiscoveryID]?.uncertainties.remove(unresolvedEffects) }
+        graph.functions[rootID]?.uncertainties.remove("Indirect function invocation")
+        if unresolved { graph.functions[rootID]?.uncertainties.insert(unresolvedEffects) }
+        else { graph.functions[rootID]?.uncertainties.remove(unresolvedEffects) }
         let legacy = "Swift Testing discovery invokes an indirect callback before test filtering"
-        for (test, roots) in graph.tests where roots.contains(sharedDiscoveryID) {
+        for test in tests {
             if graph.testDiagnostics[test]?.contains(legacy) == true {
                 graph.testDiagnostics[test]?.removeAll { $0 == legacy }
             }
@@ -250,35 +282,41 @@ enum SwiftTestingDiscoveryRoots {
                 suites[node.module, default: []].insert(node.id)
             }
         }
-        // Swift Testing constructs registrations across linked modules before it
-        // applies a filter. Without linkage information, share construction
-        // across the capture. A single node keeps the graph linear in its entries.
-        var construction = Set<String>()
-        var deferredSuites: [String: Set<String>] = [:]
+        var construction: [String: Set<String>] = [:], deferredSuites: [String: Set<String>] = [:]
         for id in suites.values.flatMap({ $0 }) {
             guard let node = graph.functions[id], let eager = node.swiftTestingDiscoveryReferences,
                   let references = node.compilerReferences, !references.isSubset(of: eager),
                   node.dynamicDeclarations.isEmpty, let type = node.swiftTestingFactoryType,
                   declaredSuites[node.module]?.contains(type) == true else {
-                construction.insert(id)
+                construction[id] = [id]
                 continue
             }
-            construction.formUnion(node.dependencies.subtracting(references.subtracting(eager)))
+            construction[id] = node.dependencies.subtracting(references.subtracting(eager))
             deferredSuites[node.module + "." + type, default: []].insert(id)
         }
         let allDeferredSuites = Set(deferredSuites.values.flatMap { $0 })
         for id in factories.values.flatMap({ $0 }) {
             guard let node = graph.functions[id] else { continue }
             if let references = node.swiftTestingDiscoveryReferences, node.dynamicDeclarations.isEmpty {
-                construction.formUnion(references)
+                construction[id] = references
             } else {
-                // Unsupported lowering and older fragments retain the entire factory.
-                construction.insert(id)
+                construction[id] = [id]
             }
         }
+        let allConstruction = Set(construction.values.flatMap { $0 })
         if !construction.isEmpty {
+            // All entries share the marker for edits to registration source.
+            // Fresh captures attach their executable construction edges to a
+            // separate node for each bundle and host. Legacy graphs share them.
             graph.functions[sharedDiscoveryID] = FunctionNode(id: sharedDiscoveryID, module: "Testing",
-                name: "discovery", dependencies: construction)
+                name: "discovery", dependencies: graph.swiftTestingFactoriesByTarget == nil ? allConstruction : [])
+        }
+        if let linked = graph.swiftTestingFactoriesByTarget {
+            for (target, module) in modules {
+                guard let ids = linked[target] else { continue }
+                let local = (factories[module] ?? []).union(suites[module] ?? [])
+                if !local.isSubset(of: ids) { graph.swiftTestingFactoriesByTarget?.removeValue(forKey: target) }
+            }
         }
         var suiteWitnesses: [String: Set<String>] = [:]
         for (id, witnesses) in graph.swiftTestingSuiteWitnesses ?? [:] {
@@ -347,8 +385,18 @@ enum SwiftTestingDiscoveryRoots {
             guard isWrittenTest || discovered[test] != nil else { continue }
             let factoryRoots = discovered[test] ?? []
             graph.tests[test, default: []].formUnion(factoryRoots)
+            let target = String(test.prefix { $0 != "/" })
+            let linked = graph.swiftTestingFactoriesByTarget?[target]
             if !construction.isEmpty {
                 graph.tests[test, default: []].insert(sharedDiscoveryID)
+                if graph.swiftTestingFactoriesByTarget != nil {
+                    let id = processRoot(target)
+                    if graph.functions[id] == nil {
+                        let dependencies = linked.map { ids in Set(ids.flatMap { construction[$0] ?? [] }) } ?? allConstruction
+                        graph.functions[id] = FunctionNode(id: id, module: "Testing", name: "discovery in " + target, dependencies: dependencies)
+                    }
+                    graph.tests[test, default: []].insert(id)
+                }
             }
             // Extensions register in their emitting module, but inherit traits
             // from the nominal type's declaring module (and its enclosing suites).
@@ -365,7 +413,8 @@ enum SwiftTestingDiscoveryRoots {
                     owners == [module + "." + type] ? module + "." + type : nil
             }
             if !allDeferredSuites.isEmpty, factory?.swiftTestingEmptyFactory != "top-level" {
-                graph.tests[test, default: []].formUnion(ownedValue.map { deferredSuites[$0] ?? [] } ?? allDeferredSuites)
+                let candidates = ownedValue.map { deferredSuites[$0] ?? [] } ?? allDeferredSuites
+                graph.tests[test, default: []].formUnion(linked.map(candidates.intersection) ?? candidates)
             }
             if !factoryRoots.isEmpty {
                 let scope = test.split(separator: "/").dropFirst().dropLast().joined(separator: ".")
