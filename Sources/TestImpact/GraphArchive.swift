@@ -220,17 +220,7 @@ public enum GraphArchive {
     private static func upgradeDiscovery(_ snapshot: inout XcodeTestGraph) {
         guard var graph = snapshot.dependencies, !graph.tests.isEmpty else { return }
         let shared = SwiftTestingDiscoveryRoots.sharedDiscoveryID
-        if graph.swiftTestingPlatformAgentInventory != true,
-           graph.swiftTestingFactoriesByTarget != nil || graph.swiftTestingLinkedRecordsVerified == true {
-            // Older archives did not retain whether the host could load plug-ins.
-            // Restore possible factory paths as well as the uncertainty diagnostic.
-            graph.swiftTestingFactoriesByTarget = nil
-            graph.swiftTestingLinkedRecordsVerified = nil
-            let factories = graph.functions.values.filter {
-                $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true
-            }.map(\.id)
-            graph.functions[shared]?.dependencies.formUnion(factories)
-        }
+        SwiftTestingDiscoveryRoots.restoreUnverifiedConstruction(&graph, sources: snapshot.sources)
         if graph.functions[shared] != nil {
             SwiftTestingDiscoveryRoots.restoreDiscoveryEffects(&graph)
             snapshot.dependencies = graph

@@ -243,6 +243,55 @@ enum SwiftTestingDiscoveryRoots {
         }
     }
 
+    /// The shared discovery root reaches construction code. Deferred callbacks
+    /// stay with their entry or suite. Missing evidence keeps the whole factory.
+    private struct FactoryConstruction {
+        var functions: [String: Set<String>] = [:]
+        var suites: [String: Set<String>] = [:]
+        var eager: [String: Set<String>] = [:]
+        var deferredSuites: [String: Set<String>] = [:]
+
+        init(_ graph: DependencyGraph, declaredSuites: [String: [String]]) {
+            for node in graph.functions.values {
+                guard let references = node.compilerReferences else { continue }
+                if references.contains(where: { $0.hasPrefix("$s7Testing4TestV6__type") }) {
+                    suites[node.module, default: []].insert(node.id)
+                    if let construction = node.swiftTestingDiscoveryReferences, !references.isSubset(of: construction),
+                       node.dynamicDeclarations.isEmpty, let type = node.swiftTestingFactoryType,
+                       declaredSuites[node.module]?.contains(type) == true {
+                        eager[node.id] = node.dependencies.subtracting(references.subtracting(construction))
+                        deferredSuites[node.module + "." + type, default: []].insert(node.id)
+                    } else {
+                        eager[node.id] = [node.id]
+                    }
+                }
+                if references.contains(where: { $0.hasPrefix("$s7Testing4TestV10__function") }) {
+                    functions[node.module, default: []].insert(node.id)
+                    eager[node.id] = node.dynamicDeclarations.isEmpty ? node.swiftTestingDiscoveryReferences ?? [node.id] : [node.id]
+                }
+            }
+        }
+    }
+
+    /// Older captures could narrow linkage using only the host's static images.
+    /// Retain other evidence on the root, including destructor edges, and repair
+    /// archives already re-encoded with direct edges to every factory.
+    static func restoreUnverifiedConstruction(_ graph: inout DependencyGraph, sources: [String: SwiftSourceSnapshot]) {
+        guard graph.swiftTestingPlatformAgentInventory != true else { return }
+        graph.swiftTestingFactoriesByTarget = nil
+        graph.swiftTestingLinkedRecordsVerified = nil
+        guard var root = graph.functions[sharedDiscoveryID] else { return }
+        var declaredSuites: [String: [String]] = [:]
+        for (key, file) in sources {
+            let declarations = file.swiftTestingDeclarations ?? SwiftTestingSourceDeclarations(legacyUnits: file.units)
+            declaredSuites[String(key.prefix { $0 != ":" }), default: []].append(contentsOf: declarations.suites.map(\.name))
+        }
+        let registration = FactoryConstruction(graph, declaredSuites: declaredSuites)
+        root.dependencies.subtract(registration.eager.keys)
+        for dependencies in registration.eager.values { root.dependencies.formUnion(dependencies) }
+        graph.functions[sharedDiscoveryID] = root
+    }
+
     static func bind(modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph) {
         guard !Set(modules.values).contains("Testing") else { return }
         let entries = graph.tests
@@ -272,37 +321,10 @@ enum SwiftTestingDiscoveryRoots {
                 entryTests[root, default: []].insert(test)
             }
         }
-        var factories: [String: Set<String>] = [:], suites: [String: Set<String>] = [:]
-        for node in graph.functions.values {
-            guard let references = node.compilerReferences else { continue }
-            if references.contains(where: { $0.hasPrefix("$s7Testing4TestV10__function") }) {
-                factories[node.module, default: []].insert(node.id)
-            }
-            if references.contains(where: { $0.hasPrefix("$s7Testing4TestV6__type") }) {
-                suites[node.module, default: []].insert(node.id)
-            }
-        }
-        var construction: [String: Set<String>] = [:], deferredSuites: [String: Set<String>] = [:]
-        for id in suites.values.flatMap({ $0 }) {
-            guard let node = graph.functions[id], let eager = node.swiftTestingDiscoveryReferences,
-                  let references = node.compilerReferences, !references.isSubset(of: eager),
-                  node.dynamicDeclarations.isEmpty, let type = node.swiftTestingFactoryType,
-                  declaredSuites[node.module]?.contains(type) == true else {
-                construction[id] = [id]
-                continue
-            }
-            construction[id] = node.dependencies.subtracting(references.subtracting(eager))
-            deferredSuites[node.module + "." + type, default: []].insert(id)
-        }
+        let registration = FactoryConstruction(graph, declaredSuites: declaredSuites)
+        let factories = registration.functions, suites = registration.suites
+        let construction = registration.eager, deferredSuites = registration.deferredSuites
         let allDeferredSuites = Set(deferredSuites.values.flatMap { $0 })
-        for id in factories.values.flatMap({ $0 }) {
-            guard let node = graph.functions[id] else { continue }
-            if let references = node.swiftTestingDiscoveryReferences, node.dynamicDeclarations.isEmpty {
-                construction[id] = references
-            } else {
-                construction[id] = [id]
-            }
-        }
         let allConstruction = Set(construction.values.flatMap { $0 })
         if !construction.isEmpty {
             // All entries share the marker for edits to registration source.

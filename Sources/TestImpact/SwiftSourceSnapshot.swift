@@ -127,7 +127,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 16
+    static let currentParserVersion = 17
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -581,10 +581,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                         ?? ancestor.as(ExtensionDeclSyntax.self)?.attributes
                         ?? ancestor.as(ProtocolDeclSyntax.self)?.attributes
                     if let list {
-                        testingEnclosingSupported = testingEnclosingSupported && (SwiftTestingSourceDeclarations.hasSuiteOwner(list) || list.allSatisfy {
-                            guard let attribute = $0.as(AttributeSyntax.self) else { return false }
-                            return ["MainActor", "Suite", "Testing.Suite"].contains(attribute.attributeName.trimmedDescription) && attribute.arguments == nil
-                        })
+                        testingEnclosingSupported = testingEnclosingSupported && SwiftTestingSourceDeclarations.supportsEnclosingDeclaration(list)
                         enclosingSupported = enclosingSupported && list.allSatisfy {
                             $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor"
                         }
@@ -711,8 +708,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 // An enclosing macro could also derive declarations from the edit.
                 var ancestor = originalAttributes?.parent?.parent
                 while let current = ancestor {
-                    if let group = current.asProtocol(DeclGroupSyntax.self), !group.attributes.isEmpty,
-                       !SwiftTestingSourceDeclarations.hasSuiteOwner(group.attributes) { break }
+                    if let group = current.asProtocol(DeclGroupSyntax.self),
+                       !SwiftTestingSourceDeclarations.supportsEnclosingDeclaration(group.attributes) { break }
                     ancestor = current.parent
                 }
                 if ancestor == nil {

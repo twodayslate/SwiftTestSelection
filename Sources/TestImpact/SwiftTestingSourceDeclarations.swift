@@ -63,9 +63,13 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         }
     }
 
+    static func supportsEnclosingDeclaration(_ attributes: AttributeListSyntax) -> Bool {
+        !hasOpaqueSibling(of: "Suite", in: attributes)
+    }
+
     static func hasSuiteOwner(_ attributes: AttributeListSyntax) -> Bool {
         attributes.contains { $0.as(AttributeSyntax.self).map { matches($0, "Suite") } == true } &&
-            !hasOpaqueSibling(of: "Suite", in: attributes)
+            supportsEnclosingDeclaration(attributes)
     }
 
     /// Match a surviving declaration across edits to its registration. A match
