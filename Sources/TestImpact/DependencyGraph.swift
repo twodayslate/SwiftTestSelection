@@ -180,6 +180,8 @@ public struct DependencyGraph: Codable, Sendable {
     public var swiftTestingSuiteWitnesses: [String: Set<String>]? = nil
     /// Complete factory inventories independently reached from compiled test registrations.
     public var swiftTestingRegisteredFactories: [String: Set<String>]? = nil
+    /// The linked images and captured test registration records agree.
+    public var swiftTestingLinkedRecordsVerified: Bool? = nil
     /// Compiler-authenticated class identities from the matching built modules.
     public var compilerClassIdentities: [String: CompilerClassIdentity]? = nil
     /// Imports injected by compiler options, including binary modules absent

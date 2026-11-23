@@ -32,6 +32,7 @@ public enum GraphArchive {
         var nominalTypeContexts: [String: String]?
         /// Optional for archives written before factory-effect evidence existed.
         var testVTableEntries: [String: Set<String>]?
+        var swiftTestingLinkedRecordsVerified: Bool?
         var swiftTestingRegisteredFactories: [String: Set<String>]?
         var swiftTestingSuiteWitnesses: [String: Set<String>]?
         var swiftTestingFormattingRequirements: [String: Set<String>]?
@@ -78,6 +79,7 @@ public enum GraphArchive {
             modeledDiscoveryBodies = Set(graph.functions.values.filter { $0.hasModeledDiscoveryInstructions == true }.map { ids[$0.id]! })
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
             testVTableEntries = graph.testVTableEntries
+            swiftTestingLinkedRecordsVerified = graph.swiftTestingLinkedRecordsVerified
             swiftTestingRegisteredFactories = graph.swiftTestingRegisteredFactories
             swiftTestingSuiteWitnesses = graph.swiftTestingSuiteWitnesses
             swiftTestingFormattingRequirements = graph.functions.compactMapValues(\.swiftTestingFormattingRequirements)
@@ -99,6 +101,7 @@ public enum GraphArchive {
             var graph = DependencyGraph(toolchain: toolchain, diagnostics: diagnostics)
             graph.schemaVersion = schema; graph.testDiagnostics = testDiagnostics
             graph.testVTableEntries = testVTableEntries
+            graph.swiftTestingLinkedRecordsVerified = swiftTestingLinkedRecordsVerified
             graph.swiftTestingRegisteredFactories = swiftTestingRegisteredFactories
             graph.swiftTestingSuiteWitnesses = swiftTestingSuiteWitnesses
             graph.compilerClassIdentities = compilerClassIdentities

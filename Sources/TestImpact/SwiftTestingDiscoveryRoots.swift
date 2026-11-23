@@ -14,7 +14,8 @@ enum SwiftTestingDiscoveryRoots {
     /// Follow each Mach-O test record's C accessor to the function supplied to
     /// Testing.Test.__store. Unknown lowering or a missing record body leaves
     /// the module on the conservative source-inventory check.
-    static func registeredFactories(tables: [String: Set<String>], graph: DependencyGraph) -> [String: Set<String>]? {
+    static func registrationInventory(tables: [String: Set<String>], graph: DependencyGraph)
+        -> (factories: [String: Set<String>]?, records: Set<String>?) {
         var inventories: [String: Set<String>] = [:], incomplete = Set<String>()
         let store = "$s7Testing4TestV7__store_4into8asTypeAt"
         func registeredFactory(from accessor: String, module: String) -> String? {
@@ -32,14 +33,18 @@ enum SwiftTestingDiscoveryRoots {
             }
             return nil
         }
+        var records = Set<String>()
         for (key, accessors) in tables where key.hasPrefix(SILModule.testingRecordPrefix) {
-            let module = String(key.dropFirst(SILModule.testingRecordPrefix.count).prefix { $0 != ":" })
+            let fields = key.dropFirst(SILModule.testingRecordPrefix.count).split(separator: ":", maxSplits: 1)
+            guard fields.count == 2 else { return (nil, nil) }
+            let module = String(fields[0])
             guard accessors.count == 1, let accessor = accessors.first,
                   let factory = registeredFactory(from: accessor, module: module),
                   inventories[module, default: []].insert(factory).inserted else { incomplete.insert(module); continue }
+            records.insert(String(fields[1]))
         }
         for module in incomplete { inventories.removeValue(forKey: module) }
-        return inventories.isEmpty ? nil : inventories
+        return (inventories.isEmpty ? nil : inventories, incomplete.isEmpty ? records : nil)
     }
 
     /// Both ends of the runtime edge must name the same concrete type.
@@ -154,7 +159,7 @@ enum SwiftTestingDiscoveryRoots {
             if let eager = graph.functions[id]?.swiftTestingDiscoveryReferences { extraRoots.subtract(eager) }
         }
         var pending = Array(factories.union(extraRoots)), visited = Set<String>()
-        var unresolved = factories.isEmpty || graph.testDiagnostics.values.contains { $0.contains(missingEvidence) }
+        var unresolved = graph.swiftTestingLinkedRecordsVerified != true || factories.isEmpty || graph.testDiagnostics.values.contains { $0.contains(missingEvidence) }
         if let recorded = graph.swiftTestingRegisteredFactories,
            recorded.values.contains(where: { !$0.isSubset(of: factories) }) { unresolved = true }
         var destructorEdges = Set<String>()
@@ -248,7 +253,20 @@ enum SwiftTestingDiscoveryRoots {
         // Swift Testing constructs registrations across linked modules before it
         // applies a filter. Without linkage information, share construction
         // across the capture. A single node keeps the graph linear in its entries.
-        var construction = Set(suites.values.flatMap { $0 })
+        var construction = Set<String>()
+        var deferredSuites: [String: Set<String>] = [:]
+        for id in suites.values.flatMap({ $0 }) {
+            guard let node = graph.functions[id], let eager = node.swiftTestingDiscoveryReferences,
+                  let references = node.compilerReferences, !references.isSubset(of: eager),
+                  node.dynamicDeclarations.isEmpty, let type = node.swiftTestingFactoryType,
+                  declaredSuites[node.module]?.contains(type) == true else {
+                construction.insert(id)
+                continue
+            }
+            construction.formUnion(node.dependencies.subtracting(references.subtracting(eager)))
+            deferredSuites[node.module + "." + type, default: []].insert(id)
+        }
+        let allDeferredSuites = Set(deferredSuites.values.flatMap { $0 })
         for id in factories.values.flatMap({ $0 }) {
             guard let node = graph.functions[id] else { continue }
             if let references = node.swiftTestingDiscoveryReferences, node.dynamicDeclarations.isEmpty {
@@ -339,6 +357,16 @@ enum SwiftTestingDiscoveryRoots {
                       !owner.isEmpty else { return nil }
                 return owner
             })
+            // A verified top-level value type cannot inherit the predicate of
+            // another suite. Keep the full suite edge for unknown ownership.
+            let factory = factoryRoots.count == 1 ? factoryRoots.first.flatMap { graph.functions[$0] } : nil
+            let ownedValue = factory?.swiftTestingFactoryType.flatMap { type in
+                completeSuiteModules.contains(module) && valueTypes[module]?.contains(type) == true &&
+                    owners == [module + "." + type] ? module + "." + type : nil
+            }
+            if !allDeferredSuites.isEmpty, factory?.swiftTestingEmptyFactory != "top-level" {
+                graph.tests[test, default: []].formUnion(ownedValue.map { deferredSuites[$0] ?? [] } ?? allDeferredSuites)
+            }
             if !factoryRoots.isEmpty {
                 let scope = test.split(separator: "/").dropFirst().dropLast().joined(separator: ".")
                 let candidates = owners.isEmpty && !scope.isEmpty
@@ -368,7 +396,7 @@ enum SwiftTestingDiscoveryRoots {
             graph.testDiagnostics[test]?.removeAll {
                 $0 == "Parameterized test arguments may execute outside the test body; compiler evidence for argument generation and traits is required"
             }
-            let factoryKind = factoryRoots.first.flatMap { graph.functions[$0]?.swiftTestingEmptyFactory }
+            let factoryKind = factory?.swiftTestingEmptyFactory
             let emptySuites = (suites[module] ?? []).allSatisfy { graph.functions[$0]?.swiftTestingEmptyFactory == "suite" }
             let localMember = factoryRoots.allSatisfy { $0.hasPrefix("$s" + String(module.utf8.count) + module) }
             // Top-level functions cannot inherit suite traits. Member tests
@@ -380,13 +408,7 @@ enum SwiftTestingDiscoveryRoots {
             // suite's traits. Require the source declaration, demangled test
             // method owner, and literal SDK factory metatype to agree. Nested,
             // imported, class, and generic contexts keep their uncertainty.
-            let factoryType = factoryRoots.first.flatMap { graph.functions[$0]?.swiftTestingFactoryType }
-            let unrelatedSuites = factoryType.map { type in
-                completeSuiteModules.contains(module) && !suiteTypes.contains(module + "." + type) && valueTypes[module]?.contains(type) == true &&
-                    roots.contains { id in
-                        entryTests[id]?.contains(test) == true && graph.functions[id]?.nominalTypeContext == module + "." + type
-                    }
-            } ?? false
+            let unrelatedSuites = ownedValue.map { !suiteTypes.contains($0) } ?? false
             if factoryKind != "top-level" && !(factoryKind == "member" && localMember && (emptySuites || unrelatedSuites)) {
                 graph.testDiagnostics[test, default: []].append(runtimeEvidence)
             }

@@ -6,7 +6,7 @@ import Foundation
 enum XcodeCompilerGraph {
     static func extract(log: String, sourceRoot: URL, directory: URL, derived: URL,
                         progress: (String) -> Void, ownership: [String: Set<String>] = [:],
-                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil, measurement: (String, Double) -> Void = { _, _ in }, allowCompilerReplay: Bool = true) -> DependencyGraph {
+                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil, measurement: (String, Double) -> Void = { _, _ in }, allowCompilerReplay: Bool = true, linkedTestingRecords: Set<String>? = nil) -> DependencyGraph {
         var graph = DependencyGraph()
         graph.compilerImplicitImports = [:]
         guard (1...8).contains(workers) else {
@@ -178,7 +178,7 @@ enum XcodeCompilerGraph {
             graph.diagnostics = ["Compiler dependency extraction failed: \(error)"]
             return graph
         }
-        resolveDispatch(&graph, tables: dispatch, externalWitnesses: externalWitnesses, projectModules: Set(jobs.map(\.module)), compiler: jobs.first?.compiler)
+        resolveDispatch(&graph, tables: dispatch, externalWitnesses: externalWitnesses, projectModules: Set(jobs.map(\.module)), compiler: jobs.first?.compiler, linkedTestingRecords: linkedTestingRecords)
 
         return graph
     }
@@ -221,12 +221,15 @@ enum XcodeCompilerGraph {
     }
 
     static func resolveDispatch(_ graph: inout DependencyGraph, tables: [String: Set<String>],
-                                externalWitnesses: [String: Set<String>] = [:], projectModules: Set<String>? = nil, compiler: String? = nil) {
+                                externalWitnesses: [String: Set<String>] = [:], projectModules: Set<String>? = nil, compiler: String? = nil,
+                                linkedTestingRecords: Set<String>? = nil) {
         for (key, symbols) in tables where key.hasPrefix(SILModule.testVTablePrefix) {
             if graph.testVTableEntries == nil { graph.testVTableEntries = [:] }
             graph.testVTableEntries?[String(key.dropFirst(SILModule.testVTablePrefix.count)), default: []].formUnion(symbols)
         }
-        graph.swiftTestingRegisteredFactories = SwiftTestingDiscoveryRoots.registeredFactories(tables: tables, graph: graph)
+        let inventory = SwiftTestingDiscoveryRoots.registrationInventory(tables: tables, graph: graph)
+        graph.swiftTestingRegisteredFactories = inventory.factories
+        graph.swiftTestingLinkedRecordsVerified = linkedTestingRecords.map { !$0.isEmpty && $0 == inventory.records }
         SwiftTestingDiscoveryRoots.bindTraitWitnesses(graph: &graph, tables: tables, compiler: compiler)
         let localModules = projectModules ?? Set(graph.functions.values.filter { !$0.regions.isEmpty }.map(\.module))
         for symbol in graph.functions.keys {

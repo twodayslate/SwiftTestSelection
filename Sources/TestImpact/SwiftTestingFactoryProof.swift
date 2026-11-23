@@ -328,6 +328,10 @@ enum SwiftTestingFactoryProof {
                 return evidence.deferredReferences.contains(symbol)
             }) { provenProviders = providers.count }
         }
+        if suite && arguments.count == 6 {
+            evidence.deferredReferences = deferredReferences(factoryCall: call, factoryCallbacks: [],
+                definitions: definitions, uses: uses, references: references)
+        }
         // Parameterized overloads have additional arguments after the traits.
         let traitIndex = suite ? 3 : 5
         var conditions: Conditions?

@@ -45,16 +45,38 @@ func evaluate(_ predicate: () -> Bool) -> Bool { predicate() }
 """
 
 
-func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = [], module: String = "UI", target: String = "UI", allowTestDiagnostics: Bool = false, compiler: String? = nil, allowedUnbound: Set<String> = []) throws -> XcodeTestGraph {
+func linkedFixtureRecords(_ arguments: [String], linkArguments: [String] = [], root: URL) throws -> Set<String> {
+    let bundle = root.appendingPathComponent("Fixture.xctest/Contents")
+    let binaryDirectory = bundle.appendingPathComponent("MacOS")
+    try FileManager.default.createDirectory(at: binaryDirectory, withIntermediateDirectories: true)
+    let executable = binaryDirectory.appendingPathComponent("Fixture")
+    let info = ["CFBundleExecutable": "Fixture", "CFBundlePackageType": "BNDL"]
+    try PropertyListSerialization.data(fromPropertyList: info, format: .binary, options: 0).write(to: bundle.appendingPathComponent("Info.plist"))
+    let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try CommandRunner.run("xcrun", arguments + ["-parse-as-library", "-Xlinker", "-bundle", "-L", platform + "/Developer/usr/lib"] +
+        linkArguments + ["-o", executable.path], at: root)
+    let run = root.appendingPathComponent("Fixture.xctestrun")
+    let plan = ["TestConfigurations": [["TestTargets": [["TestBundlePath": "__TESTROOT__/Fixture.xctest",
+        "TestHostPath": "__PLATFORMS__/MacOSX.platform/Developer/Library/Xcode/Agents/xctest"]]]]]
+    try PropertyListSerialization.data(fromPropertyList: plan, format: .binary, options: 0).write(to: run)
+    return try #require(LinkedTestingRecords.capture(testRun: run, products: root))
+}
+
+func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = [], module: String = "UI", target: String = "UI", allowTestDiagnostics: Bool = false, compiler: String? = nil, allowedUnbound: Set<String> = [], linkArguments: [String] = []) throws -> XcodeTestGraph {
     for (path, text) in files { try Data(text.utf8).write(to: root.appendingPathComponent(path)) }
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let sil = root.appendingPathComponent(module + ".sil")
-    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-sil", "-whole-module-optimization", "-Onone", "-g", "-module-name", module,
-        "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib"] + compilerArguments + files.keys.sorted().map { root.appendingPathComponent($0).path } + ["-o", sil.path], at: root)
+    let arguments = ["swiftc", "-whole-module-optimization", "-Onone", "-g", "-module-name", module,
+        "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib"] + compilerArguments + files.keys.sorted().map { root.appendingPathComponent($0).path }
+    _ = try CommandRunner.run("xcrun", arguments + ["-emit-sil", "-o", sil.path], at: root)
+    var records: Set<String>?
     var parsed = try SILParser.parse(file: sil, module: module, sourceRoot: root)
+    if parsed.dispatchTargets.keys.contains(where: { $0.hasPrefix(SILModule.testingRecordPrefix) }) {
+        records = try linkedFixtureRecords(arguments, linkArguments: linkArguments, root: root)
+    }
     if let compiler { parsed = try SILOwnership.resolve(parsed, module: module, compiler: compiler, directory: root) }
     var graph = DependencyGraph(functions: parsed.functions)
-    XcodeCompilerGraph.resolveDispatch(&graph, tables: parsed.dispatchTargets)
+    XcodeCompilerGraph.resolveDispatch(&graph, tables: parsed.dispatchTargets, linkedTestingRecords: records)
     var current = XcodeTestGraph(targets: [.init(name: target, productType: "com.apple.product-type.bundle.ui-testing", sourceFiles: Set(files.keys))], tests: tests)
     current.modules = [target: module]
     current.sources = Dictionary(uniqueKeysWithValues: files.map { (module + ":" + $0.key, SwiftSourceSnapshot.parse($0.value, path: $0.key, module: module)) })
