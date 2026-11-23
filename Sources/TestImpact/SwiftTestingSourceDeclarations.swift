@@ -36,6 +36,10 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         var bare: Bool?
         var conditions: SwiftTestingFactoryProof.Conditions?
         var nonliteralPredicates: [Arguments]?
+
+        var hasNoRuntimeInputs: Bool {
+            providers == 0 && eager.isEmpty && conditions == nil && nonliteralPredicates == nil
+        }
     }
 
     private static func name(_ attribute: AttributeSyntax) -> [String] {

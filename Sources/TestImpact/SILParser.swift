@@ -271,6 +271,7 @@ public enum SILParser {
                     current!.dynamicCallSites = []
                     current!.receiverErrorEffects = []
                     current!.receiverIndirectErrorEffects = []
+                    current!.mayDestroyValue = false
                     current!.stateAccesses = []
                     current!.receiverTypeOrigins = []
                     current!.receiverGenericCalls = []
@@ -341,6 +342,12 @@ public enum SILParser {
             }
             if let found = location(line) { addLocation(found) }
             if line.hasPrefix("//") { return }
+            if current!.mayDestroyValue == false &&
+                (line.hasPrefix("strong_release ") || line.hasPrefix("release_value ") ||
+                 line.hasPrefix("destroy_value ") || line.hasPrefix("destroy_addr ") ||
+                 line.hasPrefix("unmanaged_release ") || line.hasPrefix("end_lifetime ")) {
+                current!.mayDestroyValue = true
+            }
             if testingFactoryLines != nil {
                 if testingFactoryLines!.count < 1024 { testingFactoryLines!.append(line) }
                 else { testingFactoryLines = nil }

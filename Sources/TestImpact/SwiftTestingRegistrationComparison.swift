@@ -204,7 +204,7 @@ struct SwiftTestingRegistrationComparison {
 
         /// Each written test attribute must have a surviving declaration and a
         /// single empty SDK factory. Historical locations can move between builds.
-        func provesBareTests(in file: SwiftSourceSnapshot, fileKey: String) -> Bool {
+        func provesTestsWithoutRuntimeInputs(in file: SwiftSourceSnapshot, fileKey: String) -> Bool {
             guard let head = snapshot.sources[fileKey], file.hasSwiftTestingRegistrationMetadata,
                   let issues = file.helperDeclarationIssues,
                   issues.allSatisfy({ ["@inline", "@_transparent", "@Test", "@Testing.Test", "#expect", "#require"].contains($0.spelling) }) else { return false }
@@ -212,7 +212,7 @@ struct SwiftTestingRegistrationComparison {
             let tests = file.units.filter { $0.swiftTestingRole == "test" }
             let current = head.units.filter { $0.swiftTestingRole == "test" }
             guard !tests.isEmpty, attributes.count == tests.count, tests.map(\.key) == current.map(\.key),
-                  tests.allSatisfy({ $0.swiftTestingEntryInputs?.bare == true }) else { return false }
+                  tests.allSatisfy({ $0.swiftTestingEntryInputs?.hasNoRuntimeInputs == true }) else { return false }
             return current.allSatisfy { provesInputs(of: $0, requireEmpty: true) }
         }
 
@@ -230,7 +230,7 @@ struct SwiftTestingRegistrationComparison {
                 $0.compilerReferences?.contains { $0.hasPrefix("$s7Testing4TestV10__function") } == true
             }
             guard factories.count == 1, let factory = factories.first else { return false }
-            if requireEmpty { return inputs.bare == true && ["member", "top-level"].contains(factory.swiftTestingEmptyFactory) }
+            if requireEmpty { return inputs.hasNoRuntimeInputs && ["member", "top-level"].contains(factory.swiftTestingEmptyFactory) }
             if let conditions = inputs.conditions {
                 return factory.swiftTestingDeferredConditions?.matches(conditions) == true &&
                     (inputs.providers == 0 || factory.swiftTestingDeferredProviderCount == inputs.providers)

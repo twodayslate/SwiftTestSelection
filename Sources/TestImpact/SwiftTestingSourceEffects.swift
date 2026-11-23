@@ -35,15 +35,18 @@ struct SwiftTestingSourceEffects {
         }
         guard !candidates.isEmpty else { return [] }
         // An unowned base file might previously have contributed an overload.
-        // In a closed file, only the names actually present can compete.
+        // Only top-level bindings in a closed file participate in lookup.
         var unownedNames = Set<String>()
         for file in unowned.values {
             guard file.diagnostics.isEmpty, file.helperDeclarationsComplete == true,
                   file.helperImportsLocal == true, file.typeAliases?.isEmpty == true,
                   file.helperOperatorDeclarations?.isEmpty == true,
                   file.units.allSatisfy({ $0.helperInheritedTypes?.isEmpty == true && $0.kind != "extension" }),
-                  let names = file.identifierNames else { return [] }
-            unownedNames.formUnion(names)
+                  let declarations = file.helperGlobalDeclarations else { return [] }
+            unownedNames.formUnion(declarations.keys)
+            for unit in file.units where unit.kind == "type" && !unit.scope.contains(".") {
+                unownedNames.insert(SDKTestHelperSyntax.canonicalName(unit.scope))
+            }
         }
         var callers = Set<Declaration>()
         let units = snapshot.sources.values.flatMap(\.units).filter { $0.kind == "function" }
@@ -139,7 +142,7 @@ struct SwiftTestingSourceEffects {
             guard !named.isEmpty, hasCompleteNames(file) else { continue }
             lazy var authenticatedTests: Bool = {
                 guard completeSources, closedModules.contains(String(key.prefix { $0 != ":" })), closedUnowned else { return false }
-                return factories.provesBareTests(in: file, fileKey: key)
+                return factories.provesTestsWithoutRuntimeInputs(in: file, fileKey: key)
             }()
             for unit in named {
                 if unit.fileProvesUnusedInline == true {

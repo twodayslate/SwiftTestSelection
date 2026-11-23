@@ -75,17 +75,19 @@ func scopedIndentationAuditsOnlyEligibleLocalCalls(callee: String) throws {
     #expect((result.unownedBaseSources["Unowned.swift"] != nil) == (callee == "local"))
 }
 
-@Test(arguments: ["manifest", "competingName", "unknownExpansion"])
+@Test(arguments: ["manifest", "competingName", "competingStorage", "competingType", "unknownExpansion"])
 func unownedBaseFilesOnlyBlockAffectedLocationProofs(scenario: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
-    let before = "func value() -> Bool { true }\nfunc caller() -> Bool {\n    return value()\n}"
+    let before = "func name() -> Bool { true }\nfunc caller() -> Bool {\n    return name()\n}"
     let after = before.replacingOccurrences(of: "    return", with: "        return")
     let tests = "import Testing\nstruct Cases { @Test func check() { #expect(caller()) } }"
     try repo.write("Caller.swift", before)
     try repo.write("Tests.swift", tests)
     try repo.write("Package.swift", "// swift-tools-version: 6.0\nimport PackageDescription\nlet package = Package(name: \"Fixture\")")
-    if scenario == "competingName" { try repo.write("Removed.swift", "func value(_ line: Int = #line) -> Int { line }") }
+    if scenario == "competingName" { try repo.write("Removed.swift", "func name(_ line: Int = #line) -> Int { line }") }
+    if scenario == "competingStorage" { try repo.write("Removed.swift", "let (name, other) = ({ true }, 0)") }
+    if scenario == "competingType" { try repo.write("Removed.swift", "struct name {}") }
     if scenario == "unknownExpansion" { try repo.write("Removed.swift", "#makeHelpers()") }
     let base = try repo.commit()
     let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)

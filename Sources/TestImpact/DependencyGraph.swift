@@ -77,6 +77,9 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// An empty set proves only error propagation, never callback purity or origin.
     /// Nil denotes legacy/missing evidence.
     public var receiverIndirectErrorEffects: Set<String>? = nil
+    /// ARC cleanup can run a project deinitializer without a function reference.
+    /// Nil means the capture predates lifetime evidence.
+    public var mayDestroyValue: Bool? = nil
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>
@@ -84,6 +87,9 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// Combine evidence rather than choosing one imported implementation. Missing
     /// optional proof stays missing; an empty body never establishes purity.
     mutating func mergeEvidence(_ other: FunctionNode) {
+        if mayDestroyValue != other.mayDestroyValue {
+            mayDestroyValue = mayDestroyValue == true || other.mayDestroyValue == true ? true : nil
+        }
         dependencies.formUnion(other.dependencies)
         uncertainties.formUnion(other.uncertainties)
         dynamicDeclarations.formUnion(other.dynamicDeclarations)

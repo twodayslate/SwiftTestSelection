@@ -121,44 +121,81 @@ enum SwiftTestingDiscoveryRoots {
         return Dictionary(uniqueKeysWithValues: zip(symbols, names.map(String.init)))
     }
 
-    /// Instructions in the registration factory itself execute during discovery.
-    /// Its generated debug locations are outside the project source tree.
+    /// Objective-C selector invocation/registration and Foundation key-value
+    /// coding can call project implementations absent from the SIL call graph.
+    private static func mayInvokeForeignCallback(_ call: String, in node: FunctionNode) -> Bool {
+        guard call.hasPrefix("objc_method ") || call.hasPrefix("objc_super_method "),
+              let space = call.firstIndex(of: " ") else { return false }
+        let signature = call[call.index(after: space)...]
+        if signature == "NSObject.responds!foreign : (NSObject) -> (Selector?) -> Bool" ||
+            signature == "NSObject.instancesRespond!foreign : (NSObject.Type) -> (Selector!) -> Bool" ||
+            signature == "NSObject.instancesRespond!foreign : (NSObject.Type) -> (Selector?) -> Bool" {
+            // The query does not invoke the queried selector. The ordinary
+            // dispatch edges still reach project overrides of the query itself.
+            let declaration = signature.prefix { $0 != "!" }
+            return node.uncertainties.contains { $0.hasPrefix("Unresolved project dispatch: " + declaration) }
+        }
+        let declaration = signature.prefix { $0 != "!" && $0 != " " }
+        if let member = declaration.split(separator: ".").last,
+           keyValueMethods.contains(String(member)), signature.contains("String"),
+           signature.contains("!foreign :") { return true }
+        return signature.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "_" }).contains("Selector")
+    }
+
+    private static let keyValueMethods: Set<String> = [
+        "value", "setValue", "validateValue", "dictionaryWithValues", "setValuesForKeys",
+        "mutableArrayValue", "mutableSetValue", "mutableOrderedSetValue",
+        "valueForUndefinedKey", "setValueForUndefinedKey", "setNilValueForKey",
+    ]
+
     static func restoreIndirectDiscoveryCalls(_ graph: inout DependencyGraph) {
         guard let root = graph.functions[sharedDiscoveryID] else { return }
         let indirect = "Indirect function invocation"
+        let diagnostic = "Swift Testing discovery invokes an indirect callback before test filtering"
 
-        // Start with eager factory inputs. An indirect call may occur in the
-        // factory, a generated thunk, or any project helper reached from them.
         func mayInvokeCallback(_ node: FunctionNode) -> Bool {
             if node.uncertainties.contains(indirect) { return true }
-            // A foreign message can register or perform a selector without a
-            // function_ref to its Swift implementation. Retained graphs store
-            // the original method signature even after dispatch resolution.
             if let calls = node.dynamicCallSignatures {
-                return calls.contains { call in
-                    (call.hasPrefix("objc_method ") || call.hasPrefix("objc_super_method ")) &&
-                        call.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "_" }).contains("Selector")
-                }
+                return calls.contains { mayInvokeForeignCallback($0, in: node) }
             }
             return node.uncertainties.contains { $0.hasPrefix("Dynamic dispatch: objc_method ") || $0.hasPrefix("Dynamic dispatch: objc_super_method ") }
         }
+
+        // ARC can destroy an erased value, an aggregate member or a subclass.
+        // Its dynamic type is not necessarily the static type of the operand.
+        // Include captured destructors once, and follow their ordinary callees.
+        let destructors = Set(graph.functions.values.filter {
+            $0.hasProjectRuntimeContext && ($0.name.hasSuffix(".deinit") || $0.name.hasSuffix(".__deallocating_deinit"))
+        }.map(\.id))
         let factories = graph.functions.values.filter { $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true }
         var pending = Array(root.dependencies), visited = Set<String>()
         var hasIndirect = factories.contains(where: mayInvokeCallback)
-        while !hasIndirect, let id = pending.popLast() {
+        var hasCleanup = factories.contains { $0.mayDestroyValue != false }
+        var includedDestructors = false
+        while !pending.isEmpty || (hasCleanup && !includedDestructors) {
+            if hasCleanup && !includedDestructors {
+                includedDestructors = true
+                pending.append(contentsOf: destructors)
+            }
+            guard let id = pending.popLast() else { break }
             guard visited.insert(id).inserted, let node = graph.functions[id],
                   node.hasProjectRuntimeContext || id.hasPrefix("$s" + String(node.module.utf8.count) + node.module) else { continue }
-            hasIndirect = mayInvokeCallback(node)
+            if hasIndirect && (includedDestructors || destructors.isEmpty) { break }
+            hasIndirect = hasIndirect || mayInvokeCallback(node)
+            hasCleanup = hasCleanup || node.mayDestroyValue != false
             pending.append(contentsOf: node.dependencies)
         }
-        guard hasIndirect else { return }
-        graph.functions[sharedDiscoveryID]?.uncertainties.insert(indirect)
-        // An entry or independently executed helper can itself be the callback.
-        // Preserve this uncertainty when ordinary opaque-body selection is waived.
-        let diagnostic = "Swift Testing discovery invokes an indirect callback before test filtering"
-        for (test, roots) in graph.tests where roots.contains(sharedDiscoveryID) &&
-            graph.testDiagnostics[test]?.contains(diagnostic) != true {
-            graph.testDiagnostics[test, default: []].append(diagnostic)
+        if includedDestructors { graph.functions[sharedDiscoveryID]?.dependencies.formUnion(destructors) }
+        if hasIndirect { graph.functions[sharedDiscoveryID]?.uncertainties.insert(indirect) }
+        else { graph.functions[sharedDiscoveryID]?.uncertainties.remove(indirect) }
+        for (test, roots) in graph.tests where roots.contains(sharedDiscoveryID) {
+            if hasIndirect {
+                if graph.testDiagnostics[test]?.contains(diagnostic) != true {
+                    graph.testDiagnostics[test, default: []].append(diagnostic)
+                }
+            } else if graph.testDiagnostics[test]?.contains(diagnostic) == true {
+                graph.testDiagnostics[test]?.removeAll { $0 == diagnostic }
+            }
         }
     }
 

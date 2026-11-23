@@ -55,12 +55,14 @@ public enum GraphArchive {
                     row.append(values.count); row += values.sorted().map(intern)
                 }
                 let optionalEvidence = [n.compilerReferences, n.dynamicCallSignatures, n.stateAccesses, n.receiverTypeOrigins, n.receiverGenericCalls, n.dynamicCallSites, n.receiverErrorEffects, n.receiverIndirectErrorEffects]
-                if let last = optionalEvidence.lastIndex(where: { $0 != nil }) {
+                let lastEvidence = n.mayDestroyValue == nil ? optionalEvidence.lastIndex(where: { $0 != nil }) : optionalEvidence.indices.last
+                if let last = lastEvidence {
                     for values in optionalEvidence[...last] {
                         if let values { row.append(values.count); row += values.sorted().map(intern) }
                         else { row.append(-1) }
                     }
                 }
+                if let cleanup = n.mayDestroyValue { row.append(cleanup ? 1 : 0) }
                 words.append(UInt64(row.count).littleEndian)
                 words += row.map { UInt64(bitPattern: Int64($0)).littleEndian }
             }
@@ -156,7 +158,15 @@ public enum GraphArchive {
                     if row[cursor] == -1 { cursor += 1 }
                     else { node.receiverErrorEffects = try values() }
                 }
-                if cursor < row.count { node.receiverIndirectErrorEffects = try values() }
+                if cursor < row.count {
+                    if row[cursor] == -1 { cursor += 1 }
+                    else { node.receiverIndirectErrorEffects = try values() }
+                }
+                if cursor < row.count {
+                    guard row[cursor] == 0 || row[cursor] == 1 else { throw ImpactError("Invalid compact graph lifetime flag") }
+                    node.mayDestroyValue = row[cursor] == 1
+                    cursor += 1
+                }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
                 node.nominalTypeContext = nominalTypeContexts?[node.id]
                 node.swiftTestingDiscoveryReferences = swiftTestingDiscoveryReferences?[node.id]
