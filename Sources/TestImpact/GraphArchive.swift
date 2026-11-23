@@ -28,6 +28,7 @@ public enum GraphArchive {
         var assertionFormattingSites: [String: Set<String>]?
         var captureModules: [String: Set<String>]?
         var dynamicDeclarationModules: [String: [String: Set<String>]]?
+        var concreteSelectorQueryFunctions: Set<String>?
         var nominalTypeContexts: [String: String]?
         /// Optional for archives written before factory-effect evidence existed.
         var testVTableEntries: [String: Set<String>]?
@@ -73,6 +74,7 @@ public enum GraphArchive {
             compilerClassIdentities = graph.compilerClassIdentities
             compilerImplicitImports = graph.compilerImplicitImports
             assertionFormattingSites = graph.functions.compactMapValues(\.assertionFormattingSites)
+            concreteSelectorQueryFunctions = Set(graph.functions.values.filter { $0.selectorQueriesUseNSObject == true }.map(\.id))
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
             testVTableEntries = graph.testVTableEntries
             swiftTestingRegisteredFactories = graph.swiftTestingRegisteredFactories
@@ -168,6 +170,7 @@ public enum GraphArchive {
                     cursor += 1
                 }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
+                if concreteSelectorQueryFunctions?.contains(node.id) == true { node.selectorQueriesUseNSObject = true }
                 node.nominalTypeContext = nominalTypeContexts?[node.id]
                 node.swiftTestingDiscoveryReferences = swiftTestingDiscoveryReferences?[node.id]
                 node.swiftTestingTraitProducers = swiftTestingTraitProducers?[node.id]

@@ -130,22 +130,38 @@ enum SwiftTestingDiscoveryRoots {
         if signature == "NSObject.responds!foreign : (NSObject) -> (Selector?) -> Bool" ||
             signature == "NSObject.instancesRespond!foreign : (NSObject.Type) -> (Selector!) -> Bool" ||
             signature == "NSObject.instancesRespond!foreign : (NSObject.Type) -> (Selector?) -> Bool" {
-            // The query does not invoke the queried selector. The ordinary
-            // dispatch edges still reach project overrides of the query itself.
+            // A subclass may run +resolveInstanceMethod: or +resolveClassMethod:
+            // even when it inherits the query implementation from NSObject.
             let declaration = signature.prefix { $0 != "!" }
-            return node.uncertainties.contains { $0.hasPrefix("Unresolved project dispatch: " + declaration) }
+            return node.selectorQueriesUseNSObject != true ||
+                node.uncertainties.contains { $0.hasPrefix("Unresolved project dispatch: " + declaration) }
         }
         let declaration = signature.prefix { $0 != "!" && $0 != " " }
-        if let member = declaration.split(separator: ".").last,
-           keyValueMethods.contains(String(member)), signature.contains("String"),
-           signature.contains("!foreign :") { return true }
+        let path = declaration.split(separator: ".")
+        if path.count == 2, let abi = signature.range(of: "!foreign : (" + path[0] + ") -> ") {
+            let parametersAndResult = signature[abi.upperBound...]
+            if path[0] == "NSPredicate", path[1] == "evaluate",
+               ["(Any?) -> Bool", "(Any?, [String : Any]?) -> Bool"].contains(parametersAndResult) { return true }
+            if keyValueOwners.contains(path[0]), keyValueMethods[path[1]]?.contains(parametersAndResult) == true { return true }
+        }
         return signature.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "_" }).contains("Selector")
     }
 
-    private static let keyValueMethods: Set<String> = [
-        "value", "setValue", "validateValue", "dictionaryWithValues", "setValuesForKeys",
-        "mutableArrayValue", "mutableSetValue", "mutableOrderedSetValue",
-        "valueForUndefinedKey", "setValueForUndefinedKey", "setNilValueForKey",
+    private static let keyValueOwners: Set<Substring> = [
+        "NSObject", "NSArray", "NSMutableArray", "NSSet", "NSMutableSet", "NSOrderedSet",
+        "NSMutableOrderedSet", "NSDictionary", "NSMutableDictionary", "NSUserDefaults", "UserDefaults", "NSManagedObject",
+    ]
+
+    private static let keyValueMethods: [Substring: Set<Substring>] = [
+        "value": ["(String) -> Any?", "(String) -> Any"],
+        "setValue": ["(Any?, String) -> ()"],
+        "validateValue": ["(AutoreleasingUnsafeMutablePointer<AnyObject?>, String) throws -> ()"],
+        "dictionaryWithValues": ["([String]) -> [String : Any]"],
+        "setValuesForKeys": ["([String : Any]) -> ()"],
+        "mutableArrayValue": ["(String) -> NSMutableArray"],
+        "mutableSetValue": ["(String) -> NSMutableSet"],
+        "mutableOrderedSetValue": ["(String) -> NSMutableOrderedSet"],
+        "setNilValueForKey": ["(String) -> ()"],
     ]
 
     static func restoreIndirectDiscoveryCalls(_ graph: inout DependencyGraph) {

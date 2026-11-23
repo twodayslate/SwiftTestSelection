@@ -486,7 +486,7 @@ import Testing
                   "sdkLocation", "binaryDefault", "escaped", "qualified", "mixedProvider", "mixedTrait",
                   "comments", "bareLocation", "helperLocation", "enabled", "disabled", "mixedCondition", "customCondition",
                   "physical", "providerHelper", "gateHelper", "transparent", "suiteBody", "documented", "reason", "qualifiedGate", "eagerReason",
-                  "opaqueCallback", "wrappedCallback", "selectorCallback", "keyValueCallback", "destruction", "selectorQuery", "privateBesideNamedTest", "retainedV12", "privateBesideTest", "namedSuite", "docSuite", "serializedSuite", "unusedInline", "privateInline", "fileprivateInline", "localCall"])
+                  "opaqueCallback", "wrappedCallback", "selectorCallback", "keyValueCallback", "predicateLookup", "selectorResolution", "destruction", "unusedDestructor", "projectValue", "selectorQuery", "privateBesideNamedTest", "retainedV12", "privateBesideTest", "namedSuite", "docSuite", "serializedSuite", "unusedInline", "privateInline", "fileprivateInline", "localCall"])
 func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -502,10 +502,10 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
     var runtimeFlags: [String] = []
     let helperEdits = ["helperLocation", "providerHelper", "gateHelper", "transparent"]
     let unusedBodies = ["unusedInline", "privateInline", "fileprivateInline", "privateBesideTest", "privateBesideNamedTest"]
-    let callbacks = ["opaqueCallback", "wrappedCallback", "selectorCallback", "keyValueCallback"]
+    let callbacks = ["opaqueCallback", "wrappedCallback", "selectorCallback", "keyValueCallback", "predicateLookup", "selectorResolution"]
     let predicateEdits = ["enabled", "disabled", "mixedCondition", "documented", "reason", "qualifiedGate"]
     let suiteBodies = ["suiteBody", "retainedV12", "namedSuite", "docSuite", "serializedSuite"]
-    let localEdits = suiteBodies + ["selectorQuery", "comments", "bareLocation", "physical", "providerHelper", "gateHelper"] + predicateEdits
+    let localEdits = suiteBodies + ["selectorQuery", "projectValue", "comments", "bareLocation", "physical", "providerHelper", "gateHelper"] + predicateEdits
     if scenario == "binaryDefault" || helperEdits.contains(scenario) {
         // The selector cannot discover this default by indexing project sources.
         let vendor = root.appendingPathComponent("BinaryLocation.swift")
@@ -538,7 +538,7 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
         }, "\(output)")
     }
     func capture(head: Bool) throws -> XcodeTestGraph {
-        let suiteTrait = ["keyValueCallback", "destruction"].contains(scenario)
+        let suiteTrait = ["keyValueCallback", "destruction", "predicateLookup", "selectorResolution"].contains(scenario)
         var files = ["Support.swift": """
             import Foundation
             import Testing
@@ -564,13 +564,32 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
                     func marked() {}
                 }
                 """
-        case "keyValueCallback", "destruction":
+        case "keyValueCallback", "destruction", "predicateLookup", "selectorResolution":
             files["Helper.swift"] = "func flag() -> Bool { " + (head ? "false" : "true") + " }"
-            if scenario == "keyValueCallback" {
+            if scenario == "keyValueCallback" || scenario == "predicateLookup" {
+                let read = scenario == "keyValueCallback" ? "Settings().value(forKey: \"selected\") as? Bool == true" :
+                    "NSPredicate(format: \"selected == YES\").evaluate(with: Settings())"
                 files["Lookup.swift"] = """
                     import Foundation
                     final class Settings: NSObject { @objc dynamic var selected: Bool { flag() } }
-                    func resolveFlag() -> Bool { Settings().value(forKey: "selected") as? Bool == true }
+                    func resolveFlag() -> Bool { \(read) }
+                    """
+            } else if scenario == "selectorResolution" {
+                files["Lookup.swift"] = """
+                    import Foundation
+                    final class Settings: NSObject {
+                        override class func resolveInstanceMethod(_ sel: Selector!) -> Bool {
+                            if NSStringFromSelector(sel) == "stsMissingPermission" {
+                                setenv("STS_RESOLVED", flag() ? "1" : "0", 1)
+                            }
+                            return super.resolveInstanceMethod(sel)
+                        }
+                    }
+                    func resolveFlag() -> Bool {
+                        _ = Settings().responds(to: NSSelectorFromString("stsMissingPermission"))
+                        _ = NSObject().responds(to: NSSelectorFromString("description"))
+                        return getenv("STS_RESOLVED")?.pointee == 49
+                    }
                     """
             } else {
                 files["Lookup.swift"] = """
@@ -581,12 +600,19 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
                     """
             }
             files["Tests.swift"] = "import Testing\n@Suite(Marker(resolveFlag())) struct Other { @Test func marked() {} }"
-        case "selectorQuery":
+        case "unusedDestructor":
+            files["Helper.swift"] = "func flag() -> Bool { " + (head ? "false" : "true") + " }"
+            files["Lookup.swift"] = "private final class Token { deinit { _ = flag() } }"
+            files["Support.swift"] = "import Testing\nstruct Common { @Test func plain() {} }"
+            files["Tests.swift"] = "import Testing\nstruct Other { @Test func marked() {} }"
+        case "selectorQuery", "projectValue":
+            let lookup = scenario == "selectorQuery" ? "NSObject().responds(to: NSSelectorFromString(\"description\"))" : "Counter().value(\"key\")"
             files["Support.swift"] = """
                 import Foundation
                 import Testing
                 struct Marker: SuiteTrait { let enabled: Bool }
-                func resolveFlag() -> Bool { NSObject().responds(to: NSSelectorFromString("description")) }
+                final class Counter: NSObject { @objc dynamic func value(_ key: String) -> Bool { true } }
+                func resolveFlag() -> Bool { \(lookup) }
                 struct Common { @Test func plain() {} }
                 """
             files["Tests.swift"] = "import Testing\n@Suite(Marker(enabled: resolveFlag())) struct Other { @Test func marked() { " +
@@ -728,11 +754,11 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
         return try GraphArchive.decode(GraphArchive.encode(graph))
     }
     var base = try capture(head: false), head = try capture(head: true)
-    let changes = (scenario == "fileMove" ? ["First.swift", "Second.swift"] : [(helperEdits + unusedBodies + callbacks + ["destruction", "localCall"]).contains(scenario) ? "Helper.swift" : "Tests.swift"]).map { FileChange(path: $0) }
+    let changes = (scenario == "fileMove" ? ["First.swift", "Second.swift"] : [(helperEdits + unusedBodies + callbacks + ["destruction", "unusedDestructor", "localCall"]).contains(scenario) ? "Helper.swift" : "Tests.swift"]).map { FileChange(path: $0) }
     func dual() -> ImpactReport { XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base") }
     let report = dual()
     let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
-    if (unusedBodies + ["localCall"]).contains(scenario) {
+    if (unusedBodies + ["unusedDestructor", "localCall"]).contains(scenario) {
         for result in [report, headOnly] { #expect(result.selectedTests.isEmpty) }
         if ["privateBesideTest", "privateBesideNamedTest"].contains(scenario) {
             for id in head.dependencies!.functions.keys { head.dependencies!.functions[id]?.swiftTestingEmptyFactory = nil }
@@ -776,6 +802,9 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
             let restored = try GraphArchive.decode(GraphArchive.encode(head))
             #expect(restored.dependencies?.functions[root]?.hasOpaqueRuntimeDependency == false)
             #expect(restored.dependencies?.testDiagnostics[plain]?.contains(diagnostic) != true)
+            for id in head.dependencies!.functions.keys { head.dependencies!.functions[id]?.selectorQueriesUseNSObject = nil }
+            let legacy = try GraphArchive.decode(GraphArchive.encode(head))
+            #expect(legacy.dependencies?.testDiagnostics[plain]?.contains(diagnostic) == true)
         }
         if ["comments", "bareLocation", "physical", "providerHelper", "gateHelper"].contains(scenario) {
             var mappings = UIFeatureMappings(features: [])

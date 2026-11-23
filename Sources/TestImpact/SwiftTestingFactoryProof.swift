@@ -40,6 +40,7 @@ enum SwiftTestingFactoryProof {
     }
 
     struct Evidence {
+        var cleanupIsSDKMetadata = false
         var nominalType: String?
         var emptyFactory: String?
         var deferredProviderCount: Int?
@@ -175,11 +176,82 @@ enum SwiftTestingFactoryProof {
         return Conditions(traitCount: count, predicates: predicates, commentSlots: commentSlots.isEmpty ? nil : commentSlots)
     }
 
+    /// An empty test record still releases strings, arrays, a source location,
+    /// and a closure capturing its suite metatype. Trace each released SSA value.
+    /// A captured instance, an escaping address or an unfamiliar producer keeps
+    /// the ordinary ARC fallback, even when the SDK traits array is empty.
+    private static func metadataCleanup(_ releases: [String], factory: String,
+                                        definitions: [String: String], uses: [String: [String]],
+                                        references: [String: String], header: String) -> Bool {
+        func applied(_ instruction: String) -> (String, [String])? {
+            guard let fields = Pattern.groups(application, in: instruction),
+                  let symbol = references[fields[0]] else { return nil }
+            return (symbol, fields[2].components(separatedBy: ", "))
+        }
+        func literalString(_ id: String) -> Bool {
+            guard let definition = definitions[id], let (symbol, args) = applied(definition),
+                  symbol == "$sSS21_builtinStringLiteral17utf8CodeUnitCount7isASCIISSBp_BwBi1_tcfC",
+                  args.count == 4 else { return false }
+            return definitions[args[0]]?.hasPrefix("string_literal ") == true
+        }
+        func isMetatype(_ id: String) -> Bool {
+            if definitions[id]?.hasPrefix("metatype ") == true { return true }
+            guard let start = header.range(of: id + " : $@thin ")?.upperBound else { return false }
+            return header[start...].prefix { $0 != "," && $0 != ")" }.hasSuffix(".Type")
+        }
+        func locationInitializer(_ slot: String, consumer: String) -> (String, [String])? {
+            let writers = (uses[slot] ?? []).filter {
+                $0 != consumer && !$0.hasPrefix("destroy_addr ") && !$0.hasPrefix("dealloc_stack ") && !$0.hasPrefix("debug_value ")
+            }
+            guard writers.count == 1, let call = applied(writers[0]), call.1.first == slot else { return nil }
+            return call
+        }
+        func sourceLocation(_ slot: String, consumer: String) -> Bool {
+            guard definitions[slot]?.hasPrefix("alloc_stack $SourceLocation") == true,
+                  let (symbol, args) = locationInitializer(slot, consumer: consumer),
+                  symbol == "$s7Testing14SourceLocationV17__uncheckedFileID8filePath4line6columnACSS_SSS2itcfC", args.count == 6 else { return false }
+            return literalString(args[1]) && literalString(args[2])
+        }
+        return releases.allSatisfy { release in
+            let parts = release.split(separator: " ")
+            guard parts.count >= 2, let definition = definitions[String(parts[1])] else { return false }
+            let id = String(parts[1])
+            if literalString(id) { return true }
+            if definition.hasPrefix("thin_to_thick_function "),
+               let ref = Pattern.groups(closureConversion, in: definition)?.first, references[ref] != nil { return true }
+            if let extract = Pattern.groups(extraction, in: definition), let producer = definitions[extract[0]],
+               let (symbol, args) = applied(producer), symbol == allocateArray, args.count == 1 {
+                return definitions[args[0]] == "integer_literal $Builtin.Word, 0" && uses[extract[0]] == [definition]
+            }
+            if definition.hasPrefix("partial_apply "), let ref = Pattern.groups(closureConversion, in: definition)?.first,
+               references[ref] != nil, let capture = definition.range(of: ref + "("),
+               let end = definition[capture.upperBound...].firstIndex(of: ")") {
+                let args = definition[capture.upperBound..<end]
+                return args.isEmpty || args.components(separatedBy: ", ").allSatisfy(isMetatype)
+            }
+            if sourceLocation(id, consumer: factory) { return true }
+            guard definition.hasPrefix("alloc_stack $__SourceBounds"),
+                  let (symbol, args) = locationInitializer(id, consumer: factory),
+                  symbol.hasPrefix("$s7Testing14__SourceBoundsV21__uncheckedLowerBound"), args.count == 5,
+                  let writer = uses[id]?.first(where: { applied($0)?.0 == symbol }) else { return false }
+            return sourceLocation(args[1], consumer: writer)
+        }
+    }
+
+    static func isCleanup(_ instruction: String) -> Bool {
+        instruction.hasPrefix("strong_release ") || instruction.hasPrefix("release_value ") ||
+            instruction.hasPrefix("destroy_value ") || instruction.hasPrefix("destroy_addr ") ||
+            instruction.hasPrefix("unmanaged_release ") || instruction.hasPrefix("end_lifetime ")
+    }
+
     static func analyze(_ lines: [String]) -> Evidence {
         var evidence = Evidence()
+        var releases: [String] = [], header = ""
         var definitions: [String: String] = [:], uses: [String: [String]] = [:]
         for line in lines {
             let instruction = line.components(separatedBy: ", loc ")[0].components(separatedBy: ", scope ")[0].components(separatedBy: " // ")[0]
+            if isCleanup(instruction) { releases.append(instruction) }
+            if instruction.hasPrefix("bb0(") { header = instruction }
             let rhs: String
             if let fields = Pattern.groups(definition, in: instruction) {
                 guard definitions.updateValue(fields[1], forKey: fields[0]) == nil else { return evidence }
@@ -235,6 +307,7 @@ enum SwiftTestingFactoryProof {
         }
         guard uses[arguments[0]]?.contains(where: isOutputParameter) == true,
               uses[arguments[0]]?.allSatisfy({ $0 == call || isOutputParameter($0) }) == true else { return evidence }
+        evidence.cleanupIsSDKMetadata = metadataCleanup(releases, factory: call, definitions: definitions, uses: uses, references: references, header: header)
         if !suite { evidence.deferredConditions = conditions }
         // A nonempty traits array still permits entry-local provider edits
         // when source comparison preserves every eager trait and its location.

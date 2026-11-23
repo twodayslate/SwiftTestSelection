@@ -126,6 +126,8 @@ public enum SILParser {
         static let dispatch = try! NSRegularExpression(pattern: #"#([^\s:]+).*:\s*@([^\s:]+)"#)
         static let reference = try! NSRegularExpression(pattern: #"^(%[\w]+) = (?:function_ref|dynamic_function_ref|previous_dynamic_function_ref) @([^\s:]+)"#)
         static let method = try! NSRegularExpression(pattern: #"\b(class_method|super_method|witness_method|objc_method|objc_super_method)\b.*#([^\s:]+)"#)
+        static let objectConstruction = try! NSRegularExpression(pattern: #"^(%\d+) = apply (%\d+)\((%\d+)\) : "#)
+        static let queryReceiver = try! NSRegularExpression(pattern: #" = objc_(?:super_)?method (%\d+), "#)
         static let witnessType = try! NSRegularExpression(pattern: #"\bwitness_method \$([\w.]+),"#)
         static let classTable = try! NSRegularExpression(pattern: #"^sil_vtable(?: \[[^\]]+\])* ([\w.]+) \{"#)
         static let witnessTable = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+)* ([\w.]+): ([\w.]+) module ([\w]+) \{"#)
@@ -168,6 +170,8 @@ public enum SILParser {
         var locations: [String: ClosedRange<Int>] = [:]
         var knownValues = Set<String>()
         var directReferences: [String: String] = [:]
+        var objectMetatypes = Set<String>()
+        var concreteObjects = Set<String>()
         var recentInstructions: [String] = []
         var currentBlock = ""
         var nilSomePredecessors: [String: String] = [:]
@@ -276,6 +280,7 @@ public enum SILParser {
                     current!.receiverTypeOrigins = []
                     current!.receiverGenericCalls = []
                     directReferences = [:]
+                    objectMetatypes = []; concreteObjects = []
                     recentInstructions = []; currentBlock = ""; nilSomePredecessors = [:]; unreachableNilSome = false
                     metatypeInputs = [:]; usedMetatypeInputs = []; headerMetatypeCounts = [:]
                     for type in Self.metatypes(line) {
@@ -331,6 +336,7 @@ public enum SILParser {
                     current!.swiftTestingDiscoveryReferences = current!.dependencies.subtracting(evidence.deferredReferences)
                     current!.swiftTestingExistentialTypes = evidence.traitTypes
                     current!.swiftTestingTraitProducers = evidence.traitProducers
+                    if evidence.cleanupIsSDKMetadata { current!.mayDestroyValue = false }
                     current!.swiftTestingEmptyFactory = evidence.emptyFactory
                     current!.swiftTestingDeferredProviderCount = evidence.deferredProviderCount
                     current!.swiftTestingDeferredConditions = evidence.deferredConditions
@@ -342,10 +348,7 @@ public enum SILParser {
             }
             if let found = location(line) { addLocation(found) }
             if line.hasPrefix("//") { return }
-            if current!.mayDestroyValue == false &&
-                (line.hasPrefix("strong_release ") || line.hasPrefix("release_value ") ||
-                 line.hasPrefix("destroy_value ") || line.hasPrefix("destroy_addr ") ||
-                 line.hasPrefix("unmanaged_release ") || line.hasPrefix("end_lifetime ")) {
+            if current!.mayDestroyValue == false && SwiftTestingFactoryProof.isCleanup(line) {
                 current!.mayDestroyValue = true
             }
             if testingFactoryLines != nil {
@@ -415,6 +418,15 @@ public enum SILParser {
             } else if line.containsASCII("value_metatype ") || line.containsASCII("existential_metatype ") {
                 current!.receiverTypeOrigins?.insert("dynamic")
             }
+            if line.containsASCII(" = metatype $@thick NSObject.Type") || line.containsASCII(" = metatype $@objc_metatype NSObject.Type"),
+               let id = Pattern.groups(Expressions.value, in: line)?.first {
+                objectMetatypes.insert(id)
+            }
+            if !objectMetatypes.isEmpty, line.containsASCII(" -> @owned NSObject"),
+               let construction = Pattern.groups(Expressions.objectConstruction, in: line),
+               directReferences[construction[1]] == "$sSo8NSObjectCABycfC", objectMetatypes.contains(construction[2]) {
+                concreteObjects.insert(construction[0])
+            }
             if line.containsASCII("function_ref "), let match = Pattern.groups(Expressions.reference, in: line) {
                 knownValues.insert(match[0])
                 current!.dependencies.insert(match[1])
@@ -482,6 +494,11 @@ public enum SILParser {
                     let signature = String(line[start.upperBound..<end.lowerBound])
                     let call = match[0] + " " + match[1] + signature
                     current!.dynamicCallSignatures?.insert(call)
+                    if declaration == "NSObject.responds" || declaration == "NSObject.instancesRespond" {
+                        let receivers = declaration == "NSObject.responds" ? concreteObjects : objectMetatypes
+                        let exact = Pattern.groups(Expressions.queryReceiver, in: line).map { receivers.contains($0[0]) } ?? false
+                        current!.selectorQueriesUseNSObject = current!.selectorQueriesUseNSObject != false && exact
+                    }
                     if ExternalHelperEffects.tracksReceiverCallSite(declaration) {
                         if let point = location(line), let fields = Pattern.groups(Expressions.location, in: line),
                            let column = Int(fields[2]), column > 0 {
