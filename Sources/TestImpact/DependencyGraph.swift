@@ -53,6 +53,9 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     public var swiftTestingExistentialTypes: Set<String>? = nil
     /// Direct callees whose results are stored into the SDK traits array.
     public var swiftTestingTraitProducers: Set<String>? = nil
+    /// Concrete requirements invoked by every captured string-formatting call.
+    /// Nil leaves discovery conservative for erased calls and older captures.
+    public var swiftTestingFormattingRequirements: Set<String>? = nil
     /// Factory references that may execute before Swift Testing filters the tests.
     public var swiftTestingDiscoveryReferences: Set<String>? = nil
     /// Full SIL method reference and formal type for every dynamic call.
@@ -112,6 +115,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
         compilerReferences = union(compilerReferences, other.compilerReferences)
         swiftTestingExistentialTypes = union(swiftTestingExistentialTypes, other.swiftTestingExistentialTypes)
         swiftTestingTraitProducers = union(swiftTestingTraitProducers, other.swiftTestingTraitProducers)
+        swiftTestingFormattingRequirements = union(swiftTestingFormattingRequirements, other.swiftTestingFormattingRequirements)
         swiftTestingDiscoveryReferences = union(swiftTestingDiscoveryReferences, other.swiftTestingDiscoveryReferences)
         if swiftTestingFactoryType != other.swiftTestingFactoryType { swiftTestingFactoryType = nil }
         if swiftTestingEmptyFactory != other.swiftTestingEmptyFactory { swiftTestingEmptyFactory = nil }

@@ -169,6 +169,9 @@ public enum SILParser {
         var pendingLocation: SourceRegion?
         var locations: [String: ClosedRange<Int>] = [:]
         var knownValues = Set<String>()
+        var pendingFormatters = Set<String>()
+        var formattingRequirements = Set<String>()
+        var unknownFormatting = false
         var directReferences: [String: String] = [:]
         var objectMetatypes = Set<String>()
         var concreteObjects = Set<String>()
@@ -280,6 +283,7 @@ public enum SILParser {
                     current!.receiverTypeOrigins = []
                     current!.receiverGenericCalls = []
                     directReferences = [:]
+                    pendingFormatters = []; formattingRequirements = []; unknownFormatting = false
                     objectMetatypes = []; concreteObjects = []
                     recentInstructions = []; currentBlock = ""; nilSomePredecessors = [:]; unreachableNilSome = false
                     metatypeInputs = [:]; usedMetatypeInputs = []; headerMetatypeCounts = [:]
@@ -330,6 +334,9 @@ public enum SILParser {
                     current!.receiverTypeOrigins?.remove("input:" + type)
                 }
                 current!.dynamicDeclarationModules = Dictionary(uniqueKeysWithValues: current!.dynamicDeclarations.map { ($0, [module]) })
+                if !unknownFormatting, pendingFormatters.isEmpty, !formattingRequirements.isEmpty, current!.receiverGenericCalls != nil {
+                    current!.swiftTestingFormattingRequirements = formattingRequirements
+                }
                 current!.compilerReferences = current!.dependencies
                 if let testingFactoryLines, current!.dependencies.contains(where: SwiftTestingFactoryProof.isFactory) {
                     let evidence = SwiftTestingFactoryProof.analyze(testingFactoryLines)
@@ -431,6 +438,7 @@ public enum SILParser {
                 knownValues.insert(match[0])
                 current!.dependencies.insert(match[1])
                 directReferences[match[0]] = match[1]
+                if SwiftTestingDiscoveryRoots.isStringFormatting(match[1]) { pendingFormatters.insert(match[0]) }
             }
             if line.containsASCII("apply"), let match = Expressions.genericApply.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) {
                 let text = line as NSString
@@ -447,6 +455,15 @@ public enum SILParser {
                         previous = c
                     }
                     if depth == 0 {
+                        if SwiftTestingDiscoveryRoots.isStringFormatting(symbol) {
+                            pendingFormatters.remove(value)
+                            if let requirement = SwiftTestingDiscoveryRoots.formattingRequirement(symbol),
+                               let genericParameters, !arguments.isEmpty, !arguments.contains("τ_"),
+                               arguments != "Self", !genericParameters.contains(String(arguments.prefix { $0 != "." })),
+                               arguments.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." }) {
+                                formattingRequirements.insert(requirement + "@witness:" + arguments)
+                            } else { unknownFormatting = true }
+                        }
                         let proof = unreachableNilSome && symbol == SDKReceiverContracts.objectBridge ? SDKReceiverContracts.unreachableNil : arguments
                         current!.receiverGenericCalls?.insert(symbol + "\t" + proof)
                         if SDKReceiverContracts.errorFormatting.contains(symbol),

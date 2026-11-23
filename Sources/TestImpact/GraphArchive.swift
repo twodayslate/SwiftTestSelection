@@ -34,6 +34,7 @@ public enum GraphArchive {
         var testVTableEntries: [String: Set<String>]?
         var swiftTestingRegisteredFactories: [String: Set<String>]?
         var swiftTestingSuiteWitnesses: [String: Set<String>]?
+        var swiftTestingFormattingRequirements: [String: Set<String>]?
         var swiftTestingDiscoveryReferences: [String: Set<String>]?
         var swiftTestingTraitProducers: [String: Set<String>]?
         var swiftTestingExistentialTypes: [String: Set<String>]?
@@ -79,6 +80,7 @@ public enum GraphArchive {
             testVTableEntries = graph.testVTableEntries
             swiftTestingRegisteredFactories = graph.swiftTestingRegisteredFactories
             swiftTestingSuiteWitnesses = graph.swiftTestingSuiteWitnesses
+            swiftTestingFormattingRequirements = graph.functions.compactMapValues(\.swiftTestingFormattingRequirements)
             swiftTestingDiscoveryReferences = graph.functions.compactMapValues(\.swiftTestingDiscoveryReferences)
             swiftTestingTraitProducers = graph.functions.compactMapValues(\.swiftTestingTraitProducers)
             swiftTestingExistentialTypes = graph.functions.compactMapValues(\.swiftTestingExistentialTypes)
@@ -172,6 +174,7 @@ public enum GraphArchive {
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
                 if concreteSelectorQueryFunctions?.contains(node.id) == true { node.selectorQueriesUseNSObject = true }
                 node.nominalTypeContext = nominalTypeContexts?[node.id]
+                node.swiftTestingFormattingRequirements = swiftTestingFormattingRequirements?[node.id]
                 node.swiftTestingDiscoveryReferences = swiftTestingDiscoveryReferences?[node.id]
                 node.swiftTestingTraitProducers = swiftTestingTraitProducers?[node.id]
                 node.swiftTestingExistentialTypes = swiftTestingExistentialTypes?[node.id]

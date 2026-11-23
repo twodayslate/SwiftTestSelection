@@ -217,6 +217,9 @@ enum SwiftTestingFactoryProof {
             guard parts.count >= 2, let definition = definitions[String(parts[1])] else { return false }
             let id = String(parts[1])
             if literalString(id) { return true }
+            let someString = "enum $Optional<String>, #Optional.some!enumelt, "
+            if definition.hasPrefix(someString), literalString(String(definition.dropFirst(someString.count))) { return true }
+            if definition == "enum $Optional<String>, #Optional.none!enumelt" { return true }
             if definition.hasPrefix("thin_to_thick_function "),
                let ref = Pattern.groups(closureConversion, in: definition)?.first, references[ref] != nil { return true }
             if let extract = Pattern.groups(extraction, in: definition), let producer = definitions[extract[0]],

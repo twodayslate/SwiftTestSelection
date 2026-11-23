@@ -121,6 +121,23 @@ enum SwiftTestingDiscoveryRoots {
         return Dictionary(uniqueKeysWithValues: zip(symbols, names.map(String.init)))
     }
 
+    /// The constrained standard-library overloads invoke these protocol requirements.
+    /// The unconstrained and reflecting overloads can inspect erased values at runtime.
+    static func isStringFormatting(_ symbol: String) -> Bool {
+        symbol.hasPrefix("$sSS10describingSSx_") || symbol.hasPrefix("$sSS10reflectingSSx_")
+    }
+
+    static func formattingRequirement(_ symbol: String) -> String? {
+        switch symbol {
+        case "$sSS10describingSSx_tcs23CustomStringConvertibleRzlufC",
+             "$sSS10describingSSx_tcs23CustomStringConvertibleRzs20TextOutputStreamableRzlufC":
+            return "CustomStringConvertible.description"
+        case "$sSS10describingSSx_tcs20TextOutputStreamableRzlufC":
+            return "TextOutputStreamable.write"
+        default: return nil
+        }
+    }
+
     /// Objective-C selector invocation/registration and Foundation key-value
     /// coding can call project implementations absent from the SIL call graph.
     private static func mayInvokeForeignCallback(_ call: String, in node: FunctionNode) -> Bool {
@@ -140,12 +157,24 @@ enum SwiftTestingDiscoveryRoots {
         let path = declaration.split(separator: ".")
         if path.count == 2, let abi = signature.range(of: "!foreign : (" + path[0] + ") -> ") {
             let parametersAndResult = signature[abi.upperBound...]
-            if path[0] == "NSPredicate", path[1] == "evaluate",
-               ["(Any?) -> Bool", "(Any?, [String : Any]?) -> Bool"].contains(parametersAndResult) { return true }
+            if foundationEvaluators[declaration]?.contains(parametersAndResult) == true { return true }
             if keyValueOwners.contains(path[0]), keyValueMethods[path[1]]?.contains(parametersAndResult) == true { return true }
         }
         return signature.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "_" }).contains("Selector")
     }
+
+    // Foundation performs these evaluations inside the framework. SIL at the
+    // call site contains neither the predicate's getter nor its block callback.
+    private static let foundationEvaluators: [Substring: Set<Substring>] = [
+        "NSPredicate.evaluate": ["(Any?) -> Bool", "(Any?, [String : Any]?) -> Bool"],
+        "NSExpression.expressionValue": ["(Any?, NSMutableDictionary?) -> Any?"],
+        "NSArray.filtered": ["(NSPredicate) -> [Any]"],
+        "NSMutableArray.filter": ["(NSPredicate) -> ()"],
+        "NSSet.filtered": ["(NSPredicate) -> Set<AnyHashable>"],
+        "NSMutableSet.filter": ["(NSPredicate) -> ()"],
+        "NSOrderedSet.filtered": ["(NSPredicate) -> NSOrderedSet"],
+        "NSMutableOrderedSet.filter": ["(NSPredicate) -> ()"],
+    ]
 
     private static let keyValueOwners: Set<Substring> = [
         "NSObject", "NSArray", "NSMutableArray", "NSSet", "NSMutableSet", "NSOrderedSet",
@@ -171,6 +200,10 @@ enum SwiftTestingDiscoveryRoots {
 
         func mayInvokeCallback(_ node: FunctionNode) -> Bool {
             if node.uncertainties.contains(indirect) { return true }
+            if (node.compilerReferences ?? node.dependencies).contains(where: isStringFormatting) {
+                guard let requirements = node.swiftTestingFormattingRequirements, !requirements.isEmpty,
+                      requirements.isSubset(of: node.resolvedDynamicDeclarations) else { return true }
+            }
             if let calls = node.dynamicCallSignatures {
                 return calls.contains { mayInvokeForeignCallback($0, in: node) }
             }

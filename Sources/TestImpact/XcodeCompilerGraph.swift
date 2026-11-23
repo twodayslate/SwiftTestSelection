@@ -230,6 +230,17 @@ enum XcodeCompilerGraph {
         SwiftTestingDiscoveryRoots.bindTraitWitnesses(graph: &graph, tables: tables, compiler: compiler)
         let localModules = projectModules ?? Set(graph.functions.values.filter { !$0.regions.isEmpty }.map(\.module))
         for symbol in graph.functions.keys {
+            // String(describing:) can call into the project from inside Swift.
+            // Bind the same SIL witness-table slots as an explicit witness_method.
+            for requirement in graph.functions[symbol]!.swiftTestingFormattingRequirements ?? [] {
+                guard let witnesses = tables[requirement], !witnesses.isEmpty,
+                      witnesses.allSatisfy({ graph.functions[$0] != nil }) else {
+                    graph.functions[symbol]!.swiftTestingFormattingRequirements = nil
+                    continue
+                }
+                graph.functions[symbol]!.dependencies.formUnion(witnesses)
+                graph.functions[symbol]!.resolvedDynamicDeclarations.insert(requirement)
+            }
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
                 if let candidates = tables[declaration], !candidates.isEmpty {
                     graph.functions[symbol]!.dependencies.formUnion(candidates)
