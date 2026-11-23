@@ -129,13 +129,26 @@ enum SwiftTestingDiscoveryRoots {
 
         // Start with eager factory inputs. An indirect call may occur in the
         // factory, a generated thunk, or any project helper reached from them.
+        func mayInvokeCallback(_ node: FunctionNode) -> Bool {
+            if node.uncertainties.contains(indirect) { return true }
+            // A foreign message can register or perform a selector without a
+            // function_ref to its Swift implementation. Retained graphs store
+            // the original method signature even after dispatch resolution.
+            if let calls = node.dynamicCallSignatures {
+                return calls.contains { call in
+                    (call.hasPrefix("objc_method ") || call.hasPrefix("objc_super_method ")) &&
+                        call.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "_" }).contains("Selector")
+                }
+            }
+            return node.uncertainties.contains { $0.hasPrefix("Dynamic dispatch: objc_method ") || $0.hasPrefix("Dynamic dispatch: objc_super_method ") }
+        }
         let factories = graph.functions.values.filter { $0.compilerReferences?.contains(where: SwiftTestingFactoryProof.isFactory) == true }
         var pending = Array(root.dependencies), visited = Set<String>()
-        var hasIndirect = factories.contains { $0.uncertainties.contains(indirect) }
+        var hasIndirect = factories.contains(where: mayInvokeCallback)
         while !hasIndirect, let id = pending.popLast() {
             guard visited.insert(id).inserted, let node = graph.functions[id],
-                  !node.regions.isEmpty || id.hasPrefix("$s" + String(node.module.utf8.count) + node.module) else { continue }
-            hasIndirect = node.uncertainties.contains(indirect)
+                  node.hasProjectRuntimeContext || id.hasPrefix("$s" + String(node.module.utf8.count) + node.module) else { continue }
+            hasIndirect = mayInvokeCallback(node)
             pending.append(contentsOf: node.dependencies)
         }
         guard hasIndirect else { return }
@@ -158,7 +171,7 @@ enum SwiftTestingDiscoveryRoots {
         var valueTypes: [String: Set<String>] = [:], declaredSuites: [String: [String]] = [:]
         var currentMetadata = Set<String>()
         for (module, files) in sourceModules {
-            if files.allSatisfy({ $0.value.parserVersion == SwiftSourceSnapshot.currentParserVersion && $0.value.swiftTestingDeclarations != nil }) { currentMetadata.insert(module) }
+            if files.allSatisfy({ $0.value.hasSwiftTestingRegistrationMetadata }) { currentMetadata.insert(module) }
             for (_, file) in files {
                 for unit in file.units where unit.kind == "type" && unit.receiverValueType == true && !unit.scope.contains(".") {
                     valueTypes[module, default: []].insert(unit.scope)

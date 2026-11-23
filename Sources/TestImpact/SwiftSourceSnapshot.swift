@@ -56,6 +56,7 @@ public struct SourceUnit: Codable, Sendable {
     var fileUnreferencedInlineName: String? = nil
     /// File visibility and a closed expansion inventory allow a file-local unused-body proof.
     var fileProvesUnusedInline: Bool? = nil
+    var filePrivateInlineWithTests: Bool? = nil
     var hasOnlyDirectSourceCalls: Bool? = nil
     var swiftTestingEntryInputs: SwiftTestingSourceDeclarations.EntryInputs? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
@@ -125,7 +126,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 13
+    static let currentParserVersion = 14
+    /// Version 12 completed the registration inventory. Later inline-helper
+    /// metadata does not invalidate those registrations in retained graphs.
+    var hasSwiftTestingRegistrationMetadata: Bool {
+        (12...Self.currentParserVersion).contains(parserVersion ?? 0) && swiftTestingDeclarations != nil
+    }
     var swiftTestingDeclarations: SwiftTestingSourceDeclarations? = nil
     public var parserVersion: Int? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
@@ -273,6 +279,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         let declarationIssues = HelperDeclarationInventory.issues(tree, locations: locations, unsupportedImports: unsupportedCallerImports)
         let onlyCompilerAttributes = declarationIssues.allSatisfy {
             $0.kind == "unresolved-attribute" && ["@inline", "@_transparent"].contains($0.spelling)
+        }
+        let hasTestAttribute = declarationIssues.contains {
+            $0.kind == "unresolved-attribute" && ["@Test", "@Testing.Test"].contains($0.spelling)
         }
         result.helperDeclarationIssues = declarationIssues
         result.helperDeclarationsComplete = declarationIssues.isEmpty
@@ -781,8 +790,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                        return ["inline", "_transparent", "inlinable"].contains(attribute.attributeName.trimmedDescription)
                    }) {
                     unit.fileUnreferencedInlineName = name
-                    if onlyCompilerAttributes && function.modifiers.contains(where: { ["private", "fileprivate"].contains($0.name.text) }) {
-                        unit.fileProvesUnusedInline = true
+                    if function.modifiers.contains(where: { ["private", "fileprivate"].contains($0.name.text) }) {
+                        if onlyCompilerAttributes { unit.fileProvesUnusedInline = true }
+                        else if hasTestAttribute { unit.filePrivateInlineWithTests = true }
                     }
                 }
                 // A separate function-value use could account for a surviving

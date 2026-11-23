@@ -17,22 +17,34 @@ struct SwiftTestingSourceEffects {
     private(set) var unusedInline = Set<Declaration>()
     private(set) var positionIndependent = Set<Declaration>()
 
-    init(_ snapshot: XcodeTestGraph, touching paths: Set<String>, historical: [String: SwiftSourceSnapshot]? = nil) {
+    init(_ snapshot: XcodeTestGraph, touching paths: Set<String>, historical: [String: SwiftSourceSnapshot]? = nil,
+         unowned: [String: SwiftSourceSnapshot] = [:]) {
         guard let graph = snapshot.dependencies, graph.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil else { return }
-        unusedInline = Self.unusedBodies(snapshot.sources, in: snapshot, touching: paths)
-        if let historical { unusedInline.formIntersection(Self.unusedBodies(historical, in: snapshot, touching: paths)) }
+        unusedInline = Self.unusedBodies(snapshot.sources, in: snapshot, touching: paths, unowned: [:])
+        if let historical { unusedInline.formIntersection(Self.unusedBodies(historical, in: snapshot, touching: paths, unowned: unowned)) }
 
-        positionIndependent = Self.positionIndependentCallers(snapshot, touching: paths, historical: historical)
+        positionIndependent = Self.positionIndependentCallers(snapshot, touching: paths, historical: historical, unowned: unowned)
     }
 
     static func positionIndependentCallers(_ snapshot: XcodeTestGraph, touching paths: Set<String>,
-                                           historical: [String: SwiftSourceSnapshot]?) -> Set<Declaration> {
+                                           historical: [String: SwiftSourceSnapshot]?, unowned: [String: SwiftSourceSnapshot] = [:]) -> Set<Declaration> {
         guard let graph = snapshot.dependencies, graph.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil else { return [] }
         let candidates = snapshot.sources.filter {
             guard let path = $0.value.units.first?.region.path, paths.contains(path) else { return false }
             return $0.value.units.contains { $0.hasOnlyDirectSourceCalls == true }
         }
         guard !candidates.isEmpty else { return [] }
+        // An unowned base file might previously have contributed an overload.
+        // In a closed file, only the names actually present can compete.
+        var unownedNames = Set<String>()
+        for file in unowned.values {
+            guard file.diagnostics.isEmpty, file.helperDeclarationsComplete == true,
+                  file.helperImportsLocal == true, file.typeAliases?.isEmpty == true,
+                  file.helperOperatorDeclarations?.isEmpty == true,
+                  file.units.allSatisfy({ $0.helperInheritedTypes?.isEmpty == true && $0.kind != "extension" }),
+                  let names = file.identifierNames else { return [] }
+            unownedNames.formUnion(names)
+        }
         var callers = Set<Declaration>()
         let units = snapshot.sources.values.flatMap(\.units).filter { $0.kind == "function" }
         let functions = Dictionary(grouping: units, by: { $0.helperCallableName ?? "" })
@@ -47,7 +59,7 @@ struct SwiftTestingSourceEffects {
             }
             let oldDirectCallers = Set(old?.units.filter { $0.hasOnlyDirectSourceCalls == true }.map(\.key) ?? [])
             for unit in file.units where unit.hasOnlyDirectSourceCalls == true {
-                guard let names = unit.invocationNames, let signature = unit.helperReferenceSignature,
+                guard let names = unit.invocationNames, names.isDisjoint(with: unownedNames), let signature = unit.helperReferenceSignature,
                       let caller = Self.symbol(for: unit, among: symbols[signature]),
                       let refs = caller.compilerReferences, refs.count == names.count,
                       caller.dynamicDeclarations.isEmpty, !caller.hasOpaqueRuntimeDependency else { continue }
@@ -91,7 +103,8 @@ struct SwiftTestingSourceEffects {
         return matches?.count == 1 ? matches?.first : nil
     }
 
-    private static func unusedBodies(_ sources: [String: SwiftSourceSnapshot], in snapshot: XcodeTestGraph, touching paths: Set<String>) -> Set<Declaration> {
+    private static func unusedBodies(_ sources: [String: SwiftSourceSnapshot], in snapshot: XcodeTestGraph, touching paths: Set<String>,
+                                     unowned: [String: SwiftSourceSnapshot]) -> Set<Declaration> {
         // An expansion in the declaring file could call the function without a
         // written identifier. Internal functions can also be called by other files.
         let testingSyntax: Set<String> = ["@Test", "@Testing.Test", "@Suite", "@Testing.Suite", "#expect", "#require", "@inline", "@_transparent"]
@@ -102,21 +115,43 @@ struct SwiftTestingSourceEffects {
         }
         var unused = Set<Declaration>()
         var candidates: [SourceUnit] = []
-        for file in sources.values {
+        // Other files can change unqualified macro lookup through declarations
+        // or re-exports. Their ordinary imports are local to those files.
+        lazy var completeSources = snapshot.diagnostics.isEmpty &&
+            snapshot.unsupportedSourceInputs?.values.allSatisfy(\.isEmpty) != false &&
+            snapshot.targets.allSatisfy { target in
+                guard let module = snapshot.modules[target.name] else { return target.sourceFiles.isEmpty }
+                return target.sourceFiles.filter { $0.hasSuffix(".swift") }.allSatisfy { sources[module + ":" + $0] != nil }
+            }
+        func preservesMacroLookup(_ file: SwiftSourceSnapshot) -> Bool {
+            file.helperImportsLocal == true && file.diagnostics.isEmpty && file.helperDeclarationIssues?.allSatisfy {
+                $0.kind != "macro-declaration" && testingSyntax.contains($0.spelling)
+            } == true
+        }
+        lazy var closedModules = Set(snapshot.modules.values).subtracting(sources.compactMap { key, file in
+            preservesMacroLookup(file) ? nil : String(key.prefix { $0 != ":" })
+        })
+        lazy var closedUnowned = unowned.values.allSatisfy(preservesMacroLookup)
+        lazy var factories = SwiftTestingRegistrationComparison.FactoryIndex(snapshot, inspecting: paths)
+        for (key, file) in sources {
             guard let path = file.units.first?.region.path, paths.contains(path) else { continue }
             let named = file.units.filter { $0.fileUnreferencedInlineName != nil }
             guard !named.isEmpty, hasCompleteNames(file) else { continue }
+            lazy var authenticatedTests: Bool = {
+                guard completeSources, closedModules.contains(String(key.prefix { $0 != ":" })), closedUnowned else { return false }
+                return factories.provesBareTests(in: file, fileKey: key)
+            }()
             for unit in named {
-                if unit.fileProvesUnusedInline == true { unused.insert(Declaration(unit)) }
-                else { candidates.append(unit) }
+                if unit.fileProvesUnusedInline == true {
+                    unused.insert(Declaration(unit))
+                } else if unit.filePrivateInlineWithTests == true {
+                    if authenticatedTests { unused.insert(Declaration(unit)) }
+                } else {
+                    candidates.append(unit)
+                }
             }
         }
-        guard !candidates.isEmpty, snapshot.diagnostics.isEmpty,
-              snapshot.unsupportedSourceInputs?.values.allSatisfy(\.isEmpty) != false,
-              snapshot.targets.allSatisfy({ target in
-                  guard let module = snapshot.modules[target.name] else { return target.sourceFiles.isEmpty }
-                  return target.sourceFiles.filter { $0.hasSuffix(".swift") }.allSatisfy { sources[module + ":" + $0] != nil }
-              }), sources.values.allSatisfy(hasCompleteNames) else { return unused }
+        guard !candidates.isEmpty, unowned.isEmpty, completeSources, sources.values.allSatisfy(hasCompleteNames) else { return unused }
         let names = Set(candidates.compactMap(\.fileUnreferencedInlineName))
         var fileCounts: [String: Int] = [:]
         for file in sources.values {

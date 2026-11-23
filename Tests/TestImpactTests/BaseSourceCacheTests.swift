@@ -75,6 +75,32 @@ func scopedIndentationAuditsOnlyEligibleLocalCalls(callee: String) throws {
     #expect((result.unownedBaseSources["Unowned.swift"] != nil) == (callee == "local"))
 }
 
+@Test(arguments: ["manifest", "competingName", "unknownExpansion"])
+func unownedBaseFilesOnlyBlockAffectedLocationProofs(scenario: String) throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let before = "func value() -> Bool { true }\nfunc caller() -> Bool {\n    return value()\n}"
+    let after = before.replacingOccurrences(of: "    return", with: "        return")
+    let tests = "import Testing\nstruct Cases { @Test func check() { #expect(caller()) } }"
+    try repo.write("Caller.swift", before)
+    try repo.write("Tests.swift", tests)
+    try repo.write("Package.swift", "// swift-tools-version: 6.0\nimport PackageDescription\nlet package = Package(name: \"Fixture\")")
+    if scenario == "competingName" { try repo.write("Removed.swift", "func value(_ line: Int = #line) -> Int { line }") }
+    if scenario == "unknownExpansion" { try repo.write("Removed.swift", "#makeHelpers()") }
+    let base = try repo.commit()
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let id = "UI/Cases/check()"
+    var graph = try boundaryGraph(["Caller.swift": after, "Tests.swift": tests], tests: [id], root: repo.root,
+                                  compilerArguments: ["-plugin-path", plugins.path], compiler: compiler)
+    graph.mappings = nil
+    let changes = [FileChange(path: "Caller.swift")]
+    let source = try XcodeHeadOnlySources.read(current: graph, changes: changes, base: base, root: repo.root, mappingPath: "mapping.json")
+    #expect(source.unownedBaseSources["Package.swift"] != nil)
+    let report = XcodeHeadOnlySelector.select(current: graph, source: source, changes: changes, baseRevision: base)
+    #expect(report.selectedTests == (scenario == "manifest" ? [] : [id]))
+}
+
 @Test(arguments: ["current", "legacy-parser", "missing-head", "archive-substitution"])
 func headSyntaxReuseAuthenticatesFullGitDiffAndParser(scenario: String) throws {
     let repo = try SourceRepository()

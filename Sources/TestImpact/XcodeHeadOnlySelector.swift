@@ -276,8 +276,8 @@ enum XcodeHeadOnlySelector {
         var comparison = HeadOnlySourceComparison(head: current.mappings, base: source.mappings)
         lazy var hierarchy = SwiftSuperclassIndex(sources: current.sources)
         let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
-        let effects = SwiftTestingSourceEffects(current, touching: paths, historical: source.base)
-        if source.unownedBaseSources.isEmpty { comparison.positionIndependent = effects.positionIndependent }
+        let effects = SwiftTestingSourceEffects(current, touching: paths, historical: source.base, unowned: source.unownedBaseSources)
+        comparison.positionIndependent = effects.positionIndependent
         func scopedUnits(_ sources: [String: SwiftSourceSnapshot]) -> [String: [SourceUnit]] {
             let files = sources.values.filter { snapshot in
                 guard let path = snapshot.units.first?.region.path else { return false }
@@ -396,8 +396,7 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
             }
-            let unusedInline = effects.unusedInline.contains(.init(b)) && (source.unownedBaseSources.isEmpty ||
-                (a.fileProvesUnusedInline == true && b.fileProvesUnusedInline == true))
+            let unusedInline = effects.unusedInline.contains(.init(b))
             guard unusedInline || entryEdits[key] != nil || registrations.supportedBodies.contains(key) || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
                 fallback("head_only_unsupported_body", "Attributes, macros or opaque result types can change callers outside a surviving body: \(b.region.path):\(b.region.startLine)")
                 continue

@@ -92,7 +92,7 @@ struct SwiftTestingRegistrationComparison {
                         result[destination, default: [:]][signature, default: 0] += 1
                     }
                     if paths.contains(path), let file = sources[module + ":" + path],
-                       file.parserVersion != SwiftSourceSnapshot.currentParserVersion,
+                       !file.hasSwiftTestingRegistrationMetadata,
                        unit.swiftTestingRole != nil || (unit.kind == "function" && head.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil) ||
                            (unit.kind == "declaration" &&
                            file.swiftTestingDeclarations?.tests.contains(where: { $0.intersects(unit.region) }) == true) {
@@ -170,7 +170,7 @@ struct SwiftTestingRegistrationComparison {
 
     /// Bind an unambiguous source entry to its single compiler-emitted factory.
     /// Index by source file once, including tests with overlapping entry regions.
-    private struct FactoryIndex {
+    struct FactoryIndex {
         let snapshot: XcodeTestGraph
         var entries: [String: [(SourceRegion, String)]] = [:]
         var unmodeledPaths = Set<String>()
@@ -202,12 +202,26 @@ struct SwiftTestingRegistrationComparison {
             }
         }
 
+        /// Each written test attribute must have a surviving declaration and a
+        /// single empty SDK factory. Historical locations can move between builds.
+        func provesBareTests(in file: SwiftSourceSnapshot, fileKey: String) -> Bool {
+            guard let head = snapshot.sources[fileKey], file.hasSwiftTestingRegistrationMetadata,
+                  let issues = file.helperDeclarationIssues,
+                  issues.allSatisfy({ ["@inline", "@_transparent", "@Test", "@Testing.Test", "#expect", "#require"].contains($0.spelling) }) else { return false }
+            let attributes = issues.filter { ["@Test", "@Testing.Test"].contains($0.spelling) }
+            let tests = file.units.filter { $0.swiftTestingRole == "test" }
+            let current = head.units.filter { $0.swiftTestingRole == "test" }
+            guard !tests.isEmpty, attributes.count == tests.count, tests.map(\.key) == current.map(\.key),
+                  tests.allSatisfy({ $0.swiftTestingEntryInputs?.bare == true }) else { return false }
+            return current.allSatisfy { provesInputs(of: $0, requireEmpty: true) }
+        }
+
         func provesInputs(of unit: SourceUnit, requireEmpty: Bool = false) -> Bool {
             guard let graph = snapshot.dependencies, let inputs = unit.swiftTestingEntryInputs else { return false }
             let module = String(unit.key.prefix { $0 != ":" }), fileKey = module + ":" + unit.region.path
             let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
             guard !owners.isEmpty, owners.allSatisfy(\.isTest),
-                  let file = snapshot.sources[fileKey], file.parserVersion == SwiftSourceSnapshot.currentParserVersion,
+                  let file = snapshot.sources[fileKey], file.hasSwiftTestingRegistrationMetadata,
                   file.units.filter({ $0.kind == "function" && $0.region.intersects(unit.region) }).count == 1 else { return false }
             let matches = Set((entries[fileKey] ?? []).compactMap { $0.0.intersects(unit.region) ? $0.1 : nil })
             guard matches.count == 1, let test = matches.first,

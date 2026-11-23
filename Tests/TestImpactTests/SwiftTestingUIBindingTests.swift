@@ -486,7 +486,7 @@ import Testing
                   "sdkLocation", "binaryDefault", "escaped", "qualified", "mixedProvider", "mixedTrait",
                   "comments", "bareLocation", "helperLocation", "enabled", "disabled", "mixedCondition", "customCondition",
                   "physical", "providerHelper", "gateHelper", "transparent", "suiteBody", "documented", "reason", "qualifiedGate", "eagerReason",
-                  "opaqueCallback", "wrappedCallback", "namedSuite", "docSuite", "serializedSuite", "unusedInline", "privateInline", "fileprivateInline", "localCall"])
+                  "opaqueCallback", "wrappedCallback", "selectorCallback", "retainedV12", "privateBesideTest", "namedSuite", "docSuite", "serializedSuite", "unusedInline", "privateInline", "fileprivateInline", "localCall"])
 func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -501,10 +501,10 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
     var flags = ["-plugin-path", plugins.path]
     var runtimeFlags: [String] = []
     let helperEdits = ["helperLocation", "providerHelper", "gateHelper", "transparent"]
-    let unusedBodies = ["unusedInline", "privateInline", "fileprivateInline"]
-    let callbacks = ["opaqueCallback", "wrappedCallback"]
+    let unusedBodies = ["unusedInline", "privateInline", "fileprivateInline", "privateBesideTest"]
+    let callbacks = ["opaqueCallback", "wrappedCallback", "selectorCallback"]
     let predicateEdits = ["enabled", "disabled", "mixedCondition", "documented", "reason", "qualifiedGate"]
-    let suiteBodies = ["suiteBody", "namedSuite", "docSuite", "serializedSuite"]
+    let suiteBodies = ["suiteBody", "retainedV12", "namedSuite", "docSuite", "serializedSuite"]
     let localEdits = suiteBodies + ["comments", "bareLocation", "physical", "providerHelper", "gateHelper"] + predicateEdits
     if scenario == "binaryDefault" || helperEdits.contains(scenario) {
         // The selector cannot discover this default by indexing project sources.
@@ -563,6 +563,29 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
                     func marked() {}
                 }
                 """
+        case "selectorCallback":
+            files["Helper.swift"] = "func flag() -> Bool { " + (head ? "false" : "true") + " }"
+            files["Support.swift"] = "import Foundation\nimport Testing\nstruct Common { @Test func plain() { #expect(UserDefaults.standard.bool(forKey: \"\(discoveryKey)\")) } }"
+            files["Lookup.swift"] = """
+                import Foundation
+                import Testing
+                final class Observer: NSObject {
+                    @objc func record(_ notification: Notification) {
+                        UserDefaults.standard.set(flag(), forKey: "\(discoveryKey)")
+                    }
+                }
+                struct Marker: SuiteTrait {
+                    init() {
+                        let target = Observer()
+                        let center = NotificationCenter()
+                        let event = Notification.Name("ready")
+                        center.addObserver(target, selector: #selector(Observer.record(_:)), name: event, object: nil)
+                        center.post(name: event, object: nil)
+                        withExtendedLifetime(target) {}
+                    }
+                }
+                """
+            files["Tests.swift"] = "import Testing\n@Suite(Marker()) struct Other { @Test func marked() {} }"
         case "wrappedCallback":
             files["Helper.swift"] = """
                 import Darwin
@@ -583,18 +606,22 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
                 }
                 """
             files["Tests.swift"] = "import Testing\nextension Other { @Test(Marker(readFlag())) func marked() {} }"
-        case "unusedInline", "privateInline", "fileprivateInline", "localCall":
+        case "unusedInline", "privateInline", "fileprivateInline", "privateBesideTest", "localCall":
             let assertion = scenario == "localCall" ? "#expect(helper())" : ""
             files["Support.swift"] = "import Testing\nstruct Common { @Test func plain() { " + assertion + " } }"
             files["Tests.swift"] = "import Testing\nstruct Other { @Test func marked() { " + assertion + " } }"
             if scenario == "localCall" {
                 files["Helper.swift"] = "func yes() -> Bool { true }\nfunc helper() -> Bool {\n" + (head ? "    " : "  ") + "return yes()\n}"
             } else {
-                let modifiers = ["privateInline": "@inline(__always) private", "fileprivateInline": "@inline(__always) fileprivate"]
+                let modifiers = ["privateInline": "@inline(__always) private", "privateBesideTest": "@inline(__always) private", "fileprivateInline": "@inline(__always) fileprivate"]
                 files["Helper.swift"] = (modifiers[scenario] ?? "@inlinable") + " func unused() -> Bool { " + (head ? "false" : "true") + " }"
+                if scenario == "privateBesideTest" {
+                    files["Helper.swift"] = "import Testing\n" + files["Helper.swift"]! + "\nstruct Other { @Test func marked() {} }"
+                    files.removeValue(forKey: "Tests.swift")
+                }
                 if modifiers[scenario] != nil { files["Unrelated.swift"] = "import Darwin\nprivate func unused() {}" }
             }
-        case "suiteBody", "namedSuite", "docSuite", "serializedSuite":
+        case "suiteBody", "retainedV12", "namedSuite", "docSuite", "serializedSuite":
             let suite = ["namedSuite": "@Suite(\"Other tests\")", "docSuite": "/// Other tests\n@Suite", "serializedSuite": "@Suite(.serialized)"][scenario] ?? "@Suite"
             files["Tests.swift"] = "import Testing\n" + suite + " struct Other {\n@Test func marked() {\n" +
                 (head ? "#expect(Bool(false))\n" : "") + "}\n}"
@@ -666,6 +693,9 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
         var graph = try boundaryGraph(files, tests: inventory, root: root, compilerArguments: flags, allowTestDiagnostics: true,
                                       compiler: compiler, allowedUnbound: scenario == "physical" ? [marked] : [])
         graph.mappings = nil
+        if scenario == "retainedV12" {
+            for key in Array(graph.sources.keys) { graph.sources[key]?.parserVersion = 12 }
+        }
         return try GraphArchive.decode(GraphArchive.encode(graph))
     }
     var base = try capture(head: false), head = try capture(head: true)
@@ -675,6 +705,12 @@ func swiftTestingDiscoveryEditsReachTheirConsumers(scenario: String) throws {
     let headOnly = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
     if (unusedBodies + ["localCall"]).contains(scenario) {
         for result in [report, headOnly] { #expect(result.selectedTests.isEmpty) }
+        if scenario == "privateBesideTest" {
+            for id in head.dependencies!.functions.keys { head.dependencies!.functions[id]?.swiftTestingEmptyFactory = nil }
+            #expect(dual().selectedTests.contains(plain))
+            let unproven = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
+            #expect(unproven.selectedTests.contains(plain))
+        }
     } else if callbacks.contains(scenario) {
         for result in [report, headOnly] { #expect(result.selectedTests.contains(plain)) }
         // Archives produced before discovery inherited factory uncertainty still
