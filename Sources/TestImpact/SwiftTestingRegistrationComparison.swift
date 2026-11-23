@@ -258,10 +258,8 @@ struct SwiftTestingRegistrationComparison {
                 }
                 // Extensions inherit the nominal owner's suite in its defining module.
                 for owner in owners {
-                    var components = owner.split(separator: ".")[...]
-                    while components.count > 1 {
-                        testsBySuite[components.joined(separator: "."), default: []].insert(test)
-                        components = components.dropLast()
+                    for suite in SwiftTestingDiscoveryRoots.enclosingSuites(of: owner) {
+                        testsBySuite[suite, default: []].insert(test)
                     }
                 }
             }

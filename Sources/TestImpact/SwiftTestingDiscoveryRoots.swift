@@ -275,6 +275,20 @@ enum SwiftTestingDiscoveryRoots {
     private static let legacyIndirectCallback = "Swift Testing discovery invokes an indirect callback before test filtering"
     static let parameterizedArguments = "Parameterized test arguments may execute outside the test body; compiler evidence for argument generation and traits is required"
 
+    private static let derivedDiagnostics: Set<String> = [missingEvidence, runtimeEvidence, unresolvedEffects, legacyIndirectCallback]
+
+    /// A test inherits traits from its nominal type and its lexical enclosing types.
+    /// The first component is the module, including for cross-module extensions.
+    static func enclosingSuites(of owner: String) -> [String] {
+        var path = owner.split(separator: ".")[...]
+        var suites: [String] = []
+        while path.count > 1 {
+            suites.append(path.joined(separator: "."))
+            path = path.dropLast()
+        }
+        return suites
+    }
+
     /// Restore compiler inputs before binding. Older archives mixed entry and
     /// discovery roots in one set and could count an app host's static images as complete.
     static func restore(modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph) {
@@ -295,7 +309,6 @@ enum SwiftTestingDiscoveryRoots {
         }) else { return }
 
         let generated = factories.union(graph.swiftTestingSuiteWitnesses?.values.flatMap { $0 } ?? [])
-        let derivedDiagnostics: Set<String> = [missingEvidence, runtimeEvidence, unresolvedEffects, legacyIndirectCallback]
         var archived: [String: Set<String>] = [:]
         for (test, roots) in graph.tests {
             if let original = saved?[test] {
@@ -307,7 +320,6 @@ enum SwiftTestingDiscoveryRoots {
                 graph.tests[test] = roots.subtracting(prior).filter { !isDiscoveryRoot($0) }
                 archived[test] = prior
             }
-            graph.testDiagnostics[test]?.removeAll(where: derivedDiagnostics.contains)
         }
         bind(modules: modules, sources: sources, graph: &graph, archived: archived)
     }
@@ -322,11 +334,14 @@ enum SwiftTestingDiscoveryRoots {
         var testRegions: [String: [String: [SourceRegion]]] = [:]
         let written = SwiftTestingSuiteDeclarations(sources)
         let declaredSuites = written.names
-        var valueTypes: [String: Set<String>] = [:]
+        var nonInheritingTypes: [String: Bool] = [:]
         for (module, files) in sourceModules {
             for (_, file) in files {
-                for unit in file.units where unit.kind == "type" && unit.receiverValueType == true && !unit.scope.contains(".") {
-                    valueTypes[module, default: []].insert(unit.scope)
+                for unit in file.units where unit.kind == "type" {
+                    let name = module + "." + unit.scope
+                    let independent = unit.receiverValueType == true ||
+                        (file.classFinality?[unit.scope] == true && file.inheritance[name]?.isEmpty == true)
+                    nonInheritingTypes[name] = (nonInheritingTypes[name] ?? true) && independent
                 }
                 let declarations = file.swiftTestingDeclarations ?? SwiftTestingSourceDeclarations(legacyUnits: file.units)
                 for region in declarations.tests { testRegions[module, default: [:]][region.path, default: []].append(region) }
@@ -369,7 +384,7 @@ enum SwiftTestingDiscoveryRoots {
         let suiteTypes = Set(traitSuites.compactMap { suite in
             suite.swiftTestingFactoryType.map { suite.module + "." + $0 }
         })
-        // A verified locally declared value type only inherits its own suite
+        // A verified non-inheriting local type only receives enclosing suite
         // traits. Missing factories in unrelated modules cannot apply to it.
         var completeSuiteModules = Set<String>()
         for module in written.completeModules {
@@ -424,6 +439,7 @@ enum SwiftTestingDiscoveryRoots {
                 } == true
             }
             guard isWrittenTest || discovered[test] != nil || archived[test] != nil else { continue }
+            graph.testDiagnostics[test]?.removeAll(where: derivedDiagnostics.contains)
             compilerRoots[test] = roots
             let factoryRoots = discovered[test] ?? []
             graph.tests[test, default: []].formUnion(factoryRoots)
@@ -441,34 +457,26 @@ enum SwiftTestingDiscoveryRoots {
             }
             // Extensions register in their emitting module, but inherit traits
             // from the nominal type's declaring module (and its enclosing suites).
-            let owners = Set(roots.compactMap { id -> String? in
-                guard entryTests[id]?.contains(test) == true, let owner = graph.functions[id]?.nominalTypeContext,
-                      !owner.isEmpty else { return nil }
-                return owner
-            })
-            // A verified top-level value type cannot inherit the predicate of
-            // another suite. Keep the full suite edge for unknown ownership.
+            let methods = roots.filter { entryTests[$0]?.contains(test) == true }.compactMap { graph.functions[$0] }
+            let contexts = methods.compactMap(\.nominalTypeContext).filter { !$0.isEmpty }
+            let owners = Set(contexts)
+            let owner = contexts.count == methods.count && owners.count == 1 ? owners.first : nil
+            let enclosing = owner.map(enclosingSuites) ?? []
             let factory = factoryRoots.count == 1 ? factoryRoots.first.flatMap { graph.functions[$0] } : nil
-            let ownedValue = factory?.swiftTestingFactoryType.flatMap { type in
-                completeSuiteModules.contains(module) && valueTypes[module]?.contains(type) == true &&
-                    owners == [module + "." + type] ? module + "." + type : nil
-            }
-            if !allDeferredSuites.isEmpty, factory?.swiftTestingEmptyFactory != "top-level" {
-                let candidates = ownedValue.map { deferredSuites[$0] ?? [] } ?? allDeferredSuites
-                graph.tests[test, default: []].formUnion(linked.map(candidates.intersection) ?? candidates)
+            let hasUnknownPredicates = owner == nil && !allDeferredSuites.isEmpty &&
+                (linked.map { !$0.isDisjoint(with: allDeferredSuites) } ?? true)
+            if factory?.swiftTestingEmptyFactory != "top-level" {
+                for suite in enclosing {
+                    guard let predicates = deferredSuites[suite] else { continue }
+                    graph.tests[test, default: []].formUnion(linked.map(predicates.intersection) ?? predicates)
+                }
             }
             if !factoryRoots.isEmpty {
                 let scope = test.split(separator: "/").dropFirst().dropLast().joined(separator: ".")
                 let candidates = owners.isEmpty && !scope.isEmpty
                     ? Set(witnessModules.map { $0 + "." + scope }) : owners
-                for owner in candidates {
-                    var path = owner.split(separator: ".")
-                    while path.count > 1 {
-                        if let callbacks = suiteWitnesses[path.joined(separator: ".")] {
-                            graph.tests[test, default: []].formUnion(callbacks)
-                        }
-                        path = path.dropLast()
-                    }
+                for suite in candidates.flatMap(enclosingSuites) {
+                    if let callbacks = suiteWitnesses[suite] { graph.tests[test, default: []].formUnion(callbacks) }
                 }
             }
             guard factoryRoots.count == 1, completeSuiteModules.contains(module) || (declaredSuites[module]?.count ?? 0) <= (suites[module]?.count ?? 0),
@@ -499,17 +507,14 @@ enum SwiftTestingDiscoveryRoots {
             let factoryKind = factory?.swiftTestingEmptyFactory
             let emptySuites = (suites[module] ?? []).allSatisfy { graph.functions[$0]?.swiftTestingEmptyFactory == "suite" }
             let localMember = factoryRoots.allSatisfy { $0.hasPrefix("$s" + String(module.utf8.count) + module) }
-            // Top-level functions cannot inherit suite traits. Member tests
-            // require empty traits in every captured suite until exact suite
-            // ownership is available. Extensions of imported types have a
-            // different mangled declaration owner and may inherit unseen traits.
-            // Legacy/unknown SIL stays conservative.
-            // A local, top-level value type cannot inherit another nominal
-            // suite's traits. Require the source declaration, demangled test
-            // method owner, and literal SDK factory metatype to agree. Nested,
-            // imported, class, and generic contexts keep their uncertainty.
-            let unrelatedSuites = ownedValue.map { !suiteTypes.contains($0) } ?? false
-            if factoryKind != "top-level" && !(factoryKind == "member" && localMember && (emptySuites || unrelatedSuites)) {
+            // Excluding suite runtime uncertainty also requires a local, non-inheriting
+            // declaration and a matching metatype in a complete suite inventory.
+            let unrelatedSuites = factory?.swiftTestingFactoryType.map { type in
+                completeSuiteModules.contains(module) && nonInheritingTypes[module + "." + type] == true &&
+                    owner == module + "." + type && suiteTypes.isDisjoint(with: enclosing)
+            } ?? false
+            if factoryKind != "top-level" && (hasUnknownPredicates ||
+                !(factoryKind == "member" && localMember && (emptySuites || unrelatedSuites))) {
                 graph.testDiagnostics[test, default: []].append(runtimeEvidence)
             }
         }

@@ -143,8 +143,9 @@ import Testing
         "-plugin-path", plugins.path,
         "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib", root.appendingPathComponent("Tests.swift").path, "-o", sil.path], at: root)
     let parsed = try SILParser.parse(file: sil, module: "UI", sourceRoot: root)
-    var graph = DependencyGraph(functions: parsed.functions)
-    XcodeCompilerGraph.resolveDispatch(&graph, tables: parsed.dispatchTargets)
+    let owned = try SILOwnership.resolve(parsed, module: "UI", compiler: compiler, directory: root)
+    var graph = DependencyGraph(functions: owned.functions)
+    XcodeCompilerGraph.resolveDispatch(&graph, tables: owned.dispatchTargets)
     let source = SwiftSourceSnapshot.parse(text, path: "Tests.swift", module: "UI")
     XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": source], graph: &graph)
     for test in tests { #expect(graph.tests[test]?.isEmpty == false, "\(test)") }
@@ -190,7 +191,7 @@ import Testing
         let roots = graph.tests[test] ?? []
         #expect((nestedPaths.path(from: roots) != nil) == test.hasPrefix("UI/Outer/Inner/"), "\(test)")
         #expect((outerPaths.path(from: roots) != nil) == test.hasPrefix("UI/Outer/"), "\(test)")
-        #expect((discoveryPaths.path(from: roots) != nil) == (test != tests[4] && test != tests[0]), "\(test)")
+        #expect((discoveryPaths.path(from: roots) != nil) == test.hasPrefix("UI/Outer/"), "\(test)")
     }
 
     // A deleted helper was called by a top-level test and two nested methods.

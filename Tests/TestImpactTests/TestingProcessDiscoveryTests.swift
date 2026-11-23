@@ -31,10 +31,11 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     let modules = ["LocalTests": "Local", "CompanionTests": "Companion"]
     let ownership = Dictionary(uniqueKeysWithValues: names.map { ($0, Set([$0 + ".swift"])) })
     let log = names.map { "builtin-SwiftDriver -- " + arguments($0).map { "\"" + $0 + "\"" }.joined(separator: " ") }.joined(separator: "\n")
-    let plain = "LocalTests/Common/plain()"
+    let predicate = edit == .archivedPredicate
+    let plain = predicate ? "LocalTests/Container/Common/plain()" : "LocalTests/Common/plain()"
+    let classTest = "LocalTests/Independent/plainClass()", inherited = "LocalTests/Other/Child/member()"
     let nested = edit == .nestedMainActorSuite
     let marked = nested ? "LocalTests/Outer/Other/marked()" : "LocalTests/Other/marked()"
-    let predicate = edit == .archivedPredicate
     let guarded = edit == .guardedSuite || edit == .ambiguousSuite
     let ordinary = "CompanionTests/Case/testIndependent()"
     let observer = predicate ? "CompanionTests/Other/observe()" : "CompanionTests/Foreign/observe()"
@@ -42,9 +43,11 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         """
         import Testing
         func gate() -> Bool { \(value) }
-        struct Common { @Test func plain() {} }
+        struct Container { struct Common { @Test func plain() {} } }
+        final class Independent { @Test func plainClass() {} }
         @Suite(.enabled(if: gate())) public struct Other {
             public init() {}
+            struct Child { @Test func member() {} }
             @Test func marked() {}
         }
         """
@@ -77,6 +80,8 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     let localTarget = ["BlueprintName": "LocalTests", "TestBundlePath": "__TESTROOT__/Local/Fixture.xctest"]
     let companionTarget = ["BlueprintName": "CompanionTests", "TestBundlePath": "__TESTROOT__/Companion/Fixture.xctest"]
     let run = root.appendingPathComponent("Both.xctestrun")
+    var linkedPredicates: [Bool: XcodeTestGraph] = [:]
+    var unknownOwners: [Bool: XcodeTestGraph] = [:]
     var migratedPredicates: [Bool: XcodeTestGraph] = [:]
     func capture(_ value: Bool, includeObserver: Bool) throws -> XcodeTestGraph {
         let source: String
@@ -169,11 +174,12 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         let disabled: [String: Any] = ["TestTargets": [hosted], "IsEnabled": false]
         let linked = try records([["IsEnabled": false], active, disabled])
         #expect(linked == (try records([disabled, ["TestTargets": [localTarget, companionRun]]])))
-        #expect(linked["LocalTests"]?.count == (edit == .suiteTrait || nested || guarded || predicate ? 3 : 2))
+        let recordCount = predicate ? 5 : (edit == .suiteTrait || nested || guarded ? 3 : 2)
+        #expect(linked["LocalTests"]?.count == recordCount)
         #expect((linked["CompanionTests"] == nil) == (opaque || appHosted))
         #expect(try records([active, ["TestTargets": [hosted]]])["LocalTests"] == nil)
         #expect(try records([active, ["IsEnabled": 0, "TestTargets": [hosted]]])["LocalTests"] == nil)
-        let tests = [plain, marked, ordinary] + (includeObserver ? [observer] : [])
+        let tests = [plain, marked, ordinary] + (includeObserver ? [observer] : []) + (predicate ? [classTest, inherited] : [])
         var graph = XcodeCompilerGraph.extract(log: log, sourceRoot: root, directory: root, derived: root,
             progress: { _ in }, ownership: ownership, linkedTestingRecords: linked)
         let targets = modules.map { XcodeTarget(name: $0.key, productType: "com.apple.product-type.bundle.unit-test", sourceFiles: ownership[$0.value]!) }
@@ -189,6 +195,23 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: snapshot.sources, graph: &legacyGraph)
             let gate = try #require(graph.functions.values.first { $0.name == "gate()" }?.id)
             #expect(legacyGraph.dependencyPath(from: legacyGraph.tests[observer] ?? [], to: [gate]) == nil)
+            snapshot.dependencies = legacyGraph
+            linkedPredicates[value] = try GraphArchive.decode(GraphArchive.encode(snapshot))
+            #expect(legacyGraph.dependencyPath(from: legacyGraph.tests[inherited] ?? [], to: [gate]) != nil)
+            for test in [plain, classTest] {
+                #expect(legacyGraph.dependencyPath(from: legacyGraph.tests[test] ?? [], to: [gate]) == nil)
+            }
+
+            // When the entry method lacks nominal evidence, selection keeps the
+            // uncertainty without assigning another suite's predicate to it.
+            var unknown = legacyGraph
+            for id in unknown.swiftTestingEntryRoots?[plain] ?? [] { unknown.functions[id]?.nominalTypeContext = nil }
+            snapshot.dependencies = unknown
+            let restoredUnknown = try GraphArchive.decode(GraphArchive.encode(snapshot))
+            unknownOwners[value] = restoredUnknown
+            let rebound = try #require(restoredUnknown.dependencies)
+            #expect(rebound.testDiagnostics[plain]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+            #expect(rebound.dependencyPath(from: rebound.tests[plain] ?? [], to: [gate]) == nil)
             legacyGraph.swiftTestingPlatformAgentInventory = nil
             legacyGraph.swiftTestingEntryRoots = nil
             var legacy = snapshot
@@ -225,6 +248,14 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         }
         let reports = selections(head, base)
         if predicate {
+            for linked in try selections(#require(linkedPredicates[false]), #require(linkedPredicates[true])) {
+                #expect(Set(linked.selectedTests).isDisjoint(with: [plain, classTest]))
+                #expect(linked.explanations.contains { $0.test == inherited && $0.kind == "dependency" && $0.path.contains("Local.gate()") })
+            }
+            for report in try selections(#require(unknownOwners[false]), #require(unknownOwners[true])) {
+                #expect(report.selectedTests.contains(plain))
+                #expect(!report.explanations.contains { $0.test == plain && $0.kind == "dependency" })
+            }
             let migrated = try selections(#require(migratedPredicates[false]), #require(migratedPredicates[true]))
             for (fresh, restored) in zip(reports, migrated) {
                 #expect(restored.selectedTests == fresh.selectedTests)
@@ -301,7 +332,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             switch edit {
             case .archivedPredicate:
                 #expect(report.explanations.contains { $0.test == observer && $0.kind == "dependency" && $0.path.contains("Local.gate()") })
-                expected = [plain, marked, observer]
+                expected = [plain, classTest, inherited, marked, observer]
             case .ambiguousSuite:
                 expected = report.analysisMode == "head-only-git-syntax" ? [plain, marked, observer, ordinary] : [plain, marked]
             case .archivedBody: expected = [marked]
@@ -351,5 +382,29 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         """, path: "Nested.swift", module: "Local")
         let inner = try #require(file.units.first { $0.swiftTestingSuiteName == "Outer.Inner" })
         #expect((inner.swiftTestingRegistrationDeclaration != nil) == supported)
+    }
+}
+
+@Test func incompleteDiscoveryDiagnosticsSurviveRepeatedArchiveMigration() throws {
+    let file = "Tests.swift", test = "UI/Cases/example()"
+    let source = SwiftSourceSnapshot.parse("import Testing\nstruct Cases { @Test func example() {} }", path: file, module: "UI")
+    let entry = FunctionNode(id: "method", module: "UI", name: "Cases.example()",
+                             regions: [.init(path: file, startLine: 2, endLine: 2)])
+    var snapshot = XcodeTestGraph(targets: [], tests: [test])
+    snapshot.modules = ["UI": "UI"]
+    snapshot.sources = ["UI:" + file: source]
+    var graph = DependencyGraph(functions: [entry.id: entry])
+    graph.testDiagnostics[test] = ["existing diagnostic"]
+    XcodeCompilerGraph.bind(tests: [test], modules: snapshot.modules, sources: snapshot.sources, graph: &graph)
+    let diagnostics = ["existing diagnostic", SwiftTestingDiscoveryRoots.missingEvidence]
+    #expect(graph.testDiagnostics[test] == diagnostics)
+    graph.swiftTestingEntryRoots = nil
+    snapshot.dependencies = graph
+    for compact in [true, false] {
+        var archive = snapshot
+        for _ in 0..<2 {
+            archive = try GraphArchive.decode(compact ? GraphArchive.encode(archive) : JSONEncoder().encode(archive))
+            #expect(archive.dependencies?.testDiagnostics[test] == diagnostics)
+        }
     }
 }
