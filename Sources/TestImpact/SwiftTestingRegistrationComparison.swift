@@ -19,7 +19,10 @@ struct SwiftTestingRegistrationComparison {
     var baseChangedPaths: Set<String> { baseSuitePaths.union(baseDiscovery.paths) }
     var headChangedPaths: Set<String> { headSuitePaths.union(headDiscovery.paths) }
     var hasSemanticChanges: Bool { !headSuitePaths.isEmpty || baseDiscovery.hasChanges || headDiscovery.hasChanges }
-    var semanticPaths: Set<String> { baseChangedPaths.union(headChangedPaths).union(baseDiscovery.incomplete.paths).union(headDiscovery.incomplete.paths) }
+    // Explicit file mappings also apply when an older archive cannot compare registrations.
+    var baseMappingPaths: Set<String> { baseChangedPaths.union(baseDiscovery.incomplete.paths) }
+    var headMappingPaths: Set<String> { headChangedPaths.union(headDiscovery.incomplete.paths) }
+    var semanticPaths: Set<String> { baseMappingPaths.union(headMappingPaths) }
 
     init(before: [String: [SourceUnit]], after: [String: [SourceUnit]], baseSources: [String: SwiftSourceSnapshot],
          base: XcodeTestGraph? = nil, head: XcodeTestGraph, moves: [String: String] = [:],

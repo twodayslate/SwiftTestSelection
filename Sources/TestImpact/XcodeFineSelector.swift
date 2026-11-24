@@ -555,7 +555,7 @@ public enum XcodeFineSelector {
                 }
             }
             guard !uiTests.isEmpty else { continue }
-            let registrationPaths = revision == "base" ? registrations.baseChangedPaths : registrations.headChangedPaths
+            let registrationPaths = revision == "base" ? registrations.baseMappingPaths : registrations.headMappingPaths
             var featurePaths = snapshot.mappings?.registrationSourceMatches(registrationPaths, targets: snapshot.targets) ?? [:]
             guard !productionUnits.isEmpty || !featurePaths.isEmpty else { continue }
             guard let mappings = snapshot.mappings else {

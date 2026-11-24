@@ -313,9 +313,15 @@ enum XcodeHeadOnlySelector {
         for key in Set(old.keys).union(new.keys).sorted() {
             if replacedEntryKeys.contains(key) { continue }
             let before = old[entryEdits[key] ?? key] ?? [], after = new[key] ?? []
-            // The suite header differs only in registration inputs. Discovery
-            // accounts for them and member declarations are compared separately.
-            if registrations.registrationEdits[key] != nil, after.first?.swiftTestingRole == "suite" { continue }
+            // Discovery accounts for the header's compiler effects. An eager production
+            // registration also needs the same UI coverage as other production changes.
+            if registrations.registrationEdits[key] != nil, let suite = after.first, suite.swiftTestingRole == "suite" {
+                if registrations.suiteArgumentEdits[key] == nil,
+                   current.targets.contains(where: { !$0.isTest && $0.sourceFiles.contains(suite.region.path) }) {
+                    changed.append(suite)
+                }
+                continue
+            }
             guard entryEdits[key] != nil || !comparison.equivalent(before, after) || policyHelpers.contains(key) else { continue }
             // Shared keys (notably imports) can span several source dictionaries.
             // Keep every region, but never let dictionary order label a boundary.
@@ -455,7 +461,8 @@ enum XcodeHeadOnlySelector {
         if let graph = current.dependencies {
             let index = dependencyIndex!
             if let mappings = current.mappings { mappingIndex = MappingIndex(mappings, snapshot: current, graph: graph, index: index) }
-            var affected = Set<String>(), isolatedSymbols = Set<String>(), sdkSymbols = Set<String>(), production: [SourceUnit] = []
+            var affected = Set<String>(), isolatedSymbols = Set<String>(), sdkSymbols = Set<String>()
+            var production: [SourceUnit] = []
             affected.formUnion(registrations.headDiscovery.roots(in: graph))
             var entrySymbols = Set<String>()
             for unit in changed {
@@ -468,6 +475,11 @@ enum XcodeHeadOnlySelector {
                 }
                 if !(current.unsupportedSourceInputs?[module]?.isEmpty ?? true) || current.unresolvedProductRoles?[module] != nil {
                     fallback("head_only_ownership", "Changed module \(module) has unsupported source inputs or an unresolved product role")
+                }
+                if unit.swiftTestingRole == "suite" {
+                    // The shared discovery roots already represent evaluation of this header.
+                    production.append(unit)
+                    continue
                 }
                 let overlapping = Set(current.sources.values.flatMap(\.units).filter { $0.kind == "function" && $0.region.intersects(unit.region) }.map(\.key))
                 guard overlapping == [unit.key] else {
@@ -576,8 +588,7 @@ enum XcodeHeadOnlySelector {
                 }
             }
             // Removing an argument can leave only the historical registration input.
-            let registrationPaths = registrations.headChangedPaths.union(registrations.baseChangedPaths)
-            var featurePaths = current.mappings?.registrationSourceMatches(registrationPaths, targets: current.targets) ?? [:]
+            var featurePaths = current.mappings?.registrationSourceMatches(registrations.semanticPaths, targets: current.targets) ?? [:]
             if !production.isEmpty || !featurePaths.isEmpty {
                 if let mappings = current.mappings, let mi = mappingIndex {
                     var matched = Set(featurePaths.keys), mappedTests = Set<String>(), covered = Set<String>()
@@ -613,7 +624,7 @@ enum XcodeHeadOnlySelector {
                     }
                     if !production.isEmpty {
                         fallback("head_only_unmapped_ui", "UI tests outside explicit mappings remain selected", tests: uiTests.subtracting(mappedTests))
-                        if !production.allSatisfy({ covered.contains($0.key) }) { fallback("head_only_unmapped_production", "Changed production body has no UI feature boundary", tests: uiTests) }
+                        if !production.allSatisfy({ covered.contains($0.key) }) { fallback("head_only_unmapped_production", "Changed production declaration has no UI feature boundary", tests: uiTests) }
                         if mappings.runtimeDependencyPolicy != .declared || source.mappings?.runtimeDependencyPolicy != .declared {
                             fallback("head_only_ui_runtime", "No unchanged declared cross-process UI dependency contract", tests: uiTests)
                         }

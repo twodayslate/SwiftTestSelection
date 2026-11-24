@@ -468,8 +468,12 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     }
 }
 
-@Test
-func productionSuiteRenameRetainsDirectAndDependentUIMappings() throws {
+private enum ProductionSuiteEdit: CaseIterable {
+    case rename, archivedDocumentation, eagerArgument, removedEagerArgument
+}
+
+@Test(arguments: ProductionSuiteEdit.allCases)
+private func productionSuiteEditsRetainUICoverage(_ edit: ProductionSuiteEdit) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -501,7 +505,21 @@ func productionSuiteRenameRetainsDirectAndDependentUIMappings() throws {
     try ui.write(to: root.appendingPathComponent("UI.swift"), atomically: true, encoding: .utf8)
     let log = ["Shared", "UI"].map { "builtin-SwiftDriver -- " + arguments($0).map { "\"" + $0 + "\"" }.joined(separator: " ") }.joined(separator: "\n")
     func capture(_ name: String) throws -> XcodeTestGraph {
-        let shared = "import Testing\n@Suite(\"\(name)\") public struct Inventory { public init() {} }"
+        let header: String
+        switch edit {
+        case .rename: header = "@Suite(\"\(name)\")"
+        case .archivedDocumentation: header = "/// \(name)\n@Suite"
+        case .eagerArgument: header = "@Suite(Marker(\(name == "Old")))"
+        case .removedEagerArgument: header = name == "Old" ? "@Suite(Marker(true))" : "@Suite"
+        }
+        let shared = """
+            import Foundation
+            import Testing
+            struct Marker: SuiteTrait {
+                init(_ enabled: Bool) { UserDefaults.standard.set(enabled, forKey: "inventory.enabled") }
+            }
+            \(header) public struct Inventory { public init() {} }
+            """
         try shared.write(to: root.appendingPathComponent("Shared.swift"), atomically: true, encoding: .utf8)
         let object = root.appendingPathComponent("Shared.o").path
         _ = try query(arguments("Shared") + ["-emit-module", "-emit-object", "-o", object])
@@ -519,16 +537,44 @@ func productionSuiteRenameRetainsDirectAndDependentUIMappings() throws {
                                                         .init(name: "client", tests: [dependent], dependsOn: ["inventory"])])
         XcodeCompilerGraph.bind(tests: tests, modules: snapshot.modules, sources: snapshot.sources, graph: &graph)
         snapshot.dependencies = graph
+        if edit == .archivedDocumentation {
+            // Version 4 recorded the suite role but omitted its registration arguments and metadata.
+            var file = snapshot.sources["Shared:Shared.swift"]!
+            file.parserVersion = 4
+            file.swiftTestingDeclarations = nil
+            for i in file.units.indices {
+                file.units[i].swiftTestingArguments = nil
+                file.units[i].swiftTestingSuiteMetadata = nil
+                file.units[i].swiftTestingRegistrationDeclaration = nil
+                file.units[i].swiftTestingSuiteInputs = nil
+            }
+            snapshot.sources["Shared:Shared.swift"] = file
+        }
         return try GraphArchive.decode(GraphArchive.encode(snapshot))
     }
-    let base = try capture("Old"), head = try capture("New")
+    let base = try capture("Old")
+    var head = try capture("New")
     let changes = [FileChange(path: "Shared.swift")]
     let dual = XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base")
-    let single = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources, mappings: base.mappings), changes: changes, baseRevision: "base")
+    func headOnly() -> ImpactReport {
+        XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources, mappings: head.mappings), changes: changes, baseRevision: "base")
+    }
     #expect(Set(dual.explanations.filter { $0.test == mapped && $0.kind == "explicitMapping" }.map(\.revision)) == ["base", "head"])
-    for report in [dual, single] {
-        #expect(report.selectedTests == [member, mapped, dependent].sorted())
+    for report in [dual, headOnly()] {
+        if edit == .rename { #expect(report.selectedTests == [member, mapped, dependent].sorted()) }
+        if edit == .archivedDocumentation {
+            #expect(report.diagnostics.contains { $0.code == "incomplete_testing_registration" })
+        }
         #expect(report.explanations.contains { $0.test == mapped && $0.kind == "explicitMapping" && $0.path.contains("Shared.swift") })
         #expect(report.explanations.contains { $0.test == dependent && $0.kind == "explicitMapping" && $0.path.contains("inventory") })
+    }
+    if edit == .eagerArgument || edit == .removedEagerArgument {
+        head.mappings = UIFeatureMappings(features: [.init(name: "client", sources: ["UI.swift"], tests: tests)])
+        head.mappings?.runtimeDependencyPolicy = .declared
+        let uncovered = headOnly()
+        #expect(uncovered.selectedTests == tests.sorted())
+        #expect(uncovered.diagnostics.contains { $0.code == "head_only_unmapped_production" && $0.tests == tests.sorted() })
+        head.mappings = nil
+        #expect(headOnly().diagnostics.contains { $0.code == "head_only_missing_mappings" && $0.tests == tests.sorted() })
     }
 }
