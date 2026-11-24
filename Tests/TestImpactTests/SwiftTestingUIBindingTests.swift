@@ -511,6 +511,75 @@ func deferredSuiteConditionSelectsItsMember(scenario: String) throws {
     try verifyDiscoveryEdit(scenario: scenario)
 }
 
+@Test(arguments: ["display", "condition", "displayAndCondition", "eagerReason", "customCondition"])
+func suiteRegistrationArgumentsFollowTheirEvaluationScope(scenario: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let plain = "UI/Common/plain()", members = ["UI/Other/marked()", "UI/Other/Child/nested()"]
+    func capture(_ flag: Bool) throws -> XcodeTestGraph {
+        let display = flag ? "\"Old\"" : "\"New\""
+        let condition = ".enabled(if: \(flag))"
+        let arguments: String
+        switch scenario {
+        case "display": arguments = display
+        case "condition": arguments = condition
+        case "displayAndCondition": arguments = display + ", " + condition
+        case "eagerReason": arguments = ".enabled(if: true, reason(\(flag)))"
+        default: arguments = ".enabled(if: \(flag ? 1 : 0))"
+        }
+        let source = """
+            import Foundation
+            import Testing
+            func reason(_ flag: Bool) -> Comment {
+                UserDefaults.standard.set(flag, forKey: "suite-registration")
+                return "reason"
+            }
+            struct Marker: SuiteTrait {}
+            extension Trait where Self == Marker {
+                static func enabled(if value: Int) -> Self { _ = reason(value == 1); return Marker() }
+            }
+            struct Common {
+                @Test func plain() {}
+            }
+            @Suite(\(arguments)) struct Other {
+                @Test func marked() {}
+                struct Child { @Test func nested() {} }
+            }
+            """
+        var graph = try boundaryGraph(["Tests.swift": source], tests: [plain] + members, root: root,
+                                      compilerArguments: ["-plugin-path", plugins.path], allowTestDiagnostics: true, compiler: compiler)
+        graph.mappings = nil
+        return try GraphArchive.decode(GraphArchive.encode(graph))
+    }
+    var base = try capture(true), head = try capture(false)
+    let changes = [FileChange(path: "Tests.swift")]
+    func dual() -> ImpactReport { XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base") }
+    func headOnly() -> ImpactReport {
+        XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
+    }
+    if ["eagerReason", "customCondition"].contains(scenario) {
+        for report in [dual(), headOnly()] {
+            #expect(report.explanations.contains { $0.test == plain && $0.kind == "dependency" && $0.path.contains("Testing.discovery in UI") })
+        }
+    } else {
+        for report in [dual(), headOnly()] { #expect(report.selectedTests == members.sorted()) }
+        if scenario == "condition" {
+            // Older captures lack suite argument evidence. Each selector must keep
+            // shared coverage when the revision it relies on lacks the proof.
+            let id = try #require(head.dependencies?.functions.values.first {
+                $0.swiftTestingFactoryType == "Other" && $0.swiftTestingDeferredConditions?.predicates == [0: "enabled"]
+            }?.id)
+            base.dependencies?.functions[id]?.swiftTestingDeferredConditions = nil
+            #expect(dual().selectedTests.contains(plain))
+            head.dependencies?.functions[id]?.swiftTestingDeferredConditions = nil
+            #expect(headOnly().selectedTests.contains(plain))
+        }
+    }
+}
+
 @Test(arguments: ["fileMove", "line", "defaultLine", "actor", "display", "annotatedDisplay", "providers",
                   "sdkLocation", "binaryDefault", "escaped", "qualified", "mixedProvider", "mixedTrait",
                   "comments", "bareLocation", "helperLocation", "enabled", "disabled", "mixedCondition", "customCondition",

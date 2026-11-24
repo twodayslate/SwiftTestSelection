@@ -173,7 +173,7 @@ enum SwiftTestingFactoryProof {
                 evidence.traitProducers.insert(producer)
             }
         }
-        guard let count, !predicates.isEmpty else { return nil }
+        guard let count, !predicates.isEmpty || element == "any SuiteTrait" else { return nil }
         return Conditions(traitCount: count, predicates: predicates, commentSlots: commentSlots.isEmpty ? nil : commentSlots)
     }
 
@@ -354,7 +354,12 @@ enum SwiftTestingFactoryProof {
             evidence.cleanupIsSDKMetadata = constructsOnlyMetadata(header: header, definitions: definitions,
                 eager: Set(references.values).subtracting(evidence.deferredReferences), factory: factory.value)
         }
-        if !suite { evidence.deferredConditions = conditions }
+        // Suite arguments are local to members only when eager construction
+        // consists entirely of SDK metadata and every deferred slot is accounted for.
+        let eager = Set(references.values).subtracting(evidence.deferredReferences).subtracting([factory.value])
+        let pureSuite = suite && modeledInstructions && evidence.cleanupIsSDKMetadata &&
+            eager.isSubset(of: SwiftTestingDiscoveryEffects.metadataCallees)
+        if !suite || pureSuite { evidence.deferredConditions = conditions }
         // A nonempty traits array still permits entry-local provider edits
         // when source comparison preserves every eager trait and its location.
         if !evidence.traitTypes.isEmpty { evidence.deferredProviderCount = provenProviders }
@@ -387,6 +392,7 @@ enum SwiftTestingFactoryProof {
             evidence.deferredProviderCount = provenProviders
         } else if suite {
             evidence.emptyFactory = "suite"
+            if pureSuite { evidence.deferredConditions = Conditions() }
         } else if fields[1] == "Never", definitions[arguments[2]] == "enum $Optional<@thick Never.Type>, #Optional.none!enumelt" {
             evidence.emptyFactory = "top-level"
         } else {

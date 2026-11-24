@@ -27,9 +27,9 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         }
     }
 
-    /// The source projection retains the signature, body and sibling attributes.
-    /// Its erased inputs are entry-local only with a matching SDK factory proof.
-    struct EntryInputs: Codable, Sendable {
+    /// Preserves the rest of the declaration while projecting out registration arguments.
+    /// Scoping the projected arguments to a test or suite requires matching SDK factory evidence.
+    struct RegistrationInputs: Codable, Sendable {
         let declaration: String
         let providers: Int
         let eager: [Arguments]
@@ -88,9 +88,10 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         return fingerprint(Syntax(declaration))
     }
 
-    static func entryInputs(_ function: FunctionDeclSyntax, fingerprint: (Syntax) -> String,
-                            capture: (Syntax) -> Arguments) -> EntryInputs? {
-        var attributes = function.attributes
+    static func registrationInputs(_ node: Syntax, attribute expected: String, fingerprint: (Syntax) -> String,
+                                   capture: (Syntax) -> Arguments) -> RegistrationInputs? {
+        guard var declaration = node.asProtocol(WithAttributesSyntax.self) else { return nil }
+        var attributes = declaration.attributes
         var providers: Int?
         var eager: [Arguments] = []
         var bare = false
@@ -98,7 +99,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         var nonliteralPredicates: [Arguments] = []
         for index in attributes.indices {
             guard let attribute = attributes[index].as(AttributeSyntax.self) else { return nil }
-            if !matches(attribute, "Test") {
+            if !matches(attribute, expected) {
                 guard isMainActor(attribute) else { return nil }
                 continue
             }
@@ -117,7 +118,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
                    let literal = argument.expression.as(StringLiteralExprSyntax.self),
                    literal.segments.allSatisfy({ $0.is(StringSegmentSyntax.self) }) {
                     hasDisplayName = true
-                } else if argument.label?.text == "arguments" && providerCount == 0 {
+                } else if expected == "Test", argument.label?.text == "arguments" && providerCount == 0 {
                     providerCount = 1
                 } else if argument.label == nil && providerCount > 0 {
                     providerCount += 1
@@ -163,9 +164,11 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
             providers = providerCount
             attributes[index] = .attribute(attribute.with(\.arguments, .argumentList(projected)))
         }
-        return providers.map { EntryInputs(declaration: fingerprint(Syntax(function.with(\.attributes, attributes))),
-                                          providers: $0, eager: eager, bare: bare, conditions: conditions.predicates.isEmpty ? nil : conditions,
-                                          nonliteralPredicates: nonliteralPredicates.isEmpty ? nil : nonliteralPredicates) }
+        declaration.attributes = attributes
+        guard let providers else { return nil }
+        return RegistrationInputs(declaration: fingerprint(Syntax(declaration)), providers: providers, eager: eager, bare: bare,
+                                  conditions: conditions.predicates.isEmpty ? nil : conditions,
+                                  nonliteralPredicates: nonliteralPredicates.isEmpty ? nil : nonliteralPredicates)
     }
 
     var suites: [Suite] = []

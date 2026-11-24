@@ -13,6 +13,7 @@ struct SwiftTestingRegistrationComparison {
     private(set) var suitePaths = Set<String>()
     private(set) var discoveryPaths = Set<String>()
     private(set) var incompletePaths = Set<String>()
+    private(set) var suiteArgumentEdits: [String: String] = [:]
     private(set) var registrationEdits: [String: String] = [:]
     private var baseDiscovery = DiscoveryChange()
     private var headDiscovery = DiscoveryChange()
@@ -87,31 +88,48 @@ struct SwiftTestingRegistrationComparison {
         }
 
         var survivingFactories: [String: String] = [:]
-        if base == nil {
-            let previous = declarations(before)
-            for (identity, units) in declarations(after) {
-                guard units.count == 1, let prior = previous[identity], prior.count == 1,
-                      entryEdits[units[0].key] == nil,
-                      (prior[0].swiftTestingArguments ?? []).map({ $0.comparison(policy) }) !=
-                        (units[0].swiftTestingArguments ?? []).map({ $0.comparison(policy) }),
-                      (prior[0].swiftTestingRole != "suite" || historicalSuites.canBind(prior[0])),
-                      let factory = factory(of: units[0], historical: false) else { continue }
-                survivingFactories[prior[0].key] = factory
-                registrationEdits[units[0].key] = prior[0].key
+        let previousDeclarations = declarations(before)
+        for (identity, units) in declarations(after) {
+            guard units.count == 1, let unit = units.first,
+                  base == nil || unit.swiftTestingRole == "suite",
+                  let prior = previousDeclarations[identity], prior.count == 1, let old = prior.first,
+                  entryEdits[unit.key] == nil,
+                  (old.swiftTestingArguments ?? []).map({ $0.comparison(policy) }) !=
+                    (unit.swiftTestingArguments ?? []).map({ $0.comparison(policy) }),
+                  (old.swiftTestingRole != "suite" || historicalSuites.canBind(old)),
+                  let id = factory(of: unit, historical: false) else { continue }
+            if base == nil {
+                survivingFactories[old.key] = id
+                registrationEdits[unit.key] = old.key
             }
+            guard let inputs = unit.swiftTestingSuiteInputs, let historical = old.swiftTestingSuiteInputs,
+                  inputs.eager.isEmpty, historical.eager.isEmpty,
+                  let proof = head.dependencies?.functions[id]?.swiftTestingDeferredConditions,
+                  proof.matches(inputs.conditions ?? .init()) else { continue }
+            if let base {
+                guard let oldID = factory(of: old, historical: true),
+                      base.dependencies?.functions[oldID]?.swiftTestingDeferredConditions?.matches(historical.conditions ?? .init()) == true else { continue }
+            } else {
+                // Head SIL proves the overload only for the surviving source shape.
+                // A different historical expression could have been evaluated eagerly.
+                guard inputs.declaration == historical.declaration,
+                      (inputs.nonliteralPredicates ?? []).map({ $0.comparison(policy) }) ==
+                        (historical.nonliteralPredicates ?? []).map({ $0.comparison(policy) }) else { continue }
+            }
+            suiteArgumentEdits[unit.key] = old.key
         }
 
         var scopedSuites = Set<String>()
         for (key, group) in after where group.count == 1 {
             let unit = group[0]
-            guard paths.contains(unit.region.path), let previous = before[registrationEdits[key] ?? key], previous.count == 1,
+            guard paths.contains(unit.region.path), let previous = before[suiteArgumentEdits[key] ?? registrationEdits[key] ?? key], previous.count == 1,
                   previous[0].region.path == unit.region.path, previous[0].conditionalBranch == unit.conditionalBranch else { continue }
             if base == nil, unit.swiftTestingBodyCandidate == true, previous[0].swiftTestingBodyCandidate == true,
                previous[0].fingerprint != unit.fingerprint, headProof.provesInputs(of: unit, requireEmpty: true) {
                 supportedBodies.insert(key)
             }
             guard let a = previous[0].swiftTestingSuiteMetadata, let b = unit.swiftTestingSuiteMetadata,
-                  a.comparison(policy) != b.comparison(policy) else { continue }
+                  suiteArgumentEdits[key] != nil || a.comparison(policy) != b.comparison(policy) else { continue }
             if headSuites == nil { headSuites = SuiteIndex(head) }
             guard historicalSuites.canBind(previous[0]), let tests = headSuites?.members(of: unit) else { continue }
             if let base {
@@ -151,8 +169,8 @@ struct SwiftTestingRegistrationComparison {
             }
             return result
         }
-        let lhs = headers(before, sources: baseSources, moves: moves, excluding: Set(entryEdits.values))
-        let rhs = headers(after, sources: head.sources, moves: [:], excluding: Set(entryEdits.keys))
+        let lhs = headers(before, sources: baseSources, moves: moves, excluding: Set(entryEdits.values).union(suiteArgumentEdits.values))
+        let rhs = headers(after, sources: head.sources, moves: [:], excluding: Set(entryEdits.keys).union(suiteArgumentEdits.keys))
         for path in Set(lhs.keys).union(rhs.keys) {
             let left = lhs[path] ?? [:], right = rhs[path] ?? [:]
             for signature in Set(left.keys).union(right.keys) {

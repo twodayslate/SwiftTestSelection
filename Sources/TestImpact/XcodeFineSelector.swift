@@ -157,8 +157,10 @@ public enum XcodeFineSelector {
             oldChanged += oldUnits[baseKey] ?? []
             newChanged += newUnits[headKey] ?? []
         }
+        let scopedOldSuites = Set(registrations.suiteArgumentEdits.values)
         for key in Set(oldUnits.keys).union(newUnits.keys) {
-            let old = oldUnits[key] ?? [], new = newUnits[key] ?? []
+            let old = scopedOldSuites.contains(key) ? [] : (oldUnits[key] ?? [])
+            let new = registrations.suiteArgumentEdits[key] == nil ? (newUnits[key] ?? []) : []
             if old.count > 1 || new.count > 1 {
                 let before = Dictionary(grouping: old) { Alternative(path: movedPaths[$0.region.path] ?? $0.region.path, branch: $0.conditionalBranch) }
                 let after = Dictionary(grouping: new) { Alternative(path: $0.region.path, branch: $0.conditionalBranch) }

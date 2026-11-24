@@ -59,7 +59,8 @@ public struct SourceUnit: Codable, Sendable {
     var filePrivateInlineWithTests: Bool? = nil
     var hasOnlyDirectSourceCalls: Bool? = nil
     var swiftTestingRegistrationDeclaration: String? = nil
-    var swiftTestingEntryInputs: SwiftTestingSourceDeclarations.EntryInputs? = nil
+    var swiftTestingSuiteInputs: SwiftTestingSourceDeclarations.RegistrationInputs? = nil
+    var swiftTestingEntryInputs: SwiftTestingSourceDeclarations.RegistrationInputs? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
     /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
     public var bodylessProtocolRequirement: String? = nil
@@ -127,7 +128,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 18
+    static let currentParserVersion = 19
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -694,12 +695,13 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     registrations.append(metadata)
                 }
             }
-            let entryInputs = node.as(FunctionDeclSyntax.self).flatMap {
-                SwiftTestingSourceDeclarations.entryInputs($0, fingerprint: compactFingerprint) { expression in
+            func registrationInputs(_ attribute: String) -> SwiftTestingSourceDeclarations.RegistrationInputs? {
+                SwiftTestingSourceDeclarations.registrationInputs(node, attribute: attribute, fingerprint: compactFingerprint) { expression in
                     .init(identity: compactFingerprint(expression), locations: locationValues(expression),
                           calls: callerInfo(expression, includeAllTokens: true).locations)
                 }
             }
+            let entryInputs = node.is(FunctionDeclSyntax.self) ? registrationInputs("Test") : nil
             var registrationDeclaration: String?
             if testingBodyCandidate {
                 registrationDeclaration = SwiftTestingSourceDeclarations.registrationDeclaration(node, attribute: "Test", fingerprint: compactFingerprint)
@@ -789,6 +791,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                         }
                     }
                 })
+            if suiteMetadata != nil, registrationDeclaration != nil { unit.swiftTestingSuiteInputs = registrationInputs("Suite") }
             unit.swiftTestingSuiteMetadata = suiteMetadata
             unit.swiftTestingBodyCandidate = entryInputs?.bare == true && testingBodyCandidate ? true : nil
             unit.hasInlineBody = node.tokens(viewMode: .sourceAccurate).contains(where: { token in
