@@ -511,7 +511,7 @@ func deferredSuiteConditionSelectsItsMember(scenario: String) throws {
     try verifyDiscoveryEdit(scenario: scenario)
 }
 
-@Test(arguments: ["display", "condition", "displayAndCondition", "eagerReason", "customCondition"])
+@Test(arguments: ["display", "firstName", "serializedName", "customSerializedName", "condition", "displayAndCondition", "eagerReason", "customCondition"])
 func suiteRegistrationArgumentsFollowTheirEvaluationScope(scenario: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -522,9 +522,12 @@ func suiteRegistrationArgumentsFollowTheirEvaluationScope(scenario: String) thro
     func capture(_ flag: Bool) throws -> XcodeTestGraph {
         let display = flag ? "\"Old\"" : "\"New\""
         let condition = ".enabled(if: \(flag))"
-        let arguments: String
+        let arguments: String?
         switch scenario {
         case "display": arguments = display
+        case "firstName": arguments = flag ? nil : display
+        case "serializedName": arguments = display + ", .serialized"
+        case "customSerializedName": arguments = display + ", ParallelizationTrait.serialized"
         case "condition": arguments = condition
         case "displayAndCondition": arguments = display + ", " + condition
         case "eagerReason": arguments = ".enabled(if: true, reason(\(flag)))"
@@ -544,7 +547,8 @@ func suiteRegistrationArgumentsFollowTheirEvaluationScope(scenario: String) thro
             struct Common {
                 @Test func plain() {}
             }
-            @Suite(\(arguments)) struct Other {
+            \(scenario == "customSerializedName" ? "struct ParallelizationTrait: SuiteTrait { static var serialized: Self { _ = reason(true); return Self() } }" : "")
+            @Suite\(arguments.map { "(" + $0 + ")" } ?? "") struct Other {
                 @Test func marked() {}
                 struct Child { @Test func nested() {} }
             }
@@ -560,21 +564,41 @@ func suiteRegistrationArgumentsFollowTheirEvaluationScope(scenario: String) thro
     func headOnly() -> ImpactReport {
         XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
     }
-    if ["eagerReason", "customCondition"].contains(scenario) {
+    if ["eagerReason", "customCondition", "customSerializedName"].contains(scenario) {
         for report in [dual(), headOnly()] {
             #expect(report.explanations.contains { $0.test == plain && $0.kind == "dependency" && $0.path.contains("Testing.discovery in UI") })
         }
     } else {
         for report in [dual(), headOnly()] { #expect(report.selectedTests == members.sorted()) }
-        if scenario == "condition" {
+        if scenario == "display" {
+            let mapping = UIFeatureMappings(version: 2, features: [
+                .init(name: "suite registration", tests: [plain], when: .sourceChanged("Tests.swift"))
+            ])
+            base.mappings = mapping
+            head.mappings = mapping
+            let report = dual()
+            #expect(report.selectedTests == ([plain] + members).sorted())
+            let decisions = try #require(report.uiConditionDecisions)
+            #expect(Set(decisions.map(\.revision)) == ["base", "head"])
+            #expect(decisions.allSatisfy { $0.result.status == .matched })
+            #expect(report.explanations.contains { $0.test == plain && $0.kind == "explicitCondition" })
+        }
+        if scenario == "condition" || scenario == "serializedName" {
             // Older captures lack suite argument evidence. Each selector must keep
             // shared coverage when the revision it relies on lacks the proof.
             let id = try #require(head.dependencies?.functions.values.first {
-                $0.swiftTestingFactoryType == "Other" && $0.swiftTestingDeferredConditions?.predicates == [0: "enabled"]
+                $0.swiftTestingFactoryType == "Other" && (scenario == "condition"
+                    ? $0.swiftTestingDeferredConditions?.predicates == [0: "enabled"]
+                    : $0.swiftTestingDeferredConditions?.serializedSlots == [0])
             }?.id)
-            base.dependencies?.functions[id]?.swiftTestingDeferredConditions = nil
+            func discardProof(in snapshot: inout XcodeTestGraph) {
+                if scenario == "serializedName" {
+                    snapshot.dependencies?.functions[id]?.swiftTestingDeferredConditions?.serializedSlots = nil
+                } else { snapshot.dependencies?.functions[id]?.swiftTestingDeferredConditions = nil }
+            }
+            discardProof(in: &base)
             #expect(dual().selectedTests.contains(plain))
-            head.dependencies?.functions[id]?.swiftTestingDeferredConditions = nil
+            discardProof(in: &head)
             #expect(headOnly().selectedTests.contains(plain))
         }
     }

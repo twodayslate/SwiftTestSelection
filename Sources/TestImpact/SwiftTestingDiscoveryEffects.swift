@@ -5,6 +5,8 @@ import Foundation
 /// Positive contracts for the subset of SIL used during registration. A new
 /// instruction or an opaque callee makes the shared discovery scope uncertain.
 enum SwiftTestingDiscoveryEffects {
+    static let serializedGetter = "$s7Testing5TraitPA2A015ParallelizationB0VRszrlE10serializedAEvgZ"
+
     /// These operations construct SDK metadata or native Array storage. Their
     /// arguments' producers are checked independently, including eager traits.
     static let metadataCallees: Set<String> = [
@@ -17,7 +19,7 @@ enum SwiftTestingDiscoveryEffects {
         "$s7Testing5TraitPA2A7CommentVRszrlE20__documentationBlockyAESSFZ",
         "$s7Testing5TraitPA2A7CommentVRszrlE6__lineyAESSFZ",
         "$s7Testing5TraitPA2A7CommentVRszrlE7__blockyAESSFZ",
-        "$s7Testing5TraitPA2A015ParallelizationB0VRszrlE10serializedAEvgZ",
+        serializedGetter,
         "$s7Testing5TraitPA2A09ConditionB0VRszrlE7enabled2if_14sourceLocationAESbyYbKXA_AA7CommentVSgAA06SourceG0VtFZ",
         "$s7Testing5TraitPA2A09ConditionB0VRszrlE8disabled2if_14sourceLocationAESbyYbKXA_AA7CommentVSgAA06SourceG0VtFZ",
         "$s7Testing14SourceLocationV6__here6fileID0E4Path4line6columnACSS_SSS2itFZ",

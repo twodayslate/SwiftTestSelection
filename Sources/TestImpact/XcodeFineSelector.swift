@@ -231,8 +231,11 @@ public enum XcodeFineSelector {
         }
         var comparisonContext = UIConditionContext(sides: [], unavailableReason: nil)
         if hasConditions {
-            if let previous { comparisonContext.sides.append(.init(revision: "base", snapshot: previous, changed: oldChanged)) }
-            comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged))
+            // A scoped suite edit is still a semantic file change for an explicit mapping.
+            if let previous {
+                comparisonContext.sides.append(.init(revision: "base", snapshot: previous, changed: oldChanged, additionalChangedPaths: registrations.suitePaths))
+            }
+            comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged, additionalChangedPaths: registrations.suitePaths))
         }
         if previous == nil { comparisonContext.unavailableReason = "Base compiler evidence unavailable" }
         if missingCallerMetadata && locationPolicy != .diagnostic {

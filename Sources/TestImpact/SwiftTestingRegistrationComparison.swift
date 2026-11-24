@@ -110,9 +110,9 @@ struct SwiftTestingRegistrationComparison {
                 guard let oldID = factory(of: old, historical: true),
                       base.dependencies?.functions[oldID]?.swiftTestingDeferredConditions?.matches(historical.conditions ?? .init()) == true else { continue }
             } else {
-                // Head SIL proves the overload only for the surviving source shape.
-                // A different historical expression could have been evaluated eagerly.
-                guard inputs.declaration == historical.declaration,
+                // A bare suite had no arguments to evaluate. Otherwise require stable source
+                // evidence before applying the head factory’s overload binding to the base.
+                guard historical.bare == true || inputs.declaration == historical.declaration,
                       (inputs.nonliteralPredicates ?? []).map({ $0.comparison(policy) }) ==
                         (historical.nonliteralPredicates ?? []).map({ $0.comparison(policy) }) else { continue }
             }

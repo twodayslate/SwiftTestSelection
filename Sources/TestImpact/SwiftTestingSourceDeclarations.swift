@@ -88,6 +88,12 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         return fingerprint(Syntax(declaration))
     }
 
+    private static func hasSDKTypeQualifier(_ member: MemberAccessExprSyntax, type: String) -> Bool {
+        guard let base = member.base else { return true }
+        let tokens = base.tokens(viewMode: .sourceAccurate).map { $0.identifier?.name ?? $0.text }
+        return tokens == [type] || tokens == ["Testing", ".", type]
+    }
+
     static func registrationInputs(_ node: Syntax, attribute expected: String, fingerprint: (Syntax) -> String,
                                    capture: (Syntax) -> Arguments) -> RegistrationInputs? {
         guard var declaration = node.asProtocol(WithAttributesSyntax.self) else { return nil }
@@ -96,6 +102,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         var eager: [Arguments] = []
         var bare = false
         var conditions = SwiftTestingFactoryProof.Conditions()
+        var hasScopedTraits: Bool { !conditions.predicates.isEmpty || conditions.serializedSlots != nil }
         var nonliteralPredicates: [Arguments] = []
         for index in attributes.indices {
             guard let attribute = attributes[index].as(AttributeSyntax.self) else { return nil }
@@ -118,15 +125,22 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
                    let literal = argument.expression.as(StringLiteralExprSyntax.self),
                    literal.segments.allSatisfy({ $0.is(StringSegmentSyntax.self) }) {
                     hasDisplayName = true
+                } else if expected == "Suite", argument.label == nil,
+                          let member = argument.expression.as(MemberAccessExprSyntax.self),
+                          member.declName.baseName.text == "serialized", member.declName.argumentNames == nil,
+                          hasSDKTypeQualifier(member, type: "ParallelizationTrait") {
+                    // Keep the getter spelling in the projection and authenticate its trait slot in SIL.
+                    conditions.serializedSlots = (conditions.serializedSlots ?? []).union([conditions.traitCount])
+                    conditions.traitCount += 1
+                    continue
                 } else if expected == "Test", argument.label?.text == "arguments" && providerCount == 0 {
                     providerCount = 1
                 } else if argument.label == nil && providerCount > 0 {
                     providerCount += 1
                 } else if argument.label == nil,
                           let call = argument.expression.as(FunctionCallExprSyntax.self),
-                          let member = call.calledExpression.as(MemberAccessExprSyntax.self), member.base.map({ $0.tokens(viewMode: .sourceAccurate).map(\.text) }).map({
-                              [["ConditionTrait"], ["Testing", ".", "ConditionTrait"]].contains($0)
-                          }) ?? true,
+                          let member = call.calledExpression.as(MemberAccessExprSyntax.self),
+                          hasSDKTypeQualifier(member, type: "ConditionTrait"),
                           ["enabled", "disabled"].contains(member.declName.baseName.text),
                           call.trailingClosure == nil, call.additionalTrailingClosures.isEmpty,
                           let predicate = call.arguments.first, predicate.label?.text == "if" {
@@ -154,7 +168,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
                 } else { return nil }
                 projected[index] = argument.with(\.expression, ExprSyntax(NilLiteralExprSyntax()))
             }
-            guard hasDisplayName || providerCount > 0 || !conditions.predicates.isEmpty else { return nil }
+            guard hasDisplayName || providerCount > 0 || hasScopedTraits else { return nil }
             if hasDisplayName && !eager.isEmpty {
                 // A nonempty traits array alone cannot prove how a string
                 // literal was interpreted. Retain its value and caller location.
@@ -167,7 +181,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         declaration.attributes = attributes
         guard let providers else { return nil }
         return RegistrationInputs(declaration: fingerprint(Syntax(declaration)), providers: providers, eager: eager, bare: bare,
-                                  conditions: conditions.predicates.isEmpty ? nil : conditions,
+                                  conditions: hasScopedTraits ? conditions : nil,
                                   nonliteralPredicates: nonliteralPredicates.isEmpty ? nil : nonliteralPredicates)
     }
 

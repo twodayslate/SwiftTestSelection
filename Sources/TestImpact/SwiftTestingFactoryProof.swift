@@ -31,10 +31,11 @@ enum SwiftTestingFactoryProof {
     struct Conditions: Codable, Equatable, Sendable {
         var traitCount = 0
         var predicates: [Int: String] = [:]
+        var serializedSlots: Set<Int>?
         var commentSlots: Set<Int>?
 
         func matches(_ source: Conditions) -> Bool {
-            traitCount >= source.traitCount && predicates == source.predicates &&
+            traitCount >= source.traitCount && predicates == source.predicates && serializedSlots == source.serializedSlots &&
                 (source.traitCount..<traitCount).allSatisfy { commentSlots?.contains($0) == true }
         }
     }
@@ -140,7 +141,7 @@ enum SwiftTestingFactoryProof {
             }
             return 0 // The validated tail address or allocation pointer denotes element zero.
         }
-        var commentSlots = Set<Int>()
+        var commentSlots = Set<Int>(), serializedSlots = Set<Int>()
         let count = integerOperand(allocate[2])
         var predicates: [Int: String] = [:]
         for (slot, rhs) in definitions {
@@ -156,6 +157,8 @@ enum SwiftTestingFactoryProof {
                 if let count, let index = elementIndex(payload[0]), index >= 0, index < count,
                    let call = Pattern.groups(application, in: use), let symbol = references[call[0]] {
                     let operands = call[2].components(separatedBy: ", ")
+                    if element == "any SuiteTrait", symbol == SwiftTestingDiscoveryEffects.serializedGetter,
+                       operands.count == 2, operands[0] == slot { serializedSlots.insert(index) }
                     if operands.first == slot, payload[1] == "Comment",
                        ["19__documentationLine", "20__documentationBlock", "6__line", "7__block"].contains(where: {
                            symbol == "$s7Testing5TraitPA2A7CommentVRszrlE" + $0 + "yAESSFZ"
@@ -174,7 +177,8 @@ enum SwiftTestingFactoryProof {
             }
         }
         guard let count, !predicates.isEmpty || element == "any SuiteTrait" else { return nil }
-        return Conditions(traitCount: count, predicates: predicates, commentSlots: commentSlots.isEmpty ? nil : commentSlots)
+        return Conditions(traitCount: count, predicates: predicates, serializedSlots: serializedSlots.isEmpty ? nil : serializedSlots,
+                          commentSlots: commentSlots.isEmpty ? nil : commentSlots)
     }
 
     /// An empty test record still releases strings, arrays, a source location,

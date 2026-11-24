@@ -113,13 +113,14 @@ struct UIConditionContext {
     struct Side {
         var revision: String
         var snapshot: XcodeTestGraph
-        var changed: [SourceUnit]
+        let changedPaths: Set<String>
         var unitsByFile: [String: [SourceUnit]]
         var changedKeys: Set<String>
         var sourcePaths: Set<String>
 
-        init(revision: String, snapshot: XcodeTestGraph, changed: [SourceUnit]) {
-            self.revision = revision; self.snapshot = snapshot; self.changed = changed
+        init(revision: String, snapshot: XcodeTestGraph, changed: [SourceUnit], additionalChangedPaths: Set<String> = []) {
+            self.revision = revision; self.snapshot = snapshot
+            changedPaths = additionalChangedPaths.union(changed.map { $0.region.path })
             unitsByFile = Dictionary(grouping: snapshot.sources.values.flatMap(\.units), by: { $0.region.path })
             changedKeys = Set(changed.map { $0.key + "@" + $0.region.path })
             // Captures key snapshots by module:path; legacy callers may use
@@ -178,8 +179,8 @@ struct UIConditionContext {
                     if side.snapshot.unsupportedSourceInputs?.values.flatMap({ $0 }).contains(where: { UIFeatureMappings.matches($0, pattern: pattern) }) == true {
                         reason = "Unsupported source evidence in \(side.revision)"
                     }
-                    for unit in side.changed where UIFeatureMappings.matches(unit.region.path, pattern: pattern) {
-                        changes.insert(side.revision + ":" + unit.region.path)
+                    for path in side.changedPaths where UIFeatureMappings.matches(path, pattern: pattern) {
+                        changes.insert(side.revision + ":" + path)
                     }
                 case .symbolChanged:
                     let nodes = side.snapshot.dependencies?.functions.values.filter {
