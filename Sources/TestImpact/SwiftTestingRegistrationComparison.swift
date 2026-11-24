@@ -12,7 +12,8 @@ struct SwiftTestingRegistrationComparison {
     private(set) var uncertainSuiteTests = Set<String>()
     private var baseSuitePaths = Set<String>()
     private var headSuitePaths = Set<String>()
-    private(set) var incompletePaths = Set<String>()
+    private(set) var baseIncompletePaths = Set<String>()
+    private(set) var headIncompletePaths = Set<String>()
     private(set) var suiteArgumentEdits: [String: String] = [:]
     private(set) var registrationEdits: [String: String] = [:]
     private var baseDiscovery = DiscoveryChange()
@@ -21,8 +22,9 @@ struct SwiftTestingRegistrationComparison {
     var baseChangedPaths: Set<String> { baseSuitePaths.union(baseDiscovery.paths) }
     var headChangedPaths: Set<String> { headSuitePaths.union(headDiscovery.paths) }
     var hasSemanticChanges: Bool { !headSuitePaths.isEmpty || changedDiscovery }
-    var semanticPaths: Set<String> { baseChangedPaths.union(headChangedPaths).union(incompletePaths) }
-    var changedDiscovery: Bool { rebound || !baseDiscovery.paths.isEmpty || !headDiscovery.paths.isEmpty || !incompletePaths.isEmpty }
+    var semanticPaths: Set<String> { baseChangedPaths.union(headChangedPaths).union(baseIncompletePaths).union(headIncompletePaths) }
+    private var hasIncompletePaths: Bool { !baseIncompletePaths.isEmpty || !headIncompletePaths.isEmpty }
+    var changedDiscovery: Bool { rebound || !baseDiscovery.paths.isEmpty || !headDiscovery.paths.isEmpty || hasIncompletePaths }
 
     init(before: [String: [SourceUnit]], after: [String: [SourceUnit]], baseSources: [String: SwiftSourceSnapshot],
          base: XcodeTestGraph? = nil, head: XcodeTestGraph, moves: [String: String] = [:],
@@ -30,7 +32,8 @@ struct SwiftTestingRegistrationComparison {
         func signatures(_ unit: SourceUnit) -> [[String]] {
             ((unit.swiftTestingArguments ?? []) + [unit.swiftTestingMetadata].compactMap { $0 }).map { $0.comparison(policy) }
         }
-        func candidates(_ units: [String: [SourceUnit]], other: [String: [SourceUnit]]) -> [[String]: [SourceUnit]] {
+        func candidates(_ units: [String: [SourceUnit]], other: [String: [SourceUnit]],
+                        moves: [String: String]) -> [[String]: [SourceUnit]] {
             var result: [[String]: [SourceUnit]] = [:]
             for (key, group) in units where group.count == 1 {
                 let unit = group[0]
@@ -40,25 +43,34 @@ struct SwiftTestingRegistrationComparison {
                 // have selected an eager overload. Boolean literals retain their
                 // type; require all other predicates to compare unchanged.
                 let historical = base == nil ? inputs.nonliteralPredicates ?? [] : []
-                let identity = [String(key.prefix { $0 != ":" }), unit.region.path, unit.scope, unit.conditionalBranch ?? "",
-                                String(inputs.providers), inputs.declaration] +
+                // Older snapshots represented a literal-only @Test name with an argument
+                // placeholder. Their argument-free declaration still preserves the body.
+                let declaration = inputs.hasNoRuntimeInputs ? unit.swiftTestingRegistrationDeclaration ?? inputs.declaration : inputs.declaration
+                let destination = moves[unit.region.path] ?? unit.region.path
+                let identity = [String(key.prefix { $0 != ":" }), destination, unit.scope, unit.conditionalBranch ?? "",
+                                String(inputs.providers), declaration] +
                     (inputs.eager + historical).map { SourceUnit.withLocations($0.comparison(policy), syntax: "eager") }
                 result[identity, default: []].append(unit)
             }
             return result
         }
 
-        let old = candidates(before, other: after)
+        let old = candidates(before, other: after, moves: moves)
         let indexedPaths = paths.union(old.values.flatMap { $0.map { $0.region.path } })
         let headProof = FactoryIndex(head, inspecting: indexedPaths)
         let baseProof = base.map { FactoryIndex($0, inspecting: indexedPaths) }
-        incompletePaths = headProof.unmodeledPaths.union(baseProof?.unmodeledPaths.map { moves[$0] ?? $0 } ?? [])
+        baseIncompletePaths = baseProof?.unmodeledPaths ?? []
+        headIncompletePaths = headProof.unmodeledPaths
         if !old.isEmpty {
-            let current = candidates(after, other: before)
+            let current = candidates(after, other: before, moves: [:])
             for (identity, units) in current {
-                guard units.count == 1, let previous = old[identity], previous.count == 1,
-                      headProof.provesInputs(of: units[0]), baseProof?.provesInputs(of: previous[0]) ?? true else { continue }
-                entryEdits[units[0].key] = previous[0].key
+                guard units.count == 1, let unit = units.first,
+                      let previous = old[identity], previous.count == 1, let prior = previous.first else { continue }
+                // On name removal the head-only comparison has just the bare factory
+                // to authenticate the projected entry. Require its empty SDK binding.
+                let removingName = base == nil && unit.swiftTestingEntryInputs?.bare == true && prior.swiftTestingEntryInputs?.bare != true
+                guard headProof.provesInputs(of: unit, requireEmpty: removingName), baseProof?.provesInputs(of: prior) ?? true else { continue }
+                entryEdits[unit.key] = prior.key
             }
         }
 
@@ -154,7 +166,7 @@ struct SwiftTestingRegistrationComparison {
 
         typealias Headers = [String: [[String]: [SourceUnit]]]
         func headers(_ groups: [String: [SourceUnit]], sources: [String: SwiftSourceSnapshot],
-                     moves: [String: String], excluding: Set<String>) -> Headers {
+                     moves: [String: String], excluding: Set<String>, incompletePaths: inout Set<String>) -> Headers {
             var result: Headers = [:]
             for (key, group) in groups where !excluding.contains(key) {
                 let module = String(key.prefix { $0 != ":" })
@@ -170,14 +182,16 @@ struct SwiftTestingRegistrationComparison {
                        unit.swiftTestingRole != nil || (unit.kind == "function" && head.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil) ||
                            (unit.kind == "declaration" &&
                            file.swiftTestingDeclarations?.tests.contains(where: { $0.intersects(unit.region) }) == true) {
-                        incompletePaths.insert(destination)
+                        incompletePaths.insert(path)
                     }
                 }
             }
             return result
         }
-        let lhs = headers(before, sources: baseSources, moves: moves, excluding: Set(entryEdits.values).union(suiteArgumentEdits.values))
-        let rhs = headers(after, sources: head.sources, moves: [:], excluding: Set(entryEdits.keys).union(suiteArgumentEdits.keys))
+        let lhs = headers(before, sources: baseSources, moves: moves, excluding: Set(entryEdits.values).union(suiteArgumentEdits.values),
+                          incompletePaths: &baseIncompletePaths)
+        let rhs = headers(after, sources: head.sources, moves: [:], excluding: Set(entryEdits.keys).union(suiteArgumentEdits.keys),
+                          incompletePaths: &headIncompletePaths)
         for path in Set(lhs.keys).union(rhs.keys) {
             let left = lhs[path] ?? [:], right = rhs[path] ?? [:]
             for signature in Set(left.keys).union(right.keys) {
@@ -227,7 +241,7 @@ struct SwiftTestingRegistrationComparison {
         guard changedDiscovery else { return [] }
         let change = base ? baseDiscovery : headDiscovery
         let shared = SwiftTestingDiscoveryRoots.sharedDiscoveryID
-        guard !change.unbounded, incompletePaths.isEmpty, let inventories = graph.swiftTestingFactoriesByTarget else { return [shared] }
+        guard !change.unbounded, !hasIncompletePaths, let inventories = graph.swiftTestingFactoriesByTarget else { return [shared] }
         guard !change.factories.isEmpty || !change.modules.isEmpty else { return [] }
         var targets = Set<String>()
         for (test, roots) in graph.tests where roots.contains(shared) {
@@ -255,7 +269,7 @@ struct SwiftTestingRegistrationComparison {
         let incomplete = Set(snapshot.tests.filter { test in
             let roots = graph.tests[test] ?? []
             return roots.isEmpty || graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true ||
-                (!incompletePaths.isEmpty && roots.contains(root))
+                (hasIncompletePaths && roots.contains(root))
         })
         guard !incomplete.isEmpty else { return nil }
         return ("Swift Testing registration evidence is incomplete for the changed sources or test entries", incomplete)

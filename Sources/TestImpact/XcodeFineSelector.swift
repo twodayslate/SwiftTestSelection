@@ -233,9 +233,11 @@ public enum XcodeFineSelector {
         if hasConditions {
             // Registration metadata can change even when ordinary source fingerprints match.
             if let previous {
-                comparisonContext.sides.append(.init(revision: "base", snapshot: previous, changed: oldChanged, additionalChangedPaths: registrations.baseChangedPaths))
+                comparisonContext.sides.append(.init(revision: "base", snapshot: previous, changed: oldChanged,
+                    additionalChangedPaths: registrations.baseChangedPaths, incompleteRegistrationPaths: registrations.baseIncompletePaths))
             }
-            comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged, additionalChangedPaths: registrations.headChangedPaths))
+            comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged,
+                additionalChangedPaths: registrations.headChangedPaths, incompleteRegistrationPaths: registrations.headIncompletePaths))
         }
         if previous == nil { comparisonContext.unavailableReason = "Base compiler evidence unavailable" }
         if missingCallerMetadata && locationPolicy != .diagnostic {
@@ -339,7 +341,8 @@ public enum XcodeFineSelector {
             let paths = [change.path] + (change.previousPath.map { [$0] } ?? [])
             if paths.allSatisfy(ignoredDocumentation) {
                 ignored.insert(change.path)
-            } else if change.path.hasSuffix(".swift"), knownPaths.contains(change.path), analyzedPaths.contains(change.path), !semanticPaths.contains(change.path), !policyPaths.contains(change.path) {
+            } else if change.path.hasSuffix(".swift"), knownPaths.contains(change.path), analyzedPaths.contains(change.path),
+                      semanticPaths.isDisjoint(with: paths), !policyPaths.contains(change.path) {
                 ignored.insert(change.path)
             } else if change.isPureMove && change.path.hasSuffix(".pbxproj") {
                 ignored.insert(change.path)

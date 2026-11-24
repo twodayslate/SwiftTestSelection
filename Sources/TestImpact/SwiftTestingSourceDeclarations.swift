@@ -116,7 +116,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
             }
             guard providers == nil else { return nil }
             if attribute.arguments == nil || attribute.arguments?.as(LabeledExprListSyntax.self)?.isEmpty == true {
-                if expected == "Suite" { attributes[index] = .attribute(withoutArguments(attribute)) }
+                attributes[index] = .attribute(withoutArguments(attribute))
                 bare = true
                 providers = 0
                 continue
@@ -179,7 +179,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
                 // literal was interpreted. Retain its value and caller location.
                 projected[args.startIndex] = args[args.startIndex]
                 eager.append(capture(Syntax(args[args.startIndex].expression)))
-            } else if expected == "Suite", hasDisplayName {
+            } else if hasDisplayName {
                 // A verified literal display name is optional. Compare the surviving
                 // trait expressions identically when the name is added or removed.
                 projected.remove(at: projected.startIndex)

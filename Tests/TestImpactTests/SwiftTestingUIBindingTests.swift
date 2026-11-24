@@ -660,6 +660,61 @@ func movedSuiteRegistrationUsesItsRevisionPaths(attribute: String) throws {
     }
 }
 
+@Test(arguments: ["firstName", "nameWithCondition", "moveCondition", "moveEagerArgument"])
+func testRegistrationChangesKeepTheirEvaluationScope(scenario: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let plain = "UI/Common/plain()", marked = "UI/Other/marked()"
+    let moved = scenario.hasPrefix("move")
+    func capture(_ path: String, named: Bool) throws -> XcodeTestGraph {
+        var arguments: [String] = named ? ["\"Inventory\""] : []
+        if scenario != "firstName" { arguments.append(".enabled(if: true)") }
+        if scenario == "moveEagerArgument" { arguments.append("Marker(#fileID)") }
+        let attribute = arguments.isEmpty ? "@Test" : "@Test(" + arguments.joined(separator: ", ") + ")"
+        let files = [path: "import Testing\nstruct Other { \(attribute) func marked() {} }", "Common.swift": """
+            import Foundation
+            import Testing
+            struct Common { @Test func plain() {} }
+            struct Marker: TestTrait {
+                init(_ file: String) { UserDefaults.standard.set(file, forKey: "registeredFile") }
+            }
+            """]
+        return try boundaryGraph(files, tests: [plain, marked], root: root, compilerArguments: ["-plugin-path", plugins.path],
+                                 allowTestDiagnostics: true, compiler: compiler)
+    }
+    let oldPath = "Before.swift", newPath = moved ? "After.swift" : oldPath
+    var base = try capture(oldPath, named: false), head = try capture(newPath, named: !moved)
+    var change = FileChange(path: newPath)
+    if moved { change.previousPath = oldPath; change.isPureMove = true }
+    func dual() -> ImpactReport {
+        XcodeFineSelector.select(current: head, previous: base, changes: [change], baseRevision: "base")
+    }
+    func headOnly() -> ImpactReport {
+        XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: [change], baseRevision: "base")
+    }
+    if scenario == "moveEagerArgument" {
+        #expect(dual().explanations.contains { $0.test == plain && $0.kind == "dependency" && $0.path.contains("Testing.discovery in UI") })
+    } else {
+        #expect(dual().selectedTests == [marked])
+        if !moved {
+            #expect(headOnly().selectedTests == [marked])
+            swap(&base, &head)
+            #expect(dual().selectedTests == [marked])
+            #expect(headOnly().selectedTests == [marked])
+            if scenario == "firstName" {
+                let factory = try #require(head.dependencies?.functions.values.first {
+                    $0.swiftTestingFactoryType == "Other" && $0.swiftTestingEmptyFactory == "member"
+                }?.id)
+                head.dependencies?.functions[factory]?.swiftTestingEmptyFactory = nil
+                #expect(headOnly().selectedTests.contains(plain))
+            }
+        }
+    }
+}
+
 @Test(arguments: [false, true])
 func discoveryCommentChangesMatchTheirRevisionPaths(moved: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -684,7 +739,7 @@ func discoveryCommentChangesMatchTheirRevisionPaths(moved: Bool) throws {
         return graph
     }
     let oldPath = "OldSuite.swift", newPath = moved ? "NewSuite.swift" : oldPath
-    let base = try capture(path: oldPath, comment: "Old"), head = try capture(path: newPath, comment: "New")
+    var base = try capture(path: oldPath, comment: "Old"), head = try capture(path: newPath, comment: "New")
     var change = FileChange(path: newPath)
     if moved { change.previousPath = oldPath }
     let report = XcodeFineSelector.select(current: head, previous: base, changes: [change], baseRevision: "base")
@@ -695,6 +750,44 @@ func discoveryCommentChangesMatchTheirRevisionPaths(moved: Bool) throws {
     for decision in decisions {
         #expect(decision.result.status == .matched)
         #expect(decision.result.changes == ["base:" + oldPath, "head:" + newPath])
+    }
+
+    // A retained source snapshot can identify a test file without preserving its
+    // registration comments. Only conditions touching that file lose evidence.
+    func discardRegistrationMetadata(_ graph: inout XcodeTestGraph, path: String) throws {
+        let key = "UI:" + path
+        var file = try #require(graph.sources[key])
+        file.parserVersion = 4
+        file.swiftTestingDeclarations = nil
+        for index in file.units.indices {
+            file.units[index].swiftTestingMetadata = nil
+            file.units[index].swiftTestingSuiteMetadata = nil
+            file.units[index].swiftTestingArguments = nil
+        }
+        graph.sources[key] = file
+    }
+    try discardRegistrationMetadata(&base, path: oldPath)
+    try discardRegistrationMetadata(&head, path: newPath)
+    let patterns = Set([oldPath, newPath, "Mapped.swift"])
+    let mappings = UIFeatureMappings(version: 2, features: patterns.sorted().map {
+        .init(name: $0, tests: [mapped], when: .sourceChanged($0))
+    })
+    base.mappings = mappings
+    head.mappings = mappings
+    let retained = XcodeFineSelector.select(current: head, previous: base, changes: [change], baseRevision: "base")
+    #expect(retained.selectedTests.contains(mapped))
+    let retainedDecisions = try #require(retained.uiConditionDecisions)
+    #expect(Set(retainedDecisions.map(\.feature)) == patterns)
+    for decision in retainedDecisions {
+        if decision.feature == "Mapped.swift" {
+            #expect(decision.result.status == .notMatched)
+        } else {
+            #expect(decision.result.status == .unresolved)
+            if moved {
+                let revision = decision.feature == oldPath ? "base" : "head"
+                #expect(decision.result.reason?.contains(revision) == true)
+            }
+        }
     }
 }
 

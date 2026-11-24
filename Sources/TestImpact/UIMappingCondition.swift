@@ -114,12 +114,15 @@ struct UIConditionContext {
         var revision: String
         var snapshot: XcodeTestGraph
         let changedPaths: Set<String>
+        let incompleteRegistrationPaths: Set<String>
         var unitsByFile: [String: [SourceUnit]]
         var changedKeys: Set<String>
         var sourcePaths: Set<String>
 
-        init(revision: String, snapshot: XcodeTestGraph, changed: [SourceUnit], additionalChangedPaths: Set<String> = []) {
+        init(revision: String, snapshot: XcodeTestGraph, changed: [SourceUnit], additionalChangedPaths: Set<String> = [],
+             incompleteRegistrationPaths: Set<String> = []) {
             self.revision = revision; self.snapshot = snapshot
+            self.incompleteRegistrationPaths = incompleteRegistrationPaths
             changedPaths = additionalChangedPaths.union(changed.map { $0.region.path })
             unitsByFile = Dictionary(grouping: snapshot.sources.values.flatMap(\.units), by: { $0.region.path })
             changedKeys = Set(changed.map { $0.key + "@" + $0.region.path })
@@ -168,6 +171,9 @@ struct UIConditionContext {
                 switch condition {
                 case .sourceChanged:
                     resolved = resolved || side.sourcePaths.contains { UIFeatureMappings.matches($0, pattern: pattern) }
+                    if side.incompleteRegistrationPaths.contains(where: { UIFeatureMappings.matches($0, pattern: pattern) }) {
+                        reason = "Incomplete Swift Testing registration evidence for a matching path in \(side.revision)"
+                    }
                     if side.snapshot.targets.contains(where: { target in
                         target.sourceFiles.contains { path in
                             UIFeatureMappings.matches(path, pattern: pattern) &&
