@@ -44,6 +44,7 @@ enum SwiftTestingFactoryProof {
         var verifiedFactoryCall = false
         var cleanupIsSDKMetadata = false
         var nominalType: String?
+        var commentOnlyFactory: String?
         var emptyFactory: String?
         var deferredProviderCount: Int?
         var deferredConditions: Conditions?
@@ -176,7 +177,7 @@ enum SwiftTestingFactoryProof {
                 evidence.traitProducers.insert(producer)
             }
         }
-        guard let count, !predicates.isEmpty || element == "any SuiteTrait" else { return nil }
+        guard let count else { return nil }
         return Conditions(traitCount: count, predicates: predicates, serializedSlots: serializedSlots.isEmpty ? nil : serializedSlots,
                           commentSlots: commentSlots.isEmpty ? nil : commentSlots)
     }
@@ -361,9 +362,11 @@ enum SwiftTestingFactoryProof {
         // Suite arguments are local to members only when eager construction
         // consists entirely of SDK metadata and every deferred slot is accounted for.
         let eager = Set(references.values).subtracting(evidence.deferredReferences).subtracting([factory.value])
-        let pureSuite = suite && modeledInstructions && evidence.cleanupIsSDKMetadata &&
+        let metadataOnly = modeledInstructions && evidence.cleanupIsSDKMetadata &&
             eager.isSubset(of: SwiftTestingDiscoveryEffects.metadataCallees)
-        if !suite || pureSuite { evidence.deferredConditions = conditions }
+        if suite ? metadataOnly : conditions?.predicates.isEmpty == false {
+            evidence.deferredConditions = conditions
+        }
         // A nonempty traits array still permits entry-local provider edits
         // when source comparison preserves every eager trait and its location.
         if !evidence.traitTypes.isEmpty { evidence.deferredProviderCount = provenProviders }
@@ -380,6 +383,17 @@ enum SwiftTestingFactoryProof {
                 }
             }
         }
+        // Never and the actual nil metatype identify the SDK's top-level sentinel.
+        let topLevel = !suite && fields[1] == "Never" &&
+            definitions[arguments[2]] == "enum $Optional<@thick Never.Type>, #Optional.none!enumelt"
+        let testKind = topLevel ? "top-level" : "member"
+        // Documentation becomes a nonempty traits array. Only a nonparameterized
+        // SDK test whose entire eager factory constructs metadata can use this proof.
+        if function, metadataOnly, let conditions, conditions.traitCount > 0,
+           conditions.commentSlots?.count == conditions.traitCount {
+            evidence.commentOnlyFactory = testKind
+        }
+
         let traits = arguments[traitIndex]
         guard let extract = definitions[traits].flatMap({ Pattern.groups(extraction, in: $0) }),
               let allocation = definitions[extract[0]],
@@ -390,17 +404,13 @@ enum SwiftTestingFactoryProof {
               uses[extract[0]] == [definitions[traits]!],
               uses[traits]?.allSatisfy({ $0 == call || $0 == "release_value " + traits || $0 == "destroy_value " + traits }) == true
         else { return evidence }
-        // Never is the SDK's top-level sentinel, authenticated here by both the
-        // generic substitution and the actual optional metatype argument.
         if let provenProviders {
             evidence.deferredProviderCount = provenProviders
         } else if suite {
             evidence.emptyFactory = "suite"
-            if pureSuite { evidence.deferredConditions = Conditions() }
-        } else if fields[1] == "Never", definitions[arguments[2]] == "enum $Optional<@thick Never.Type>, #Optional.none!enumelt" {
-            evidence.emptyFactory = "top-level"
+            if metadataOnly { evidence.deferredConditions = Conditions() }
         } else {
-            evidence.emptyFactory = "member"
+            evidence.emptyFactory = testKind
         }
         return evidence
     }

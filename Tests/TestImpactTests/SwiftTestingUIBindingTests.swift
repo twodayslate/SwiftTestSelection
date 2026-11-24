@@ -660,7 +660,7 @@ func movedSuiteRegistrationUsesItsRevisionPaths(attribute: String) throws {
     }
 }
 
-@Test(arguments: ["firstName", "nameWithCondition", "moveCondition", "moveEagerArgument"])
+@Test(arguments: ["firstName", "documentedFirstName", "documentedRename", "documentedCustomTrait", "nameWithCondition", "moveCondition", "moveEagerArgument"])
 func testRegistrationChangesKeepTheirEvaluationScope(scenario: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -671,19 +671,34 @@ func testRegistrationChangesKeepTheirEvaluationScope(scenario: String) throws {
     let moved = scenario.hasPrefix("move")
     func capture(_ path: String, named: Bool) throws -> XcodeTestGraph {
         var arguments: [String] = named ? ["\"Inventory\""] : []
-        if scenario != "firstName" { arguments.append(".enabled(if: true)") }
-        if scenario == "moveEagerArgument" { arguments.append("Marker(#fileID)") }
+        let documented = scenario.hasPrefix("documented")
+        switch scenario {
+        case "documentedRename" where !named: arguments = ["\"Previous\""]
+        case "documentedCustomTrait": arguments.append("Marker(\"file\")")
+        case "nameWithCondition", "moveCondition": arguments.append(".enabled(if: true)")
+        case "moveEagerArgument": arguments += [".enabled(if: true)", "Marker(#fileID)"]
+        default: break
+        }
         let attribute = arguments.isEmpty ? "@Test" : "@Test(" + arguments.joined(separator: ", ") + ")"
-        let files = [path: "import Testing\nstruct Other { \(attribute) func marked() {} }", "Common.swift": """
+        let comment = documented ? "/// Inventory entry.\n" : ""
+        let files = [path: """
+            import Testing
+            struct Other {
+                \(comment)\(attribute) func marked() {}
+            }
+            """, "Common.swift": """
             import Foundation
             import Testing
-            struct Common { @Test func plain() {} }
+            struct Common {
+                \(documented ? "/** Common test. */\n" : "")@Test func plain() {}
+            }
             struct Marker: TestTrait {
                 init(_ file: String) { UserDefaults.standard.set(file, forKey: "registeredFile") }
             }
             """]
-        return try boundaryGraph(files, tests: [plain, marked], root: root, compilerArguments: ["-plugin-path", plugins.path],
-                                 allowTestDiagnostics: true, compiler: compiler)
+        let graph = try boundaryGraph(files, tests: [plain, marked], root: root, compilerArguments: ["-plugin-path", plugins.path],
+                                      allowTestDiagnostics: true, compiler: compiler)
+        return try GraphArchive.decode(GraphArchive.encode(graph))
     }
     let oldPath = "Before.swift", newPath = moved ? "After.swift" : oldPath
     var base = try capture(oldPath, named: false), head = try capture(newPath, named: !moved)
@@ -695,7 +710,12 @@ func testRegistrationChangesKeepTheirEvaluationScope(scenario: String) throws {
     func headOnly() -> ImpactReport {
         XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: [change], baseRevision: "base")
     }
-    if scenario == "moveEagerArgument" {
+    if scenario == "documentedCustomTrait" {
+        let factory = try #require(head.dependencies?.functions.values.first { $0.swiftTestingFactoryType == "Other" })
+        #expect(factory.swiftTestingMetadataFactory == nil)
+        #expect(dual().selectedTests.contains(plain))
+        #expect(headOnly().selectedTests.contains(plain))
+    } else if scenario == "moveEagerArgument" {
         #expect(dual().explanations.contains { $0.test == plain && $0.kind == "dependency" && $0.path.contains("Testing.discovery in UI") })
     } else {
         #expect(dual().selectedTests == [marked])
@@ -704,11 +724,12 @@ func testRegistrationChangesKeepTheirEvaluationScope(scenario: String) throws {
             swap(&base, &head)
             #expect(dual().selectedTests == [marked])
             #expect(headOnly().selectedTests == [marked])
-            if scenario == "firstName" {
+            if ["firstName", "documentedFirstName", "documentedRename"].contains(scenario) {
                 let factory = try #require(head.dependencies?.functions.values.first {
-                    $0.swiftTestingFactoryType == "Other" && $0.swiftTestingEmptyFactory == "member"
+                    $0.swiftTestingFactoryType == "Other" && $0.swiftTestingMetadataFactory == "member"
                 }?.id)
                 head.dependencies?.functions[factory]?.swiftTestingEmptyFactory = nil
+                head.dependencies?.functions[factory]?.swiftTestingCommentOnlyFactory = nil
                 #expect(headOnly().selectedTests.contains(plain))
             }
         }

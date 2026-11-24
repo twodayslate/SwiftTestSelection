@@ -380,6 +380,7 @@ public enum SILParser {
                     current!.swiftTestingExistentialTypes = evidence.traitTypes
                     current!.swiftTestingTraitProducers = evidence.traitProducers
                     if evidence.cleanupIsSDKMetadata { current!.mayDestroyValue = false }
+                    current!.swiftTestingCommentOnlyFactory = evidence.commentOnlyFactory
                     current!.swiftTestingEmptyFactory = evidence.emptyFactory
                     current!.swiftTestingDeferredProviderCount = evidence.deferredProviderCount
                     current!.swiftTestingDeferredConditions = evidence.deferredConditions

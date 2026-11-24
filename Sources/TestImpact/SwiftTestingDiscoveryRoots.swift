@@ -470,7 +470,7 @@ enum SwiftTestingDiscoveryRoots {
             let factory = factoryRoots.count == 1 ? factoryRoots.first.flatMap { graph.functions[$0] } : nil
             let hasUnknownCallbacks = owner == nil && !callbackFactories.isEmpty &&
                 (linked.map { !$0.isDisjoint(with: callbackFactories) } ?? true)
-            if !factoryRoots.isEmpty, factory?.swiftTestingEmptyFactory != "top-level" {
+            if !factoryRoots.isEmpty, factory?.swiftTestingMetadataFactory != "top-level" {
                 for suite in enclosing {
                     guard let registrations = callbacksBySuite[suite] else { continue }
                     for (id, callbacks) in registrations where linked?.contains(id) != false {
@@ -503,7 +503,7 @@ enum SwiftTestingDiscoveryRoots {
             graph.testDiagnostics[test]?.removeAll {
                 $0 == parameterizedArguments
             }
-            let factoryKind = factory?.swiftTestingEmptyFactory
+            let factoryKind = factory?.swiftTestingMetadataFactory
             let emptySuites = (suites[module] ?? []).allSatisfy { graph.functions[$0]?.swiftTestingEmptyFactory == "suite" }
             let localMember = factoryRoots.allSatisfy { $0.hasPrefix("$s" + String(module.utf8.count) + module) }
             // Excluding suite runtime uncertainty also requires a local, non-inheriting

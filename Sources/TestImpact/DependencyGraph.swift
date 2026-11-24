@@ -41,6 +41,9 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// A bounded SIL proof of an SDK factory with literal empty traits and no
     /// argument producer: "top-level", "member", or "suite". Nil is unproven.
     public var swiftTestingEmptyFactory: String? = nil
+    /// Nonparameterized SDK test factory whose only traits are compiler-emitted SDK comments.
+    var swiftTestingCommentOnlyFactory: String? = nil
+    var swiftTestingMetadataFactory: String? { swiftTestingEmptyFactory ?? swiftTestingCommentOnlyFactory }
     /// Capture-free argument providers passed to a verified SDK factory with a recognized traits array.
     public var swiftTestingDeferredProviderCount: Int? = nil
     /// Capture-free SDK predicates and their positions in the registration’s traits array.
@@ -120,6 +123,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
         swiftTestingDiscoveryReferences = union(swiftTestingDiscoveryReferences, other.swiftTestingDiscoveryReferences)
         if swiftTestingFactoryType != other.swiftTestingFactoryType { swiftTestingFactoryType = nil }
         if swiftTestingEmptyFactory != other.swiftTestingEmptyFactory { swiftTestingEmptyFactory = nil }
+        if swiftTestingCommentOnlyFactory != other.swiftTestingCommentOnlyFactory { swiftTestingCommentOnlyFactory = nil }
         if swiftTestingDeferredProviderCount != other.swiftTestingDeferredProviderCount { swiftTestingDeferredProviderCount = nil }
         if swiftTestingDeferredConditions != other.swiftTestingDeferredConditions { swiftTestingDeferredConditions = nil }
         dynamicCallSignatures = union(dynamicCallSignatures, other.dynamicCallSignatures)

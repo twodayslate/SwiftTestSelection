@@ -66,9 +66,9 @@ struct SwiftTestingRegistrationComparison {
                 guard units.count == 1, let unit = units.first,
                       let previous = old[identity], previous.count == 1, let prior = previous.first else { continue }
                 // On name removal the head-only comparison has just the bare factory
-                // to authenticate the projected entry. Require its empty SDK binding.
+                // to authenticate the projected entry. Require its SDK metadata-only binding.
                 let removingName = base == nil && unit.swiftTestingEntryInputs?.bare == true && prior.swiftTestingEntryInputs?.bare != true
-                guard headProof.provesInputs(of: unit, requireEmpty: removingName), baseProof?.provesInputs(of: prior) ?? true else { continue }
+                guard headProof.provesInputs(of: unit, requireMetadataOnly: removingName), baseProof?.provesInputs(of: prior) ?? true else { continue }
                 entryEdits[unit.key] = prior.key
             }
         }
@@ -142,7 +142,7 @@ struct SwiftTestingRegistrationComparison {
                   previous.count == 1, let old = previous.first, (moves[old.region.path] ?? old.region.path) == unit.region.path,
                   old.conditionalBranch == unit.conditionalBranch else { continue }
             if base == nil, unit.swiftTestingBodyCandidate == true, old.swiftTestingBodyCandidate == true,
-               old.fingerprint != unit.fingerprint, headProof.provesInputs(of: unit, requireEmpty: true) {
+               old.fingerprint != unit.fingerprint, headProof.provesInputs(of: unit, requireMetadataOnly: true) {
                 supportedBodies.insert(key)
             }
             guard let a = old.swiftTestingSuiteMetadata, let b = unit.swiftTestingSuiteMetadata,
@@ -321,7 +321,7 @@ struct SwiftTestingRegistrationComparison {
                     for suite in SwiftTestingDiscoveryRoots.enclosingSuites(of: owner) {
                         testsBySuite[suite, default: []].insert(test)
                     }
-                } else if !nodes.contains(where: { $0.swiftTestingEmptyFactory == "top-level" }) {
+                } else if !nodes.contains(where: { $0.swiftTestingMetadataFactory == "top-level" }) {
                     unresolved.insert(test)
                 }
             }
@@ -380,7 +380,7 @@ struct SwiftTestingRegistrationComparison {
         }
 
         /// Each written test attribute must have a surviving declaration and a
-        /// single empty SDK factory. Historical locations can move between builds.
+        /// single SDK metadata-only factory. Historical locations can move between builds.
         func provesTestsWithoutRuntimeInputs(in file: SwiftSourceSnapshot, fileKey: String) -> Bool {
             guard let head = snapshot.sources[fileKey], file.hasSwiftTestingRegistrationMetadata,
                   let issues = file.helperDeclarationIssues,
@@ -390,7 +390,7 @@ struct SwiftTestingRegistrationComparison {
             let current = head.units.filter { $0.swiftTestingRole == "test" }
             guard !tests.isEmpty, attributes.count == tests.count, tests.map(\.key) == current.map(\.key),
                   tests.allSatisfy({ $0.swiftTestingEntryInputs?.hasNoRuntimeInputs == true }) else { return false }
-            return current.allSatisfy { provesInputs(of: $0, requireEmpty: true) }
+            return current.allSatisfy { provesInputs(of: $0, requireMetadataOnly: true) }
         }
 
         func factory(of unit: SourceUnit) -> FunctionNode? {
@@ -409,16 +409,16 @@ struct SwiftTestingRegistrationComparison {
             return factories.count == 1 ? factories.first : nil
         }
 
-        func provesInputs(of unit: SourceUnit, requireEmpty: Bool = false) -> Bool {
+        func provesInputs(of unit: SourceUnit, requireMetadataOnly: Bool = false) -> Bool {
             guard let inputs = unit.swiftTestingEntryInputs, let factory = factory(of: unit) else { return false }
-            if requireEmpty { return inputs.hasNoRuntimeInputs && ["member", "top-level"].contains(factory.swiftTestingEmptyFactory) }
+            if requireMetadataOnly { return inputs.hasNoRuntimeInputs && ["member", "top-level"].contains(factory.swiftTestingMetadataFactory) }
             if let conditions = inputs.conditions {
                 return factory.swiftTestingDeferredConditions?.matches(conditions) == true &&
                     (inputs.providers == 0 || factory.swiftTestingDeferredProviderCount == inputs.providers)
             }
             if inputs.bare == true { return true }
             if inputs.providers == 0 {
-                return inputs.eager.isEmpty && ["member", "top-level"].contains(factory.swiftTestingEmptyFactory)
+                return inputs.eager.isEmpty && ["member", "top-level"].contains(factory.swiftTestingMetadataFactory)
             }
             return factory.swiftTestingDeferredProviderCount == inputs.providers &&
                 factory.swiftTestingExistentialTypes?.isEmpty == inputs.eager.isEmpty

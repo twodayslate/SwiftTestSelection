@@ -43,6 +43,7 @@ public enum GraphArchive {
         var swiftTestingTraitProducers: [String: Set<String>]?
         var swiftTestingExistentialTypes: [String: Set<String>]?
         var swiftTestingFactoryTypes: [String: String]?
+        var swiftTestingCommentOnlyFactories: [String: String]?
         var swiftTestingEmptyFactories: [String: String]?
         var swiftTestingDeferredProviderCounts: [String: Int]?
         var swiftTestingConditionsByFunction: [String: SwiftTestingFactoryProof.Conditions]?
@@ -93,6 +94,7 @@ public enum GraphArchive {
             swiftTestingTraitProducers = graph.functions.compactMapValues(\.swiftTestingTraitProducers)
             swiftTestingExistentialTypes = graph.functions.compactMapValues(\.swiftTestingExistentialTypes)
             swiftTestingFactoryTypes = graph.functions.compactMapValues(\.swiftTestingFactoryType)
+            swiftTestingCommentOnlyFactories = graph.functions.compactMapValues(\.swiftTestingCommentOnlyFactory)
             swiftTestingEmptyFactories = graph.functions.compactMapValues(\.swiftTestingEmptyFactory)
             swiftTestingDeferredProviderCounts = graph.functions.compactMapValues(\.swiftTestingDeferredProviderCount)
             swiftTestingConditionsByFunction = graph.functions.compactMapValues(\.swiftTestingDeferredConditions)
@@ -190,6 +192,7 @@ public enum GraphArchive {
                 node.swiftTestingTraitProducers = swiftTestingTraitProducers?[node.id]
                 node.swiftTestingExistentialTypes = swiftTestingExistentialTypes?[node.id]
                 node.swiftTestingFactoryType = swiftTestingFactoryTypes?[node.id]
+                node.swiftTestingCommentOnlyFactory = swiftTestingCommentOnlyFactories?[node.id]
                 node.swiftTestingEmptyFactory = swiftTestingEmptyFactories?[node.id]
                 node.swiftTestingDeferredProviderCount = swiftTestingDeferredProviderCounts?[node.id]
                 node.swiftTestingDeferredConditions = swiftTestingConditionsByFunction?[node.id]
