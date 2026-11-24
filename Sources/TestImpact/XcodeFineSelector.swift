@@ -234,10 +234,10 @@ public enum XcodeFineSelector {
             // Registration metadata can change even when ordinary source fingerprints match.
             if let previous {
                 comparisonContext.sides.append(.init(revision: "base", snapshot: previous, changed: oldChanged,
-                    additionalChangedPaths: registrations.baseChangedPaths, incompleteRegistrationPaths: registrations.baseIncompletePaths))
+                    additionalChangedPaths: registrations.baseChangedPaths, incompleteRegistrations: registrations.baseDiscovery.incomplete))
             }
             comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged,
-                additionalChangedPaths: registrations.headChangedPaths, incompleteRegistrationPaths: registrations.headIncompletePaths))
+                additionalChangedPaths: registrations.headChangedPaths, incompleteRegistrations: registrations.headDiscovery.incomplete))
         }
         if previous == nil { comparisonContext.unavailableReason = "Base compiler evidence unavailable" }
         if missingCallerMetadata && locationPolicy != .diagnostic {
@@ -407,13 +407,14 @@ public enum XcodeFineSelector {
                     fallback("unsupported_source_ownership", "Changed module \(module) also compiles inputs without a repository semantic boundary: " + inputs.joined(separator: ", "))
                 }
             }
-            if let uncertainty = registrations.uncertainty(in: snapshot) {
+            let discoveryChange = revision == "base" ? registrations.baseDiscovery : registrations.headDiscovery
+            if let uncertainty = discoveryChange.uncertainty(in: snapshot) {
                 fallback("incomplete_testing_registration", uncertainty.message, tests: uncertainty.tests)
             }
             let index = DependencyIndex(graph)
             var affected = Set<String>()
             let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
-            affected.formUnion(registrations.discoveryRoots(in: graph, base: revision == "base"))
+            affected.formUnion(discoveryChange.roots(in: graph))
             let unusedInline = revision == "head" ? headEffects.unusedInline : baseEffects?.unusedInline ?? []
             if graph.functions[discovery] != nil, units.contains(where: { $0.hasInlineBody == true && !unusedInline.contains(.init($0)) }) {
                 let consumers = snapshot.tests.filter { test in

@@ -154,16 +154,16 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
                     if !predicate.expression.is(BooleanLiteralExprSyntax.self) {
                         nonliteralPredicates.append(capture(Syntax(predicate.expression)))
                     }
-                    let placeholder = predicate.with(\.expression, ExprSyntax(NilLiteralExprSyntax()))
-                    var operands = call.arguments
-                    operands[operands.startIndex] = placeholder
                     // The SDK evaluates the comment and explicit source location during
                     // registration. A plain Comment string has no caller expressions.
-                    for operand in operands.dropFirst() {
+                    for operand in call.arguments.dropFirst() {
                         if let literal = operand.expression.as(StringLiteralExprSyntax.self),
                            literal.segments.allSatisfy({ $0.is(StringSegmentSyntax.self) }) { continue }
                         eager.append(capture(Syntax(operand.expression)))
                     }
+                    let placeholder = predicate.with(\.expression, ExprSyntax(NilLiteralExprSyntax()))
+                    var operands = call.arguments
+                    operands[operands.startIndex] = placeholder
                     projected[index] = argument.with(\.expression, ExprSyntax(call.with(\.arguments, operands)))
                     continue
                 } else if argument.label == nil {

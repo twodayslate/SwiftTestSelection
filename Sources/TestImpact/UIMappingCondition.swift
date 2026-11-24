@@ -114,15 +114,15 @@ struct UIConditionContext {
         var revision: String
         var snapshot: XcodeTestGraph
         let changedPaths: Set<String>
-        let incompleteRegistrationPaths: Set<String>
+        let incompleteRegistrations: SwiftTestingRegistrationComparison.IncompleteRegistrations
         var unitsByFile: [String: [SourceUnit]]
         var changedKeys: Set<String>
         var sourcePaths: Set<String>
 
         init(revision: String, snapshot: XcodeTestGraph, changed: [SourceUnit], additionalChangedPaths: Set<String> = [],
-             incompleteRegistrationPaths: Set<String> = []) {
+             incompleteRegistrations: SwiftTestingRegistrationComparison.IncompleteRegistrations = .init()) {
             self.revision = revision; self.snapshot = snapshot
-            self.incompleteRegistrationPaths = incompleteRegistrationPaths
+            self.incompleteRegistrations = incompleteRegistrations
             changedPaths = additionalChangedPaths.union(changed.map { $0.region.path })
             unitsByFile = Dictionary(grouping: snapshot.sources.values.flatMap(\.units), by: { $0.region.path })
             changedKeys = Set(changed.map { $0.key + "@" + $0.region.path })
@@ -171,7 +171,7 @@ struct UIConditionContext {
                 switch condition {
                 case .sourceChanged:
                     resolved = resolved || side.sourcePaths.contains { UIFeatureMappings.matches($0, pattern: pattern) }
-                    if side.incompleteRegistrationPaths.contains(where: { UIFeatureMappings.matches($0, pattern: pattern) }) {
+                    if side.incompleteRegistrations.paths.contains(where: { UIFeatureMappings.matches($0, pattern: pattern) }) {
                         reason = "Incomplete Swift Testing registration evidence for a matching path in \(side.revision)"
                     }
                     if side.snapshot.targets.contains(where: { target in
@@ -199,6 +199,10 @@ struct UIConditionContext {
                         let units = candidates.filter { unit in
                             guard unit.kind == "function", node.module == String(unit.key.prefix(while: { $0 != ":" })) else { return false }
                             return node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }
+                        }
+                        if side.incompleteRegistrations.compiledEntries.contains(node.id) ||
+                            units.contains(where: { side.incompleteRegistrations.writtenEntries.contains(.init($0)) }) {
+                            reason = "Incomplete Swift Testing registration evidence for \(node.module).\(node.name) in \(side.revision)"
                         }
                         if units.isEmpty { reason = "No source declaration evidence for \(node.module).\(node.name) in \(side.revision)" }
                         if units.count > 1 { reason = "Ambiguous source declaration evidence for \(node.module).\(node.name) in \(side.revision)" }

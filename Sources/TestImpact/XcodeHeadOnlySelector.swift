@@ -293,7 +293,7 @@ enum XcodeHeadOnlySelector {
             fallback("unresolved_suite_membership", "Swift Testing suite metadata changed and the test’s nominal suite owner is unverified", tests: registrations.uncertainSuiteTests)
         }
         let entryEdits = registrations.entryEdits.merging(registrations.registrationEdits) { local, _ in local }
-        if let uncertainty = registrations.uncertainty(in: current) {
+        if let uncertainty = registrations.headDiscovery.uncertainty(in: current) {
             fallback("incomplete_testing_registration", uncertainty.message, tests: uncertainty.tests)
         }
         let replacedEntryKeys = Set(entryEdits.compactMap { $0.key == $0.value ? nil : $0.value })
@@ -456,7 +456,7 @@ enum XcodeHeadOnlySelector {
             let index = dependencyIndex!
             if let mappings = current.mappings { mappingIndex = MappingIndex(mappings, snapshot: current, graph: graph, index: index) }
             var affected = Set<String>(), isolatedSymbols = Set<String>(), sdkSymbols = Set<String>(), production: [SourceUnit] = []
-            affected.formUnion(registrations.discoveryRoots(in: graph))
+            affected.formUnion(registrations.headDiscovery.roots(in: graph))
             var entrySymbols = Set<String>()
             for unit in changed {
                 fallbackUnits = [unit]

@@ -12,19 +12,14 @@ struct SwiftTestingRegistrationComparison {
     private(set) var uncertainSuiteTests = Set<String>()
     private var baseSuitePaths = Set<String>()
     private var headSuitePaths = Set<String>()
-    private(set) var baseIncompletePaths = Set<String>()
-    private(set) var headIncompletePaths = Set<String>()
     private(set) var suiteArgumentEdits: [String: String] = [:]
     private(set) var registrationEdits: [String: String] = [:]
-    private var baseDiscovery = DiscoveryChange()
-    private var headDiscovery = DiscoveryChange()
-    private var rebound = false
+    private(set) var baseDiscovery = DiscoveryChange()
+    private(set) var headDiscovery = DiscoveryChange()
     var baseChangedPaths: Set<String> { baseSuitePaths.union(baseDiscovery.paths) }
     var headChangedPaths: Set<String> { headSuitePaths.union(headDiscovery.paths) }
-    var hasSemanticChanges: Bool { !headSuitePaths.isEmpty || changedDiscovery }
-    var semanticPaths: Set<String> { baseChangedPaths.union(headChangedPaths).union(baseIncompletePaths).union(headIncompletePaths) }
-    private var hasIncompletePaths: Bool { !baseIncompletePaths.isEmpty || !headIncompletePaths.isEmpty }
-    var changedDiscovery: Bool { rebound || !baseDiscovery.paths.isEmpty || !headDiscovery.paths.isEmpty || hasIncompletePaths }
+    var hasSemanticChanges: Bool { !headSuitePaths.isEmpty || baseDiscovery.hasChanges || headDiscovery.hasChanges }
+    var semanticPaths: Set<String> { baseChangedPaths.union(headChangedPaths).union(baseDiscovery.incomplete.paths).union(headDiscovery.incomplete.paths) }
 
     init(before: [String: [SourceUnit]], after: [String: [SourceUnit]], baseSources: [String: SwiftSourceSnapshot],
          base: XcodeTestGraph? = nil, head: XcodeTestGraph, moves: [String: String] = [:],
@@ -33,12 +28,16 @@ struct SwiftTestingRegistrationComparison {
             ((unit.swiftTestingArguments ?? []) + [unit.swiftTestingMetadata].compactMap { $0 }).map { $0.comparison(policy) }
         }
         func candidates(_ units: [String: [SourceUnit]], other: [String: [SourceUnit]],
-                        moves: [String: String]) -> [[String]: [SourceUnit]] {
+                        sources: [String: SwiftSourceSnapshot], moves: [String: String]) -> [[String]: [SourceUnit]] {
             var result: [[String]: [SourceUnit]] = [:]
             for (key, group) in units where group.count == 1 {
                 let unit = group[0]
                 guard let inputs = unit.swiftTestingEntryInputs else { continue }
                 if let matches = other[key], matches.count == 1, signatures(unit) == signatures(matches[0]) { continue }
+                let module = String(key.prefix { $0 != ":" })
+                // Captures before v23 measured eager condition arguments after rewriting the predicate.
+                if inputs.conditions != nil, !inputs.eager.isEmpty, policy != .diagnostic,
+                   (sources[module + ":" + unit.region.path]?.parserVersion ?? 0) < 23 { continue }
                 // Without a base factory, a changed expression could previously
                 // have selected an eager overload. Boolean literals retain their
                 // type; require all other predicates to compare unchanged.
@@ -47,7 +46,7 @@ struct SwiftTestingRegistrationComparison {
                 // placeholder. Their argument-free declaration still preserves the body.
                 let declaration = inputs.hasNoRuntimeInputs ? unit.swiftTestingRegistrationDeclaration ?? inputs.declaration : inputs.declaration
                 let destination = moves[unit.region.path] ?? unit.region.path
-                let identity = [String(key.prefix { $0 != ":" }), destination, unit.scope, unit.conditionalBranch ?? "",
+                let identity = [module, destination, unit.scope, unit.conditionalBranch ?? "",
                                 String(inputs.providers), declaration] +
                     (inputs.eager + historical).map { SourceUnit.withLocations($0.comparison(policy), syntax: "eager") }
                 result[identity, default: []].append(unit)
@@ -55,14 +54,14 @@ struct SwiftTestingRegistrationComparison {
             return result
         }
 
-        let old = candidates(before, other: after, moves: moves)
+        let old = candidates(before, other: after, sources: baseSources, moves: moves)
         let indexedPaths = paths.union(old.values.flatMap { $0.map { $0.region.path } })
         let headProof = FactoryIndex(head, inspecting: indexedPaths)
         let baseProof = base.map { FactoryIndex($0, inspecting: indexedPaths) }
-        baseIncompletePaths = baseProof?.unmodeledPaths ?? []
-        headIncompletePaths = headProof.unmodeledPaths
+        baseDiscovery.incomplete = baseProof?.incomplete ?? .init()
+        headDiscovery.incomplete = headProof.incomplete
         if !old.isEmpty {
-            let current = candidates(after, other: before, moves: [:])
+            let current = candidates(after, other: before, sources: head.sources, moves: [:])
             for (identity, units) in current {
                 guard units.count == 1, let unit = units.first,
                       let previous = old[identity], previous.count == 1, let prior = previous.first else { continue }
@@ -166,32 +165,41 @@ struct SwiftTestingRegistrationComparison {
 
         typealias Headers = [String: [[String]: [SourceUnit]]]
         func headers(_ groups: [String: [SourceUnit]], sources: [String: SwiftSourceSnapshot],
-                     moves: [String: String], excluding: Set<String>, incompletePaths: inout Set<String>) -> Headers {
+                     moves: [String: String], excluding: Set<String>, graph: DependencyGraph?, incomplete: inout IncompleteRegistrations) -> Headers {
             var result: Headers = [:]
-            for (key, group) in groups where !excluding.contains(key) {
+            for (key, group) in groups {
                 let module = String(key.prefix { $0 != ":" })
                 for unit in group {
-                    let path = unit.region.path, destination = moves[path] ?? path
+                    let path = unit.region.path
+                    if paths.contains(path) {
+                        let file = sources[module + ":" + path]
+                        if unit.swiftTestingRole == "test", unit.kind == "function",
+                           file?.hasSwiftTestingRegistrationMetadata != true || unit.swiftTestingMetadata == nil {
+                            incomplete.paths.insert(path)
+                            incomplete.writtenEntries.insert(.init(unit))
+                        } else if let file, !file.hasSwiftTestingRegistrationMetadata,
+                                  unit.swiftTestingRole != nil || (unit.kind == "function" && graph?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil) ||
+                                    (unit.kind == "declaration" && file.swiftTestingDeclarations?.tests.contains(where: { $0.intersects(unit.region) }) == true) {
+                            incomplete.paths.insert(path)
+                        }
+                    }
+                    guard !excluding.contains(key) else { continue }
+                    let destination = moves[path] ?? path
                     let suite = scopedSuites.contains(key) ? nil : unit.swiftTestingSuiteMetadata
                     for record in (unit.swiftTestingArguments ?? []) + [suite].compactMap({ $0 }) {
                         let signature = [module, unit.conditionalBranch ?? ""] + record.comparison(policy)
                         result[destination, default: [:]][signature, default: []].append(unit)
-                    }
-                    if paths.contains(path), let file = sources[module + ":" + path],
-                       !file.hasSwiftTestingRegistrationMetadata,
-                       unit.swiftTestingRole != nil || (unit.kind == "function" && head.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil) ||
-                           (unit.kind == "declaration" &&
-                           file.swiftTestingDeclarations?.tests.contains(where: { $0.intersects(unit.region) }) == true) {
-                        incompletePaths.insert(path)
                     }
                 }
             }
             return result
         }
         let lhs = headers(before, sources: baseSources, moves: moves, excluding: Set(entryEdits.values).union(suiteArgumentEdits.values),
-                          incompletePaths: &baseIncompletePaths)
+                          graph: base?.dependencies ?? head.dependencies, incomplete: &baseDiscovery.incomplete)
         let rhs = headers(after, sources: head.sources, moves: [:], excluding: Set(entryEdits.keys).union(suiteArgumentEdits.keys),
-                          incompletePaths: &headIncompletePaths)
+                          graph: head.dependencies, incomplete: &headDiscovery.incomplete)
+        // A head-only selection must also account for historical inputs it cannot place.
+        headDiscovery.hasIncompleteHistory = base == nil && !baseDiscovery.incomplete.paths.isEmpty
         for path in Set(lhs.keys).union(rhs.keys) {
             let left = lhs[path] ?? [:], right = rhs[path] ?? [:]
             for signature in Set(left.keys).union(right.keys) {
@@ -218,61 +226,68 @@ struct SwiftTestingRegistrationComparison {
         }
         if let before = base?.dependencies, let after = head.dependencies {
             for (old, new) in Self.reboundDiscoveryCalls(before: before, after: after) {
-                rebound = true
                 baseDiscovery.factories.insert(old)
                 headDiscovery.factories.insert(new)
             }
         }
     }
 
-    private struct DiscoveryChange {
+    struct IncompleteRegistrations {
+        var paths = Set<String>()
+        var compiledEntries = Set<String>()
+        var writtenEntries = Set<SwiftTestingSourceEffects.Declaration>()
+    }
+
+    struct DiscoveryChange {
         var paths = Set<String>()
         var factories = Set<String>()
         var modules = Set<String>()
         var unbounded = false
+        var incomplete = IncompleteRegistrations()
+        var hasIncompleteHistory = false
+        private var lacksEvidence: Bool { hasIncompleteHistory || !incomplete.paths.isEmpty }
+        var hasChanges: Bool { lacksEvidence || unbounded || !factories.isEmpty || !modules.isEmpty }
 
         mutating func record(_ unit: SourceUnit, factory: String?) {
             if let factory { factories.insert(factory) }
             else { modules.insert(String(unit.key.prefix { $0 != ":" })) }
         }
-    }
 
-    func discoveryRoots(in graph: DependencyGraph, base: Bool = false) -> Set<String> {
-        guard changedDiscovery else { return [] }
-        let change = base ? baseDiscovery : headDiscovery
-        let shared = SwiftTestingDiscoveryRoots.sharedDiscoveryID
-        guard !change.unbounded, !hasIncompletePaths, let inventories = graph.swiftTestingFactoriesByTarget else { return [shared] }
-        guard !change.factories.isEmpty || !change.modules.isEmpty else { return [] }
-        var targets = Set<String>()
-        for (test, roots) in graph.tests where roots.contains(shared) {
-            let target = String(test.prefix { $0 != "/" })
-            guard roots.contains(SwiftTestingDiscoveryRoots.processRoot(target)) else { return [shared] }
-            targets.insert(target)
+        func roots(in graph: DependencyGraph) -> Set<String> {
+            guard hasChanges else { return [] }
+            let shared = SwiftTestingDiscoveryRoots.sharedDiscoveryID
+            guard !unbounded, !lacksEvidence, let inventories = graph.swiftTestingFactoriesByTarget else { return [shared] }
+            var targets = Set<String>()
+            for (test, roots) in graph.tests where roots.contains(shared) {
+                let target = String(test.prefix { $0 != "/" })
+                guard roots.contains(SwiftTestingDiscoveryRoots.processRoot(target)) else { return [shared] }
+                targets.insert(target)
+            }
+            var result = Set<String>()
+            for target in targets {
+                let process = SwiftTestingDiscoveryRoots.processRoot(target)
+                guard let linked = inventories[target] else { result.insert(process); continue }
+                if !linked.isDisjoint(with: factories) || (!modules.isEmpty && linked.contains {
+                    graph.functions[$0].map { modules.contains($0.module) } ?? true
+                }) { result.insert(process) }
+            }
+            return result
         }
-        var result = Set<String>()
-        for target in targets {
-            let process = SwiftTestingDiscoveryRoots.processRoot(target)
-            guard let linked = inventories[target] else { result.insert(process); continue }
-            if !linked.isDisjoint(with: change.factories) || (!change.modules.isEmpty && linked.contains {
-                graph.functions[$0].map { change.modules.contains($0.module) } ?? true
-            }) { result.insert(process) }
-        }
-        return result
-    }
 
-    func uncertainty(in snapshot: XcodeTestGraph) -> (message: String, tests: Set<String>)? {
-        guard changedDiscovery, let graph = snapshot.dependencies else { return nil }
-        let root = SwiftTestingDiscoveryRoots.sharedDiscoveryID
-        if graph.functions[root] == nil {
-            return ("Swift Testing registration changed without compiled discovery roots", Set(snapshot.tests))
+        func uncertainty(in snapshot: XcodeTestGraph) -> (message: String, tests: Set<String>)? {
+            guard hasChanges, let graph = snapshot.dependencies else { return nil }
+            let root = SwiftTestingDiscoveryRoots.sharedDiscoveryID
+            if graph.functions[root] == nil {
+                return ("Swift Testing registration changed without compiled discovery roots", Set(snapshot.tests))
+            }
+            let uncertainTests = Set(snapshot.tests.filter { test in
+                let roots = graph.tests[test] ?? []
+                return roots.isEmpty || graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true ||
+                    (lacksEvidence && roots.contains(root))
+            })
+            guard !uncertainTests.isEmpty else { return nil }
+            return ("Swift Testing registration evidence is incomplete for the changed sources or test entries", uncertainTests)
         }
-        let incomplete = Set(snapshot.tests.filter { test in
-            let roots = graph.tests[test] ?? []
-            return roots.isEmpty || graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true ||
-                (hasIncompletePaths && roots.contains(root))
-        })
-        guard !incomplete.isEmpty else { return nil }
-        return ("Swift Testing registration evidence is incomplete for the changed sources or test entries", incomplete)
     }
 
     /// Index nominal owners once. A single insertion can move many suite bounds.
@@ -333,7 +348,7 @@ struct SwiftTestingRegistrationComparison {
     struct FactoryIndex {
         let snapshot: XcodeTestGraph
         var entries: [String: [(SourceRegion, String)]] = [:]
-        var unmodeledPaths = Set<String>()
+        var incomplete = IncompleteRegistrations()
 
         init(_ snapshot: XcodeTestGraph, inspecting paths: Set<String>) {
             self.snapshot = snapshot
@@ -353,9 +368,11 @@ struct SwiftTestingRegistrationComparison {
                     for region in node.regions where paths.contains(region.path) {
                         let fileKey = module + ":" + region.path
                         entries[fileKey, default: []].append((region, test))
-                        if isRegistration,
-                           snapshot.sources[fileKey]?.swiftTestingDeclarations?.tests.contains(where: { $0.intersects(region) }) != true {
-                            unmodeledPaths.insert(region.path)
+                        let file = snapshot.sources[fileKey]
+                        if isRegistration, file?.hasSwiftTestingRegistrationMetadata != true ||
+                            file?.swiftTestingDeclarations?.tests.contains(where: { $0.intersects(region) }) != true {
+                            incomplete.paths.insert(region.path)
+                            incomplete.compiledEntries.insert(id)
                         }
                     }
                 }

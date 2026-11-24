@@ -715,6 +715,79 @@ func testRegistrationChangesKeepTheirEvaluationScope(scenario: String) throws {
     }
 }
 
+@Test
+func firstAndLastSwiftTestingRegistrationUseOnlyTheirOwnRevision() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let ordinary = "UI/Ordinary/testIndependent()", marked = "UI/Other/marked()"
+    let ordinaryFile = "import XCTest\nfinal class Ordinary: XCTestCase { func testIndependent() {} }"
+    let empty = try boundaryGraph(["Ordinary.swift": ordinaryFile, "Other.swift": "import Testing\nstruct Other {}"],
+                                  tests: [ordinary], root: root, compilerArguments: ["-plugin-path", plugins.path], compiler: compiler)
+    var mixed = try boundaryGraph(["Ordinary.swift": ordinaryFile,
+        "Other.swift": "import Testing\nstruct Other { @Test(.enabled(if: true)) func marked() {} }"],
+        tests: [ordinary, marked], root: root, compilerArguments: ["-plugin-path", plugins.path], allowTestDiagnostics: true, compiler: compiler)
+    func select(from base: XcodeTestGraph, to head: XcodeTestGraph) -> ImpactReport {
+        XcodeFineSelector.select(current: head, previous: base, changes: [.init(path: "Other.swift")], baseRevision: "base")
+    }
+    #expect(select(from: empty, to: mixed).selectedTests == [marked])
+    #expect(select(from: mixed, to: empty).selectedTests.isEmpty)
+    mixed.dependencies?.functions.removeValue(forKey: SwiftTestingDiscoveryRoots.sharedDiscoveryID)
+    for report in [select(from: empty, to: mixed), select(from: mixed, to: empty)] {
+        #expect(report.diagnostics.contains { $0.code == "incomplete_testing_registration" && $0.tests.contains(ordinary) })
+    }
+}
+
+@Test
+func retainedSymbolConditionsDistinguishTheTestFromItsHelper() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let mapped = "UI/Ordinary/testMapped()", marked = "UI/Other/marked()"
+    func capture(_ comment: String) throws -> XcodeTestGraph {
+        let file = """
+            import Testing
+            func helper() {}
+            struct Other {
+                /// \(comment)
+                @Test func marked() { helper() }
+            }
+            """
+        var graph = try boundaryGraph(["Tests.swift": file, "Ordinary.swift":
+            "import XCTest\nfinal class Ordinary: XCTestCase { func testMapped() {} }"],
+            tests: [mapped, marked], root: root, compilerArguments: ["-plugin-path", plugins.path], allowTestDiagnostics: true, compiler: compiler)
+        graph.mappings = UIFeatureMappings(version: 2, features: [
+            .init(name: "test", tests: [mapped], when: .symbolChanged("UI.Other.marked()")),
+            .init(name: "helper", tests: [mapped], when: .symbolChanged("UI.helper()"))
+        ])
+        return graph
+    }
+    var base = try capture("Old"), head = try capture("New")
+    func verify(_ expected: UIConditionResult.Status) throws {
+        let report = XcodeFineSelector.select(current: head, previous: base, changes: [.init(path: "Tests.swift")], baseRevision: "base")
+        #expect(report.selectedTests.contains(mapped))
+        let decisions = try #require(report.uiConditionDecisions)
+        #expect(decisions.count == 4)
+        for decision in decisions {
+            #expect(decision.result.status == (decision.feature == "test" ? expected : .notMatched))
+        }
+    }
+    try verify(.matched)
+    func discardMetadata(_ graph: inout XcodeTestGraph) {
+        let key = "UI:Tests.swift"
+        graph.sources[key]!.parserVersion = 4
+        graph.sources[key]!.swiftTestingDeclarations = nil
+        for i in graph.sources[key]!.units.indices { graph.sources[key]!.units[i].swiftTestingMetadata = nil }
+    }
+    discardMetadata(&base)
+    discardMetadata(&head)
+    try verify(.unresolved)
+}
+
 @Test(arguments: [false, true])
 func discoveryCommentChangesMatchTheirRevisionPaths(moved: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -789,6 +862,11 @@ func discoveryCommentChangesMatchTheirRevisionPaths(moved: Bool) throws {
             }
         }
     }
+}
+
+@Test
+func eagerConditionArgumentsKeepTheirWrittenPositions() throws {
+    try verifyDiscoveryEdit(scenario: "eagerReasonColumn")
 }
 
 @Test(arguments: ["fileMove", "line", "defaultLine", "actor", "display", "annotatedDisplay", "providers",
@@ -1080,6 +1158,9 @@ private func verifyDiscoveryEdit(scenario: String) throws {
         case "eagerReason":
             files["Support.swift"]! += "\nfunc reason(_ flag: Bool) -> Comment { _ = Marker(flag); return \"reason\" }"
             files["Tests.swift"] = "import Testing\nextension Other { @Test(.enabled(if: true, reason(\(!head)))) func marked() {} }"
+        case "eagerReasonColumn":
+            files["Support.swift"]! += "\nfunc reason(_ column: Int) -> Comment { _ = Marker(column.isMultiple(of: 2)); return \"reason\" }"
+            files["Tests.swift"] = "import Testing\nextension Other { @Test(.enabled(if: \(!head), reason(#column))) func marked() {} }"
         case "comments":
             files["Tests.swift"] = "import Testing\nextension Other {\n/// \(head ? "STOP" : "PASS")\n" +
                 "@Test func marked() { #expect(Test.current!.comments.contains { $0.rawValue.contains(\"PASS\") }) }\n}"
@@ -1166,6 +1247,21 @@ private func verifyDiscoveryEdit(scenario: String) throws {
             let unproven = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
             #expect(unproven.selectedTests.contains(plain))
         }
+    } else if scenario == "eagerReasonColumn" {
+        func hasDiscoveryDependency(_ report: ImpactReport) -> Bool {
+            report.explanations.contains { $0.test == plain && $0.kind == "dependency" && $0.path.contains("Testing.discovery in UI") }
+        }
+        #expect(hasDiscoveryDependency(report))
+        #expect(hasDiscoveryDependency(headOnly))
+        let key = "UI:Tests.swift"
+        let index = try #require(head.sources[key]?.units.firstIndex { $0.swiftTestingRole == "test" })
+        let prior = try #require(base.sources[key]?.units.first { $0.swiftTestingRole == "test" }?.swiftTestingEntryInputs)
+        // Older parsers recorded identical eager positions for these different columns.
+        head.sources[key]!.units[index].swiftTestingEntryInputs = prior
+        head.sources[key]!.parserVersion = 22
+        #expect(hasDiscoveryDependency(dual()))
+        #expect(hasDiscoveryDependency(XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources),
+            changes: changes, baseRevision: "base")))
     } else if scenario == "descriptionWitness" {
         for result in [report, headOnly] {
             #expect(result.explanations.contains {
