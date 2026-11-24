@@ -34,6 +34,8 @@ enum SwiftTestingFactoryProof {
         var serializedSlots: Set<Int>?
         var commentSlots: Set<Int>?
 
+        var hasOnlyComments: Bool { traitCount > 0 && commentSlots?.count == traitCount }
+
         func matches(_ source: Conditions) -> Bool {
             traitCount >= source.traitCount && predicates == source.predicates && serializedSlots == source.serializedSlots &&
                 (source.traitCount..<traitCount).allSatisfy { commentSlots?.contains($0) == true }
@@ -364,7 +366,10 @@ enum SwiftTestingFactoryProof {
         let eager = Set(references.values).subtracting(evidence.deferredReferences).subtracting([factory.value])
         let metadataOnly = modeledInstructions && evidence.cleanupIsSDKMetadata &&
             eager.isSubset(of: SwiftTestingDiscoveryEffects.metadataCallees)
-        if suite ? metadataOnly : conditions?.predicates.isEmpty == false {
+        // Keep the slot proof for a documented parameterized test independently of its
+        // deferred providers. Argument iteration still carries its own runtime uncertainty.
+        let providerWithComments = provenProviders != nil && conditions?.hasOnlyComments == true
+        if suite ? metadataOnly : (conditions?.predicates.isEmpty == false || providerWithComments) {
             evidence.deferredConditions = conditions
         }
         // A nonempty traits array still permits entry-local provider edits
@@ -389,8 +394,7 @@ enum SwiftTestingFactoryProof {
         let testKind = topLevel ? "top-level" : "member"
         // Documentation becomes a nonempty traits array. Only a nonparameterized
         // SDK test whose entire eager factory constructs metadata can use this proof.
-        if function, metadataOnly, let conditions, conditions.traitCount > 0,
-           conditions.commentSlots?.count == conditions.traitCount {
+        if function, metadataOnly, conditions?.hasOnlyComments == true {
             evidence.commentOnlyFactory = testKind
         }
 

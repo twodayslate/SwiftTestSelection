@@ -554,16 +554,18 @@ public enum XcodeFineSelector {
                         boundedUncertaintyTests: tests.sorted(), rationale: boundary.rationale))
                 }
             }
-            guard !productionUnits.isEmpty, !uiTests.isEmpty else { continue }
+            guard !uiTests.isEmpty else { continue }
+            let registrationPaths = revision == "base" ? registrations.baseChangedPaths : registrations.headChangedPaths
+            var featurePaths = snapshot.mappings?.registrationSourceMatches(registrationPaths, targets: snapshot.targets) ?? [:]
+            guard !productionUnits.isEmpty || !featurePaths.isEmpty else { continue }
             guard let mappings = snapshot.mappings else {
                 fallback("missing_ui_mappings", "\(revision): production changes have no explicit UI feature mappings.", tests: uiTests)
                 continue
             }
-            var matchedFeatures = Set<String>()
-            var featurePaths: [String: [String]] = [:]
+            var matchedFeatures = Set(featurePaths.keys)
             var coveredChanges = Set<String>()
             var mappedTests = Set<String>()
-            let opaqueProduction = declaredUIRuntime ? Set<String>() : Set(graph.functions.values.filter(\.hasOpaqueRuntimeDependency).map(\.id))
+            let opaqueProduction = declaredUIRuntime || productionUnits.isEmpty ? Set<String>() : Set(graph.functions.values.filter(\.hasOpaqueRuntimeDependency).map(\.id))
             let opaquePaths = index.paths(to: opaqueProduction)
             let mappingIndex = MappingIndex(mappings, snapshot: snapshot, graph: graph, index: index)
             if revision == "head" { headMappingIndex = mappingIndex }
@@ -583,7 +585,7 @@ public enum XcodeFineSelector {
                     fallback("unresolved_mapping_selector", "\(revision): feature \(feature.name) has no discovered tests for \(selector)", tests: uiTests)
                 }
                 let roots = featureRoots[feature.name]!
-                if !declaredUIRuntime && opaquePaths.path(from: roots) != nil {
+                if !productionUnits.isEmpty && !declaredUIRuntime && opaquePaths.path(from: roots) != nil {
                     fallback("unresolved_feature_dependency", "\(revision): feature \(feature.name) reaches opaque runtime dependencies.", tests: tests)
                 }
                 if roots.isEmpty && (!(feature.sources ?? []).isEmpty || !(feature.symbols ?? []).isEmpty) {
@@ -619,7 +621,7 @@ public enum XcodeFineSelector {
                 if tests.isEmpty { fallback("unresolved_feature_tests", "\(revision): affected feature \(feature.name) has no test mappings.", tests: uiTests) }
             }
             let missing = uiTests.subtracting(mappedTests)
-            if !missing.isEmpty { fallback("unmapped_ui_tests", "\(revision): UI tests without feature mappings remain conservatively selected.", tests: missing) }
+            if !productionUnits.isEmpty && !missing.isEmpty { fallback("unmapped_ui_tests", "\(revision): UI tests without feature mappings remain conservatively selected.", tests: missing) }
             for unit in productionUnits where !coveredChanges.contains(unit.key) {
                 fallback("unmapped_production_boundary", "\(revision): no UI feature reaches changed production source \(unit.region.path):\(unit.region.startLine)", tests: uiTests)
             }

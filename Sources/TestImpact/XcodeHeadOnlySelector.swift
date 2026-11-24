@@ -574,9 +574,13 @@ enum XcodeHeadOnlySelector {
                         fallback("head_only_test_host", "App-hosted or unresolved test runtime can execute changed production code outside explicit test roots: \(group.key)", tests: Set(group.value))
                     }
                 }
+            }
+            // Removing an argument can leave only the historical registration input.
+            let registrationPaths = registrations.headChangedPaths.union(registrations.baseChangedPaths)
+            var featurePaths = current.mappings?.registrationSourceMatches(registrationPaths, targets: current.targets) ?? [:]
+            if !production.isEmpty || !featurePaths.isEmpty {
                 if let mappings = current.mappings, let mi = mappingIndex {
-                    var matched = Set<String>(), mappedTests = Set<String>(), covered = Set<String>()
-                    var featurePaths: [String: [String]] = [:]
+                    var matched = Set(featurePaths.keys), mappedTests = Set<String>(), covered = Set<String>()
                     for feature in mappings.features {
                         let tests = mi.tests[feature.name] ?? []
                         mappedTests.formUnion(tests)
@@ -604,13 +608,15 @@ enum XcodeHeadOnlySelector {
                     }
                     for feature in mappings.features where matched.contains(feature.name) {
                         let tests = mi.tests[feature.name] ?? []
-                        include(tests, kind: "explicitMapping", reason: "Head dependency or declared feature dependency reaches a surviving changed body", path: [feature.name] + (featurePaths[feature.name] ?? []))
+                        include(tests, kind: "explicitMapping", reason: "Changed production source or dependency affects UI feature " + feature.name, path: [feature.name] + (featurePaths[feature.name] ?? []))
                         if tests.isEmpty { fallback("head_only_unresolved_mapping", "Affected feature \(feature.name) has no tests", tests: uiTests) }
                     }
-                    fallback("head_only_unmapped_ui", "UI tests outside explicit mappings remain selected", tests: uiTests.subtracting(mappedTests))
-                    if !production.allSatisfy({ covered.contains($0.key) }) { fallback("head_only_unmapped_production", "Changed production body has no UI feature boundary", tests: uiTests) }
-                    if mappings.runtimeDependencyPolicy != .declared || source.mappings?.runtimeDependencyPolicy != .declared {
-                        fallback("head_only_ui_runtime", "No unchanged declared cross-process UI dependency contract", tests: uiTests)
+                    if !production.isEmpty {
+                        fallback("head_only_unmapped_ui", "UI tests outside explicit mappings remain selected", tests: uiTests.subtracting(mappedTests))
+                        if !production.allSatisfy({ covered.contains($0.key) }) { fallback("head_only_unmapped_production", "Changed production body has no UI feature boundary", tests: uiTests) }
+                        if mappings.runtimeDependencyPolicy != .declared || source.mappings?.runtimeDependencyPolicy != .declared {
+                            fallback("head_only_ui_runtime", "No unchanged declared cross-process UI dependency contract", tests: uiTests)
+                        }
                     }
                 } else { fallback("head_only_missing_mappings", "Production changes need explicit UI dependency mappings", tests: uiTests) }
             }

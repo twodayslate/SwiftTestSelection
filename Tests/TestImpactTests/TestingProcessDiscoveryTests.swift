@@ -467,3 +467,68 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         }
     }
 }
+
+@Test
+func productionSuiteRenameRetainsDirectAndDependentUIMappings() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    func query(_ args: [String]) throws -> String {
+        try CommandRunner.run("xcrun", args, at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    let compiler = try query(["--find", "swiftc"])
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("lib/swift/host/plugins/testing")
+    let platform = try query(["--sdk", "macosx", "--show-sdk-platform-path"])
+    func arguments(_ module: String) -> [String] {
+        [compiler, "-module-name", module, "-whole-module-optimization", "-g", "-Onone", "-parse-as-library", "-plugin-path", plugins.path,
+         "-I", root.path, "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib",
+         root.appendingPathComponent(module + ".swift").path]
+    }
+    let member = "UI/Inventory/member()", mapped = "UI/Case/testMapped()", dependent = "UI/Case/testDependent()", plain = "UI/Common/plain()"
+    let tests = [member, mapped, dependent, plain]
+    let ui = """
+        import Shared
+        import Testing
+        import XCTest
+        extension Shared.Inventory { @Test func member() {} }
+        struct Common { @Test func plain() {} }
+        final class Case: XCTestCase {
+            func testMapped() {}
+            func testDependent() {}
+        }
+        """
+    try ui.write(to: root.appendingPathComponent("UI.swift"), atomically: true, encoding: .utf8)
+    let log = ["Shared", "UI"].map { "builtin-SwiftDriver -- " + arguments($0).map { "\"" + $0 + "\"" }.joined(separator: " ") }.joined(separator: "\n")
+    func capture(_ name: String) throws -> XcodeTestGraph {
+        let shared = "import Testing\n@Suite(\"\(name)\") public struct Inventory { public init() {} }"
+        try shared.write(to: root.appendingPathComponent("Shared.swift"), atomically: true, encoding: .utf8)
+        let object = root.appendingPathComponent("Shared.o").path
+        _ = try query(arguments("Shared") + ["-emit-module", "-emit-object", "-o", object])
+        let records = try linkedFixtureRecords(arguments("UI"), linkArguments: [object], root: root, target: "UI")
+        var graph = XcodeCompilerGraph.extract(log: log, sourceRoot: root, directory: root, derived: root, progress: { _ in },
+                                               ownership: ["Shared": ["Shared.swift"], "UI": ["UI.swift"]], linkedTestingRecords: records)
+        var snapshot = XcodeTestGraph(targets: [
+            .init(name: "Shared", productType: "com.apple.product-type.library.static", sourceFiles: ["Shared.swift"]),
+            .init(name: "UI", productType: "com.apple.product-type.bundle.ui-testing", sourceFiles: ["UI.swift"])
+        ], tests: tests)
+        snapshot.modules = ["UI": "UI", "Shared": "Shared"]
+        snapshot.sources = ["UI:UI.swift": .parse(ui, path: "UI.swift", module: "UI"),
+                            "Shared:Shared.swift": .parse(shared, path: "Shared.swift", module: "Shared")]
+        snapshot.mappings = UIFeatureMappings(features: [.init(name: "inventory", sources: ["Shared*.swift"], tests: [mapped]),
+                                                        .init(name: "client", tests: [dependent], dependsOn: ["inventory"])])
+        XcodeCompilerGraph.bind(tests: tests, modules: snapshot.modules, sources: snapshot.sources, graph: &graph)
+        snapshot.dependencies = graph
+        return try GraphArchive.decode(GraphArchive.encode(snapshot))
+    }
+    let base = try capture("Old"), head = try capture("New")
+    let changes = [FileChange(path: "Shared.swift")]
+    let dual = XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base")
+    let single = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources, mappings: base.mappings), changes: changes, baseRevision: "base")
+    #expect(Set(dual.explanations.filter { $0.test == mapped && $0.kind == "explicitMapping" }.map(\.revision)) == ["base", "head"])
+    for report in [dual, single] {
+        #expect(report.selectedTests == [member, mapped, dependent].sorted())
+        #expect(report.explanations.contains { $0.test == mapped && $0.kind == "explicitMapping" && $0.path.contains("Shared.swift") })
+        #expect(report.explanations.contains { $0.test == dependent && $0.kind == "explicitMapping" && $0.path.contains("inventory") })
+    }
+}

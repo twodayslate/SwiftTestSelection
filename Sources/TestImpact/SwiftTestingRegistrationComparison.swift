@@ -420,8 +420,9 @@ struct SwiftTestingRegistrationComparison {
             if inputs.providers == 0 {
                 return inputs.eager.isEmpty && ["member", "top-level"].contains(factory.swiftTestingMetadataFactory)
             }
-            return factory.swiftTestingDeferredProviderCount == inputs.providers &&
-                factory.swiftTestingExistentialTypes?.isEmpty == inputs.eager.isEmpty
+            guard factory.swiftTestingDeferredProviderCount == inputs.providers else { return false }
+            if factory.swiftTestingDeferredConditions?.hasOnlyComments == true { return inputs.eager.isEmpty }
+            return factory.swiftTestingExistentialTypes?.isEmpty == inputs.eager.isEmpty
         }
     }
 

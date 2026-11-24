@@ -126,6 +126,21 @@ public struct UIFeatureMappings: Codable, Sendable {
         (feature.tests ?? []) + (feature.fixtures ?? []).flatMap { fixtures?[$0] ?? [] }
     }
 
+    /// A registration can change a mapped production source without changing a callable body.
+    func registrationSourceMatches(_ changedPaths: Set<String>, targets: [XcodeTarget]) -> [String: [String]] {
+        guard !changedPaths.isEmpty else { return [:] }
+        let paths = changedPaths.filter { path in
+            targets.contains { !$0.isTest && $0.sourceFiles.contains(path) }
+        }.sorted()
+        var matches: [String: [String]] = [:]
+        for feature in features where feature.when == nil {
+            if let path = paths.first(where: { path in
+                feature.sources?.contains { Self.matches(path, pattern: $0) } == true
+            }) { matches[feature.name] = [path] }
+        }
+        return matches
+    }
+
     static func matches(_ value: String, pattern: String) -> Bool {
         guard pattern.contains("*") else { return value == pattern }
         var expression = "^"
