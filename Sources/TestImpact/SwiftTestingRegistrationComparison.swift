@@ -10,15 +10,17 @@ struct SwiftTestingRegistrationComparison {
     private(set) var supportedBodies = Set<String>()
     private(set) var suiteTests = Set<String>()
     private(set) var uncertainSuiteTests = Set<String>()
-    private(set) var suitePaths = Set<String>()
+    private var baseSuitePaths = Set<String>()
+    private var headSuitePaths = Set<String>()
     private(set) var incompletePaths = Set<String>()
     private(set) var suiteArgumentEdits: [String: String] = [:]
     private(set) var registrationEdits: [String: String] = [:]
     private var baseDiscovery = DiscoveryChange()
     private var headDiscovery = DiscoveryChange()
     private var rebound = false
-    var baseChangedPaths: Set<String> { suitePaths.union(baseDiscovery.paths) }
-    var headChangedPaths: Set<String> { suitePaths.union(headDiscovery.paths) }
+    var baseChangedPaths: Set<String> { baseSuitePaths.union(baseDiscovery.paths) }
+    var headChangedPaths: Set<String> { headSuitePaths.union(headDiscovery.paths) }
+    var hasSemanticChanges: Bool { !headSuitePaths.isEmpty || changedDiscovery }
     var semanticPaths: Set<String> { baseChangedPaths.union(headChangedPaths).union(incompletePaths) }
     var changedDiscovery: Bool { rebound || !baseDiscovery.paths.isEmpty || !headDiscovery.paths.isEmpty || !incompletePaths.isEmpty }
 
@@ -62,12 +64,13 @@ struct SwiftTestingRegistrationComparison {
 
         // A changed eager trait can change the source-unit key even though the
         // callable survives intact. Only pair unique, compiler-bound entries.
-        func declarations(_ groups: [String: [SourceUnit]]) -> [[String]: [SourceUnit]] {
+        func declarations(_ groups: [String: [SourceUnit]], moves: [String: String]) -> [[String]: [SourceUnit]] {
             var result: [[String]: [SourceUnit]] = [:]
             for (key, group) in groups where group.count == 1 {
                 let unit = group[0]
                 guard paths.contains(unit.region.path), let declaration = unit.swiftTestingRegistrationDeclaration else { continue }
-                let identity = [String(key.prefix { $0 != ":" }), unit.region.path, unit.scope, unit.conditionalBranch ?? "", declaration]
+                let destination = moves[unit.region.path] ?? unit.region.path
+                let identity = [String(key.prefix { $0 != ":" }), destination, unit.scope, unit.conditionalBranch ?? "", declaration]
                 result[identity, default: []].append(unit)
             }
             return result
@@ -90,8 +93,8 @@ struct SwiftTestingRegistrationComparison {
         }
 
         var survivingFactories: [String: String] = [:]
-        let previousDeclarations = declarations(before)
-        for (identity, units) in declarations(after) {
+        let previousDeclarations = declarations(before, moves: moves)
+        for (identity, units) in declarations(after, moves: [:]) {
             guard units.count == 1, let unit = units.first,
                   base == nil || unit.swiftTestingRole == "suite",
                   let prior = previousDeclarations[identity], prior.count == 1, let old = prior.first,
@@ -124,25 +127,27 @@ struct SwiftTestingRegistrationComparison {
         var scopedSuites = Set<String>()
         for (key, group) in after where group.count == 1 {
             let unit = group[0]
-            guard paths.contains(unit.region.path), let previous = before[suiteArgumentEdits[key] ?? registrationEdits[key] ?? key], previous.count == 1,
-                  previous[0].region.path == unit.region.path, previous[0].conditionalBranch == unit.conditionalBranch else { continue }
-            if base == nil, unit.swiftTestingBodyCandidate == true, previous[0].swiftTestingBodyCandidate == true,
-               previous[0].fingerprint != unit.fingerprint, headProof.provesInputs(of: unit, requireEmpty: true) {
+            guard paths.contains(unit.region.path), let previous = before[suiteArgumentEdits[key] ?? registrationEdits[key] ?? key],
+                  previous.count == 1, let old = previous.first, (moves[old.region.path] ?? old.region.path) == unit.region.path,
+                  old.conditionalBranch == unit.conditionalBranch else { continue }
+            if base == nil, unit.swiftTestingBodyCandidate == true, old.swiftTestingBodyCandidate == true,
+               old.fingerprint != unit.fingerprint, headProof.provesInputs(of: unit, requireEmpty: true) {
                 supportedBodies.insert(key)
             }
-            guard let a = previous[0].swiftTestingSuiteMetadata, let b = unit.swiftTestingSuiteMetadata,
+            guard let a = old.swiftTestingSuiteMetadata, let b = unit.swiftTestingSuiteMetadata,
                   suiteArgumentEdits[key] != nil || a.comparison(policy) != b.comparison(policy) else { continue }
             if headSuites == nil { headSuites = SuiteIndex(head) }
-            guard historicalSuites.canBind(previous[0]), let tests = headSuites?.members(of: unit) else { continue }
+            guard historicalSuites.canBind(old), let tests = headSuites?.members(of: unit) else { continue }
             if let base {
                 if baseSuites == nil { baseSuites = SuiteIndex(base) }
-                guard let oldTests = baseSuites?.members(of: previous[0]) else { continue }
+                guard let oldTests = baseSuites?.members(of: old) else { continue }
                 suiteTests.formUnion(oldTests.members)
                 uncertainSuiteTests.formUnion(oldTests.uncertain)
             }
             scopedSuites.insert(key)
-            scopedSuites.insert(previous[0].key)
-            suitePaths.insert(unit.region.path)
+            scopedSuites.insert(old.key)
+            baseSuitePaths.insert(old.region.path)
+            headSuitePaths.insert(unit.region.path)
             suiteTests.formUnion(tests.members)
             uncertainSuiteTests.formUnion(tests.uncertain)
         }

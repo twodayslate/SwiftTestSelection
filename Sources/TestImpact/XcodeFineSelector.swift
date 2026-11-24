@@ -354,7 +354,7 @@ public enum XcodeFineSelector {
                 fallback("unclassified_change", "Change lacks a supported semantic source boundary: \(change.path)")
             }
         }
-        let hasSemanticChanges = !registrations.suitePaths.isEmpty || registrations.changedDiscovery || !oldChanged.isEmpty || !newChanged.isEmpty
+        let hasSemanticChanges = registrations.hasSemanticChanges || !oldChanged.isEmpty || !newChanged.isEmpty
         // A proven test-entry change is invoked by the test runner, not by
         // unrelated tests' opaque SDK calls. Keep explicit callers in the graph,
         // but do not let uncertainty elsewhere expand this into a suite run.

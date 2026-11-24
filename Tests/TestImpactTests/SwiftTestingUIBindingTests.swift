@@ -609,6 +609,57 @@ func suiteRegistrationArgumentsFollowTheirEvaluationScope(scenario: String) thro
     }
 }
 
+@Test(arguments: ["@Suite", "@Suite(\"Inventory\")", "@Suite(Marker(#fileID))"])
+func movedSuiteRegistrationUsesItsRevisionPaths(attribute: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let plain = "UI/Common/plain()", marked = "UI/Other/marked()"
+    func capture(_ path: String) throws -> XcodeTestGraph {
+        let files = [path: "import Testing\n\(attribute) struct Other {}", "Tests.swift": """
+            import Foundation
+            import Testing
+            struct Common { @Test func plain() {} }
+            extension Other { @Test func marked() {} }
+            struct Marker: SuiteTrait {
+                init(_ file: String) { UserDefaults.standard.set(file, forKey: "suitePath") }
+            }
+            """]
+        return try boundaryGraph(files, tests: [plain, marked], root: root, compilerArguments: ["-plugin-path", plugins.path],
+                                 allowTestDiagnostics: true, compiler: compiler)
+    }
+    let oldPath = "Before.swift", newPath = "After.swift"
+    var base = try capture(oldPath), head = try capture(newPath)
+    var change = FileChange(path: newPath)
+    change.previousPath = oldPath
+    change.isPureMove = true
+    func select() -> ImpactReport {
+        XcodeFineSelector.select(current: head, previous: base, changes: [change], baseRevision: "base")
+    }
+    let report = select()
+    if attribute.contains("Marker") {
+        #expect(report.explanations.contains { $0.test == plain && $0.kind == "dependency" && $0.path.contains("Testing.discovery in UI") })
+        return
+    }
+    #expect(report.selectedTests == [marked])
+    #expect(report.explanations.contains { $0.test == marked && $0.reason == "Swift Testing suite metadata changed" })
+    let mappings = UIFeatureMappings(version: 2, features: [oldPath, newPath].map {
+        .init(name: $0, tests: [plain], when: .sourceChanged($0))
+    })
+    base.mappings = mappings
+    head.mappings = mappings
+    let mapped = select()
+    #expect(mapped.selectedTests == [plain, marked])
+    let decisions = try #require(mapped.uiConditionDecisions)
+    for path in [oldPath, newPath] {
+        let matches = decisions.filter { $0.feature == path }
+        #expect(Set(matches.map(\.revision)) == ["base", "head"])
+        #expect(matches.allSatisfy { $0.result.status == .matched && $0.result.changes == [(path == oldPath ? "base:" : "head:") + path] })
+    }
+}
+
 @Test(arguments: [false, true])
 func discoveryCommentChangesMatchTheirRevisionPaths(moved: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
