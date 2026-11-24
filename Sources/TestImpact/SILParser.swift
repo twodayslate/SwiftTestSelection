@@ -140,6 +140,8 @@ public enum SILParser {
         static let nilSwitch = try! NSRegularExpression(pattern: #"^switch_enum_addr (%[\w]+), case #Optional.some!enumelt: (bb[0-9]+), case #Optional.none!enumelt: bb[0-9]+(?:,|$)"#)
         static let receiverCast = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?(?:unconditional_checked_cast(?:_addr|_value)?|checked_cast(?:_addr|_value)?_br|unchecked_(?:addr|trivial_bit|bitwise)_cast)\b.*? to (.+)"#)
         static let genericApply = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?(?<opcode>apply|try_apply|begin_apply|partial_apply)(?: \[[^\]]*\])* (?<callee>%[\w]+)<"#)
+        static let allocatingCall = try! NSRegularExpression(pattern: #"^(%\d+) = apply (%\d+)\((%\d+)\) : \$@convention\(method\) \(@thick ([\w.]+)\.Type\) -> @owned \4(?:,|\s|$)"#)
+        static let releasedValue = try! NSRegularExpression(pattern: #"^strong_release (%\d+)(?:,|\s|$)"#)
         static let predicateApply = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?apply(?: \[[^\]]*\])* %[\w]+\([^\r\n]*\) : \$@(?:noescape @)?callee_guaranteed \(\) -> (?:@out )?Bool$"#)
         static let apply = try! NSRegularExpression(pattern: #"\b(?:apply|try_apply|begin_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
     }
@@ -153,7 +155,30 @@ public enum SILParser {
             self.module = module
             self.root = sourceRoot.standardizedFileURL.resolvingSymlinksInPath().path + "/"
         }
-        var result: SILModule { SILModule(importedSymbols: importedSymbols, sharedSymbols: sharedSymbols, functions: functions, dispatchTargets: tables, externalWitnesses: externalWitnesses) }
+        // Resolve releases after reading the vtables, which follow the function bodies.
+        struct Allocation: Hashable {
+            let type: String
+            let initializer: String
+        }
+        var literalMetatypes: [String: String] = [:]
+        var allocationsReleased: [String: Set<Allocation>] = [:]
+        var tableInitializers = Set<String>()
+        var deallocators: [Allocation: Set<String>] = [:]
+
+        var result: SILModule {
+            var bound = functions
+            for (caller, allocations) in allocationsReleased {
+                for allocation in allocations {
+                    if let ids = deallocators[allocation], ids.count == 1, let id = ids.first {
+                        bound[caller]?.dependencies.insert(id)
+                        bound[caller]?.swiftTestingDiscoveryReferences?.insert(id)
+                    }
+                }
+            }
+            return SILModule(importedSymbols: importedSymbols, sharedSymbols: sharedSymbols, functions: bound,
+                             dispatchTargets: tables, externalWitnesses: externalWitnesses)
+        }
+
 
         var importedSymbols = Set<String>()
         var sharedSymbols = Set<String>()
@@ -251,6 +276,7 @@ public enum SILParser {
                           let provider = Pattern.groups(Expressions.associatedScope, in: line) {
                     associatedScope = SILModule.scopeConformancePrefix + provider[1] + ":" + provider[0]
                 } else if line.hasPrefix("sil_vtable") {
+                    tableInitializers.removeAll(keepingCapacity: true)
                     classTable = Pattern.groups(Expressions.classTable, in: line)?.first
                     witnessType = nil
                 } else if line == "}" {
@@ -281,6 +307,7 @@ public enum SILParser {
                     current!.stateAccesses = []
                     current!.receiverTypeOrigins = []
                     current!.receiverGenericCalls = []
+                    literalMetatypes.removeAll(keepingCapacity: true)
                     directReferences = [:]
                     pendingFormatters = []; formattingRequirements = []; unknownFormatting = false
                     recentInstructions = []; currentBlock = ""; nilSomePredecessors = [:]; unreachableNilSome = false
@@ -301,6 +328,15 @@ public enum SILParser {
                 } else if line.containsASCII("#"), let match = Pattern.groups(Expressions.dispatch, in: line) {
                     let key = match[0].components(separatedBy: "!")[0]
                     tables[key, default: []].insert(match[1])
+                    if let classTable {
+                        if match[0] == classTable + ".init!allocator" {
+                            tableInitializers.insert(match[1])
+                        } else if match[0] == classTable + ".deinit!deallocator" {
+                            for initializer in tableInitializers {
+                                deallocators[Allocation(type: classTable, initializer: initializer), default: []].insert(match[1])
+                            }
+                        }
+                    }
                     // Retain the concrete implementation selected for inherited
                     // XCTest entries, including methods from another module.
                     if let classTable, let member = key.split(separator: ".").last, member.hasPrefix("test"),
@@ -361,6 +397,17 @@ public enum SILParser {
             }
             if current!.mayDestroyValue == false && SwiftTestingFactoryProof.isCleanup(line) {
                 current!.mayDestroyValue = true
+            }
+            // A literal class metatype, a direct allocating call and a release of
+            // its exact SSA result can identify a deallocator through that vtable.
+            // Indirect, generic and erased releases keep the normal ARC uncertainty.
+            if line.hasPrefix("strong_release "), recentInstructions.count == 2,
+               let release = Pattern.groups(Expressions.releasedValue, in: line),
+               let call = Pattern.groups(Expressions.allocatingCall, in: recentInstructions[1]),
+               release[0] == call[0], literalMetatypes[call[2]] == call[3],
+               recentInstructions[0].containsASCII(" = function_ref "),
+               let ref = Pattern.groups(Expressions.reference, in: recentInstructions[0]), ref[0] == call[1] {
+                allocationsReleased[current!.id, default: []].insert(Allocation(type: call[3], initializer: ref[1]))
             }
             if testingFactoryLines != nil {
                 if testingFactoryLines!.count < 1024 { testingFactoryLines!.append(line) }
@@ -424,6 +471,9 @@ public enum SILParser {
             }
             if line.containsASCII(" = metatype ") {
                 let types = Self.metatypes(line)
+                if types.count == 1, line.containsASCII(" = metatype $@thick "), let value = line.split(separator: " ").first {
+                    literalMetatypes[String(value)] = types[0]
+                }
                 if types.isEmpty { current!.receiverTypeOrigins = nil }
                 else { current!.receiverTypeOrigins?.formUnion(types.map { "literal:" + $0 }) }
             } else if line.containsASCII("value_metatype ") || line.containsASCII("existential_metatype ") {

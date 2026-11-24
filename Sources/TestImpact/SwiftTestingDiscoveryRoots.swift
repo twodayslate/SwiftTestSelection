@@ -194,23 +194,16 @@ enum SwiftTestingDiscoveryRoots {
         var unresolved = !complete
         if rootID == sharedDiscoveryID, let recorded = graph.swiftTestingRegisteredFactories,
            recorded.values.contains(where: { !$0.isSubset(of: factories) }) { unresolved = true }
-        var destructorEdges = Set<String>()
-        while let id = pending.popLast() {
+        while !unresolved, let id = pending.popLast() {
             guard visited.insert(id).inserted else { continue }
             guard let node = graph.functions[id], let references = node.compilerReferences else {
                 unresolved = true
                 continue
             }
             if node.hasModeledDiscoveryInstructions != true { unresolved = true }
-            if node.mayDestroyValue != false {
-                // Captured destructors give positive paths. The dynamic value
-                // can also have an imported deinitializer with no captured body.
-                unresolved = true
-                destructorEdges = Set(graph.functions.values.filter {
-                    $0.hasProjectRuntimeContext && ($0.name.hasSuffix(".deinit") || $0.name.hasSuffix(".__deallocating_deinit"))
-                }.map(\.id))
-                break // All remaining possible effects are already represented.
-            }
+            // Proven release edges are already on the releasing SIL function.
+            // Erased values and legacy captures still need runtime fallback.
+            if node.mayDestroyValue != false { unresolved = true }
             let factory = factories.contains(id)
             if factory && node.swiftTestingDiscoveryReferences == nil { unresolved = true }
             let eager = factory ? node.swiftTestingDiscoveryReferences ?? references : references
@@ -223,7 +216,6 @@ enum SwiftTestingDiscoveryRoots {
             }
             pending.append(contentsOf: node.dependencies.subtracting(references))
         }
-        graph.functions[rootID]?.dependencies.formUnion(destructorEdges)
         // Drop derived state from pre-effect-summary captures before recomputing.
         graph.functions[rootID]?.uncertainties.remove("Indirect function invocation")
         if unresolved { graph.functions[rootID]?.uncertainties.insert(unresolvedEffects) }
@@ -277,6 +269,12 @@ enum SwiftTestingDiscoveryRoots {
 
     private static let derivedDiagnostics: Set<String> = [missingEvidence, runtimeEvidence, unresolvedEffects, legacyIndirectCallback]
 
+    static func nominalOwner(of entries: [FunctionNode]) -> String? {
+        guard let owner = entries.first?.nominalTypeContext, !owner.isEmpty,
+              entries.allSatisfy({ $0.nominalTypeContext == owner }) else { return nil }
+        return owner
+    }
+
     /// A test inherits traits from its nominal type and its lexical enclosing types.
     /// The first component is the module, including for cross-module extensions.
     static func enclosingSuites(of owner: String) -> [String] {
@@ -308,17 +306,23 @@ enum SwiftTestingDiscoveryRoots {
             $0.swiftTestingDeclarations?.tests.isEmpty == false || $0.units.contains { $0.swiftTestingRole == "test" }
         }) else { return }
 
-        let generated = factories.union(graph.swiftTestingSuiteWitnesses?.values.flatMap { $0 } ?? [])
+        let testFactories = factories.filter {
+            graph.functions[$0]?.compilerReferences?.contains(where: { $0.hasPrefix("$s7Testing4TestV10__function") }) == true
+        }
+        let suiteRoots = factories.subtracting(testFactories).union(graph.swiftTestingSuiteWitnesses?.values.flatMap { $0 } ?? [])
+        let generated = testFactories.union(suiteRoots)
         var archived: [String: Set<String>] = [:]
         for (test, roots) in graph.tests {
             if let original = saved?[test] {
-                graph.tests[test] = original
+                graph.tests[test] = original.subtracting(suiteRoots)
                 archived[test] = []
             } else {
                 let prior = roots.intersection(generated)
                 guard roots.contains(sharedDiscoveryID) || !prior.isEmpty else { continue }
                 graph.tests[test] = roots.subtracting(prior).filter { !isDiscoveryRoot($0) }
-                archived[test] = prior
+                // Only per-test factories can independently preserve an entry binding.
+                // Recompute suite callbacks from ownership and linkage on every read.
+                archived[test] = prior.intersection(testFactories)
             }
         }
         bind(modules: modules, sources: sources, graph: &graph, archived: archived)
@@ -357,7 +361,6 @@ enum SwiftTestingDiscoveryRoots {
         let registration = FactoryConstruction(graph, declaredSuites: declaredSuites)
         let factories = registration.functions, suites = registration.suites
         let construction = registration.eager, deferredSuites = registration.deferredSuites
-        let allDeferredSuites = Set(deferredSuites.values.flatMap { $0 })
         let allConstruction = Set(construction.values.flatMap { $0 })
         if !construction.isEmpty {
             // All entries share the marker for edits to registration source.
@@ -373,13 +376,17 @@ enum SwiftTestingDiscoveryRoots {
                 if !local.isSubset(of: ids) { graph.swiftTestingFactoriesByTarget?.removeValue(forKey: target) }
             }
         }
-        var suiteWitnesses: [String: Set<String>] = [:]
+        // Keep the originating registration with every deferred condition and
+        // trait witness until the entry's process inventory has been checked.
+        var callbacksBySuite = deferredSuites.mapValues { factories in
+            Dictionary(uniqueKeysWithValues: factories.map { ($0, Set([$0])) })
+        }
         for (id, witnesses) in graph.swiftTestingSuiteWitnesses ?? [:] {
             guard let suite = graph.functions[id], let type = suite.swiftTestingFactoryType,
                   declaredSuites[suite.module]?.contains(type) == true else { continue }
-            suiteWitnesses[suite.module + "." + type, default: []].formUnion(witnesses)
+            callbacksBySuite[suite.module + "." + type, default: [:]][id, default: []].formUnion(witnesses)
         }
-        let witnessModules = Set(suiteWitnesses.keys.map { String($0.prefix { $0 != "." }) })
+        let callbackFactories = Set(callbacksBySuite.values.flatMap(\.keys))
         let traitSuites = suites.values.flatMap { $0 }.compactMap { graph.functions[$0] }.filter { $0.swiftTestingEmptyFactory != "suite" }
         let suiteTypes = Set(traitSuites.compactMap { suite in
             suite.swiftTestingFactoryType.map { suite.module + "." + $0 }
@@ -458,25 +465,17 @@ enum SwiftTestingDiscoveryRoots {
             // Extensions register in their emitting module, but inherit traits
             // from the nominal type's declaring module (and its enclosing suites).
             let methods = roots.filter { entryTests[$0]?.contains(test) == true }.compactMap { graph.functions[$0] }
-            let contexts = methods.compactMap(\.nominalTypeContext).filter { !$0.isEmpty }
-            let owners = Set(contexts)
-            let owner = contexts.count == methods.count && owners.count == 1 ? owners.first : nil
+            let owner = nominalOwner(of: methods)
             let enclosing = owner.map(enclosingSuites) ?? []
             let factory = factoryRoots.count == 1 ? factoryRoots.first.flatMap { graph.functions[$0] } : nil
-            let hasUnknownPredicates = owner == nil && !allDeferredSuites.isEmpty &&
-                (linked.map { !$0.isDisjoint(with: allDeferredSuites) } ?? true)
-            if factory?.swiftTestingEmptyFactory != "top-level" {
+            let hasUnknownCallbacks = owner == nil && !callbackFactories.isEmpty &&
+                (linked.map { !$0.isDisjoint(with: callbackFactories) } ?? true)
+            if !factoryRoots.isEmpty, factory?.swiftTestingEmptyFactory != "top-level" {
                 for suite in enclosing {
-                    guard let predicates = deferredSuites[suite] else { continue }
-                    graph.tests[test, default: []].formUnion(linked.map(predicates.intersection) ?? predicates)
-                }
-            }
-            if !factoryRoots.isEmpty {
-                let scope = test.split(separator: "/").dropFirst().dropLast().joined(separator: ".")
-                let candidates = owners.isEmpty && !scope.isEmpty
-                    ? Set(witnessModules.map { $0 + "." + scope }) : owners
-                for suite in candidates.flatMap(enclosingSuites) {
-                    if let callbacks = suiteWitnesses[suite] { graph.tests[test, default: []].formUnion(callbacks) }
+                    guard let registrations = callbacksBySuite[suite] else { continue }
+                    for (id, callbacks) in registrations where linked?.contains(id) != false {
+                        graph.tests[test, default: []].formUnion(callbacks)
+                    }
                 }
             }
             guard factoryRoots.count == 1, completeSuiteModules.contains(module) || (declaredSuites[module]?.count ?? 0) <= (suites[module]?.count ?? 0),
@@ -513,7 +512,7 @@ enum SwiftTestingDiscoveryRoots {
                 completeSuiteModules.contains(module) && nonInheritingTypes[module + "." + type] == true &&
                     owner == module + "." + type && suiteTypes.isDisjoint(with: enclosing)
             } ?? false
-            if factoryKind != "top-level" && (hasUnknownPredicates ||
+            if factoryKind != "top-level" && (hasUnknownCallbacks ||
                 !(factoryKind == "member" && localMember && (emptySuites || unrelatedSuites))) {
                 graph.testDiagnostics[test, default: []].append(runtimeEvidence)
             }

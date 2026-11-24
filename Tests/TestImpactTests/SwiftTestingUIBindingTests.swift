@@ -902,15 +902,20 @@ private func verifyDiscoveryEdit(scenario: String) throws {
                 $0.test == plain && $0.kind == "dependency" && $0.path.contains("UI.Token.deinit")
             })
         }
-        // A retained graph predating lifetime capture must recover this path.
+        // Legacy captures had no release-site binding. Discard their derived
+        // root edges and keep selection conservative across archive migration.
         let root = SwiftTestingDiscoveryRoots.processRoot("UI")
-        for id in head.dependencies!.functions.keys {
-            head.dependencies!.functions[id]?.mayDestroyValue = nil
+        let destructors = Set(head.dependencies!.functions.values.filter { $0.name.contains("deinit") }.map(\.id))
+        let caller = try #require(head.dependencies!.functions.values.first { $0.name == "consumeToken()" }?.id)
+        head.dependencies!.functions[caller]?.dependencies.subtract(destructors)
+        head.dependencies!.functions[caller]?.mayDestroyValue = nil
+        head.dependencies!.functions[root]?.dependencies.formUnion(destructors)
+        for archive in [try GraphArchive.encode(head), try JSONEncoder().encode(head)] {
+            let restored = try #require(GraphArchive.decode(archive).dependencies)
+            #expect(restored.functions[root]?.hasOpaqueRuntimeDependency == true)
+            #expect(restored.functions[root]?.dependencies.isDisjoint(with: destructors) == true)
+            #expect(restored.dependencyPath(from: restored.tests[plain] ?? [], to: destructors) == nil)
         }
-        let destructors = head.dependencies!.functions.values.filter { $0.name.contains("deinit") }.map(\.id)
-        head.dependencies!.functions[root]?.dependencies.subtract(destructors)
-        let restored = try GraphArchive.decode(GraphArchive.encode(head))
-        #expect(restored.dependencies!.functions[root]!.dependencies.isSuperset(of: destructors))
     } else if callbacks.contains(scenario) {
         for result in [report, headOnly] { #expect(result.selectedTests.contains(plain)) }
         if ["externalWitness", "linkedSuite"].contains(scenario) {

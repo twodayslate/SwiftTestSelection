@@ -5,6 +5,7 @@ import Testing
 @testable import TestImpact
 
 private enum ProcessEdit: CaseIterable {
+    case suiteWitness, suiteMetadata, cleanup
     case archivedPredicate, guardedSuite, ambiguousSuite
     case bodyWithOpaqueCompanion, archivedBody, eagerTrait, eagerTraitInCompanionHost, pluginHost, suiteTrait, nestedMainActorSuite, registrationLocation
 }
@@ -38,7 +39,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     let marked = nested ? "LocalTests/Outer/Other/marked()" : "LocalTests/Other/marked()"
     let guarded = edit == .guardedSuite || edit == .ambiguousSuite
     let ordinary = "CompanionTests/Case/testIndependent()"
-    let observer = predicate ? "CompanionTests/Other/observe()" : "CompanionTests/Foreign/observe()"
+    let observer = predicate || edit == .suiteWitness ? "CompanionTests/Other/observe()" : "CompanionTests/Foreign/observe()"
     func suiteWithPredicate(_ value: Bool) -> String {
         """
         import Testing
@@ -60,6 +61,13 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     let opaque = edit == .bodyWithOpaqueCompanion
     let plugin = edit == .pluginHost
     let appHosted = plugin || edit == .eagerTraitInCompanionHost
+    let companionSuite: String
+    switch edit {
+    case .suiteWitness: companionSuite = "private struct Other"
+    case .suiteMetadata: companionSuite = "private struct Foreign"
+    case .cleanup: companionSuite = "@Suite(Dropper()) struct Foreign"
+    default: companionSuite = predicate ? "extension Local.Other" : (opaque ? "@Suite(Marker()) struct Foreign" : "struct Foreign")
+    }
     let companion = """
     import Foundation
     import Testing
@@ -67,7 +75,9 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     \(opaque ? #"@_silgen_name("support") func support() -> Int32"# : "")
     \(opaque ? #"struct Marker: SuiteTrait { init() { UserDefaults.standard.set(support(), forKey: "startup") } }"# : "")
     \(predicate ? "import Local" : "")
-    \(opaque ? "@Suite(Marker()) " : "")\(predicate ? "extension Local.Other" : "struct Foreign") { @Test func observe() { \(plugin ? #"#expect(UserDefaults.standard.bool(forKey: "pluginFlag"))"# : "") } }
+    \(edit == .cleanup ? "final class Token { deinit {} }" : "")
+    \(edit == .cleanup ? "struct Dropper: SuiteTrait { init() { _ = Token() } }" : "")
+    \(companionSuite) { @Test func observe() { \(plugin ? #"#expect(UserDefaults.standard.bool(forKey: "pluginFlag"))"# : "") } }
     final class Case: XCTestCase { func testIndependent() {} }
     """
     try Data(companion.utf8).write(to: root.appendingPathComponent("Companion.swift"))
@@ -94,6 +104,16 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             struct Marker: TestTrait { var value = true; var line = 0 }
             struct Common { @Test func plain() {} }
             \(padding)struct Other { @Test(Marker(\(argument))) func marked() {} }
+            """
+        case .suiteWitness, .suiteMetadata, .cleanup:
+            source = """
+            import Testing
+            func gate() -> Bool { \(edit == .suiteMetadata || value) }
+            struct Marker: SuiteTrait { func prepare(for test: Testing.Test) async throws { _ = gate() } }
+            final class Unrelated { deinit { _ = gate() } }
+            private struct Common { @Test func plain() {} }
+            /// \(edit == .suiteMetadata && !value ? "New docs" : "Old docs")
+            \(edit == .suiteWitness ? "@Suite(Marker())" : "@Suite") struct Other { @Test func marked() {} }
             """
         case .archivedPredicate:
             source = suiteWithPredicate(value)
@@ -174,7 +194,8 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         let disabled: [String: Any] = ["TestTargets": [hosted], "IsEnabled": false]
         let linked = try records([["IsEnabled": false], active, disabled])
         #expect(linked == (try records([disabled, ["TestTargets": [localTarget, companionRun]]])))
-        let recordCount = predicate ? 5 : (edit == .suiteTrait || nested || guarded ? 3 : 2)
+        let hasSuite = [.suiteTrait, .suiteWitness, .suiteMetadata, .cleanup].contains(edit) || nested || guarded
+        let recordCount = predicate ? 5 : (hasSuite ? 3 : 2)
         #expect(linked["LocalTests"]?.count == recordCount)
         #expect((linked["CompanionTests"] == nil) == (opaque || appHosted))
         #expect(try records([active, ["TestTargets": [hosted]]])["LocalTests"] == nil)
@@ -247,6 +268,44 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
              XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")]
         }
         let reports = selections(head, base)
+        if edit == .suiteWitness {
+            // Older binders attached a same-named foreign witness and could
+            // persist that derived node among the entry roots on re-encoding.
+            let clean = try #require(head.dependencies)
+            let callbacks = Set(try #require(clean.swiftTestingSuiteWitnesses).values.flatMap { $0 })
+            #expect(!callbacks.isEmpty)
+            for saved in [true, false] {
+                var stale = head
+                stale.dependencies?.tests[observer, default: []].formUnion(callbacks)
+                if saved { stale.dependencies?.swiftTestingEntryRoots?[observer, default: []].formUnion(callbacks) }
+                else { stale.dependencies?.swiftTestingEntryRoots = nil }
+                for data in [try GraphArchive.encode(stale), try JSONEncoder().encode(stale)] {
+                    let restored = try #require(GraphArchive.decode(data).dependencies)
+                    #expect(restored.tests[observer] == clean.tests[observer])
+                    #expect(restored.testDiagnostics[observer] == clean.testDiagnostics[observer])
+                }
+            }
+        }
+        if [.suiteWitness, .suiteMetadata, .cleanup].contains(edit) {
+            for report in reports {
+                #expect(!report.explanations.contains { $0.test == observer && $0.kind == "dependency" })
+                switch edit {
+                case .suiteMetadata:
+                    #expect(!report.selectedTests.contains(observer))
+                    #expect(report.explanations.contains { $0.test == marked && $0.kind == "dependency" })
+                    #expect(report.diagnostics.contains { $0.code == "unresolved_suite_membership" && $0.tests == [plain] })
+                    #expect(!report.explanations.contains { $0.test == plain && $0.kind == "dependency" })
+                case .suiteWitness:
+                    #expect(!report.selectedTests.contains(observer))
+                    #expect(report.explanations.contains { $0.test == marked && $0.path.contains("Local.gate()") })
+                    #expect(report.explanations.contains { $0.test == plain && $0.kind == "fallback" })
+                    #expect(!report.explanations.contains { $0.test == plain && $0.kind == "dependency" })
+                default:
+                    #expect(report.explanations.contains { $0.test == observer && $0.kind == "fallback" })
+                }
+            }
+            continue
+        }
         if predicate {
             for linked in try selections(#require(linkedPredicates[false]), #require(linkedPredicates[true])) {
                 #expect(Set(linked.selectedTests).isDisjoint(with: [plain, classTest]))

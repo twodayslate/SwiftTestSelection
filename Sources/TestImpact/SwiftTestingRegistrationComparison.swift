@@ -9,6 +9,7 @@ struct SwiftTestingRegistrationComparison {
     private(set) var entryEdits: [String: String] = [:]
     private(set) var supportedBodies = Set<String>()
     private(set) var suiteTests = Set<String>()
+    private(set) var uncertainSuiteTests = Set<String>()
     private(set) var suitePaths = Set<String>()
     private(set) var discoveryPaths = Set<String>()
     private(set) var incompletePaths = Set<String>()
@@ -116,12 +117,14 @@ struct SwiftTestingRegistrationComparison {
             if let base {
                 if baseSuites == nil { baseSuites = SuiteIndex(base) }
                 guard let oldTests = baseSuites?.members(of: previous[0]) else { continue }
-                suiteTests.formUnion(oldTests)
+                suiteTests.formUnion(oldTests.members)
+                uncertainSuiteTests.formUnion(oldTests.uncertain)
             }
             scopedSuites.insert(key)
             scopedSuites.insert(previous[0].key)
             suitePaths.insert(unit.region.path)
-            suiteTests.formUnion(tests)
+            suiteTests.formUnion(tests.members)
+            uncertainSuiteTests.formUnion(tests.uncertain)
         }
 
         typealias Headers = [String: [[String]: [SourceUnit]]]
@@ -231,11 +234,13 @@ struct SwiftTestingRegistrationComparison {
     private struct SuiteIndex {
         let written: SwiftTestingSuiteDeclarations
         var factories: [String: [String]] = [:]
+        let linkedByTarget: [String: Set<String>]
         var testsBySuite: [String: Set<String>] = [:]
         var unresolved = Set<String>()
 
         init(_ snapshot: XcodeTestGraph) {
             written = SwiftTestingSuiteDeclarations(snapshot.sources)
+            linkedByTarget = snapshot.dependencies?.swiftTestingFactoriesByTarget ?? [:]
             guard let graph = snapshot.dependencies else { return }
             for node in graph.functions.values {
                 guard let type = node.swiftTestingFactoryType,
@@ -252,15 +257,12 @@ struct SwiftTestingRegistrationComparison {
                 let method = test.split(separator: "/").dropFirst().joined(separator: ".")
                 let nodes = roots.compactMap { graph.functions[$0] }
                 let entries = nodes.filter { $0.name == method || $0.name == "static " + method }
-                let owners = entries.compactMap(\.nominalTypeContext).filter { !$0.isEmpty }
-                if (entries.isEmpty || owners.count != entries.count) && !nodes.contains(where: { $0.swiftTestingEmptyFactory == "top-level" }) {
-                    unresolved.insert(test)
-                }
-                // Extensions inherit the nominal owner's suite in its defining module.
-                for owner in owners {
+                if let owner = SwiftTestingDiscoveryRoots.nominalOwner(of: entries) {
                     for suite in SwiftTestingDiscoveryRoots.enclosingSuites(of: owner) {
                         testsBySuite[suite, default: []].insert(test)
                     }
+                } else if !nodes.contains(where: { $0.swiftTestingEmptyFactory == "top-level" }) {
+                    unresolved.insert(test)
                 }
             }
         }
@@ -271,11 +273,13 @@ struct SwiftTestingRegistrationComparison {
             return matches.first
         }
 
-        func members(of unit: SourceUnit) -> Set<String>? {
-            guard let name = unit.swiftTestingSuiteName else { return nil }
+        func members(of unit: SourceUnit) -> (members: Set<String>, uncertain: Set<String>)? {
+            guard let name = unit.swiftTestingSuiteName, let id = factory(of: unit) else { return nil }
             let suite = String(unit.key.prefix { $0 != ":" }) + "." + name
-            guard factory(of: unit) != nil else { return nil }
-            return unresolved.union(testsBySuite[suite] ?? [])
+            func mayLoadFactory(_ test: String) -> Bool {
+                linkedByTarget[String(test.prefix { $0 != "/" })]?.contains(id) != false
+            }
+            return ((testsBySuite[suite] ?? []).filter(mayLoadFactory), unresolved.filter(mayLoadFactory))
         }
     }
 

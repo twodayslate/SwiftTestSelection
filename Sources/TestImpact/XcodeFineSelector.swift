@@ -150,6 +150,9 @@ public enum XcodeFineSelector {
             baseSources: previous?.sources ?? [:], base: previous, head: current, moves: movedPaths,
             touching: touchedPaths, policy: locationPolicy)
         include(registrations.suiteTests, kind: "dependency", reason: "Swift Testing suite metadata changed", revision: "base/head")
+        if !registrations.uncertainSuiteTests.isEmpty {
+            fallback("unresolved_suite_membership", "Swift Testing suite metadata changed and the test’s nominal suite owner is unverified", tests: registrations.uncertainSuiteTests)
+        }
         for (headKey, baseKey) in registrations.entryEdits where headKey == baseKey {
             oldChanged += oldUnits[baseKey] ?? []
             newChanged += newUnits[headKey] ?? []

@@ -289,6 +289,9 @@ enum XcodeHeadOnlySelector {
         let registrations = SwiftTestingRegistrationComparison(before: old, after: new, baseSources: source.base,
             head: current, touching: paths, policy: comparison.locationPolicy)
         include(registrations.suiteTests, kind: "dependency", reason: "Swift Testing suite metadata changed")
+        if !registrations.uncertainSuiteTests.isEmpty {
+            fallback("unresolved_suite_membership", "Swift Testing suite metadata changed and the test’s nominal suite owner is unverified", tests: registrations.uncertainSuiteTests)
+        }
         let entryEdits = registrations.entryEdits.merging(registrations.registrationEdits) { local, _ in local }
         if let uncertainty = registrations.uncertainty(in: current) {
             fallback("incomplete_testing_registration", uncertainty.message, tests: uncertainty.tests)
