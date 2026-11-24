@@ -72,6 +72,10 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
             supportsEnclosingDeclaration(attributes)
     }
 
+    private static func withoutArguments(_ attribute: AttributeSyntax) -> AttributeSyntax {
+        attribute.with(\.arguments, nil).with(\.leftParen, nil).with(\.rightParen, nil)
+    }
+
     /// Match a surviving declaration across edits to its registration. A match
     /// preserves the test body and signature. Eager arguments are still compared
     /// separately, with their locations, for every process that loads the factory.
@@ -83,7 +87,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         }
         guard matches.count == 1, let index = matches.first, let attribute = attributes[index].as(AttributeSyntax.self),
               !hasOpaqueSibling(of: expected, in: attributes) else { return nil }
-        attributes[index] = .attribute(attribute.with(\.arguments, nil).with(\.leftParen, nil).with(\.rightParen, nil))
+        attributes[index] = .attribute(withoutArguments(attribute))
         declaration.attributes = attributes
         return fingerprint(Syntax(declaration))
     }
@@ -112,6 +116,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
             }
             guard providers == nil else { return nil }
             if attribute.arguments == nil || attribute.arguments?.as(LabeledExprListSyntax.self)?.isEmpty == true {
+                if expected == "Suite" { attributes[index] = .attribute(withoutArguments(attribute)) }
                 bare = true
                 providers = 0
                 continue
@@ -174,9 +179,13 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
                 // literal was interpreted. Retain its value and caller location.
                 projected[args.startIndex] = args[args.startIndex]
                 eager.append(capture(Syntax(args[args.startIndex].expression)))
+            } else if expected == "Suite", hasDisplayName {
+                // A verified literal display name is optional. Compare the surviving
+                // trait expressions identically when the name is added or removed.
+                projected.remove(at: projected.startIndex)
             }
             providers = providerCount
-            attributes[index] = .attribute(attribute.with(\.arguments, .argumentList(projected)))
+            attributes[index] = .attribute(projected.isEmpty ? withoutArguments(attribute) : attribute.with(\.arguments, .argumentList(projected)))
         }
         declaration.attributes = attributes
         guard let providers else { return nil }

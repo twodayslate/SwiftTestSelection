@@ -11,14 +11,16 @@ struct SwiftTestingRegistrationComparison {
     private(set) var suiteTests = Set<String>()
     private(set) var uncertainSuiteTests = Set<String>()
     private(set) var suitePaths = Set<String>()
-    private(set) var discoveryPaths = Set<String>()
     private(set) var incompletePaths = Set<String>()
     private(set) var suiteArgumentEdits: [String: String] = [:]
     private(set) var registrationEdits: [String: String] = [:]
     private var baseDiscovery = DiscoveryChange()
     private var headDiscovery = DiscoveryChange()
     private var rebound = false
-    var changedDiscovery: Bool { rebound || !discoveryPaths.isEmpty || !incompletePaths.isEmpty }
+    var baseChangedPaths: Set<String> { suitePaths.union(baseDiscovery.paths) }
+    var headChangedPaths: Set<String> { suitePaths.union(headDiscovery.paths) }
+    var semanticPaths: Set<String> { baseChangedPaths.union(headChangedPaths).union(incompletePaths) }
+    var changedDiscovery: Bool { rebound || !baseDiscovery.paths.isEmpty || !headDiscovery.paths.isEmpty || !incompletePaths.isEmpty }
 
     init(before: [String: [SourceUnit]], after: [String: [SourceUnit]], baseSources: [String: SwiftSourceSnapshot],
          base: XcodeTestGraph? = nil, head: XcodeTestGraph, moves: [String: String] = [:],
@@ -176,9 +178,14 @@ struct SwiftTestingRegistrationComparison {
             for signature in Set(left.keys).union(right.keys) {
                 let a = left[signature] ?? [], b = right[signature] ?? []
                 guard a.count != b.count else { continue }
-                discoveryPaths.insert(path)
-                for unit in b { headDiscovery.record(unit, factory: factory(of: unit, historical: false)) }
+                // Headers are paired at the destination, but mapping evidence belongs
+                // to the physical file that contained each changed registration.
+                for unit in b {
+                    headDiscovery.paths.insert(unit.region.path)
+                    headDiscovery.record(unit, factory: factory(of: unit, historical: false))
+                }
                 for unit in a {
+                    baseDiscovery.paths.insert(unit.region.path)
                     if base != nil { baseDiscovery.record(unit, factory: factory(of: unit, historical: true)) }
                     else if let factory = survivingFactories[unit.key] {
                         headDiscovery.factories.insert(factory)
@@ -200,6 +207,7 @@ struct SwiftTestingRegistrationComparison {
     }
 
     private struct DiscoveryChange {
+        var paths = Set<String>()
         var factories = Set<String>()
         var modules = Set<String>()
         var unbounded = false

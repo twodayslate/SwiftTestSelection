@@ -304,7 +304,7 @@ enum XcodeHeadOnlySelector {
         var excludedChanges: [SourceUnit] = []
         var changed: [SourceUnit] = []
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
-        semanticPaths.formUnion(registrations.suitePaths.union(registrations.discoveryPaths).union(registrations.incompletePaths))
+        semanticPaths.formUnion(registrations.semanticPaths)
         let legacyConditionalPaths = SwiftSourceSnapshot.legacyConditionalPaths(in: current.sources, touching: paths)
         if !legacyConditionalPaths.isEmpty {
             semanticPaths.formUnion(legacyConditionalPaths)

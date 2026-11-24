@@ -231,11 +231,11 @@ public enum XcodeFineSelector {
         }
         var comparisonContext = UIConditionContext(sides: [], unavailableReason: nil)
         if hasConditions {
-            // A scoped suite edit is still a semantic file change for an explicit mapping.
+            // Registration metadata can change even when ordinary source fingerprints match.
             if let previous {
-                comparisonContext.sides.append(.init(revision: "base", snapshot: previous, changed: oldChanged, additionalChangedPaths: registrations.suitePaths))
+                comparisonContext.sides.append(.init(revision: "base", snapshot: previous, changed: oldChanged, additionalChangedPaths: registrations.baseChangedPaths))
             }
-            comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged, additionalChangedPaths: registrations.suitePaths))
+            comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged, additionalChangedPaths: registrations.headChangedPaths))
         }
         if previous == nil { comparisonContext.unavailableReason = "Base compiler evidence unavailable" }
         if missingCallerMetadata && locationPolicy != .diagnostic {
@@ -329,7 +329,7 @@ public enum XcodeFineSelector {
                 fallback("generated_input_changed", "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for \(module).")
             }
         }
-        let semanticPaths = legacyConditionalPaths.union(registrations.suitePaths).union(registrations.discoveryPaths).union(registrations.incompletePaths)
+        let semanticPaths = legacyConditionalPaths.union(registrations.semanticPaths)
             .union((oldChanged + newChanged).map { $0.region.path })
         let analyzedPaths = Set((Array(current.sources.keys) + Array(previous?.sources.keys ?? [:].keys)).compactMap { key in
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) }

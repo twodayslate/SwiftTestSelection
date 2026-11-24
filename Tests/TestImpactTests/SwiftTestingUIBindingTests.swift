@@ -511,7 +511,7 @@ func deferredSuiteConditionSelectsItsMember(scenario: String) throws {
     try verifyDiscoveryEdit(scenario: scenario)
 }
 
-@Test(arguments: ["display", "firstName", "serializedName", "customSerializedName", "condition", "displayAndCondition", "eagerReason", "customCondition"])
+@Test(arguments: ["display", "firstName", "firstSerializedName", "serializedName", "customSerializedName", "condition", "displayAndCondition", "eagerReason", "customCondition"])
 func suiteRegistrationArgumentsFollowTheirEvaluationScope(scenario: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -526,6 +526,7 @@ func suiteRegistrationArgumentsFollowTheirEvaluationScope(scenario: String) thro
         switch scenario {
         case "display": arguments = display
         case "firstName": arguments = flag ? nil : display
+        case "firstSerializedName": arguments = flag ? ".serialized" : display + ", .serialized"
         case "serializedName": arguments = display + ", .serialized"
         case "customSerializedName": arguments = display + ", ParallelizationTrait.serialized"
         case "condition": arguments = condition
@@ -570,6 +571,10 @@ func suiteRegistrationArgumentsFollowTheirEvaluationScope(scenario: String) thro
         }
     } else {
         for report in [dual(), headOnly()] { #expect(report.selectedTests == members.sorted()) }
+        if scenario == "firstSerializedName" {
+            swap(&base, &head)
+            for report in [dual(), headOnly()] { #expect(report.selectedTests == members.sorted()) }
+        }
         if scenario == "display" {
             let mapping = UIFeatureMappings(version: 2, features: [
                 .init(name: "suite registration", tests: [plain], when: .sourceChanged("Tests.swift"))
@@ -601,6 +606,44 @@ func suiteRegistrationArgumentsFollowTheirEvaluationScope(scenario: String) thro
             discardProof(in: &head)
             #expect(headOnly().selectedTests.contains(plain))
         }
+    }
+}
+
+@Test(arguments: [false, true])
+func discoveryCommentChangesMatchTheirRevisionPaths(moved: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let mapped = "UI/MappedCase/testMapped()"
+    func capture(path: String, comment: String) throws -> XcodeTestGraph {
+        let files = [path: """
+            import Testing
+            @Suite actor Other {
+                /// \(comment)
+                @Test func marked() { #expect(Test.current?.comments.first?.rawValue == "/// Old") }
+            }
+            """, "Mapped.swift": "import XCTest\nfinal class MappedCase: XCTestCase { func testMapped() {} }"]
+        var graph = try boundaryGraph(files, tests: [mapped, "UI/Other/marked()"], root: root,
+                                      compilerArguments: ["-plugin-path", plugins.path], allowTestDiagnostics: true, compiler: compiler)
+        graph.mappings = UIFeatureMappings(version: 2, features: [
+            .init(name: "registration", tests: [mapped], when: .sourceChanged("*Suite.swift"))
+        ])
+        return graph
+    }
+    let oldPath = "OldSuite.swift", newPath = moved ? "NewSuite.swift" : oldPath
+    let base = try capture(path: oldPath, comment: "Old"), head = try capture(path: newPath, comment: "New")
+    var change = FileChange(path: newPath)
+    if moved { change.previousPath = oldPath }
+    let report = XcodeFineSelector.select(current: head, previous: base, changes: [change], baseRevision: "base")
+    #expect(report.selectedTests.contains(mapped))
+    #expect(report.explanations.contains { $0.test == mapped && $0.kind == "explicitCondition" })
+    let decisions = try #require(report.uiConditionDecisions)
+    #expect(Set(decisions.map(\.revision)) == ["base", "head"])
+    for decision in decisions {
+        #expect(decision.result.status == .matched)
+        #expect(decision.result.changes == ["base:" + oldPath, "head:" + newPath])
     }
 }
 
