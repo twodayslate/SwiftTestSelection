@@ -8,6 +8,7 @@ private enum ProcessEdit: CaseIterable {
     case suiteWitness, suiteMetadata, cleanup
     case archivedPredicate, guardedSuite, ambiguousSuite
     case bodyWithOpaqueCompanion, archivedBody, eagerTrait, eagerTraitInCompanionHost, suiteTrait, nestedMainActorSuite, registrationLocation
+    case scopedRemovedMethod, scopedRemovedClass
     case pluginHost, principalClassPlugin, discoveryHookPlugin, instanceConstructionPlugin, testMethodPlugin, shadowedAssertionPlugin, removedTestMethodPlugin
 }
 
@@ -63,7 +64,8 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     let plugin = edit == .pluginHost
     let appHosted = plugin || edit == .eagerTraitInCompanionHost
     let principalClassPlugin = edit == .principalClassPlugin
-    let platformLoadsPlugin = [.principalClassPlugin, .discoveryHookPlugin, .instanceConstructionPlugin, .testMethodPlugin, .shadowedAssertionPlugin, .removedTestMethodPlugin].contains(edit)
+    let scopedRemoval = edit == .scopedRemovedMethod || edit == .scopedRemovedClass
+    let platformLoadsPlugin = scopedRemoval || [.principalClassPlugin, .discoveryHookPlugin, .instanceConstructionPlugin, .testMethodPlugin, .shadowedAssertionPlugin, .removedTestMethodPlugin].contains(edit)
     let loadsPlugin = plugin || platformLoadsPlugin
     let companionSuite: String
     switch edit {
@@ -92,12 +94,19 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     """
     let testBody: String
     switch edit {
-    case .testMethodPlugin, .removedTestMethodPlugin: testBody = loadBundle
+    case .testMethodPlugin, .removedTestMethodPlugin, .scopedRemovedMethod, .scopedRemovedClass: testBody = loadBundle
     case .shadowedAssertionPlugin: testBody = "XCTAssertTrue(true)"
     default: testBody = ""
     }
-    func companionSource(body: String) -> String {
+    func companionSource(body: String, includeCase: Bool = true) -> String {
+        let testCase = """
+        final class CompanionTests: XCTestCase {
+            \(edit == .discoveryHookPlugin ? suiteOverride : "")
+            \(edit == .instanceConstructionPlugin ? "private let startup: Void = { " + loadBundle + " }()" : "")
+            func testCompanionState() { \(body) }
+        }
         """
+        return """
         import Foundation
         import Testing
         import XCTest
@@ -109,11 +118,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         \(principalClassPlugin ? principalClass : "")
         \(edit == .shadowedAssertionPlugin ? "func XCTAssertTrue(_ value: Bool) { " + loadBundle + " }" : "")
         \(companionSuite) { @Test func observe() { \(loadsPlugin ? #"#expect(UserDefaults.standard.bool(forKey: "pluginFlag"))"# : "") } }
-        final class CompanionTests: XCTestCase {
-            \(edit == .discoveryHookPlugin ? suiteOverride : "")
-            \(edit == .instanceConstructionPlugin ? "private let startup: Void = { " + loadBundle + " }()" : "")
-            func testCompanionState() { \(body) }
-        }
+        \(includeCase ? testCase : "")
         """
     }
     try Data("int support(void) { return 1; }".utf8).write(to: root.appendingPathComponent("support.c"))
@@ -133,9 +138,11 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     var linkedPredicates: [Bool: XcodeTestGraph] = [:]
     var unknownOwners: [Bool: XcodeTestGraph] = [:]
     var migratedPredicates: [Bool: XcodeTestGraph] = [:]
+    if scopedRemoval { _ = try CommandRunner.run("git", ["init", "-q"], at: root) }
     func capture(_ value: Bool, includeObserver: Bool) throws -> XcodeTestGraph {
-        let removesLoad = edit == .removedTestMethodPlugin && !value
-        let companion = removesLoad ? companionSource(body: "") : originalCompanion
+        let removesLoad = (edit == .removedTestMethodPlugin || scopedRemoval) && !value
+        let removesClass = edit == .scopedRemovedClass && !value
+        let companion = removesLoad ? companionSource(body: "", includeCase: !removesClass) : originalCompanion
         if removesLoad { try buildCompanion(companion) }
         let source: String
         switch edit {
@@ -172,7 +179,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             \(guarded ? "#endif" : "")
             \(nested ? "}" : "")
             """
-        case .pluginHost, .principalClassPlugin, .discoveryHookPlugin, .instanceConstructionPlugin, .testMethodPlugin, .shadowedAssertionPlugin, .removedTestMethodPlugin:
+        case .pluginHost, .principalClassPlugin, .discoveryHookPlugin, .instanceConstructionPlugin, .testMethodPlugin, .shadowedAssertionPlugin, .removedTestMethodPlugin, .scopedRemovedMethod, .scopedRemovedClass:
             source = """
             import Foundation
             import Testing
@@ -187,6 +194,11 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             source = "import Testing\nstruct Common { @Test func plain() {} }\nstruct Other { @Test func marked() { #expect(Bool(\(value))) } }"
         }
         try Data(source.utf8).write(to: root.appendingPathComponent("Local.swift"))
+        if scopedRemoval {
+            _ = try CommandRunner.run("git", ["add", "--", "Local.swift", "Companion.swift"], at: root)
+            _ = try CommandRunner.run("git", ["-c", "user.name=Fixture", "-c", "user.email=test@example.invalid",
+                "commit", "-qm", value ? "base" : "head"], at: root)
+        }
         _ = try linkedFixtureRecords(arguments("Local"), root: root.appendingPathComponent("Local"), target: "LocalTests")
         if platformLoadsPlugin {
             let run = try CommandRunner.run("xcrun", ["xctest", "Companion/Fixture.xctest"], at: root, allowFailure: true)
@@ -253,7 +265,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         #expect((linked["CompanionTests"] == nil) == (opaque || appHosted || (platformLoadsPlugin && edit != .shadowedAssertionPlugin && !removesLoad)))
         #expect(try records([active, ["TestTargets": [hosted]]])["LocalTests"] == nil)
         #expect(try records([active, ["IsEnabled": 0, "TestTargets": [hosted]]])["LocalTests"] == nil)
-        let tests = [plain, marked, ordinary] + (includeObserver ? [observer] : []) + (predicate ? [classTest, inherited] : [])
+        let tests = [plain, marked] + (removesClass ? [] : [ordinary]) + (includeObserver ? [observer] : []) + (predicate ? [classTest, inherited] : [])
         var graph = XcodeCompilerGraph.extract(log: log, sourceRoot: root, directory: root, derived: root,
             progress: { _ in }, ownership: ownership, linkedTestingRecords: linked)
         if edit == .shadowedAssertionPlugin {
@@ -324,6 +336,18 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
              XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")]
         }
         let reports = selections(head, base)
+        if scopedRemoval {
+            let scoped = try XcodeHeadOnlySelector.scopedReports(current: head, requests: .init(scopes: [
+                .init(name: "trait", paths: ["Local.swift"]), .init(name: "empty", paths: [])
+            ]), changes: changes + [FileChange(path: "Companion.swift")], baseRevision: "HEAD^", headRevision: "HEAD",
+                root: root, mappingPath: ".swift-test-selection.json", documentation: [], buildEvidenceFailure: nil)
+            #expect(reports[0].selectedTests.contains(observer))
+            #expect(scoped[0].report.selectedTests.contains(observer))
+            #expect(scoped[0].report.diagnostics.contains { $0.code == "swift_testing_discovery_effects" && $0.tests.contains(observer) })
+            #expect(!scoped[0].report.selectedTests.contains(ordinary))
+            #expect(scoped[1].report.selectedTests.isEmpty)
+            continue
+        }
         if edit == .removedTestMethodPlugin {
             for report in reports {
                 #expect(report.selectedTests.contains(observer))

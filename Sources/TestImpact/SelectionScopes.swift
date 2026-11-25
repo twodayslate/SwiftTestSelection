@@ -53,7 +53,11 @@ extension XcodeHeadOnlySelector {
             let filtered = changes.filter { paths.contains($0.path) || ($0.previousPath.map(paths.contains) ?? false) }
             // Derive evidence independently, sharing only immutable reads/parses.
             let sourceStart = AnalysisMeasurement()
-            let source = try XcodeHeadOnlySources.read(current: current, changes: filtered, base: baseRevision, root: root, mappingPath: mappingPath, cache: sourceCache)
+            let selectedPaths = Set(filtered.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+            let omittedInputs = changedPaths.subtracting(selectedPaths).subtracting(documentation).subtracting([mappingPath])
+            var source = try XcodeHeadOnlySources.read(current: current, changes: filtered, base: baseRevision, root: root,
+                mappingPath: mappingPath, cache: sourceCache)
+            source.unverifiedScopedProcesses = processesAffectedByOmittedInputs(omittedInputs, in: current)
             measurement(sourceStart.event("scopeSourceSyntax", revision: baseRevision, detail: scope.name, parent: "selectionScopes"))
             let selectionStart = AnalysisMeasurement()
             var report = select(current: current, source: source, changes: filtered, baseRevision: baseRevision,
@@ -69,6 +73,22 @@ extension XcodeHeadOnlySelector {
             report.buildArtifactPath = retainedGraphPath
             return ScopedImpactReport(scope: scope, report: report)
         }
+    }
+
+    /// A head binary cannot establish what a changed test bundle used to load.
+    /// A production or unowned input may have contributed to any linked image.
+    private static func processesAffectedByOmittedInputs(_ paths: Set<String>, in current: XcodeTestGraph) -> Set<String> {
+        guard !paths.isEmpty, let inventories = current.dependencies?.swiftTestingFactoriesByTarget,
+              !inventories.isEmpty else { return [] }
+        var testInputs = Set<String>(), processes = Set<String>()
+        for target in current.targets {
+            let overlap = paths.intersection(target.sourceFiles)
+            guard !overlap.isEmpty else { continue }
+            guard target.isTest else { return Set(inventories.keys) }
+            testInputs.formUnion(overlap)
+            if inventories[target.name] != nil { processes.insert(target.name) }
+        }
+        return testInputs == paths ? processes : Set(inventories.keys)
     }
 
     static func independentEntryKeys(current: XcodeTestGraph, excluding entries: Set<String>, index: DependencyIndex? = nil) -> Set<String> {

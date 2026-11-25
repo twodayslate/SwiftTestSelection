@@ -44,6 +44,8 @@ struct XcodeHeadOnlySources {
     /// Git sources absent from the captured head inventory have unknown base ownership.
     var unownedBaseSources: [String: SwiftSourceSnapshot] = [:]
     var mappingPath: String = ".swift-test-selection.json"
+    /// Processes whose historical linkage cannot be inferred across edits outside this scope.
+    var unverifiedScopedProcesses = Set<String>()
     /// Full Git comparison, never the filtered scope. Produced only by read().
     var runtimeBoundaryEvidence: HeadOnlyRuntimeSourceEvidence? = nil
 
@@ -541,12 +543,13 @@ enum XcodeHeadOnlySelector {
                     }
                 }
             }
-            let historicalProcesses = XCTestDiscoveryCase.historicallyUnverifiedTargets(in: current, base: source.base, touching: paths)
-            if !historicalProcesses.isEmpty {
+            var processes = XCTestDiscoveryCase.historicallyUnverifiedTargets(in: current, base: source.base, touching: paths)
+            if !semanticPaths.isDisjoint(with: paths) { processes.formUnion(source.unverifiedScopedProcesses) }
+            if !processes.isEmpty {
                 let entries = inventory.filter { test in
-                    historicalProcesses.contains(target(test)) && graph.tests[test]?.contains(SwiftTestingDiscoveryRoots.sharedDiscoveryID) == true
+                    processes.contains(target(test)) && graph.tests[test]?.contains(SwiftTestingDiscoveryRoots.sharedDiscoveryID) == true
                 }
-                fallback("swift_testing_discovery_effects", "Base XCTest execution may have changed the registrations visible to this Swift Testing process.", tests: entries)
+                fallback("swift_testing_discovery_effects", "The base test process may have loaded registrations outside the verified head inventory.", tests: entries)
             }
             if !uncertainDiscoveryTests.isEmpty {
                 fallback("swift_testing_discovery_effects", SwiftTestingDiscoveryRoots.unresolvedEffects, tests: uncertainDiscoveryTests)
