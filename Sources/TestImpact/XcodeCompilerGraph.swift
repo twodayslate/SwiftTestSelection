@@ -235,6 +235,7 @@ enum XcodeCompilerGraph {
             let factories = Set(image.records.compactMap { inventory.byRecord[$0] })
             return factories.count == image.records.count ? factories : nil
         }
+        graph.swiftTestingCasesByTarget = linkedTestingRecords?.filter { graph.swiftTestingFactoriesByTarget?[$0.key] != nil }.mapValues(\.cases)
         SwiftTestingDiscoveryRoots.bindTraitWitnesses(graph: &graph, tables: tables, compiler: compiler)
         let localModules = projectModules ?? Set(graph.functions.values.filter { !$0.regions.isEmpty }.map(\.module))
         for symbol in graph.functions.keys {

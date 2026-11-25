@@ -35,6 +35,7 @@ public enum GraphArchive {
         var swiftTestingEntryRoots: [String: [Int]]?
         var swiftTestingProcessInventoryVersion: Int?
         var swiftTestingFactoriesByTarget: [String: Set<String>]?
+        var swiftTestingCasesByTarget: [String: Set<XCTestDiscoveryCase>]?
         var swiftTestingLinkedRecordsVerified: Bool?
         var swiftTestingRegisteredFactories: [String: Set<String>]?
         var swiftTestingSuiteWitnesses: [String: Set<String>]?
@@ -86,6 +87,7 @@ public enum GraphArchive {
             testVTableEntries = graph.testVTableEntries
             swiftTestingProcessInventoryVersion = graph.swiftTestingProcessInventoryVersion
             swiftTestingFactoriesByTarget = graph.swiftTestingFactoriesByTarget
+            swiftTestingCasesByTarget = graph.swiftTestingCasesByTarget
             swiftTestingLinkedRecordsVerified = graph.swiftTestingLinkedRecordsVerified
             swiftTestingRegisteredFactories = graph.swiftTestingRegisteredFactories
             swiftTestingSuiteWitnesses = graph.swiftTestingSuiteWitnesses
@@ -111,6 +113,7 @@ public enum GraphArchive {
             graph.testVTableEntries = testVTableEntries
             graph.swiftTestingProcessInventoryVersion = swiftTestingProcessInventoryVersion
             graph.swiftTestingFactoriesByTarget = swiftTestingFactoriesByTarget
+            graph.swiftTestingCasesByTarget = swiftTestingCasesByTarget
             graph.swiftTestingLinkedRecordsVerified = swiftTestingLinkedRecordsVerified
             graph.swiftTestingRegisteredFactories = swiftTestingRegisteredFactories
             graph.swiftTestingSuiteWitnesses = swiftTestingSuiteWitnesses

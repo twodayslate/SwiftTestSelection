@@ -193,6 +193,8 @@ public struct DependencyGraph: Codable, Sendable {
     /// Factories reached from registrations in a platform-agent bundle, keyed by the
     /// Xcode target identifier. An absent key has incomplete linkage evidence.
     public var swiftTestingFactoriesByTarget: [String: Set<String>]? = nil
+    /// XCTest source contracts actually matched to entry points in each verified process.
+    var swiftTestingCasesByTarget: [String: Set<XCTestDiscoveryCase>]? = nil
     /// Whole-plan evidence recorded by older archives.
     public var swiftTestingLinkedRecordsVerified: Bool? = nil
     /// Compiler-authenticated class identities from the matching built modules.

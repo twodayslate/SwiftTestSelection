@@ -541,6 +541,13 @@ enum XcodeHeadOnlySelector {
                     }
                 }
             }
+            let historicalProcesses = XCTestDiscoveryCase.historicallyUnverifiedTargets(in: current, base: source.base, touching: paths)
+            if !historicalProcesses.isEmpty {
+                let entries = inventory.filter { test in
+                    historicalProcesses.contains(target(test)) && graph.tests[test]?.contains(SwiftTestingDiscoveryRoots.sharedDiscoveryID) == true
+                }
+                fallback("swift_testing_discovery_effects", "Base XCTest execution may have changed the registrations visible to this Swift Testing process.", tests: entries)
+            }
             if !uncertainDiscoveryTests.isEmpty {
                 fallback("swift_testing_discovery_effects", SwiftTestingDiscoveryRoots.unresolvedEffects, tests: uncertainDiscoveryTests)
             }

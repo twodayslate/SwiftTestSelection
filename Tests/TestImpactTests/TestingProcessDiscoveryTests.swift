@@ -8,7 +8,7 @@ private enum ProcessEdit: CaseIterable {
     case suiteWitness, suiteMetadata, cleanup
     case archivedPredicate, guardedSuite, ambiguousSuite
     case bodyWithOpaqueCompanion, archivedBody, eagerTrait, eagerTraitInCompanionHost, suiteTrait, nestedMainActorSuite, registrationLocation
-    case pluginHost, principalClassPlugin, discoveryHookPlugin, instanceConstructionPlugin, testMethodPlugin, shadowedAssertionPlugin
+    case pluginHost, principalClassPlugin, discoveryHookPlugin, instanceConstructionPlugin, testMethodPlugin, shadowedAssertionPlugin, removedTestMethodPlugin
 }
 
 @Test(.serialized, arguments: ProcessEdit.allCases)
@@ -39,7 +39,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     let nested = edit == .nestedMainActorSuite
     let marked = nested ? "LocalTests/Outer/Other/marked()" : "LocalTests/Other/marked()"
     let guarded = edit == .guardedSuite || edit == .ambiguousSuite
-    let ordinary = "CompanionTests/Case/testIndependent()"
+    let ordinary = "CompanionTests/CompanionTests/testCompanionState()"
     let observer = predicate || edit == .suiteWitness ? "CompanionTests/Other/observe()" : "CompanionTests/Foreign/observe()"
     func suiteWithPredicate(_ value: Bool) -> String {
         """
@@ -63,7 +63,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     let plugin = edit == .pluginHost
     let appHosted = plugin || edit == .eagerTraitInCompanionHost
     let principalClassPlugin = edit == .principalClassPlugin
-    let platformLoadsPlugin = [.principalClassPlugin, .discoveryHookPlugin, .instanceConstructionPlugin, .testMethodPlugin, .shadowedAssertionPlugin].contains(edit)
+    let platformLoadsPlugin = [.principalClassPlugin, .discoveryHookPlugin, .instanceConstructionPlugin, .testMethodPlugin, .shadowedAssertionPlugin, .removedTestMethodPlugin].contains(edit)
     let loadsPlugin = plugin || platformLoadsPlugin
     let companionSuite: String
     switch edit {
@@ -73,7 +73,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     default: companionSuite = predicate ? "extension Local.Other" : (opaque ? "@Suite(Marker()) struct Foreign" : "struct Foreign")
     }
     let loadBundle = """
-    let root = Bundle(for: Case.self).bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+    let root = Bundle(for: CompanionTests.self).bundleURL.deletingLastPathComponent().deletingLastPathComponent()
     try! Bundle(url: root.appendingPathComponent("Local/Fixture.xctest"))!.loadAndReturnError()
     """
     let principalClass = """
@@ -92,35 +92,41 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     """
     let testBody: String
     switch edit {
-    case .testMethodPlugin: testBody = loadBundle
+    case .testMethodPlugin, .removedTestMethodPlugin: testBody = loadBundle
     case .shadowedAssertionPlugin: testBody = "XCTAssertTrue(true)"
     default: testBody = ""
     }
-    let companion = """
-    import Foundation
-    import Testing
-    import XCTest
-    \(opaque ? #"@_silgen_name("support") func support() -> Int32"# : "")
-    \(opaque ? #"struct Marker: SuiteTrait { init() { UserDefaults.standard.set(support(), forKey: "startup") } }"# : "")
-    \(predicate ? "import Local" : "")
-    \(edit == .cleanup ? "final class Token { deinit {} }" : "")
-    \(edit == .cleanup ? "struct Dropper: SuiteTrait { init() { _ = Token() } }" : "")
-    \(principalClassPlugin ? principalClass : "")
-    \(edit == .shadowedAssertionPlugin ? "func XCTAssertTrue(_ value: Bool) { " + loadBundle + " }" : "")
-    \(companionSuite) { @Test func observe() { \(loadsPlugin ? #"#expect(UserDefaults.standard.bool(forKey: "pluginFlag"))"# : "") } }
-    final class Case: XCTestCase {
-        \(edit == .discoveryHookPlugin ? suiteOverride : "")
-        \(edit == .instanceConstructionPlugin ? "private let startup: Void = { " + loadBundle + " }()" : "")
-        func testIndependent() { \(testBody) }
+    func companionSource(body: String) -> String {
+        """
+        import Foundation
+        import Testing
+        import XCTest
+        \(opaque ? #"@_silgen_name("support") func support() -> Int32"# : "")
+        \(opaque ? #"struct Marker: SuiteTrait { init() { UserDefaults.standard.set(support(), forKey: "startup") } }"# : "")
+        \(predicate ? "import Local" : "")
+        \(edit == .cleanup ? "final class Token { deinit {} }" : "")
+        \(edit == .cleanup ? "struct Dropper: SuiteTrait { init() { _ = Token() } }" : "")
+        \(principalClassPlugin ? principalClass : "")
+        \(edit == .shadowedAssertionPlugin ? "func XCTAssertTrue(_ value: Bool) { " + loadBundle + " }" : "")
+        \(companionSuite) { @Test func observe() { \(loadsPlugin ? #"#expect(UserDefaults.standard.bool(forKey: "pluginFlag"))"# : "") } }
+        final class CompanionTests: XCTestCase {
+            \(edit == .discoveryHookPlugin ? suiteOverride : "")
+            \(edit == .instanceConstructionPlugin ? "private let startup: Void = { " + loadBundle + " }()" : "")
+            func testCompanionState() { \(body) }
+        }
+        """
     }
-    """
-    try Data(companion.utf8).write(to: root.appendingPathComponent("Companion.swift"))
     try Data("int support(void) { return 1; }".utf8).write(to: root.appendingPathComponent("support.c"))
     _ = try query(["clang", "-dynamiclib", "support.c", "-install_name", "@rpath/libSupport.dylib", "-o", "libSupport.dylib"])
     var linkArguments = opaque ? ["-L", root.path, "-lSupport", "-Xlinker", "-rpath", "-Xlinker", root.path] : []
     if predicate { linkArguments = ["-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup"] }
-    _ = try linkedFixtureRecords(arguments("Companion"), linkArguments: linkArguments,
-        root: root.appendingPathComponent("Companion"), target: "CompanionTests", principalClass: principalClassPlugin ? "PluginLoader" : nil)
+    func buildCompanion(_ text: String) throws {
+        try Data(text.utf8).write(to: root.appendingPathComponent("Companion.swift"))
+        _ = try linkedFixtureRecords(arguments("Companion"), linkArguments: linkArguments,
+            root: root.appendingPathComponent("Companion"), target: "CompanionTests", principalClass: principalClassPlugin ? "PluginLoader" : nil)
+    }
+    let originalCompanion = companionSource(body: testBody)
+    try buildCompanion(originalCompanion)
     let localTarget = ["BlueprintName": "LocalTests", "TestBundlePath": "__TESTROOT__/Local/Fixture.xctest"]
     let companionTarget = ["BlueprintName": "CompanionTests", "TestBundlePath": "__TESTROOT__/Companion/Fixture.xctest"]
     let run = root.appendingPathComponent("Both.xctestrun")
@@ -128,6 +134,9 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     var unknownOwners: [Bool: XcodeTestGraph] = [:]
     var migratedPredicates: [Bool: XcodeTestGraph] = [:]
     func capture(_ value: Bool, includeObserver: Bool) throws -> XcodeTestGraph {
+        let removesLoad = edit == .removedTestMethodPlugin && !value
+        let companion = removesLoad ? companionSource(body: "") : originalCompanion
+        if removesLoad { try buildCompanion(companion) }
         let source: String
         switch edit {
         case .eagerTrait, .eagerTraitInCompanionHost, .registrationLocation:
@@ -163,7 +172,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             \(guarded ? "#endif" : "")
             \(nested ? "}" : "")
             """
-        case .pluginHost, .principalClassPlugin, .discoveryHookPlugin, .instanceConstructionPlugin, .testMethodPlugin, .shadowedAssertionPlugin:
+        case .pluginHost, .principalClassPlugin, .discoveryHookPlugin, .instanceConstructionPlugin, .testMethodPlugin, .shadowedAssertionPlugin, .removedTestMethodPlugin:
             source = """
             import Foundation
             import Testing
@@ -172,7 +181,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             }
             struct Marker: TestTrait { init(value: Bool) { writePluginFlag(value) } }
             struct Common { @Test func plain() {} }
-            struct Other { @Test(Marker(value: \(value))) func marked() {} }
+            struct Other { @Test(Marker(value: \(edit == .removedTestMethodPlugin || value))) func marked() {} }
             """
         case .bodyWithOpaqueCompanion, .archivedBody:
             source = "import Testing\nstruct Common { @Test func plain() {} }\nstruct Other { @Test func marked() { #expect(Bool(\(value))) } }"
@@ -186,7 +195,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         }
         let localSource = SwiftSourceSnapshot.parse(source, path: "Local.swift", module: "Local")
         let companionSource = SwiftSourceSnapshot.parse(companion, path: "Companion.swift", module: "Companion")
-        let plainCases = ["LocalTests": localSource.plainXCTestCases ?? [], "CompanionTests": companionSource.plainXCTestCases ?? []]
+        let plainCases = ["LocalTests": localSource.xctestDiscoveryCases ?? [], "CompanionTests": companionSource.xctestDiscoveryCases ?? []]
         func records(_ configurations: [[String: Any]]) throws -> [String: LinkedTestingRecords.Inventory] {
             let plan = ["TestConfigurations": configurations]
             try PropertyListSerialization.data(fromPropertyList: plan, format: .binary, options: 0).write(to: run)
@@ -241,7 +250,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         let hasSuite = [.suiteTrait, .suiteWitness, .suiteMetadata, .cleanup].contains(edit) || nested || guarded
         let recordCount = predicate ? 5 : (hasSuite ? 3 : 2)
         #expect(linked["LocalTests"]?.records.count == recordCount)
-        #expect((linked["CompanionTests"] == nil) == (opaque || appHosted || (platformLoadsPlugin && edit != .shadowedAssertionPlugin)))
+        #expect((linked["CompanionTests"] == nil) == (opaque || appHosted || (platformLoadsPlugin && edit != .shadowedAssertionPlugin && !removesLoad)))
         #expect(try records([active, ["TestTargets": [hosted]]])["LocalTests"] == nil)
         #expect(try records([active, ["IsEnabled": 0, "TestTargets": [hosted]]])["LocalTests"] == nil)
         let tests = [plain, marked, ordinary] + (includeObserver ? [observer] : []) + (predicate ? [classTest, inherited] : [])
@@ -309,12 +318,27 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     for includeObserver in (opaque ? [false, true] : [true]) {
         let base = try capture(true, includeObserver: includeObserver)
         let head = try capture(false, includeObserver: includeObserver)
-        let changes = [FileChange(path: "Local.swift")]
+        let changes = [FileChange(path: edit == .removedTestMethodPlugin ? "Companion.swift" : "Local.swift")]
         func selections(_ head: XcodeTestGraph, _ base: XcodeTestGraph) -> [ImpactReport] {
             [XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base"),
              XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")]
         }
         let reports = selections(head, base)
+        if edit == .removedTestMethodPlugin {
+            for report in reports {
+                #expect(report.selectedTests.contains(observer))
+                #expect(report.diagnostics.contains { $0.code == "swift_testing_discovery_effects" && $0.tests.contains(observer) })
+            }
+            // Keep the source-only check across both on-disk encodings, independently
+            // of whether a scoped query removes the changed XCTest entry as a root.
+            for data in [try GraphArchive.encode(head), try JSONEncoder().encode(head)] {
+                let restored = try GraphArchive.decode(data)
+                let report = XcodeHeadOnlySelector.select(current: restored, source: .init(base: base.sources),
+                    changes: changes, baseRevision: "base", excludedTestEntries: [ordinary])
+                #expect(report.selectedTests.contains(observer))
+            }
+            continue
+        }
         if edit == .suiteWitness {
             // Older binders attached a same-named foreign witness and could
             // persist that derived node among the entry roots on re-encoding.

@@ -287,7 +287,7 @@ public struct XcodeAnalysis {
         var plainCases: [String: [XCTestDiscoveryCase]] = [:]
         for target in targets where target.isTest {
             guard let module = modules[target.name] else { continue }
-            plainCases[target.name] = target.sourceFiles.flatMap { sources[module + ":" + $0]?.plainXCTestCases ?? [] }
+            plainCases[target.name] = target.sourceFiles.flatMap { sources[module + ":" + $0]?.xctestDiscoveryCases ?? [] }
         }
         let linkedRecords = sources.values.contains { $0.swiftTestingDeclarations?.tests.isEmpty == false }
             ? LinkedTestingRecords.capture(testRun: xctestrun, products: derived.appendingPathComponent("Build/Products"), plainCases: plainCases) : nil

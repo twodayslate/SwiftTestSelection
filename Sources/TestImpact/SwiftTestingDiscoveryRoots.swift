@@ -71,7 +71,7 @@ enum SwiftTestingDiscoveryRoots {
             targets.formUnion(symbols)
         }
         guard !targets.isEmpty else { return }
-        let names = demangledNames(producers.union(targets).sorted(), compiler: compiler)
+        let names = SILOwnership.demangledNames(producers.union(targets).sorted(), compiler: compiler)
         let prefixes = protocols.map { "protocol witness for Testing." + $0 + "." }
         var witnesses: [String: Set<String>] = [:]
         for symbol in targets {
@@ -114,25 +114,6 @@ enum SwiftTestingDiscoveryRoots {
     private static let nominal = #"\w+(?:\.(?:\w+|\(\w+ in _[A-Fa-f0-9]+\)))+"#
     private static let producerResult = try! NSRegularExpression(pattern: #"(?: -> |\.getter : )("# + nominal + #")$"#)
     private static let witnessOwner = try! NSRegularExpression(pattern: #" in conformance ("# + nominal + #") : Testing\.(?:Trait|TestTrait|SuiteTrait|TestScoping) in [\w]+$"#)
-
-    private static func demangledNames(_ symbols: [String], compiler: String?) -> [String: String] {
-        let command: [String]
-        let sibling = compiler.map { URL(fileURLWithPath: $0).deletingLastPathComponent().appendingPathComponent("swift-demangle").path }
-        if compiler?.hasPrefix("/") == true, let sibling, FileManager.default.isExecutableFile(atPath: sibling) {
-            command = [sibling]
-        } else {
-            #if os(macOS)
-            command = ["xcrun", "swift-demangle"]
-            #else
-            command = ["swift-demangle"]
-            #endif
-        }
-        guard let output = try? CommandRunner.run(command[0], Array(command.dropFirst()) + ["--compact"],
-            at: FileManager.default.temporaryDirectory, input: Data((symbols.joined(separator: "\n") + "\n").utf8)).text else { return [:] }
-        let names = output.split(separator: "\n")
-        guard names.count == symbols.count else { return [:] }
-        return Dictionary(uniqueKeysWithValues: zip(symbols, names.map(String.init)))
-    }
 
     /// The constrained standard-library overloads invoke these protocol requirements.
     /// The unconstrained and reflecting overloads can inspect erased values at runtime.
@@ -292,6 +273,7 @@ enum SwiftTestingDiscoveryRoots {
     static func restore(modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph) {
         guard !modules.values.contains("Testing") else { return }
         if graph.swiftTestingProcessInventoryVersion != LinkedTestingRecords.inventoryVersion {
+            graph.swiftTestingCasesByTarget = nil
             graph.swiftTestingFactoriesByTarget = nil
             graph.swiftTestingLinkedRecordsVerified = nil
         }

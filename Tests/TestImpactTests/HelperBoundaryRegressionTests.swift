@@ -65,7 +65,8 @@ func linkedFixtureRecords(_ arguments: [String], linkArguments: [String] = [], r
     var plainCases: [XCTestDiscoveryCase] = []
     for path in arguments where path.hasSuffix(".swift") {
         let text = try String(contentsOfFile: path, encoding: .utf8)
-        plainCases.append(contentsOf: SwiftSourceSnapshot.parse(text, path: path, module: module).plainXCTestCases ?? [])
+        let sourcePath = path.hasPrefix(root.path + "/") ? String(path.dropFirst(root.path.count + 1)) : URL(fileURLWithPath: path).lastPathComponent
+        plainCases.append(contentsOf: SwiftSourceSnapshot.parse(text, path: sourcePath, module: module).xctestDiscoveryCases ?? [])
     }
     return try #require(LinkedTestingRecords.capture(testRun: run, products: root, plainCases: [target: plainCases]))
 }

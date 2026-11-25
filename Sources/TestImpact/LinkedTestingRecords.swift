@@ -7,19 +7,20 @@ import Foundation
 /// Unknown dylibs, image layouts and stripped registration symbols leave
 /// discovery open. A source import list cannot establish these facts.
 enum LinkedTestingRecords {
-    // Version 4 accounts for XCTest case construction and execution before Swift Testing discovery.
-    static let inventoryVersion = 4
+    // Version 5 binds XCTest execution evidence to compiler-resolved identities.
+    static let inventoryVersion = 5
 
     struct Assertion: Hashable {
-        let method: String
+        let thunk: String
         let sdk: String
 
         func verified(in graph: DependencyGraph) -> Bool {
             // The source is a single call with a boolean literal. Confirm the SDK
             // overload and the literal autoclosure, including when a project shadows the name.
-            let literal = method + "SbyKXEfu_"
-            guard graph.functions[method]?.compilerReferences == [sdk, sdk + "fA0_", literal],
-                  let closure = graph.functions[literal] else { return false }
+            guard let callees = graph.functions[thunk]?.compilerReferences, callees.count == 1,
+                  let method = callees.first, var references = graph.functions[method]?.compilerReferences,
+                  references.remove(sdk) != nil, references.remove(sdk + "fA0_") != nil, references.count == 1,
+                  let literal = references.first, let closure = graph.functions[literal] else { return false }
             return closure.compilerReferences == [] && closure.hasModeledDiscoveryInstructions == true && closure.mayDestroyValue == false
         }
     }
@@ -27,10 +28,12 @@ enum LinkedTestingRecords {
     struct Inventory: Equatable {
         var records: Set<String> = []
         var assertions: Set<Assertion> = []
+        var cases: Set<XCTestDiscoveryCase> = []
 
         mutating func formUnion(_ other: Self) {
             records.formUnion(other.records)
             assertions.formUnion(other.assertions)
+            cases.formUnion(other.cases)
         }
     }
 
@@ -193,7 +196,15 @@ enum LinkedTestingRecords {
         let lines = sections[0].split(separator: "\n").dropFirst()
         let classes = lines.split(whereSeparator: { $0.first?.isHexDigit == true })
         guard classes.count == count else { return false }
-        let evidence = Dictionary(grouping: plainCases, by: \.runtimeName)
+        let evidence = Dictionary(grouping: plainCases, by: \.qualifiedName)
+        let symbols = lines.compactMap { line -> String? in
+            let fields = line.split(whereSeparator: \.isWhitespace)
+            guard let symbol = fields.last,
+                  (fields.first == "name" && symbol.hasPrefix("_Tt")) ||
+                  (fields.first == "imp" && symbol.hasPrefix("_$s")) else { return nil }
+            return String(symbol)
+        }
+        let names = evidence.isEmpty ? [:] : SILOwnership.demangledNames(Set(symbols).sorted())
         return classes.allSatisfy { record in
             let sides = record.split(separator: "Meta Class")
             guard sides.count == 2 else { return false }
@@ -213,10 +224,11 @@ enum LinkedTestingRecords {
                 guard let name = header.first(where: { $0.first == "name" }), name.count == 3,
                       instance.contains(["ivars", "0x0"]) else { return false }
                 guard header.contains(where: { $0.first == "data" && $0.suffix(2) == ["Swift", "class"] }),
-                      let candidates = evidence[String(name[2])], candidates.count == 1, let source = candidates.first,
+                      let identity = names[String(name[2])], let candidates = evidence[identity], candidates.count == 1, let source = candidates.first,
                       let methods = instance.firstIndex(where: { $0.first == "baseMethods" }),
                       let end = instance[methods...].firstIndex(where: { $0.first == "baseProtocols" }),
-                      let assertions = source.linkedAssertions(in: instance[methods..<end]) else { return false }
+                      let assertions = source.linkedAssertions(in: instance[methods..<end], names: names) else { return false }
+                inventory.cases.insert(source)
                 inventory.assertions.formUnion(assertions)
                 return true
             default:

@@ -128,7 +128,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 24
+    static let currentParserVersion = 25
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -136,7 +136,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     }
     var swiftTestingDeclarations: SwiftTestingSourceDeclarations? = nil
     /// Source evidence for case implementations that can run before Swift Testing discovery.
-    var plainXCTestCases: [XCTestDiscoveryCase]? = nil
+    var xctestDiscoveryCases: [XCTestDiscoveryCase]? = nil
     public var parserVersion: Int? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
     static func legacyConditionalPaths(in sources: [String: Self], touching paths: Set<String>) -> Set<String> {
@@ -251,8 +251,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         var result = Self(units: [], inheritance: [:], diagnostics: [])
         result.parserVersion = Self.currentParserVersion
         if !tree.hasError {
-            result.plainXCTestCases = tree.statements.compactMap {
-                $0.item.as(ClassDeclSyntax.self).flatMap { XCTestDiscoveryCase($0, module: module) }
+            result.xctestDiscoveryCases = tree.statements.compactMap {
+                $0.item.as(ClassDeclSyntax.self).flatMap { XCTestDiscoveryCase($0, path: path, module: module) }
             }
         }
         #if canImport(CryptoKit)
