@@ -54,7 +54,7 @@ extension XcodeHeadOnlySelector {
             // Derive evidence independently, sharing only immutable reads/parses.
             let sourceStart = AnalysisMeasurement()
             let selectedPaths = Set(filtered.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
-            let omittedInputs = changedPaths.subtracting(selectedPaths).subtracting(documentation).subtracting([mappingPath])
+            let omittedInputs = changedPaths.subtracting(selectedPaths).subtracting(documentation)
             var source = try XcodeHeadOnlySources.read(current: current, changes: filtered, base: baseRevision, root: root,
                 mappingPath: mappingPath, cache: sourceCache)
             source.unverifiedScopedProcesses = processesAffectedByOmittedInputs(omittedInputs, in: current)
