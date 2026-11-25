@@ -437,6 +437,7 @@ public enum XcodeFineSelector {
             var productionAffected = Set<String>()
             var enumModules = Set<String>()
             var unverifiedLocations = Set<String>()
+            var unverifiedCopies = Set<String>()
             let physicalModules = revision == "base" ? registrations.basePhysicalModules : registrations.headPhysicalModules
             for unit in units {
                 if (unit.kind == "function" || unit.scope.isEmpty), unit.hasUnverifiedCompilerLocation(in: physicalModules) {
@@ -460,7 +461,7 @@ public enum XcodeFineSelector {
                         return unit.kind != "function" || (region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine)
                     }) else { return false }
                     guard physicalModules.contains(node.module) else {
-                        unverifiedLocations.insert("\(unit.region.path):\(unit.region.startLine)")
+                        unverifiedCopies.insert(node.id)
                         return false
                     }
                     return true
@@ -493,6 +494,7 @@ public enum XcodeFineSelector {
                 }
             }
             let affectedPaths = index.paths(to: affected)
+            let uncertainCopies = unverifiedCopies.isEmpty ? nil : index.paths(to: unverifiedCopies)
             var uncertainDiscoveryTests = Set<String>()
             for test in snapshot.tests where inventory.contains(test) {
                 if hasSemanticChanges {
@@ -500,6 +502,9 @@ public enum XcodeFineSelector {
                         if diagnostic == SwiftTestingDiscoveryRoots.unresolvedEffects { uncertainDiscoveryTests.insert(test) }
                         else { fallback("unresolved_inheritance", diagnostic + " for " + test, tests: [test]) }
                     }
+                }
+                if let symbol = uncertainCopies?.path(from: graph.tests[test] ?? [])?.last, let node = graph.functions[symbol] {
+                    fallback("unverified_source_location", "Compiled code reachable from \(test) carries an unverified source location in \(revision): \(node.module).\(node.name)", tests: [test])
                 }
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
                     let reason = path.last.map(SwiftTestingDiscoveryRoots.isDiscoveryRoot) == true ? "Swift Testing discovery inputs changed before test filtering" : "Compiled dependency reaches a changed declaration"
