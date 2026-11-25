@@ -110,8 +110,7 @@ extension TestRuntimeBoundary {
                     ?? "; refresh the missing declaration inventory"
                 return prefix + "historical macro/attribute expansion is not authenticated: " + key + detail
             }
-            if modules.contains(module), !(current.generatedSourceBoundaries?[module]?.isEmpty ?? true) ||
-                !(current.unsupportedSourceInputs?[module]?.isEmpty ?? true) || current.unresolvedProductRoles?[module] != nil {
+            if modules.contains(module), current.hasUninspectedSwiftInputs(in: module) || current.unresolvedProductRoles?[module] != nil {
                 return prefix + "generated inputs or module ownership require historical build evidence: " + module
             }
             let before = Dictionary(grouping: old.units, by: \.key)

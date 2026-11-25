@@ -849,6 +849,57 @@ func helperEditsRespectPhysicalCompilerLocations(redirected: Bool) throws {
     }
 }
 
+@Test(arguments: [false, true])
+func generatedSwiftCallsKeepInlinedHelperConsumers(mixedPlan: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let generated = ".build/DerivedSources/Generated.swift"
+    try FileManager.default.createDirectory(at: root.appendingPathComponent(".build/DerivedSources"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let caller = "UI/Suite/first()", control = "UI/Control/second()"
+    let xctest = "UI/Ordinary/testFirst()"
+    let tests = mixedPlan ? [caller, control, xctest] : [caller, control]
+    func capture(_ value: Bool) throws -> XcodeTestGraph {
+        var files = [
+            "Helpers.swift": "@_transparent func gate() -> Bool { \(value) }",
+            generated: "func generatedResult() -> Bool { gate() }",
+            "Tests.swift": """
+                import Testing
+                struct Suite { @Test func first() { #expect(!generatedResult()) } }
+                struct Control { @Test func second() {} }
+                """
+        ]
+        if mixedPlan {
+            files["Ordinary.swift"] = "import XCTest\nfinal class Ordinary: XCTestCase { func testFirst() { XCTAssertFalse(generatedResult()) } }"
+        }
+        var graph = try boundaryGraph(files, tests: tests, root: root,
+                                      compilerArguments: ["-plugin-path", plugins.path], allowTestDiagnostics: mixedPlan, compiler: compiler)
+        // Capture stores generated inputs as boundaries outside the repository syntax inventory.
+        graph.targets[0].sourceFiles.remove(generated)
+        graph.sources.removeValue(forKey: "UI:" + generated)
+        let digest = try ArtifactFiles.digest(root.appendingPathComponent(generated))
+        graph.generatedSourceBoundaries = ["UI": [.init(module: "UI", logicalPath: generated, contentDigest: digest,
+            generatorIdentity: "auxiliary-file", repositoryInputs: "same", hasPhysicalLocations: true)]]
+        return try GraphArchive.decode(GraphArchive.encode(graph))
+    }
+    let base = try capture(false), head = try capture(true)
+    let compilerGraph = try #require(head.dependencies)
+    let gate = try #require(compilerGraph.functions.values.first { $0.name == "gate()" })
+    #expect(compilerGraph.dependencyPath(from: compilerGraph.tests[caller] ?? [], to: [gate.id]) == nil)
+    let changes = [FileChange(path: "Helpers.swift")]
+    let dual = XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base")
+    let single = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
+    for report in [dual, single] {
+        #expect(report.selectedTests.contains(caller))
+        #expect(report.explanations.contains { $0.test == caller && $0.kind == "fallback" })
+        if mixedPlan { #expect(report.selectedTests.contains(xctest)) }
+    }
+    if mixedPlan {
+        #expect(dual.diagnostics.contains { $0.code == "unverified_inline_callers" && $0.tests.contains(xctest) })
+    }
+}
+
 @Test
 func firstAndLastSwiftTestingRegistrationUseOnlyTheirOwnRevision() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

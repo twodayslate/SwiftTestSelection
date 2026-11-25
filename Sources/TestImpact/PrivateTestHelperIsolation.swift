@@ -807,7 +807,7 @@ enum PrivateTestHelperIsolation {
         let module = String(unit.key.prefix { $0 != ":" })
         let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
         guard !owners.isEmpty, owners.allSatisfy({ $0.isTest && !$0.hasProductionRole && current.modules[$0.name] == module }),
-              current.unsupportedSourceInputs?[module]?.isEmpty ?? true,
+              !current.hasUninspectedSwiftInputs(in: module),
               current.unresolvedProductRoles?[module] == nil else { return false }
         let headSources = Array(current.sources.values), baseSources = Array(base.values)
         guard (headSources + baseSources).allSatisfy({ $0.helperNamesUnshadowed == true }) else { return false }

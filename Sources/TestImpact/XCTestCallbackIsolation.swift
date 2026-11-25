@@ -27,6 +27,7 @@ enum XCTestCallbackIsolation {
 
     static func blocker(current: XcodeTestGraph, base: [String: SwiftSourceSnapshot],
                         unownedBase: [String: SwiftSourceSnapshot]) -> String? {
+        guard !current.hasUninspectedSwiftInputs() else { return "Uninspected source inputs can register XCTest callbacks" }
         let revisions = [Array(current.sources.values), Array(base.values) + Array(unownedBase.values)]
         for sources in revisions {
             for source in sources {

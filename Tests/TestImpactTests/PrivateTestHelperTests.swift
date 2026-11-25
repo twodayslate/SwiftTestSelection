@@ -361,12 +361,15 @@ func compiledPrivateHelperChainAndAddedEntry(safety: String) throws {
     #expect(select(uncertain, base: uncertain.sources).selectedTests.isEmpty)
     uncertain.dependencies!.testDiagnostics[unrelated] = ["Unknown lifecycle"]
     #expect(select(uncertain, base: entryBase).selectedTests == tests)
-    for fault in ["legacy", "missingRoot", "unknownConsumer", "ancestorState", "baseName", "otherFileName", "nonfinal", "unsupported", "attachmentAPI", "legacyAttachment"] {
+    for fault in ["legacy", "missingRoot", "unknownConsumer", "ancestorState", "baseName", "otherFileName", "generated", "nonfinal", "unsupported", "attachmentAPI", "legacyAttachment"] {
         var broken = current, old = entryBase
         switch fault {
         case "legacy":
             for i in broken.sources["UI:UI.swift"]!.units.indices { broken.sources["UI:UI.swift"]!.units[i].independentAddedTestEntry = nil }
         case "missingRoot": broken.dependencies!.tests[unrelated] = []
+        case "generated":
+            broken.generatedSourceBoundaries = ["UI": [.init(module: "UI", logicalPath: "Generated.swift", contentDigest: "stable",
+                generatorIdentity: "auxiliary-file", repositoryInputs: "same", hasPhysicalLocations: true)]]
         case "unknownConsumer": broken.dependencies!.functions[graph.tests[unrelated]!.first!]!.dependencies.formUnion(graph.tests[added]!)
         case "ancestorState":
             for id in graph.functions.keys where graph.functions[id]!.name.contains(".openShareSubmenu(") {

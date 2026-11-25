@@ -425,13 +425,15 @@ public enum XcodeFineSelector {
             let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
             affected.formUnion(discoveryChange.roots(in: graph))
             let unusedInline = revision == "head" ? headEffects.unusedInline : baseEffects?.unusedInline ?? []
-            if graph.functions[discovery] != nil, units.contains(where: { $0.hasInlineBody == true && !unusedInline.contains(.init($0)) }) {
-                let consumers = snapshot.tests.filter { test in
+            let hasInlineChange = units.contains { $0.hasInlineBody == true && !unusedInline.contains(.init($0)) }
+            var inlineDiscoveryConsumers = Set<String>()
+            if hasInlineChange, graph.functions[discovery] != nil {
+                inlineDiscoveryConsumers = Set(snapshot.tests.filter { test in
                     let roots = graph.tests[test] ?? []
                     return roots.isEmpty || roots.contains(discovery) ||
                         graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true
-                }
-                fallback("swift_testing_inline_origin", "Compiler inlining can erase the origin of a changed body used during Swift Testing discovery", tests: Set(consumers))
+                })
+                fallback("swift_testing_inline_origin", "Compiler inlining can erase the origin of a changed body used during Swift Testing discovery", tests: inlineDiscoveryConsumers)
             }
             var productionUnits: [SourceUnit] = []
             var productionAffected = Set<String>()
@@ -520,7 +522,7 @@ public enum XcodeFineSelector {
             if !uncertainDiscoveryTests.isEmpty {
                 fallback("swift_testing_discovery_effects", SwiftTestingDiscoveryRoots.unresolvedEffects, tests: uncertainDiscoveryTests)
             }
-            if hasSemanticChanges && (!testEntriesOnly || !unverifiedLocations.isEmpty) {
+            if hasSemanticChanges && (!testEntriesOnly || !unverifiedLocations.isEmpty || hasInlineChange) {
                 // Runtime dispatch to known project declarations is represented by
                 // candidate SIL edges. Opaque function values and raw pointers are
                 // not proof of absence; conservatively include their callers.
@@ -558,9 +560,11 @@ public enum XcodeFineSelector {
                 var bounded: [String: [String]] = [:]
                 var layoutConsumers = Set<String>()
                 var locationConsumers = Set<String>()
+                var inlineBodyConsumers = Set<String>()
                 for test in inventory {
                     let path = declaredUIRuntime && uiTests.contains(test) ? nil : uncertainPaths.path(from: graph.tests[test] ?? [])
-                    guard !enumModules.isEmpty || !unverifiedLocations.isEmpty || path != nil else { continue }
+                    let needsInlineFallback = hasInlineChange && !inlineDiscoveryConsumers.contains(test)
+                    guard needsInlineFallback || !enumModules.isEmpty || !unverifiedLocations.isEmpty || path != nil else { continue }
                     if changesHaveIsolatedOwnership, let boundary = boundedTargets[target(of: test)],
                        changedModules.isDisjoint(with: boundary.modules) {
                         bounded[boundary.target, default: []].append(test)
@@ -568,12 +572,16 @@ public enum XcodeFineSelector {
                     }
                     if !enumModules.isEmpty { layoutConsumers.insert(test) }
                     if !unverifiedLocations.isEmpty { locationConsumers.insert(test) }
+                    if needsInlineFallback { inlineBodyConsumers.insert(test) }
                     if let path {
                         let uncertainty = graph.functions[path.last!]!.uncertainties
                         let missingImplementation = uncertainty.contains { $0.hasPrefix("Imported conformance:") }
                             ? " Imported conformance ownership is known; its implementation body/runtime effects are unavailable." : ""
                         fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test); no validated boundary excludes changed modules [\(changedModules.sorted().joined(separator: ", "))]: \(uncertainty.sorted().joined(separator: "; "))" + missingImplementation, tests: [test])
                     }
+                }
+                if !inlineBodyConsumers.isEmpty {
+                    fallback("unverified_inline_callers", "Inlining can erase calls to a changed body in \(revision). The compiler graph cannot identify every caller.", tests: inlineBodyConsumers)
                 }
                 if !locationConsumers.isEmpty {
                     fallback("unverified_source_location", "Cannot bind changed declarations to physical compiler locations in \(revision): " + unverifiedLocations.sorted().joined(separator: ", "), tests: locationConsumers)

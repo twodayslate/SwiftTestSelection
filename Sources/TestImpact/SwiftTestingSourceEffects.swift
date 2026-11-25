@@ -34,6 +34,9 @@ struct SwiftTestingSourceEffects {
             return $0.value.units.contains { $0.hasOnlyDirectSourceCalls == true }
         }
         guard !candidates.isEmpty else { return [] }
+        // With no historical SIL, a competing overload in uninspected input
+        // could have supplied a caller-location default in the base build.
+        if historical != nil, !snapshot.hasCompleteSwiftSourceInventory(snapshot.sources) { return [] }
         // An unowned base file might previously have contributed an overload.
         // Only top-level bindings in a closed file participate in lookup.
         var unownedNames = Set<String>()
@@ -122,12 +125,7 @@ struct SwiftTestingSourceEffects {
         var candidates: [SourceUnit] = []
         // Other files can change unqualified macro lookup through declarations
         // or re-exports. Their ordinary imports are local to those files.
-        lazy var completeSources = snapshot.diagnostics.isEmpty &&
-            snapshot.unsupportedSourceInputs?.values.allSatisfy(\.isEmpty) != false &&
-            snapshot.targets.allSatisfy { target in
-                guard let module = snapshot.modules[target.name] else { return target.sourceFiles.isEmpty }
-                return target.sourceFiles.filter { $0.hasSuffix(".swift") }.allSatisfy { sources[module + ":" + $0] != nil }
-            }
+        lazy var completeSources = snapshot.hasCompleteSwiftSourceInventory(sources)
         func preservesMacroLookup(_ file: SwiftSourceSnapshot) -> Bool {
             file.helperImportsLocal == true && file.diagnostics.isEmpty && file.helperDeclarationIssues?.allSatisfy {
                 $0.kind != "macro-declaration" && testingSyntax.contains($0.spelling)

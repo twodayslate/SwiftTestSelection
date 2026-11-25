@@ -374,7 +374,7 @@ struct InlineUIMappings {
             return result
         }
         func computeCompleteExports(_ module: String) -> Bool {
-            guard snapshot.unsupportedSourceInputs?[module]?.isEmpty != false,
+            guard !snapshot.hasUninspectedSwiftInputs(in: module),
                   let keys = sourcesByModule[module], !keys.isEmpty,
                   keys.allSatisfy({ snapshot.sources[$0]?.inlineMappings?.reexportedModules != nil &&
                       snapshot.sources[$0]?.inlineMappings?.reexportedTypeImports != nil }) else { return false }

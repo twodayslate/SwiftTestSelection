@@ -18,7 +18,7 @@ enum SDKTestHelperIsolation {
         let module = String(unit.key.prefix { $0 != ":" })
         let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
         guard !owners.isEmpty, owners.allSatisfy({ $0.isTest && !$0.hasProductionRole && current.modules[$0.name] == module }),
-              current.unsupportedSourceInputs?[module]?.isEmpty ?? true, current.unresolvedProductRoles?[module] == nil else { return "Unresolved test-only ownership or unsupported source inputs" }
+              !current.hasUninspectedSwiftInputs(in: module), current.unresolvedProductRoles?[module] == nil else { return "Unresolved test-only ownership or uninspected source inputs" }
         guard current.tests.allSatisfy({ test in
             guard let roots = graph.tests[test], !roots.isEmpty, graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
             return roots.allSatisfy { graph.functions[$0] != nil }

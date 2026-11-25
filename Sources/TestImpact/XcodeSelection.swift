@@ -64,6 +64,24 @@ public struct XcodeTestGraph: Codable, Sendable {
         self.diagnostics = diagnostics
     }
 
+    /// Generated boundaries can establish stable bytes and physical locations,
+    /// but contain no inventory of names, calls, macros, or overloads.
+    func hasUninspectedSwiftInputs(in module: String? = nil) -> Bool {
+        if let module {
+            return unsupportedSourceInputs?[module]?.isEmpty == false || generatedSourceBoundaries?[module]?.isEmpty == false
+        }
+        return unsupportedSourceInputs?.values.contains(where: { !$0.isEmpty }) == true ||
+            generatedSourceBoundaries?.values.contains(where: { !$0.isEmpty }) == true
+    }
+
+    func hasCompleteSwiftSourceInventory(_ snapshots: [String: SwiftSourceSnapshot]) -> Bool {
+        diagnostics.isEmpty && !hasUninspectedSwiftInputs() &&
+            targets.allSatisfy { target in
+                guard let module = modules[target.name] else { return target.sourceFiles.isEmpty }
+                return target.sourceFiles.filter { $0.hasSuffix(".swift") }.allSatisfy { snapshots[module + ":" + $0] != nil }
+            }
+    }
+
     var modulesWithPhysicalSourceLocations: Set<String> {
         // A SIL location can point into a different input of the same module.
         // Prove every input uses physical coordinates before matching any root.
