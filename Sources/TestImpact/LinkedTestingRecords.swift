@@ -7,8 +7,8 @@ import Foundation
 /// Unknown dylibs, image layouts and stripped registration symbols leave
 /// discovery open. A source import list cannot establish these facts.
 enum LinkedTestingRecords {
-    // Earlier captures checked host and image startup code but omitted the bundle's principal class.
-    static let inventoryVersion = 2
+    // Version 3 also verifies the linked class method tables used during XCTest discovery.
+    static let inventoryVersion = 3
 
     static func capture(testRun: URL?, products: URL) -> [String: Set<String>]? {
         let run: URL
@@ -126,11 +126,31 @@ enum LinkedTestingRecords {
         let fields = layout.split(separator: "\n").map { $0.split(whereSeparator: \.isWhitespace) }
         // A bundle initializer or Objective-C +load method can load another
         // image before the platform agent begins Swift Testing discovery.
-        for field in fields {
+        var classCount: UInt64 = 0
+        for (index, field) in fields.enumerated() {
             if field == ["cmd", "LC_ROUTINES_64"] || field == ["sectname", "__objc_nlclslist"] ||
                 field == ["sectname", "__objc_nlcatlist"] { return nil }
+            // A category can replace a framework discovery hook on an existing class.
+            if field.first == "sectname", field.last?.hasPrefix("__objc_catlist") == true { return nil }
+            if field == ["sectname", "__objc_classlist"] {
+                guard classCount == 0, index + 3 < fields.count, let size = hexField(fields[index + 3], name: "size"),
+                      size % 8 == 0 else { return nil }
+                classCount = size / 8
+            }
             // Mach-O section type (low byte): S_MOD_INIT_FUNC_POINTERS or S_INIT_FUNC_OFFSETS.
             if let flags = hexField(field, name: "flags"), [0x09, 0x16].contains(flags & 0xff) { return nil }
+        }
+        if classCount > 0 {
+            // XCTest dispatches class methods such as defaultTestSuite and testInvocations
+            // before Swift Testing discovery. Inspect the final image, including statically
+            // linked superclasses. An empty metaclass method table rules out a local override.
+            guard let metadata = try? CommandRunner.run("xcrun", ["otool", "-ov", image.path], at: directory).text else { return nil }
+            let metaclasses = metadata.components(separatedBy: "\nMeta Class\n").dropFirst()
+            guard metaclasses.count == classCount, metaclasses.allSatisfy({ record in
+                let fields = record.split(separator: "\n").prefix { $0.first?.isWhitespace == true }
+                let tables = fields.map { $0.split(whereSeparator: \.isWhitespace) }.filter { $0.first == "baseMethods" }
+                return tables == [["baseMethods", "0x0"]]
+            }) else { return nil }
         }
         let sections = fields.indices.filter { fields[$0] == ["sectname", "__swift5_tests"] }
         if sections.isEmpty { return [] }
