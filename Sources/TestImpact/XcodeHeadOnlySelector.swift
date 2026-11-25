@@ -412,10 +412,6 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
             }
-            if b.hasUnverifiedSwiftTestingLocation(in: registrations.headPhysicalModules) {
-                fallback("unverified_test_location", "Cannot bind the changed Swift Testing entry to physical compiler locations in head: \(b.region.path):\(b.region.startLine)")
-                continue
-            }
             let unusedInline = effects.unusedInline.contains(.init(b))
             guard unusedInline || entryEdits[key] != nil || registrations.supportedBodies.contains(key) || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
                 fallback("head_only_unsupported_body", "Attributes, macros or opaque result types can change callers outside a surviving body: \(b.region.path):\(b.region.startLine)")
@@ -489,14 +485,17 @@ enum XcodeHeadOnlySelector {
                     production.append(unit)
                     continue
                 }
+                guard !unit.hasUnverifiedCompilerLocation(in: registrations.headPhysicalModules) else {
+                    fallback("unverified_source_location", "Cannot bind the changed declaration to physical compiler locations in head: \(unit.region.path):\(unit.region.startLine)")
+                    continue
+                }
                 let overlapping = Set(current.sources.values.flatMap(\.units).filter { $0.kind == "function" && $0.region.intersects(unit.region) }.map(\.key))
                 guard overlapping == [unit.key] else {
                     fallback("head_only_ambiguous_location", "Overlapping declaration locations cannot identify the changed body in \(unit.region.path)")
                     continue
                 }
                 let ids = Set((index.byFile[unit.region.path] ?? []).filter { id in
-                    let node = graph.functions[id]!
-                    return node.module == module && node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }
+                    unit.containsCompilerLocation(of: graph.functions[id]!, physicalModules: registrations.headPhysicalModules)
                 })
                 if ids.isEmpty { fallback("head_only_unresolved_body", "No compiled function for surviving body \(unit.region.path):\(unit.region.startLine)") }
                 affected.formUnion(ids)
@@ -511,11 +510,9 @@ enum XcodeHeadOnlySelector {
             let omittedKeys = Set(excludedChanges.map(\.key))
             for (key, units) in new where !omittedKeys.contains(key) &&
                 (!comparison.equivalent(old[key] ?? [], units) || policyHelpers.contains(key)) {
-                for unit in units where unit.kind == "function" && !unit.hasUnverifiedSwiftTestingLocation(in: registrations.headPhysicalModules) {
-                    let module = String(unit.key.prefix { $0 != ":" })
+                for unit in units where unit.kind == "function" {
                     affected.formUnion((index.byFile[unit.region.path] ?? []).filter { id in
-                        let node = graph.functions[id]!
-                        return node.module == module && node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }
+                        unit.containsCompilerLocation(of: graph.functions[id]!, physicalModules: registrations.headPhysicalModules)
                     })
                 }
             }

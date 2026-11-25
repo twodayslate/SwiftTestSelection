@@ -792,6 +792,63 @@ func registrationEditsRespectPhysicalCompilerLocations(redirected: Bool, edit: S
     }
 }
 
+@Test(arguments: [false, true])
+func helperEditsRespectPhysicalCompilerLocations(redirected: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let caller = "UI/Suite/first()", sibling = "UI/Control/second()"
+    func capture(gate: Bool) throws -> XcodeTestGraph {
+        let path = root.appendingPathComponent("Helpers.swift").path
+        let helpers = """
+        // Test support
+        \(redirected ? "#sourceLocation(file: \"\(path)\", line: 6)" : "")
+        func gate() -> Bool { \(gate) }
+        \(redirected ? "#sourceLocation()" : "")
+        \(redirected ? "#sourceLocation(file: \"\(path)\", line: 3)" : "")
+        func controlGate() -> Bool { true }
+        \(redirected ? "#sourceLocation()" : "")
+        """
+        let tests = """
+        import Testing
+        struct Suite { @Test("Gate") func first() { #expect(!gate()) } }
+        struct Control { @Test func second() { #expect(controlGate()) } }
+        """
+        let graph = try boundaryGraph(["Helpers.swift": helpers, "Tests.swift": tests], tests: [caller, sibling],
+                                      root: root, compilerArguments: ["-plugin-path", plugins.path], compiler: compiler)
+        return try GraphArchive.decode(GraphArchive.encode(graph))
+    }
+    let base = try capture(gate: false), head = try capture(gate: true)
+    let changes = [FileChange(path: "Helpers.swift")]
+    func check(_ base: XcodeTestGraph, _ head: XcodeTestGraph, verified: Bool) {
+        let dual = XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base")
+        let historical = XcodeHeadOnlySources(base: base.sources)
+        func headOnly(excluding entries: Set<String>) -> ImpactReport {
+            XcodeHeadOnlySelector.select(current: head, source: historical, changes: changes, baseRevision: "base",
+                                         excludedTestEntries: entries)
+        }
+        for report in [dual, headOnly(excluding: []), headOnly(excluding: [sibling])] {
+            #expect(report.selectedTests.contains(caller))
+            #expect(!report.explanations.contains { $0.test == sibling && $0.kind == "dependency" })
+            if verified {
+                #expect(report.selectedTests == [caller])
+                #expect(report.explanations.contains { $0.test == caller && $0.kind == "dependency" })
+            } else {
+                #expect(report.diagnostics.contains { $0.code == "unverified_source_location" && $0.tests.contains(caller) })
+            }
+        }
+    }
+    check(base, head, verified: !redirected)
+    if !redirected {
+        // An input elsewhere in the module can redirect its compiler locations into Helpers.swift.
+        var legacy = head
+        legacy.sources["UI:Tests.swift"]?.receiverPhysicalLocations = nil
+        check(base, legacy, verified: false)
+    }
+}
+
 @Test
 func firstAndLastSwiftTestingRegistrationUseOnlyTheirOwnRevision() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

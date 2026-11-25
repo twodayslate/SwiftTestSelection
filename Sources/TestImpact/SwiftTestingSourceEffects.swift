@@ -55,7 +55,8 @@ struct SwiftTestingSourceEffects {
             Dictionary(grouping: sources.values.flatMap(\.units).filter { $0.kind == "function" }, by: { $0.helperCallableName ?? "" })
         }
         let symbols = Dictionary(grouping: graph.functions.values.filter { !$0.regions.isEmpty }, by: \.name)
-        for (fileKey, file) in candidates where file.receiverPhysicalLocations == true {
+        let physicalModules = snapshot.modulesWithPhysicalSourceLocations
+        for (fileKey, file) in candidates {
             let old = historical?[fileKey]
             if historical != nil {
                 guard let old, old.receiverPhysicalLocations == true, old.units.map(\.key) == file.units.map(\.key) else { continue }
@@ -63,7 +64,7 @@ struct SwiftTestingSourceEffects {
             let oldDirectCallers = Set(old?.units.filter { $0.hasOnlyDirectSourceCalls == true }.map(\.key) ?? [])
             for unit in file.units where unit.hasOnlyDirectSourceCalls == true {
                 guard let names = unit.invocationNames, names.isDisjoint(with: unownedNames), let signature = unit.helperReferenceSignature,
-                      let caller = Self.symbol(for: unit, among: symbols[signature]),
+                      let caller = Self.symbol(for: unit, among: symbols[signature], physicalModules: physicalModules),
                       let refs = caller.compilerReferences, refs.count == names.count,
                       caller.dynamicDeclarations.isEmpty, !caller.hasOpaqueRuntimeDependency else { continue }
                 // Bind each distinct written call to an actual local implementation
@@ -74,7 +75,7 @@ struct SwiftTestingSourceEffects {
                     let matches = (functions[name] ?? []).filter {
                         guard $0.scope.isEmpty, $0.conditionalBranch == nil, $0.hasInlineBody != true,
                               let signature = $0.helperReferenceSignature,
-                              let callee = Self.symbol(for: $0, among: symbols[signature]) else { return false }
+                              let callee = Self.symbol(for: $0, among: symbols[signature], physicalModules: physicalModules) else { return false }
                         return refs.contains(callee.id)
                     }
                     if matches.count == 1 { targets.append(matches[0]) }
@@ -96,8 +97,9 @@ struct SwiftTestingSourceEffects {
         return callers
     }
 
-    private static func symbol(for unit: SourceUnit, among candidates: [FunctionNode]?) -> FunctionNode? {
+    private static func symbol(for unit: SourceUnit, among candidates: [FunctionNode]?, physicalModules: Set<String>) -> FunctionNode? {
         let module = String(unit.key.prefix { $0 != ":" })
+        guard physicalModules.contains(module) else { return nil }
         let matches = candidates?.filter { node in
             node.module == module && node.regions.contains {
                 $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.endLine <= unit.region.endLine

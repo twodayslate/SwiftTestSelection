@@ -212,7 +212,14 @@ public enum XcodeFineSelector {
                 if signatures(oldEdges[key]!) != signatures(newEdges[key]!) {
                     for (nodes, units, isOld) in [(oldEdges[key]!, oldUnitsByFile, true), (newEdges[key]!, newUnitsByFile, false)] {
                         let candidates = Set(nodes.flatMap(\.regions).map(\.path)).flatMap { units[$0] ?? [] }
-                        let enclosing = candidates.filter { unit in unit.kind == "function" && nodes.contains { node in node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine } } }
+                        let physicalModules = isOld ? registrations.basePhysicalModules : registrations.headPhysicalModules
+                        guard nodes.allSatisfy({ physicalModules.contains($0.module) }) else {
+                            fallback("unverified_source_location", "Cannot bind changed compiler dependencies for " + key + " to physical source locations in " + (isOld ? "base" : "head"))
+                            continue
+                        }
+                        let enclosing = candidates.filter { unit in
+                            unit.kind == "function" && nodes.contains { unit.containsCompilerLocation(of: $0, physicalModules: physicalModules) }
+                        }
                         if isOld { oldChanged += enclosing } else { newChanged += enclosing }
                     }
                 }
@@ -429,10 +436,11 @@ public enum XcodeFineSelector {
             var productionUnits: [SourceUnit] = []
             var productionAffected = Set<String>()
             var enumModules = Set<String>()
+            var unverifiedLocations = Set<String>()
             let physicalModules = revision == "base" ? registrations.basePhysicalModules : registrations.headPhysicalModules
             for unit in units {
-                if unit.hasUnverifiedSwiftTestingLocation(in: physicalModules) {
-                    fallback("unverified_test_location", "Cannot bind the changed Swift Testing entry to physical compiler locations in \(revision): \(unit.region.path):\(unit.region.startLine)")
+                if (unit.kind == "function" || unit.scope.isEmpty), unit.hasUnverifiedCompilerLocation(in: physicalModules) {
+                    unverifiedLocations.insert("\(unit.region.path):\(unit.region.startLine)")
                     continue
                 }
                 let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
@@ -442,13 +450,20 @@ public enum XcodeFineSelector {
                     : index.byFile[unit.region.path] ?? []
                 let nodes = candidates.compactMap { graph.functions[$0] }.filter { node in
                     guard !node.regions.isEmpty else { return false }
-                    if unit.kind == "function" {
-                        return node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }
-                    }
-                    if !unit.scope.isEmpty {
+                    if unit.kind != "function", !unit.scope.isEmpty {
                         return node.name.contains(unit.scope + ".") && owners.contains { snapshot.modules[$0.name] == node.module }
                     }
-                    return node.regions.contains { $0.path == unit.region.path }
+                    // Imported and inlined bodies can carry this source location
+                    // in another module. Verify the emitting module as well.
+                    guard node.regions.contains(where: { region in
+                        guard region.path == unit.region.path else { return false }
+                        return unit.kind != "function" || (region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine)
+                    }) else { return false }
+                    guard physicalModules.contains(node.module) else {
+                        unverifiedLocations.insert("\(unit.region.path):\(unit.region.startLine)")
+                        return false
+                    }
+                    return true
                 }
                 let ids = Set(nodes.map(\.id))
                 affected.formUnion(ids)
@@ -498,7 +513,7 @@ public enum XcodeFineSelector {
             if !uncertainDiscoveryTests.isEmpty {
                 fallback("swift_testing_discovery_effects", SwiftTestingDiscoveryRoots.unresolvedEffects, tests: uncertainDiscoveryTests)
             }
-            if hasSemanticChanges && !testEntriesOnly {
+            if hasSemanticChanges && (!testEntriesOnly || !unverifiedLocations.isEmpty) {
                 // Runtime dispatch to known project declarations is represented by
                 // candidate SIL edges. Opaque function values and raw pointers are
                 // not proof of absence; conservatively include their callers.
@@ -535,21 +550,26 @@ public enum XcodeFineSelector {
                 let changedModules = Set((oldChanged + newChanged).map { String($0.key.prefix { $0 != ":" }) })
                 var bounded: [String: [String]] = [:]
                 var layoutConsumers = Set<String>()
+                var locationConsumers = Set<String>()
                 for test in inventory {
                     let path = declaredUIRuntime && uiTests.contains(test) ? nil : uncertainPaths.path(from: graph.tests[test] ?? [])
-                    guard !enumModules.isEmpty || path != nil else { continue }
+                    guard !enumModules.isEmpty || !unverifiedLocations.isEmpty || path != nil else { continue }
                     if changesHaveIsolatedOwnership, let boundary = boundedTargets[target(of: test)],
                        changedModules.isDisjoint(with: boundary.modules) {
                         bounded[boundary.target, default: []].append(test)
                         continue
                     }
                     if !enumModules.isEmpty { layoutConsumers.insert(test) }
+                    if !unverifiedLocations.isEmpty { locationConsumers.insert(test) }
                     if let path {
                         let uncertainty = graph.functions[path.last!]!.uncertainties
                         let missingImplementation = uncertainty.contains { $0.hasPrefix("Imported conformance:") }
                             ? " Imported conformance ownership is known; its implementation body/runtime effects are unavailable." : ""
                         fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test); no validated boundary excludes changed modules [\(changedModules.sorted().joined(separator: ", "))]: \(uncertainty.sorted().joined(separator: "; "))" + missingImplementation, tests: [test])
                     }
+                }
+                if !locationConsumers.isEmpty {
+                    fallback("unverified_source_location", "Cannot bind changed declarations to physical compiler locations in \(revision): " + unverifiedLocations.sorted().joined(separator: ", "), tests: locationConsumers)
                 }
                 if !layoutConsumers.isEmpty {
                     fallback("enum_layout_change", "\(revision): Enum declaration or case layout changed in \(enumModules.sorted().joined(separator: ", ")). Compiled member references do not cover every representation or protocol witness consumer.", tests: layoutConsumers)
@@ -730,7 +750,15 @@ public enum XcodeFineSelector {
             guard discoverySymbols.insert(id).inserted, let node = graph.functions[id] else { continue }
             pending.append(contentsOf: node.dependencies)
         }
+        let physicalModules = snapshot.modulesWithPhysicalSourceLocations
+        for unit in units where unit.hasUnverifiedCompilerLocation(in: physicalModules) {
+            result[unit.key, default: []].formUnion(allKinds)
+            if graph.functions[discovery] != nil, let locations = unit.callerLocations {
+                result[unit.key, default: []].formUnion(locations.keys)
+            }
+        }
         func index(_ node: FunctionNode) {
+            guard physicalModules.contains(node.module) else { return }
             for region in node.regions {
                 for unit in byFile[region.path] ?? [] where unit.key.hasPrefix(node.module + ":") &&
                     region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine {
@@ -813,7 +841,7 @@ public enum XcodeFineSelector {
     static func isTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
         guard unit.kind == "function", let graph = snapshot.dependencies else { return false }
         let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
-        guard !owners.isEmpty, owners.allSatisfy(\.isTest) else { return false }
+        guard !owners.isEmpty, owners.allSatisfy(\.isTest), !unit.hasUnverifiedCompilerLocation(in: snapshot.modulesWithPhysicalSourceLocations) else { return false }
         // Debug information is line based. Two declarations on the same line
         // cannot establish which function changed; retain fallback in that case.
         let overlapping = Set(snapshot.sources.values.flatMap(\.units).filter {

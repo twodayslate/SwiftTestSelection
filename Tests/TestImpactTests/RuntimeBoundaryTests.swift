@@ -54,6 +54,27 @@ private func labelEdit(_ old: XcodeTestGraph) -> XcodeTestGraph {
     #expect(try GraphArchive.decode(GraphArchive.encode(current)).runtimeInventory?.hosts == current.runtimeInventory?.hosts)
 }
 
+@Test func crossModuleCompilerLocationsPreserveConsumers() {
+    var base = boundaryFixture()
+    let test = "Hosted/Labels/testLabel()"
+    // An emitted body carries a location from App.swift without a call to label.
+    base.dependencies!.functions["hosted"]!.dependencies = []
+    base.dependencies!.functions["hosted"]!.regions.append(.init(path: "App.swift", startLine: 1, endLine: 1))
+    let head = labelEdit(base)
+    func select(_ current: XcodeTestGraph) -> ImpactReport {
+        XcodeFineSelector.select(current: current, previous: base, changes: [.init(path: "App.swift")], baseRevision: "base")
+    }
+    let verified = select(head)
+    #expect(verified.selectedTests == [test])
+    #expect(verified.explanations.contains { $0.test == test && $0.kind == "dependency" && $0.revision == "head" })
+    var legacy = head
+    legacy.sources["Hosted:Hosted.swift"]?.receiverPhysicalLocations = nil
+    let unverified = select(legacy)
+    #expect(unverified.selectedTests == [test])
+    #expect(unverified.diagnostics.contains { $0.code == "unverified_source_location" && $0.tests == [test] })
+    #expect(!unverified.explanations.contains { $0.test == test && $0.kind == "dependency" && $0.revision == "head" })
+}
+
 @Test func enumLayoutFallbackRespectsClosedRuntimeModules() {
     var base = boundaryFixture()
     let path = "App.swift"

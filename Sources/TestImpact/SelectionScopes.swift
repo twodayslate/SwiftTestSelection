@@ -114,7 +114,7 @@ extension XcodeHeadOnlySelector {
             .flatMap { graph.functions[$0]?.regions ?? [] }, by: \.path)
         let physicalModules = current.modulesWithPhysicalSourceLocations
         let candidates = current.sources.values.flatMap(\.units).filter { unit in
-            unit.kind == "function" && !unit.hasUnverifiedSwiftTestingLocation(in: physicalModules) && (regions[unit.region.path] ?? []).contains {
+            unit.kind == "function" && !unit.hasUnverifiedCompilerLocation(in: physicalModules) && (regions[unit.region.path] ?? []).contains {
                 $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine
             }
         }

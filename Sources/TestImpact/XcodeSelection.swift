@@ -72,7 +72,12 @@ public struct XcodeTestGraph: Codable, Sendable {
             guard let module = modules[target.name], physical.contains(module) else { continue }
             if unsupportedSourceInputs?[module]?.isEmpty == false ||
                 generatedSourceBoundaries?[module]?.allSatisfy({ $0.hasPhysicalLocations == true }) == false ||
-                !target.sourceFiles.allSatisfy({ sources[module + ":" + $0]?.receiverPhysicalLocations == true }) {
+                !target.sourceFiles.allSatisfy({ path in
+                    if let source = sources[module + ":" + path] { return source.receiverPhysicalLocations == true }
+                    // Bare-path snapshots must also identify the owning module.
+                    guard let source = sources[path], source.receiverPhysicalLocations == true, !source.units.isEmpty else { return false }
+                    return source.units.allSatisfy { $0.key.hasPrefix(module + ":") && $0.region.path == path }
+                }) {
                 physical.remove(module)
             }
         }

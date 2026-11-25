@@ -113,6 +113,7 @@ struct UIConditionContext {
     struct Side {
         var revision: String
         var snapshot: XcodeTestGraph
+        let physicalModules: Set<String>
         let changedPaths: Set<String>
         let incompleteRegistrations: SwiftTestingRegistrationComparison.IncompleteRegistrations
         var unitsByFile: [String: [SourceUnit]]
@@ -123,6 +124,7 @@ struct UIConditionContext {
              incompleteRegistrations: SwiftTestingRegistrationComparison.IncompleteRegistrations = .init()) {
             self.revision = revision; self.snapshot = snapshot
             self.incompleteRegistrations = incompleteRegistrations
+            physicalModules = snapshot.modulesWithPhysicalSourceLocations
             changedPaths = additionalChangedPaths.union(changed.map { $0.region.path })
             unitsByFile = Dictionary(grouping: snapshot.sources.values.flatMap(\.units), by: { $0.region.path })
             changedKeys = Set(changed.map { $0.key + "@" + $0.region.path })
@@ -194,11 +196,14 @@ struct UIConditionContext {
                     } ?? []
                     resolved = resolved || !nodes.isEmpty
                     for node in nodes {
+                        guard side.physicalModules.contains(node.module) else {
+                            reason = "Unverified source locations for \(node.module).\(node.name) in \(side.revision)"
+                            continue
+                        }
                         let paths = Set(node.regions.map(\.path))
                         let candidates: [SourceUnit] = paths.flatMap { side.unitsByFile[$0] ?? [] }
                         let units = candidates.filter { unit in
-                            guard unit.kind == "function", node.module == String(unit.key.prefix(while: { $0 != ":" })) else { return false }
-                            return node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }
+                            unit.kind == "function" && unit.containsCompilerLocation(of: node, physicalModules: side.physicalModules)
                         }
                         if side.incompleteRegistrations.compiledEntries.contains(node.id) ||
                             units.contains(where: { side.incompleteRegistrations.writtenEntries.contains(.init($0)) }) {

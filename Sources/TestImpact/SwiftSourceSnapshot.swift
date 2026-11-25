@@ -105,8 +105,16 @@ public struct SourceUnit: Codable, Sendable {
     /// Whether this subscript can compete with the SDK identifier getter.
     public var subscriptAcceptsSingleUnlabeledArgument: Bool? = nil
 
-    func hasUnverifiedSwiftTestingLocation(in physicalModules: Set<String>) -> Bool {
-        swiftTestingRole == "test" && !physicalModules.contains(String(key.prefix { $0 != ":" }))
+    func hasUnverifiedCompilerLocation(in physicalModules: Set<String>) -> Bool {
+        !physicalModules.contains(String(key.prefix { $0 != ":" }))
+    }
+
+    /// Compiler regions report presumed positions. Only a complete module-wide
+    /// check can prove that another input did not redirect a symbol into this body.
+    func containsCompilerLocation(of node: FunctionNode, physicalModules: Set<String>) -> Bool {
+        physicalModules.contains(node.module) && key.hasPrefix(node.module + ":") && node.regions.contains {
+            $0.path == region.path && $0.startLine >= region.startLine && $0.startLine <= region.endLine
+        }
     }
 
     func comparisonFingerprint(_ policy: UIFeatureMappings.SourceLocationPolicy) -> String {
