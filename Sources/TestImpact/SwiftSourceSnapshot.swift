@@ -138,10 +138,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source evidence for case implementations that can run before Swift Testing discovery.
     var xctestDiscoveryCases: [XCTestDiscoveryCase]? = nil
     public var parserVersion: Int? = nil
+    /// A legacy capture can recover branch membership from the exact Git blob.
+    var hasVerifiedConditionalMembership: Bool? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
     static func legacyConditionalPaths(in sources: [String: Self], touching paths: Set<String>) -> Set<String> {
         Set(sources.values.compactMap { snapshot in
-            guard (snapshot.parserVersion ?? 0) < 5, let path = snapshot.units.first?.region.path, paths.contains(path),
+            guard (snapshot.parserVersion ?? 0) < 5, snapshot.hasVerifiedConditionalMembership != true, let path = snapshot.units.first?.region.path, paths.contains(path),
                   snapshot.units.contains(where: { $0.kind == "configuration" }) else { return nil }
             return path
         })

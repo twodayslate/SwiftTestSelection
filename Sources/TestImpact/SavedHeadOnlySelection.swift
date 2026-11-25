@@ -41,7 +41,7 @@ extension XcodeAnalysis {
         let cache = try XcodeBaseSourceCache(root: root, base: comparison.base)
         var events: [XcodeAnalysisEvent] = []
         let sourceStart = AnalysisMeasurement()
-        try current.refreshLegacyCallerLocations(paths: Set(changes.map(\.path)), revision: artifact.revision, root: root)
+        try current.refreshLegacyComparisonSyntax(paths: Set(changes.map(\.path)), revision: artifact.revision, root: root)
         let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: comparison.base,
             root: root, mappingPath: options.mappingsPath, cache: cache)
         events.append(sourceStart.event("baseSourceSyntax", revision: comparison.base))
@@ -82,10 +82,11 @@ extension XcodeAnalysis {
 }
 
 extension XcodeTestGraph {
-    /// Parser 11 added physical coordinates to the per-call location digests.
-    /// Compare the same representation on both sides when the captured bytes
-    /// are still available. Preserve independently captured compiler evidence.
-    mutating func refreshLegacyCallerLocations(paths: Set<String>, revision: String, root: URL) throws {
+    /// Comparisons need the same syntax representation on both sides. Older
+    /// captures lack conditional membership (before v5) or physical caller
+    /// coordinates (before v11). Recompute these facts from authenticated bytes
+    /// without changing captured compiler bindings or reviewed helper digests.
+    mutating func refreshLegacyComparisonSyntax(paths: Set<String>, revision: String, root: URL) throws {
         var cache: XcodeBaseSourceCache?
         for (key, var archived) in sources {
             guard let version = archived.parserVersion, version < 11,
@@ -95,14 +96,20 @@ extension XcodeTestGraph {
             guard paths.contains(path) else { continue }
             if cache == nil { cache = try XcodeBaseSourceCache(root: root, base: revision) }
             guard let parsed = try cache?.snapshot(path: path, module: String(key[..<separator])),
-                  let parsedBlobs = parsed.sourceBlobIDs, !blobs.isDisjoint(with: parsedBlobs) else { continue }
-            let regions = Dictionary(grouping: parsed.units, by: \.region)
+                  parsed.diagnostics.isEmpty, let parsedBlobs = parsed.sourceBlobIDs, !blobs.isDisjoint(with: parsedBlobs) else { continue }
+            let regions = Dictionary(grouping: parsed.units.indices, by: { parsed.units[$0].region })
+            var matched = Set<Int>()
             for index in archived.units.indices {
                 let unit = archived.units[index]
-                let matches = regions[unit.region]?.filter { $0.key == unit.key && $0.conditionalBranch == unit.conditionalBranch }
-                if let matches, matches.count == 1 {
-                    archived.units[index].callerLocations = matches[0].callerLocations
-                }
+                let matches = regions[unit.region]?.filter { parsed.units[$0].key == unit.key }
+                guard let matches, matches.count == 1, let match = matches.first else { continue }
+                let native = parsed.units[match]
+                archived.units[index].callerLocations = native.callerLocations
+                archived.units[index].conditionalBranch = native.conditionalBranch
+                matched.insert(match)
+            }
+            if version < 5, matched.count == parsed.units.count, matched.count == archived.units.count {
+                archived.hasVerifiedConditionalMembership = true
             }
             sources[key] = archived
         }

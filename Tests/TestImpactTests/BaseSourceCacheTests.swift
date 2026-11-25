@@ -30,11 +30,11 @@ private struct SourceRepository {
     }
 }
 
-@Test func retainedCallerLocationsRequireTheCapturedHeadBytes() throws {
+@Test func retainedComparisonSyntaxRequiresTheCapturedHeadBytes() throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
     let path = "Caller.swift", key = "App:Caller.swift"
-    let text = "func call() { record() }"
+    let text = "#if DEBUG\nfunc call() { record() }\n#endif"
     try repo.write(path, text)
     let head = try repo.commit()
     let native = SwiftSourceSnapshot.parse(text, path: path, module: "App")
@@ -42,19 +42,24 @@ private struct SourceRepository {
     archived.parserVersion = 4
     // Old parsers used the presumed file for both kinds, even when it
     // disagreed with the physical path supplied to the macro or SDK.
-    archived.units[0].callerLocations?["filePath"] = native.units[0].callerLocations?["file"]
-    let original = try #require(archived.units[0].callerLocations)
-    #expect(original != native.units[0].callerLocations)
+    let index = try #require(native.units.firstIndex { $0.kind == "function" })
+    archived.units[index].conditionalBranch = nil
+    archived.units[index].callerLocations?["filePath"] = native.units[index].callerLocations?["file"]
+    let original = try #require(archived.units[index].callerLocations)
+    #expect(original != native.units[index].callerLocations)
     var graph = XcodeTestGraph(targets: [], tests: [])
     graph.sources[key] = archived
     try repo.write(path, text + " // different bytes")
     let other = try repo.commit()
-    try graph.refreshLegacyCallerLocations(paths: [path], revision: other, root: repo.root)
-    #expect(graph.sources[key]?.units[0].callerLocations == original)
-    try graph.refreshLegacyCallerLocations(paths: [], revision: head, root: repo.root)
-    #expect(graph.sources[key]?.units[0].callerLocations == original)
-    try graph.refreshLegacyCallerLocations(paths: [path], revision: head, root: repo.root)
-    #expect(graph.sources[key]?.units[0].callerLocations == native.units[0].callerLocations)
+    try graph.refreshLegacyComparisonSyntax(paths: [path], revision: other, root: repo.root)
+    #expect(graph.sources[key]?.units[index].callerLocations == original)
+    #expect(SwiftSourceSnapshot.legacyConditionalPaths(in: graph.sources, touching: [path]) == [path])
+    try graph.refreshLegacyComparisonSyntax(paths: [], revision: head, root: repo.root)
+    #expect(graph.sources[key]?.units[index].callerLocations == original)
+    try graph.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
+    #expect(graph.sources[key]?.units[index].callerLocations == native.units[index].callerLocations)
+    #expect(graph.sources[key]?.units[index].conditionalBranch == native.units[index].conditionalBranch)
+    #expect(SwiftSourceSnapshot.legacyConditionalPaths(in: graph.sources, touching: [path]).isEmpty)
     #expect(graph.sources[key]?.parserVersion == 4)
 }
 
