@@ -45,7 +45,7 @@ func evaluate(_ predicate: () -> Bool) -> Bool { predicate() }
 """
 
 
-func linkedFixtureRecords(_ arguments: [String], linkArguments: [String] = [], root: URL, target: String, principalClass: String? = nil) throws -> [String: Set<String>] {
+func linkedFixtureRecords(_ arguments: [String], linkArguments: [String] = [], root: URL, target: String, principalClass: String? = nil) throws -> [String: LinkedTestingRecords.Inventory] {
     let bundle = root.appendingPathComponent("Fixture.xctest/Contents")
     let binaryDirectory = bundle.appendingPathComponent("MacOS")
     try FileManager.default.createDirectory(at: binaryDirectory, withIntermediateDirectories: true)
@@ -60,7 +60,14 @@ func linkedFixtureRecords(_ arguments: [String], linkArguments: [String] = [], r
     let plan = ["TestConfigurations": [["TestTargets": [["BlueprintName": target, "TestBundlePath": "__TESTROOT__/Fixture.xctest",
         "TestHostPath": "__PLATFORMS__/MacOSX.platform/Developer/Library/Xcode/Agents/xctest"]]]]]
     try PropertyListSerialization.data(fromPropertyList: plan, format: .binary, options: 0).write(to: run)
-    return try #require(LinkedTestingRecords.capture(testRun: run, products: root))
+    let moduleFlag = try #require(arguments.firstIndex(of: "-module-name"))
+    let module = arguments[moduleFlag + 1]
+    var plainCases: [XCTestDiscoveryCase] = []
+    for path in arguments where path.hasSuffix(".swift") {
+        let text = try String(contentsOfFile: path, encoding: .utf8)
+        plainCases.append(contentsOf: SwiftSourceSnapshot.parse(text, path: path, module: module).plainXCTestCases ?? [])
+    }
+    return try #require(LinkedTestingRecords.capture(testRun: run, products: root, plainCases: [target: plainCases]))
 }
 
 func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compilerArguments: [String] = [], module: String = "UI", target: String = "UI", allowTestDiagnostics: Bool = false, compiler: String? = nil, allowedUnbound: Set<String> = [], linkArguments: [String] = []) throws -> XcodeTestGraph {
@@ -70,7 +77,7 @@ func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compil
     let arguments = ["swiftc", "-whole-module-optimization", "-Onone", "-g", "-module-name", module,
         "-F", platform + "/Developer/Library/Frameworks", "-I", platform + "/Developer/usr/lib"] + compilerArguments + files.keys.sorted().map { root.appendingPathComponent($0).path }
     _ = try CommandRunner.run("xcrun", arguments + ["-emit-sil", "-o", sil.path], at: root)
-    var records: [String: Set<String>]?
+    var records: [String: LinkedTestingRecords.Inventory]?
     var parsed = try SILParser.parse(file: sil, module: module, sourceRoot: root)
     if parsed.dispatchTargets.keys.contains(where: { $0.hasPrefix(SILModule.testingRecordPrefix) }) {
         records = try linkedFixtureRecords(arguments, linkArguments: linkArguments, root: root, target: target)

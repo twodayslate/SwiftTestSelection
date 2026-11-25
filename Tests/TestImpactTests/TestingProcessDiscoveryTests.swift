@@ -8,7 +8,7 @@ private enum ProcessEdit: CaseIterable {
     case suiteWitness, suiteMetadata, cleanup
     case archivedPredicate, guardedSuite, ambiguousSuite
     case bodyWithOpaqueCompanion, archivedBody, eagerTrait, eagerTraitInCompanionHost, suiteTrait, nestedMainActorSuite, registrationLocation
-    case pluginHost, principalClassPlugin, discoveryHookPlugin
+    case pluginHost, principalClassPlugin, discoveryHookPlugin, instanceConstructionPlugin, testMethodPlugin, shadowedAssertionPlugin
 }
 
 @Test(.serialized, arguments: ProcessEdit.allCases)
@@ -63,7 +63,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     let plugin = edit == .pluginHost
     let appHosted = plugin || edit == .eagerTraitInCompanionHost
     let principalClassPlugin = edit == .principalClassPlugin
-    let platformLoadsPlugin = principalClassPlugin || edit == .discoveryHookPlugin
+    let platformLoadsPlugin = [.principalClassPlugin, .discoveryHookPlugin, .instanceConstructionPlugin, .testMethodPlugin, .shadowedAssertionPlugin].contains(edit)
     let loadsPlugin = plugin || platformLoadsPlugin
     let companionSuite: String
     switch edit {
@@ -90,6 +90,12 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         return super.defaultTestSuite
     }
     """
+    let testBody: String
+    switch edit {
+    case .testMethodPlugin: testBody = loadBundle
+    case .shadowedAssertionPlugin: testBody = "XCTAssertTrue(true)"
+    default: testBody = ""
+    }
     let companion = """
     import Foundation
     import Testing
@@ -100,10 +106,12 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     \(edit == .cleanup ? "final class Token { deinit {} }" : "")
     \(edit == .cleanup ? "struct Dropper: SuiteTrait { init() { _ = Token() } }" : "")
     \(principalClassPlugin ? principalClass : "")
+    \(edit == .shadowedAssertionPlugin ? "func XCTAssertTrue(_ value: Bool) { " + loadBundle + " }" : "")
     \(companionSuite) { @Test func observe() { \(loadsPlugin ? #"#expect(UserDefaults.standard.bool(forKey: "pluginFlag"))"# : "") } }
     final class Case: XCTestCase {
         \(edit == .discoveryHookPlugin ? suiteOverride : "")
-        func testIndependent() {}
+        \(edit == .instanceConstructionPlugin ? "private let startup: Void = { " + loadBundle + " }()" : "")
+        func testIndependent() { \(testBody) }
     }
     """
     try Data(companion.utf8).write(to: root.appendingPathComponent("Companion.swift"))
@@ -155,7 +163,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             \(guarded ? "#endif" : "")
             \(nested ? "}" : "")
             """
-        case .pluginHost, .principalClassPlugin, .discoveryHookPlugin:
+        case .pluginHost, .principalClassPlugin, .discoveryHookPlugin, .instanceConstructionPlugin, .testMethodPlugin, .shadowedAssertionPlugin:
             source = """
             import Foundation
             import Testing
@@ -176,10 +184,13 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             #expect(run.status == (value ? 0 : 1))
             #expect(String(decoding: run.stdout + run.stderr, as: UTF8.self).contains(value ? "Test observe() passed" : "Test observe() failed"))
         }
-        func records(_ configurations: [[String: Any]]) throws -> [String: Set<String>] {
+        let localSource = SwiftSourceSnapshot.parse(source, path: "Local.swift", module: "Local")
+        let companionSource = SwiftSourceSnapshot.parse(companion, path: "Companion.swift", module: "Companion")
+        let plainCases = ["LocalTests": localSource.plainXCTestCases ?? [], "CompanionTests": companionSource.plainXCTestCases ?? []]
+        func records(_ configurations: [[String: Any]]) throws -> [String: LinkedTestingRecords.Inventory] {
             let plan = ["TestConfigurations": configurations]
             try PropertyListSerialization.data(fromPropertyList: plan, format: .binary, options: 0).write(to: run)
-            return try #require(LinkedTestingRecords.capture(testRun: run, products: root))
+            return try #require(LinkedTestingRecords.capture(testRun: run, products: root, plainCases: plainCases))
         }
         var companionRun = companionTarget
         if appHosted {
@@ -229,18 +240,21 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         #expect(linked == (try records([disabled, ["TestTargets": [localTarget, companionRun]]])))
         let hasSuite = [.suiteTrait, .suiteWitness, .suiteMetadata, .cleanup].contains(edit) || nested || guarded
         let recordCount = predicate ? 5 : (hasSuite ? 3 : 2)
-        #expect(linked["LocalTests"]?.count == recordCount)
-        #expect((linked["CompanionTests"] == nil) == (opaque || appHosted || platformLoadsPlugin))
+        #expect(linked["LocalTests"]?.records.count == recordCount)
+        #expect((linked["CompanionTests"] == nil) == (opaque || appHosted || (platformLoadsPlugin && edit != .shadowedAssertionPlugin)))
         #expect(try records([active, ["TestTargets": [hosted]]])["LocalTests"] == nil)
         #expect(try records([active, ["IsEnabled": 0, "TestTargets": [hosted]]])["LocalTests"] == nil)
         let tests = [plain, marked, ordinary] + (includeObserver ? [observer] : []) + (predicate ? [classTest, inherited] : [])
         var graph = XcodeCompilerGraph.extract(log: log, sourceRoot: root, directory: root, derived: root,
             progress: { _ in }, ownership: ownership, linkedTestingRecords: linked)
+        if edit == .shadowedAssertionPlugin {
+            #expect(linked["CompanionTests"]?.assertions.isEmpty == false)
+            #expect(graph.swiftTestingFactoriesByTarget?["CompanionTests"] == nil)
+        }
         let targets = modules.map { XcodeTarget(name: $0.key, productType: "com.apple.product-type.bundle.unit-test", sourceFiles: ownership[$0.value]!) }
         var snapshot = XcodeTestGraph(targets: targets, tests: tests)
         snapshot.modules = modules
-        snapshot.sources = ["Local:Local.swift": .parse(source, path: "Local.swift", module: "Local"),
-                            "Companion:Companion.swift": .parse(companion, path: "Companion.swift", module: "Companion")]
+        snapshot.sources = ["Local:Local.swift": localSource, "Companion:Companion.swift": companionSource]
         if predicate {
             // An old app-host inventory bounded each bundle by its own records.
             // Compare its migration with a fresh bind of the same compiler input
@@ -392,7 +406,8 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         if loadsPlugin {
             // Earlier archives trusted the static image list and omitted the plug-in.
             var legacy = head
-            legacy.dependencies?.swiftTestingProcessInventoryVersion = edit == .discoveryHookPlugin ? 2 : nil
+            if edit == .instanceConstructionPlugin { legacy.dependencies?.swiftTestingProcessInventoryVersion = 3 }
+            else { legacy.dependencies?.swiftTestingProcessInventoryVersion = edit == .discoveryHookPlugin ? 2 : nil }
             legacy.dependencies?.swiftTestingFactoriesByTarget?["CompanionTests"] = []
             legacy.dependencies?.testDiagnostics[observer] = []
             legacy.dependencies?.functions[SwiftTestingDiscoveryRoots.processRoot("CompanionTests")]?.dependencies = []
@@ -464,7 +479,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     ] {
         try Data(source.utf8).write(to: file)
         _ = try CommandRunner.run("xcrun", ["clang", "-bundle", file.path, "-framework", "Foundation", "-o", image.path], at: root)
-        #expect(LinkedTestingRecords.recordsInImage(image) == (hasStartup ? nil : Set<String>()))
+        #expect(LinkedTestingRecords.recordsInImage(image)?.records == (hasStartup ? nil : Set<String>()))
     }
 }
 
@@ -485,7 +500,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             .write(to: bundle.appendingPathComponent(file))
     }
     try writeInfo("Info.plist")
-    #expect(LinkedTestingRecords.capture(testRun: run, products: root)?["UI"] == Set<String>())
+    #expect(LinkedTestingRecords.capture(testRun: run, products: root)?["UI"]?.records == Set<String>())
     for key in ["NSPrincipalClass-iphoneos", "NSPrincipalClass~ipad"] {
         try writeInfo("Info.plist", principalKey: key)
         #expect(LinkedTestingRecords.capture(testRun: run, products: root) == [:])

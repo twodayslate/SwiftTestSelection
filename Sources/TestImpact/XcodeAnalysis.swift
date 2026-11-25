@@ -284,8 +284,13 @@ public struct XcodeAnalysis {
             if let module = modules[target.name] { result[module, default: []].formUnion(target.sourceFiles) }
         }
         let extractionStart = Date()
+        var plainCases: [String: [XCTestDiscoveryCase]] = [:]
+        for target in targets where target.isTest {
+            guard let module = modules[target.name] else { continue }
+            plainCases[target.name] = target.sourceFiles.flatMap { sources[module + ":" + $0]?.plainXCTestCases ?? [] }
+        }
         let linkedRecords = sources.values.contains { $0.swiftTestingDeclarations?.tests.isEmpty == false }
-            ? LinkedTestingRecords.capture(testRun: xctestrun, products: derived.appendingPathComponent("Build/Products")) : nil
+            ? LinkedTestingRecords.capture(testRun: xctestrun, products: derived.appendingPathComponent("Build/Products"), plainCases: plainCases) : nil
         var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation, moduleCache: moduleCache, captured: captured, measurement: measurement, allowCompilerReplay: allowCompilerReplay, linkedTestingRecords: linkedRecords)
         measurement("extraction", Date().timeIntervalSince(extractionStart))
         progress("Binding compiler dependencies to \(tests.count) enumerated tests…")

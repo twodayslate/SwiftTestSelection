@@ -6,7 +6,7 @@ import Foundation
 enum XcodeCompilerGraph {
     static func extract(log: String, sourceRoot: URL, directory: URL, derived: URL,
                         progress: (String) -> Void, ownership: [String: Set<String>] = [:],
-                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil, measurement: (String, Double) -> Void = { _, _ in }, allowCompilerReplay: Bool = true, linkedTestingRecords: [String: Set<String>]? = nil) -> DependencyGraph {
+                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil, measurement: (String, Double) -> Void = { _, _ in }, allowCompilerReplay: Bool = true, linkedTestingRecords: [String: LinkedTestingRecords.Inventory]? = nil) -> DependencyGraph {
         var graph = DependencyGraph()
         graph.compilerImplicitImports = [:]
         guard (1...8).contains(workers) else {
@@ -222,7 +222,7 @@ enum XcodeCompilerGraph {
 
     static func resolveDispatch(_ graph: inout DependencyGraph, tables: [String: Set<String>],
                                 externalWitnesses: [String: Set<String>] = [:], projectModules: Set<String>? = nil, compiler: String? = nil,
-                                linkedTestingRecords: [String: Set<String>]? = nil) {
+                                linkedTestingRecords: [String: LinkedTestingRecords.Inventory]? = nil) {
         for (key, symbols) in tables where key.hasPrefix(SILModule.testVTablePrefix) {
             if graph.testVTableEntries == nil { graph.testVTableEntries = [:] }
             graph.testVTableEntries?[String(key.dropFirst(SILModule.testVTablePrefix.count)), default: []].formUnion(symbols)
@@ -230,9 +230,10 @@ enum XcodeCompilerGraph {
         let inventory = SwiftTestingDiscoveryRoots.registrationInventory(tables: tables, graph: graph)
         graph.swiftTestingRegisteredFactories = inventory.factories
         graph.swiftTestingProcessInventoryVersion = linkedTestingRecords.map { _ in LinkedTestingRecords.inventoryVersion }
-        graph.swiftTestingFactoriesByTarget = linkedTestingRecords?.compactMapValues { records in
-            let factories = Set(records.compactMap { inventory.byRecord[$0] })
-            return factories.count == records.count ? factories : nil
+        graph.swiftTestingFactoriesByTarget = linkedTestingRecords?.compactMapValues { image in
+            guard image.assertions.allSatisfy({ $0.verified(in: graph) }) else { return nil }
+            let factories = Set(image.records.compactMap { inventory.byRecord[$0] })
+            return factories.count == image.records.count ? factories : nil
         }
         SwiftTestingDiscoveryRoots.bindTraitWitnesses(graph: &graph, tables: tables, compiler: compiler)
         let localModules = projectModules ?? Set(graph.functions.values.filter { !$0.regions.isEmpty }.map(\.module))

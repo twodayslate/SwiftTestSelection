@@ -7,10 +7,34 @@ import Foundation
 /// Unknown dylibs, image layouts and stripped registration symbols leave
 /// discovery open. A source import list cannot establish these facts.
 enum LinkedTestingRecords {
-    // Version 3 also verifies the linked class method tables used during XCTest discovery.
-    static let inventoryVersion = 3
+    // Version 4 accounts for XCTest case construction and execution before Swift Testing discovery.
+    static let inventoryVersion = 4
 
-    static func capture(testRun: URL?, products: URL) -> [String: Set<String>]? {
+    struct Assertion: Hashable {
+        let method: String
+        let sdk: String
+
+        func verified(in graph: DependencyGraph) -> Bool {
+            // The source is a single call with a boolean literal. Confirm the SDK
+            // overload and the literal autoclosure, including when a project shadows the name.
+            let literal = method + "SbyKXEfu_"
+            guard graph.functions[method]?.compilerReferences == [sdk, sdk + "fA0_", literal],
+                  let closure = graph.functions[literal] else { return false }
+            return closure.compilerReferences == [] && closure.hasModeledDiscoveryInstructions == true && closure.mayDestroyValue == false
+        }
+    }
+
+    struct Inventory: Equatable {
+        var records: Set<String> = []
+        var assertions: Set<Assertion> = []
+
+        mutating func formUnion(_ other: Self) {
+            records.formUnion(other.records)
+            assertions.formUnion(other.assertions)
+        }
+    }
+
+    static func capture(testRun: URL?, products: URL, plainCases: [String: [XCTestDiscoveryCase]] = [:]) -> [String: Inventory]? {
         let run: URL
         if let testRun { run = testRun }
         else {
@@ -31,17 +55,8 @@ enum LinkedTestingRecords {
         }
         // A test target runs its bundle in its own host process. Repeated plan
         // configurations may load different images for the same target.
-        var inspected: [URL: Set<String>] = [:], opaqueImages = Set<URL>()
-        func records(in image: URL) -> Set<String>? {
-            if let cached = inspected[image] { return cached }
-            guard !opaqueImages.contains(image), let symbols = recordsInImage(image) else {
-                opaqueImages.insert(image)
-                return nil
-            }
-            inspected[image] = symbols
-            return symbols
-        }
-        func processRecords(_ target: [String: Any]) -> Set<String>? {
+        var inspected: [String: [URL: Inventory]] = [:]
+        func processRecords(_ target: [String: Any], name: String) -> Inventory? {
             for key in ["TestingEnvironmentVariables", "EnvironmentVariables"] {
                 if let environment = target[key] as? [String: String], let injection = environment["DYLD_INSERT_LIBRARIES"],
                    injection.split(separator: ":").contains(where: {
@@ -54,9 +69,12 @@ enum LinkedTestingRecords {
             guard target["IsAppHostedTestBundle"] as? Bool != true, target["UseDestinationArtifacts"] as? Bool != true,
                   let path = target["TestBundlePath"] as? String, let bundle = product(path),
                   let image = executableWithoutPrincipalClass(in: bundle) else { return nil }
-            return records(in: image)
+            if let cached = inspected[name]?[image] { return cached }
+            guard let symbols = recordsInImage(image, plainCases: plainCases[name] ?? []) else { return nil }
+            inspected[name, default: [:]][image] = symbols
+            return symbols
         }
-        var recordsByTarget: [String: Set<String>] = [:], incomplete = Set<String>()
+        var recordsByTarget: [String: Inventory] = [:], incomplete = Set<String>()
         for configuration in configurations {
             if let enabled = configuration["IsEnabled"] as? NSNumber,
                CFGetTypeID(enabled) == CFBooleanGetTypeID(), !enabled.boolValue { continue }
@@ -64,7 +82,7 @@ enum LinkedTestingRecords {
             for target in targets {
                 guard let name = target["BlueprintName"] as? String, !name.isEmpty else { return nil }
                 guard !incomplete.contains(name) else { continue }
-                if let records = processRecords(target) { recordsByTarget[name, default: []].formUnion(records) }
+                if let records = processRecords(target, name: name) { recordsByTarget[name, default: Inventory()].formUnion(records) }
                 else {
                     incomplete.insert(name)
                     recordsByTarget.removeValue(forKey: name)
@@ -104,7 +122,7 @@ enum LinkedTestingRecords {
         ["@rpath/\($0).framework/\($0)", "@rpath/\($0).framework/Versions/A/\($0)"]
     } + ["@rpath/libXCTestSwiftSupport.dylib"])
 
-    static func recordsInImage(_ image: URL) -> Set<String>? {
+    static func recordsInImage(_ image: URL, plainCases: [XCTestDiscoveryCase] = []) -> Inventory? {
         let directory = image.deletingLastPathComponent()
         // Support the 64-bit little-endian thin image ABI. Do not silently
         // inspect only the host slice of a universal test product.
@@ -132,7 +150,8 @@ enum LinkedTestingRecords {
                 field == ["sectname", "__objc_nlcatlist"] { return nil }
             // A category can replace a framework discovery hook on an existing class.
             if field.first == "sectname", field.last?.hasPrefix("__objc_catlist") == true { return nil }
-            if field == ["sectname", "__objc_classlist"] {
+            if field.first == "sectname", field.last?.hasPrefix("__objc_classlist") == true {
+                guard field.last == "__objc_classlist" else { return nil }
                 guard classCount == 0, index + 3 < fields.count, let size = hexField(fields[index + 3], name: "size"),
                       size % 8 == 0 else { return nil }
                 classCount = size / 8
@@ -140,36 +159,70 @@ enum LinkedTestingRecords {
             // Mach-O section type (low byte): S_MOD_INIT_FUNC_POINTERS or S_INIT_FUNC_OFFSETS.
             if let flags = hexField(field, name: "flags"), [0x09, 0x16].contains(flags & 0xff) { return nil }
         }
+        var inventory = Inventory()
         if classCount > 0 {
-            // XCTest dispatches class methods such as defaultTestSuite and testInvocations
-            // before Swift Testing discovery. Inspect the final image, including statically
-            // linked superclasses. An empty metaclass method table rules out a local override.
-            guard let metadata = try? CommandRunner.run("xcrun", ["otool", "-ov", image.path], at: directory).text else { return nil }
-            let metaclasses = metadata.components(separatedBy: "\nMeta Class\n").dropFirst()
-            guard metaclasses.count == classCount, metaclasses.allSatisfy({ record in
-                let fields = record.split(separator: "\n").prefix { $0.first?.isWhitespace == true }
-                let tables = fields.map { $0.split(whereSeparator: \.isWhitespace) }.filter { $0.first == "baseMethods" }
-                return tables == [["baseMethods", "0x0"]]
-            }) else { return nil }
+            guard let metadata = try? CommandRunner.run("xcrun", ["otool", "-ov", image.path], at: directory).text,
+                  verifiedClasses(in: metadata, count: classCount, plainCases: plainCases, inventory: &inventory) else { return nil }
         }
         let sections = fields.indices.filter { fields[$0] == ["sectname", "__swift5_tests"] }
-        if sections.isEmpty { return [] }
+        if sections.isEmpty { return inventory }
         guard sections.count == 1, let index = sections.first, index + 3 < fields.count,
               fields[index + 1].count == 2, fields[index + 1][0] == "segname",
               let start = hexField(fields[index + 2], name: "addr"),
               let size = hexField(fields[index + 3], name: "size"), size % 32 == 0,
               let symbols = try? CommandRunner.run("xcrun", ["nm", "-n", "-s", String(fields[index + 1][1]),
                 "__swift5_tests", image.path], at: directory).text else { return nil }
-        var result = Set<String>()
         for line in symbols.split(separator: "\n") {
             let parts = line.split(whereSeparator: \.isWhitespace)
             guard parts.count == 3, parts[2].hasPrefix("_$s"), let address = UInt64(parts[0], radix: 16),
-                  address >= start, address - start == UInt64(result.count) * 32,
-                  result.insert(String(parts[2].dropFirst())).inserted else { return nil }
+                  address >= start, address - start == UInt64(inventory.records.count) * 32,
+                  inventory.records.insert(String(parts[2].dropFirst())).inserted else { return nil }
         }
         // Each SDK record has two UInt32 fields and three pointer-sized fields.
         // Checking the section extent detects missing symbols even if nm succeeds.
-        return UInt64(result.count) == size / 32 ? result : nil
+        return UInt64(inventory.records.count) == size / 32 ? inventory : nil
+    }
+
+    // XCTest calls class hooks and constructs case instances while discovering suites.
+    // Inspect every linked class, including archive members without project sources.
+    private static func verifiedClasses(in metadata: String, count: UInt64, plainCases: [XCTestDiscoveryCase], inventory: inout Inventory) -> Bool {
+        let sections = metadata.components(separatedBy: "\nContents of ").filter {
+            $0.prefix(while: { $0 != "\n" }).hasSuffix(",__objc_classlist) section")
+        }
+        guard sections.count == 1 else { return false }
+        let lines = sections[0].split(separator: "\n").dropFirst()
+        let classes = lines.split(whereSeparator: { $0.first?.isHexDigit == true })
+        guard classes.count == count else { return false }
+        let evidence = Dictionary(grouping: plainCases, by: \.runtimeName)
+        return classes.allSatisfy { record in
+            let sides = record.split(separator: "Meta Class")
+            guard sides.count == 2 else { return false }
+            let metaclass = sides[1].map { $0.split(whereSeparator: \.isWhitespace) }
+            guard metaclass.filter({ $0.first == "baseMethods" }) == [["baseMethods", "0x0"]] else { return false }
+
+            let instance = sides[0].map { $0.split(whereSeparator: \.isWhitespace) }
+            guard let parent = instance.first(where: { $0.first == "superclass" }),
+                  parent.count == 3, parent[1] == "0x0" else { return false }
+            switch parent[2] {
+            case "_OBJC_CLASS_$_NSObject", "_OBJC_CLASS_$__TtCs12_SwiftObject":
+                return true
+            case "_OBJC_CLASS_$_XCTestCase":
+                // Even a synthesized init can run arbitrary stored-property initializers.
+                // Only accept a linked Swift case whose source proves default construction.
+                let header = instance.prefix { $0.first != "baseMethods" }
+                guard let name = header.first(where: { $0.first == "name" }), name.count == 3,
+                      instance.contains(["ivars", "0x0"]) else { return false }
+                guard header.contains(where: { $0.first == "data" && $0.suffix(2) == ["Swift", "class"] }),
+                      let candidates = evidence[String(name[2])], candidates.count == 1, let source = candidates.first,
+                      let methods = instance.firstIndex(where: { $0.first == "baseMethods" }),
+                      let end = instance[methods...].firstIndex(where: { $0.first == "baseProtocols" }),
+                      let assertions = source.linkedAssertions(in: instance[methods..<end]) else { return false }
+                inventory.assertions.formUnion(assertions)
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     private static func hexField(_ fields: [Substring], name: Substring) -> UInt64? {
