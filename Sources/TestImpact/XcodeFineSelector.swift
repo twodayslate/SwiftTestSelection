@@ -94,8 +94,8 @@ public enum XcodeFineSelector {
         let touchedPaths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
         let headEffects = SwiftTestingSourceEffects(current, touching: touchedPaths)
         let baseEffects = previous.map { SwiftTestingSourceEffects($0, touching: touchedPaths) }
-        let callerKinds = locationPolicy == .diagnostic ? [:] : callerLocationKinds(current, effects: headEffects)
-            .merging(previous.map { callerLocationKinds($0, effects: baseEffects!) } ?? [:], uniquingKeysWith: { $0.union($1) })
+        let callerKinds = locationPolicy == .diagnostic ? [:] : callerLocationKinds(current, units: newUnits.values.flatMap { $0 }, effects: headEffects)
+            .merging(previous.map { callerLocationKinds($0, units: oldUnits.values.flatMap { $0 }, effects: baseEffects!) } ?? [:], uniquingKeysWith: { $0.union($1) })
         func comparisonFingerprint(_ unit: SourceUnit) -> String {
             var kinds = callerKinds[unit.key] ?? []
             if locationPolicy == .diagnosticLineColumn { kinds.subtract(["line", "column"]) }
@@ -743,11 +743,11 @@ public enum XcodeFineSelector {
         return report
     }
 
-    private static func callerLocationKinds(_ snapshot: XcodeTestGraph, effects: SwiftTestingSourceEffects) -> [String: Set<String>] {
-        let units = snapshot.sources.values.flatMap(\.units)
+    private static func callerLocationKinds(_ snapshot: XcodeTestGraph, units: [SourceUnit], effects: SwiftTestingSourceEffects) -> [String: Set<String>] {
         let defaults = units.filter { !($0.locationDefaultKinds?.isEmpty ?? true) }
         let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
-        guard !defaults.isEmpty || snapshot.dependencies?.functions[discovery] != nil else { return [:] }
+        let inlineBodies = units.filter { $0.hasInlineBody == true }
+        guard !defaults.isEmpty || !inlineBodies.isEmpty || snapshot.dependencies?.functions[discovery] != nil else { return [:] }
         let allKinds = defaults.reduce(into: Set<String>()) { $0.formUnion($1.locationDefaultKinds ?? []) }
         var kindsByName: [String: Set<String>] = [:]
         for unit in defaults {
@@ -808,7 +808,7 @@ public enum XcodeFineSelector {
         }
         // Mandatory inlining can erase both the call and its debug origin.
         // A location-sensitive inline body must still participate in comparison.
-        for unit in units where unit.hasInlineBody == true && graph.functions[discovery] != nil {
+        for unit in inlineBodies {
             result[unit.key, default: []].formUnion(unit.callerLocations?.keys.map { $0 } ?? [])
         }
         if defaults.isEmpty {

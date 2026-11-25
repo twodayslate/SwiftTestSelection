@@ -170,6 +170,13 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// for comparison, including in saved graphs that predate this selector.
     var comparisonUnits: [SourceUnit] {
         var units = self.units
+        // Before v11 the archive recorded identifiers but did not mark inline
+        // bodies. Without a complete negative name inventory, keep callers of
+        // changed declarations in this file eligible for the inline fallback.
+        if (parserVersion ?? 0) < 11,
+           identifierNames?.isDisjoint(with: ["inline", "_transparent", "inlinable", "_alwaysEmitIntoClient"]) != true {
+            for i in units.indices { units[i].hasInlineBody = true }
+        }
         var owner: [String: Int] = [:]
         var cases: [Int: [String]] = [:]
         for (index, unit) in units.enumerated() {

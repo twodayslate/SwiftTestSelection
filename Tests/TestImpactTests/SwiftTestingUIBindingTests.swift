@@ -897,6 +897,21 @@ func generatedSwiftCallsKeepInlinedHelperConsumers(mixedPlan: Bool) throws {
     }
     if mixedPlan {
         #expect(dual.diagnostics.contains { $0.code == "unverified_inline_callers" && $0.tests.contains(xctest) })
+        func legacy(_ graph: XcodeTestGraph) throws -> XcodeTestGraph {
+            var graph = graph
+            graph.sources = graph.sources.mapValues { snapshot in
+                var snapshot = snapshot
+                snapshot.parserVersion = 10
+                for i in snapshot.units.indices {
+                    snapshot.units[i].hasInlineBody = nil
+                    snapshot.units[i].fileUnreferencedInlineName = nil
+                }
+                return snapshot
+            }
+            return try GraphArchive.decode(GraphArchive.encode(graph))
+        }
+        let archived = XcodeFineSelector.select(current: try legacy(head), previous: try legacy(base), changes: changes, baseRevision: "base")
+        #expect(archived.diagnostics.contains { $0.code == "unverified_inline_callers" && $0.tests.contains(xctest) })
     }
 }
 
