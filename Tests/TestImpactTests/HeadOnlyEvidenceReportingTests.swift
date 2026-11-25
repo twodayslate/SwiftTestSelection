@@ -74,6 +74,58 @@ import Testing
     #expect(callers.contains { $0.baseRegion.startLine == 6 && $0.survivingTestEntries.isEmpty })
 }
 
+@Test(arguments: [false, true])
+func redirectedCompilerLocationsCannotIdentifyHistoricalCallers(acrossFiles: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let inactive = """
+    import XCTest
+    final class Cases: XCTestCase {
+    #if !DEBUG
+        func testReading() { queryHelper(2) }
+    #endif
+    }
+    """
+    let active = """
+    extension Cases {
+    #if DEBUG
+    #sourceLocation(file: "\(root.appendingPathComponent("Suite.swift").path)", line: 4)
+        func testReading() {}
+    #sourceLocation()
+    #endif
+    }
+    """
+    let surviving = "func queryHelper<T>(_ value: T) {}"
+    var files = ["Suite.swift": inactive, "Helpers.swift": surviving]
+    if acrossFiles { files["Active.swift"] = active }
+    else { files["Suite.swift"] = inactive + "\n" + active }
+    let entry = "UI/Cases/testReading()"
+    var head = try boundaryGraph(files, tests: [entry], root: root, compilerArguments: ["-DDEBUG"])
+    let method = try #require(head.dependencies?.functions.values.first { $0.name == "Cases.testReading()" })
+    #expect(method.regions.contains { $0.path == "Suite.swift" && $0.startLine == 4 })
+    var base = head.sources
+    base["UI:Helpers.swift"] = .parse(surviving + "\nfunc queryHelper(_ value: Int) {}", path: "Helpers.swift", module: "UI")
+
+    for legacy in [false, true] {
+        if legacy {
+            for key in head.sources.keys {
+                head.sources[key]!.parserVersion = 4
+                for i in head.sources[key]!.units.indices { head.sources[key]!.units[i].conditionalBranch = nil }
+            }
+        }
+        let saved = try GraphArchive.decode(GraphArchive.encode(head))
+        let report = XcodeHeadOnlySelector.select(current: saved, source: .init(base: base),
+            changes: [.init(path: "Helpers.swift")], baseRevision: "base")
+        let removed = try #require(report.headOnlyDeclarationChanges?.first { $0.change == "removed" })
+        let callers = removed.historicalReferences.filter { $0.sourceKey == "UI:Suite.swift" }.flatMap { $0.possibleCallers ?? [] }
+        #expect(Set(callers.map { $0.baseRegion.startLine }) == [4])
+        #expect(callers.allSatisfy { $0.survivingTestEntries.isEmpty })
+        #expect(report.selectedTests == [entry])
+    }
+}
+
 @Test func importedSuperclassUsesTheCompiledTestImplementation() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -135,14 +187,20 @@ import Testing
         graph.tests[entry] = fragment.tests[entry]
     }
     current.dependencies = graph
-    let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base),
-        changes: [.init(path: "Shared.swift")], baseRevision: "base")
-    let removed = try #require(report.headOnlyDeclarationChanges?.first { $0.change == "removed" })
-    for (target, module) in current.modules {
-        let references = removed.historicalReferences.filter { $0.sourceKey == module + ":Shared.swift" }
-        let callers = references.flatMap { $0.possibleCallers ?? [] }
-        #expect(!callers.isEmpty)
-        #expect(callers.allSatisfy { $0.survivingTestEntries == [target + "/Suite/testReading()"] })
+    // Only the mobile target compiles this additional generated source.
+    for physical in [true, false, nil] as [Bool?] {
+        current.generatedSourceBoundaries = ["MobileTests": [.init(module: "MobileTests", logicalPath: "Generated.swift",
+            contentDigest: "content", generatorIdentity: "generator", repositoryInputs: "inputs", hasPhysicalLocations: physical)]]
+        let report = XcodeHeadOnlySelector.select(current: current, source: .init(base: base),
+            changes: [.init(path: "Shared.swift")], baseRevision: "base")
+        let removed = try #require(report.headOnlyDeclarationChanges?.first { $0.change == "removed" })
+        for (target, module) in current.modules {
+            let references = removed.historicalReferences.filter { $0.sourceKey == module + ":Shared.swift" }
+            let callers = references.flatMap { $0.possibleCallers ?? [] }
+            let expected = module == "MacTests" || physical == true ? [target + "/Suite/testReading()"] : []
+            #expect(!callers.isEmpty)
+            #expect(callers.allSatisfy { $0.survivingTestEntries == expected })
+        }
     }
 }
 

@@ -352,6 +352,7 @@ func generatedInputsAreComparedEvenWithoutGitPaths(scenario: String) throws {
     let boundary = GeneratedSourceBoundary(module: "App", logicalPath: "<DerivedData>/Generated.swift", contentDigest: "source", generatorIdentity: "settings", repositoryInputs: "resources")
     old.generatedSourceBoundaries = ["App": [boundary]]
     var current = labelEdit(old)
+    current.generatedSourceBoundaries?["App"]?[0].hasPhysicalLocations = true
     switch scenario {
     case "changed": current.generatedSourceBoundaries?["App"]?[0].contentDigest = "changed"
     case "missingBase": old.generatedSourceBoundaries = nil

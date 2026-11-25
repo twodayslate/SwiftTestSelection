@@ -27,7 +27,28 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
     public var historicalReferences: [Reference]
     public var missingEvidence: [String]
 
-    static func describe(key: String, before: [SourceUnit], after: [SourceUnit], source: XcodeHeadOnlySources, current: XcodeTestGraph, hierarchy: SwiftSuperclassIndex) -> Self {
+    struct CallerIndex {
+        let hierarchy: SwiftSuperclassIndex
+        let physicalModules: Set<String>
+
+        init(_ current: XcodeTestGraph) {
+            hierarchy = SwiftSuperclassIndex(sources: current.sources)
+            // A SIL location can point into a different input of the same module.
+            // Prove every input uses physical coordinates before matching any root.
+            var physical = Set(current.modules.values)
+            for target in current.targets {
+                guard let module = current.modules[target.name], physical.contains(module) else { continue }
+                if current.unsupportedSourceInputs?[module]?.isEmpty == false ||
+                    current.generatedSourceBoundaries?[module]?.allSatisfy({ $0.hasPhysicalLocations == true }) == false ||
+                    !target.sourceFiles.allSatisfy({ current.sources[module + ":" + $0]?.receiverPhysicalLocations == true }) {
+                    physical.remove(module)
+                }
+            }
+            physicalModules = physical
+        }
+    }
+
+    static func describe(key: String, before: [SourceUnit], after: [SourceUnit], source: XcodeHeadOnlySources, current: XcodeTestGraph, index: CallerIndex) -> Self {
         let names = Set(before.compactMap(\.helperCallableName))
         let sources = source.base.map { ($0.key, $0.value) } + source.unownedBaseSources.map { ("unowned:" + $0.key, $0.value) }
         var references: [Reference] = []
@@ -48,7 +69,7 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
                         }.count == 1
                         return Caller(declaration: unit.key, baseRegion: unit.region,
                                survivingTestEntries: unique ? survivingEntries(for: unit, baseBlobIDs: snapshot.sourceBlobIDs,
-                                   sourceKey: sourceKey, current: current, hierarchy: hierarchy) : [])
+                                   sourceKey: sourceKey, current: current, index: index) : [])
                     }.sorted { ($0.baseRegion.startLine, $0.declaration) < ($1.baseRegion.startLine, $1.declaration) }
                     references.append(.init(sourceKey: sourceKey, signature: signature, callerLines: uses.callers.sorted(),
                         unsupportedLines: uses.unsupportedLines.sorted(), incomplete: uses.unsupported, possibleCallers: callers))
@@ -65,8 +86,10 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
     }
 
     private static func survivingEntries(for historical: SourceUnit, baseBlobIDs: Set<String>?, sourceKey: String,
-                                         current: XcodeTestGraph, hierarchy: SwiftSuperclassIndex) -> [String] {
-        guard let snapshot = current.sources[sourceKey], let graph = current.dependencies else { return [] }
+                                         current: XcodeTestGraph, index: CallerIndex) -> [String] {
+        let module = String(sourceKey.prefix { $0 != ":" })
+        guard index.physicalModules.contains(module), let snapshot = current.sources[sourceKey],
+              let graph = current.dependencies else { return [] }
         // A caller audit has already parsed the base file. Identical captured bytes
         // let its physical region distinguish branches even in a pre-v5 head.
         let incompleteBranches = snapshot.lacksConditionalMembership
@@ -79,7 +102,6 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
             return unit.conditionalBranch == historical.conditionalBranch
         }
         guard matches.count == 1, let unit = matches.first, let name = unit.helperCallableName else { return [] }
-        let module = String(sourceKey.prefix { $0 != ":" })
         let owners = current.targets.filter { current.modules[$0.name] == module && $0.sourceFiles.contains(unit.region.path) }
         guard !owners.isEmpty, owners.allSatisfy(\.isTest),
               snapshot.units.filter({ $0.kind == "function" && $0.region.intersects(unit.region) }).count == 1 else { return [] }
@@ -122,7 +144,7 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
                     let name = node.name.hasPrefix("static ") ? String(node.name.dropFirst(7)) : node.name
                     return !node.regions.isEmpty && node.module + "." + name == owner + "." + method
                 }) { return false }
-                guard let candidate = hierarchy.verifiedSuperclass(of: owner, identities: graph.compilerClassIdentities) else { return false }
+                guard let candidate = index.hierarchy.verifiedSuperclass(of: owner, identities: graph.compilerClassIdentities) else { return false }
                 owner = candidate
             }
             return false

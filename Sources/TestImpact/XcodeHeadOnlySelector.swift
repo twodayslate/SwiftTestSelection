@@ -277,7 +277,7 @@ enum XcodeHeadOnlySelector {
             }
         }
         var comparison = HeadOnlySourceComparison(head: current.mappings, base: source.mappings)
-        lazy var hierarchy = SwiftSuperclassIndex(sources: current.sources)
+        lazy var callerIndex = HeadOnlyDeclarationChange.CallerIndex(current)
         let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
         let effects = SwiftTestingSourceEffects(current, touching: paths, historical: source.base, unowned: source.unownedBaseSources)
         comparison.positionIndependent = effects.positionIndependent
@@ -407,7 +407,7 @@ enum XcodeHeadOnlySelector {
             }
             guard before.count == 1, after.count == 1, let a = before.first, let b = after.first,
                   a.kind == "function", b.kind == "function", a.region.path == b.region.path, !movedBetweenBranches else {
-                declarationChanges.append(.describe(key: key, before: before, after: after, source: source, current: current, hierarchy: hierarchy))
+                declarationChanges.append(.describe(key: key, before: before, after: after, source: source, current: current, index: callerIndex))
                 let affectedPaths = Set(fallbackUnits.map(\.region.path)).sorted()
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue

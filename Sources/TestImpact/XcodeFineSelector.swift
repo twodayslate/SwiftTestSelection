@@ -296,6 +296,8 @@ public enum XcodeFineSelector {
                 var result = boundary
                 // Explanations are not semantic generator inputs.
                 result.documentationBlockers = nil
+                // Location provenance can be absent in an older capture of the same bytes.
+                result.hasPhysicalLocations = nil
                 if let files = boundary.repositoryInputFiles, let documentation = boundary.documentationInputs,
                    (try? XcodeGraphCache.key(files)) == boundary.repositoryInputs {
                     let filtered = files.filter { !paths.contains($0.key) }
