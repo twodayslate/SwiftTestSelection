@@ -214,12 +214,13 @@ enum XcodeHeadOnlySelector {
             selected.formUnion(tests)
             explanations += tests.sorted().map { TestExplanation(test: $0, reason: reason, revision: "head", path: path, kind: kind) }
         }
-        func fallback(_ code: String, _ reason: String, tests: Set<String>? = nil, path: [String] = []) {
+        func fallback(_ code: String, _ reason: String, tests: Set<String>? = nil, path: [String] = [], incompleteTestRoots: [String]? = nil) {
             let tests = (tests ?? inventory).intersection(inventory)
             guard !tests.isEmpty else { return }
             let boundary = reason.contains("runtime formatting conformances") ? evaluations.last?.encountered.last : nil
             let boundaryPath = boundary.map { [$0.helper, $0.producerSymbol, $0.assertionSymbol, $0.substitutions] } ?? path
-            let detail = SelectionFallback.explain(code: code, message: reason, units: fallbackUnits, path: boundaryPath, allTests: tests == inventory)
+            var detail = SelectionFallback.explain(code: code, message: reason, units: fallbackUnits, path: boundaryPath, allTests: tests == inventory)
+            detail.incompleteTestRoots = incompleteTestRoots
             diagnostics.append(.init(fallback: detail, code: code, message: reason + " " + detail.requiredEvidence, tests: tests.sorted()))
             include(tests, kind: "fallback", reason: reason)
             if tests == inventory { fullReasons.insert(reason) }
@@ -393,7 +394,8 @@ enum XcodeHeadOnlySelector {
                     fallback("head_only_helper_shared_state", "Shared state in private helper callers or callees cannot be isolated: \(unit.region.path):\(unit.region.startLine)")
                 }
                 if unit.privateTestHelper != nil, !traversal.hasUnprovenCalleeEffects, traversal.sharedStateSymbols.isEmpty {
-                    fallback("head_only_helper_isolation", (traversal.isolationBlocker ?? "Unproven source/compiler caller isolation for " + unit.key) + " at \(unit.region.path):\(unit.region.startLine). No formatting declaration supplies missing historical caller evidence.")
+                    fallback("head_only_helper_isolation", (traversal.isolationBlocker ?? "Unproven source/compiler caller isolation for " + unit.key) + " at \(unit.region.path):\(unit.region.startLine). No formatting declaration supplies missing historical caller evidence.",
+                        incompleteTestRoots: traversal.incompleteTestRoots)
                 }
             }
             // New independent entries are covered only by an explicit separate

@@ -41,6 +41,7 @@ extension XcodeAnalysis {
         let cache = try XcodeBaseSourceCache(root: root, base: comparison.base)
         var events: [XcodeAnalysisEvent] = []
         let sourceStart = AnalysisMeasurement()
+        try current.refreshLegacyCallerLocations(paths: Set(changes.map(\.path)), revision: artifact.revision, root: root)
         let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: comparison.base,
             root: root, mappingPath: options.mappingsPath, cache: cache)
         events.append(sourceStart.event("baseSourceSyntax", revision: comparison.base))
@@ -77,5 +78,33 @@ extension XcodeAnalysis {
         }
         selectionGraphObserver?(current)
         return report
+    }
+}
+
+extension XcodeTestGraph {
+    /// Parser 11 added physical coordinates to the per-call location digests.
+    /// Compare the same representation on both sides when the captured bytes
+    /// are still available. Preserve independently captured compiler evidence.
+    mutating func refreshLegacyCallerLocations(paths: Set<String>, revision: String, root: URL) throws {
+        var cache: XcodeBaseSourceCache?
+        for (key, var archived) in sources {
+            guard let version = archived.parserVersion, version < 11,
+                  let blobs = archived.sourceBlobIDs, !blobs.isEmpty,
+                  let separator = key.firstIndex(of: ":") else { continue }
+            let path = String(key[key.index(after: separator)...])
+            guard paths.contains(path) else { continue }
+            if cache == nil { cache = try XcodeBaseSourceCache(root: root, base: revision) }
+            guard let parsed = try cache?.snapshot(path: path, module: String(key[..<separator])),
+                  let parsedBlobs = parsed.sourceBlobIDs, !blobs.isDisjoint(with: parsedBlobs) else { continue }
+            let regions = Dictionary(grouping: parsed.units, by: \.region)
+            for index in archived.units.indices {
+                let unit = archived.units[index]
+                let matches = regions[unit.region]?.filter { $0.key == unit.key && $0.conditionalBranch == unit.conditionalBranch }
+                if let matches, matches.count == 1 {
+                    archived.units[index].callerLocations = matches[0].callerLocations
+                }
+            }
+            sources[key] = archived
+        }
     }
 }

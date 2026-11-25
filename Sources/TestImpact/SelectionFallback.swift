@@ -14,6 +14,9 @@ public struct SelectionFallback: Codable, Sendable {
     public var requiredEvidence: String
     public var applicableRevisions: [String] = ["base", "head"]
     public var supportedDeclaration: String?
+    /// Entries whose missing or uncertain roots prevented the helper isolation proof.
+    /// Kept on the diagnostic so explanations for selected tests need only its reason.
+    public var incompleteTestRoots: [String]? = nil
     public var validationFailures: [String] = []
     public var uncertaintyOnlyTests: [String] = []
     public var overlappingPositiveTests: [String] = []

@@ -30,6 +30,34 @@ private struct SourceRepository {
     }
 }
 
+@Test func retainedCallerLocationsRequireTheCapturedHeadBytes() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let path = "Caller.swift", key = "App:Caller.swift"
+    let text = "func call() { record() }"
+    try repo.write(path, text)
+    let head = try repo.commit()
+    let native = SwiftSourceSnapshot.parse(text, path: path, module: "App")
+    var archived = native
+    archived.parserVersion = 4
+    // Old parsers used the presumed file for both kinds, even when it
+    // disagreed with the physical path supplied to the macro or SDK.
+    archived.units[0].callerLocations?["filePath"] = native.units[0].callerLocations?["file"]
+    let original = try #require(archived.units[0].callerLocations)
+    #expect(original != native.units[0].callerLocations)
+    var graph = XcodeTestGraph(targets: [], tests: [])
+    graph.sources[key] = archived
+    try repo.write(path, text + " // different bytes")
+    let other = try repo.commit()
+    try graph.refreshLegacyCallerLocations(paths: [path], revision: other, root: repo.root)
+    #expect(graph.sources[key]?.units[0].callerLocations == original)
+    try graph.refreshLegacyCallerLocations(paths: [], revision: head, root: repo.root)
+    #expect(graph.sources[key]?.units[0].callerLocations == original)
+    try graph.refreshLegacyCallerLocations(paths: [path], revision: head, root: repo.root)
+    #expect(graph.sources[key]?.units[0].callerLocations == native.units[0].callerLocations)
+    #expect(graph.sources[key]?.parserVersion == 4)
+}
+
 @Test func unauditedRetainedSourceReadSkipsFullComparison() throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }

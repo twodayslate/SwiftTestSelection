@@ -22,6 +22,7 @@ enum PrivateTestHelperIsolation {
         fileprivate var preservedHelperDeclarations: [String: [SourceUnit]] = [:]
         fileprivate var sdkEnvironmentRejections: [String: (ids: Set<String>, reason: String)] = [:]
         fileprivate(set) var receiverOriginBlocker: String?
+        fileprivate(set) var incompleteTestRoots: [String]?
         fileprivate(set) var isolationBlocker: String?
         private(set) var evaluationCount = 0
         fileprivate(set) var sharedStateSymbols = Set<String>()
@@ -123,7 +124,8 @@ enum PrivateTestHelperIsolation {
             return roots.contains { graph.functions[$0] == nil }
         }
         guard missingTests.isEmpty else {
-            traversal.isolationBlocker = "Incomplete test/lifecycle compiler roots: " + missingTests.sorted().joined(separator: ", ")
+            traversal.incompleteTestRoots = missingTests.sorted()
+            traversal.isolationBlocker = "Incomplete test/lifecycle compiler roots for \(missingTests.count) tests"
             return nil
         }
         guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules.union(["CoreGraphics"])),

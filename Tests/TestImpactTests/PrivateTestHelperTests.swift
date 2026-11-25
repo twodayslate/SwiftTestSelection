@@ -153,7 +153,13 @@ func compiledPrivateXCTestHelpersSelectOnlyProvenConsumers(added: Bool, safety: 
     // precision from the absence of evidence.
     var missing = current
     missing.dependencies!.tests.removeValue(forKey: tests[3])
-    #expect(select(missing).selectedTests.contains(tests[3]))
+    let unresolved = (0..<32).map { "UI/Legacy/testMissing\($0)()" }
+    missing.tests.append(contentsOf: unresolved)
+    let missingReport = try JSONDecoder().decode(ImpactReport.self, from: JSONEncoder().encode(select(missing)))
+    #expect(missingReport.selectedTests == missing.tests.sorted())
+    let blocker = try #require(missingReport.diagnostics.first { $0.code == "head_only_helper_isolation" }?.fallback)
+    #expect(blocker.incompleteTestRoots == (unresolved + [tests[3]]).sorted())
+    #expect(!missingReport.explanations.contains { $0.reason.contains("Incomplete test/lifecycle") && $0.reason.contains(unresolved[0]) })
     var legacy = current
     legacy.sources["UI:UI.swift"]!.identifierNames = nil
     #expect(select(legacy).selectedTests.contains(tests[3]))
