@@ -1255,7 +1255,10 @@ private func verifyDiscoveryEdit(scenario: String) throws {
         }
         var graph = try boundaryGraph(files, tests: inventory, root: root, compilerArguments: flags, allowTestDiagnostics: true,
                                       compiler: compiler, allowedUnbound: scenario == "physical" ? [marked] : [], linkArguments: linkArguments)
-        #expect((graph.dependencies?.swiftTestingFactoriesByTarget?["UI"] != nil) == (scenario != "linkedSuite"))
+        // A linked project library or a class-side dynamic dispatch hook leaves the
+        // bundle's process inventory open. The consumer checks below still apply.
+        let openInventory = scenario == "linkedSuite" || scenario == "selectorResolution"
+        #expect((graph.dependencies?.swiftTestingFactoriesByTarget?["UI"] == nil) == openInventory)
         graph.mappings = nil
         if scenario == "retainedV12" {
             for key in Array(graph.sources.keys) { graph.sources[key]?.parserVersion = 12 }
