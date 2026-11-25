@@ -861,8 +861,9 @@ func generatedSwiftCallsKeepInlinedHelperConsumers(mixedPlan: Bool) throws {
     let xctest = "UI/Ordinary/testFirst()"
     let tests = mixedPlan ? [caller, control, xctest] : [caller, control]
     func capture(_ value: Bool) throws -> XcodeTestGraph {
+        let attribute = mixedPlan ? "@`_transparent`" : "@_transparent"
         var files = [
-            "Helpers.swift": "@_transparent func gate() -> Bool { \(value) }",
+            "Helpers.swift": "\(attribute) func gate() -> Bool { \(value) }",
             generated: "func generatedResult() -> Bool { gate() }",
             "Tests.swift": """
                 import Testing
@@ -897,11 +898,16 @@ func generatedSwiftCallsKeepInlinedHelperConsumers(mixedPlan: Bool) throws {
     }
     if mixedPlan {
         #expect(dual.diagnostics.contains { $0.code == "unverified_inline_callers" && $0.tests.contains(xctest) })
-        func legacy(_ graph: XcodeTestGraph) throws -> XcodeTestGraph {
+        func legacy(_ graph: XcodeTestGraph, version: Int) throws -> XcodeTestGraph {
             var graph = graph
             graph.sources = graph.sources.mapValues { snapshot in
                 var snapshot = snapshot
-                snapshot.parserVersion = 10
+                snapshot.parserVersion = version
+                snapshot.helperDeclarationIssues = snapshot.helperDeclarationIssues?.map { issue in
+                    var issue = issue
+                    if issue.spelling == "@_transparent" { issue.spelling = "@`_transparent`" }
+                    return issue
+                }
                 for i in snapshot.units.indices {
                     snapshot.units[i].hasInlineBody = nil
                     snapshot.units[i].fileUnreferencedInlineName = nil
@@ -910,8 +916,36 @@ func generatedSwiftCallsKeepInlinedHelperConsumers(mixedPlan: Bool) throws {
             }
             return try GraphArchive.decode(GraphArchive.encode(graph))
         }
-        let archived = XcodeFineSelector.select(current: try legacy(head), previous: try legacy(base), changes: changes, baseRevision: "base")
-        #expect(archived.diagnostics.contains { $0.code == "unverified_inline_callers" && $0.tests.contains(xctest) })
+        for version in [10, 25] {
+            let archived = XcodeFineSelector.select(current: try legacy(head, version: version), previous: try legacy(base, version: version),
+                                                    changes: changes, baseRevision: "base")
+            #expect(archived.diagnostics.contains { $0.code == "unverified_inline_callers" && $0.tests.contains(xctest) })
+        }
+    }
+}
+
+@Test(arguments: [false, true], [false, true])
+func xctestOnlyInlineHelperRequiresAFileLocalUnusedProof(used: Bool, escaped: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let caller = "UI/Ordinary/testFirst()", control = "UI/Ordinary/testSecond()"
+    func capture(_ value: Bool) throws -> XcodeTestGraph {
+        let attribute = escaped ? "@`_transparent`" : "@_transparent"
+        let helper = "\(attribute) private func gate() -> Bool { \(value) }"
+        let result = used ? "gate()" : "false"
+        return try boundaryGraph([
+            "Helpers.swift": helper + "\nfunc result() -> Bool { \(result) }",
+            "Tests.swift": "import XCTest\nfinal class Ordinary: XCTestCase { func testFirst() { XCTAssertFalse(result()) }; func testSecond() {} }"
+        ], tests: [caller, control], root: root)
+    }
+    let base = try capture(false), head = try capture(true)
+    let changes = [FileChange(path: "Helpers.swift")]
+    let dual = XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base")
+    let single = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
+    for report in [dual, single] {
+        if used { #expect(report.selectedTests.contains(caller)) }
+        else { #expect(report.selectedTests.isEmpty) }
     }
 }
 

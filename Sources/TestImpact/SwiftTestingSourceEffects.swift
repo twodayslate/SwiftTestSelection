@@ -19,7 +19,7 @@ struct SwiftTestingSourceEffects {
 
     init(_ snapshot: XcodeTestGraph, touching paths: Set<String>, historical: [String: SwiftSourceSnapshot]? = nil,
          unowned: [String: SwiftSourceSnapshot] = [:]) {
-        guard let graph = snapshot.dependencies, graph.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil else { return }
+        guard snapshot.dependencies != nil else { return }
         unusedInline = Self.unusedBodies(snapshot.sources, in: snapshot, touching: paths, unowned: [:])
         if let historical { unusedInline.formIntersection(Self.unusedBodies(historical, in: snapshot, touching: paths, unowned: unowned)) }
 
@@ -52,7 +52,7 @@ struct SwiftTestingSourceEffects {
             }
         }
         var callers = Set<Declaration>()
-        let units = snapshot.sources.values.flatMap(\.units).filter { $0.kind == "function" }
+        let units = snapshot.sources.values.flatMap(\.unitsWithInlineEvidence).filter { $0.kind == "function" }
         let functions = Dictionary(grouping: units, by: { $0.helperCallableName ?? "" })
         let oldFunctions = historical.map { sources in
             Dictionary(grouping: sources.values.flatMap(\.units).filter { $0.kind == "function" }, by: { $0.helperCallableName ?? "" })
@@ -121,6 +121,7 @@ struct SwiftTestingSourceEffects {
                 file.helperDeclarationIssues?.allSatisfy { testingSyntax.contains($0.spelling) && $0.kind != "macro-declaration" } == true &&
                 file.units.allSatisfy { $0.receiverUnsupportedImports?.subtracting(["import Testing"]).isEmpty == true }
         }
+        let hasDiscovery = snapshot.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil
         var unused = Set<Declaration>()
         var candidates: [SourceUnit] = []
         // Other files can change unqualified macro lookup through declarations
@@ -147,6 +148,9 @@ struct SwiftTestingSourceEffects {
             for unit in named {
                 if unit.fileProvesUnusedInline == true {
                     unused.insert(Declaration(unit))
+                } else if !hasDiscovery {
+                    // Only file-local evidence is independent of the discovery caller audit.
+                    continue
                 } else if unit.filePrivateInlineWithTests == true {
                     if authenticatedTests { unused.insert(Declaration(unit)) }
                 } else {

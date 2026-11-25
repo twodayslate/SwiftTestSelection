@@ -8,6 +8,16 @@ import SwiftSyntax
 import CryptoKit
 #endif
 
+extension AttributeSyntax {
+    static let inlineAttributeNames: Set<String> = ["inline", "_transparent", "inlinable", "_alwaysEmitIntoClient"]
+
+    var inlineAttributeName: String? {
+        guard let type = attributeName.as(IdentifierTypeSyntax.self), type.genericArgumentClause == nil else { return nil }
+        let name = type.name.identifier?.name ?? type.name.text
+        return Self.inlineAttributeNames.contains(name) ? name : nil
+    }
+}
+
 public struct SourceUnit: Codable, Sendable {
     public var key: String
     public var fingerprint: String
@@ -140,7 +150,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 25
+    static let currentParserVersion = 26
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -166,17 +176,29 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         })
     }
 
+    /// v11 introduced per-unit inline flags. Through v25 the parser missed
+    /// backtick-escaped attributes, whose original spelling survives in the fingerprint.
+    var unitsWithInlineEvidence: [SourceUnit] {
+        let version = parserVersion ?? 0
+        let names = AttributeSyntax.inlineAttributeNames
+        guard version < 26, identifierNames?.isDisjoint(with: names) != true else { return units }
+        // Older inventories preserve the written attribute name. A quoted
+        // identifier used as an ordinary function name needs no recovery.
+        let escapedNames = names.map { "`" + $0 + "`" }.filter { spelling in
+            helperDeclarationIssues?.contains { $0.spelling == "@" + spelling } != false
+        }
+        guard version < 11 || !escapedNames.isEmpty else { return units }
+        var result = units
+        for i in result.indices where version < 11 || escapedNames.contains(where: result[i].fingerprint.contains) {
+            result[i].hasInlineBody = true
+        }
+        return result
+    }
+
     /// Archives retain units in source order. Fold that order into the enum type
     /// for comparison, including in saved graphs that predate this selector.
     var comparisonUnits: [SourceUnit] {
-        var units = self.units
-        // Before v11 the archive recorded identifiers but did not mark inline
-        // bodies. Without a complete negative name inventory, keep callers of
-        // changed declarations in this file eligible for the inline fallback.
-        if (parserVersion ?? 0) < 11,
-           identifierNames?.isDisjoint(with: ["inline", "_transparent", "inlinable", "_alwaysEmitIntoClient"]) != true {
-            for i in units.indices { units[i].hasInlineBody = true }
-        }
+        var units = unitsWithInlineEvidence
         var owner: [String: Int] = [:]
         var cases: [Int: [String]] = [:]
         for (index, unit) in units.enumerated() {
@@ -828,18 +850,17 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             unit.swiftTestingSuiteMetadata = suiteMetadata
             unit.swiftTestingBodyCandidate = entryInputs?.bare == true && testingBodyCandidate ? true : nil
             unit.hasInlineBody = node.tokens(viewMode: .sourceAccurate).contains(where: { token in
-                guard token.tokenKind == .atSign, let attribute = token.parent?.as(AttributeSyntax.self) else { return false }
-                let name = attribute.attributeName.trimmedDescription
-                if name == "inline" { return attribute.arguments?.trimmedDescription != "never" }
-                return ["_transparent", "inlinable", "_alwaysEmitIntoClient"].contains(name)
+                guard token.tokenKind == .atSign, let attribute = token.parent?.as(AttributeSyntax.self),
+                      let name = attribute.inlineAttributeName else { return false }
+                return name != "inline" || attribute.arguments?.trimmedDescription != "never"
             }) ? true : nil
             if let function = node.as(FunctionDeclSyntax.self), scope.isEmpty, branch.isEmpty,
                let name = function.name.identifier?.name {
                 if unit.hasInlineBody == true, identifiers[name]?.count == 1,
                    function.modifiers.allSatisfy({ ["private", "fileprivate", "internal"].contains($0.name.text) }),
                    function.attributes.allSatisfy({ element in
-                       guard let attribute = element.as(AttributeSyntax.self) else { return false }
-                       return ["inline", "_transparent", "inlinable"].contains(attribute.attributeName.trimmedDescription)
+                       guard let name = element.as(AttributeSyntax.self)?.inlineAttributeName else { return false }
+                       return name != "_alwaysEmitIntoClient"
                    }) {
                     unit.fileUnreferencedInlineName = name
                     if function.modifiers.contains(where: { ["private", "fileprivate"].contains($0.name.text) }) {
