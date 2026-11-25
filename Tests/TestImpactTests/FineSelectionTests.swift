@@ -405,6 +405,38 @@ func importedSDKHelperWithoutLocationsPreservesUIRuntimePolicy(policy: UIFeature
     #expect(report.diagnostics.contains { $0.code == "unresolved_feature_dependency" } == (policy == .conservative))
 }
 
+@Test(arguments: [false, true])
+func unverifiedCopiesReachMappedUIFeaturesAndTheirDependents(copyInBase: Bool) {
+    let direct = "UI/Sharing/testIndependent()", copied = "UI/Sharing/testOne()"
+    let dependent = "UI/Sharing/testTwo()", transitive = "UI/Sharing/testThree()"
+    let unrelated = "UI/Notes/testNotes()"
+    func fixture(_ app: String, hasCopy: Bool) -> XcodeTestGraph {
+        var snapshot = model(app: app)
+        snapshot.mappings = UIFeatureMappings(features: [
+            .init(name: "direct", symbols: ["App.sharing()"], tests: [direct]),
+            .init(name: "transitive", tests: [transitive], dependsOn: ["dependent"]),
+            .init(name: "dependent", tests: [dependent], dependsOn: ["copied"]),
+            .init(name: "copied", symbols: ["App.notes()"], tests: [copied]),
+            .init(name: "unrelated", symbols: ["App.common()"], tests: [unrelated])
+        ])
+        snapshot.mappings?.runtimeDependencyPolicy = .declared
+        // One revision attributes the emitted copy to the changed function.
+        // The app feature is its only caller across the UI runner's process boundary.
+        let regions = hasCopy ? snapshot.dependencies!.functions["App.sharing()"]!.regions : []
+        snapshot.dependencies!.functions["copy"] = .init(id: "copy", module: "Client", name: "copiedGate()", regions: regions)
+        snapshot.dependencies!.functions["App.notes()"]!.dependencies.insert("copy")
+        return snapshot
+    }
+    let edited = appSource.replacingOccurrences(of: "sharing() -> Int { common() }", with: "sharing() -> Int { 2 }")
+    let report = selection(fixture(edited, hasCopy: !copyInBase), fixture(appSource, hasCopy: copyInBase), paths: ["App/Features.swift"])
+    #expect(report.selectedTests == [direct, copied, dependent, transitive].sorted())
+    let uncertain = Set([copied, dependent, transitive])
+    let diagnostics = report.diagnostics.filter { $0.code == "unverified_source_location" }
+    #expect(Set(diagnostics.flatMap(\.tests)) == uncertain)
+    #expect(diagnostics.allSatisfy { $0.message.contains(copyInBase ? "base" : "head") })
+    #expect(!report.explanations.contains { uncertain.contains($0.test) && $0.kind == "explicitMapping" })
+}
+
 @Test func declaredRuntimePolicyPreservesSharedAndExplicitFeatureDependencies() {
     let old = declaredRuntimeModel()
     let shared = declaredRuntimeModel(app: appSource.replacingOccurrences(of: "42", with: "43"))

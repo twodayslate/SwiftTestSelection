@@ -438,6 +438,7 @@ public enum XcodeFineSelector {
             var enumModules = Set<String>()
             var unverifiedLocations = Set<String>()
             var unverifiedCopies = Set<String>()
+            var unverifiedProductionCopies = Set<String>()
             let physicalModules = revision == "base" ? registrations.basePhysicalModules : registrations.headPhysicalModules
             for unit in units {
                 if (unit.kind == "function" || unit.scope.isEmpty), unit.hasUnverifiedCompilerLocation(in: physicalModules) {
@@ -462,6 +463,7 @@ public enum XcodeFineSelector {
                     }) else { return false }
                     guard physicalModules.contains(node.module) else {
                         unverifiedCopies.insert(node.id)
+                        if production { unverifiedProductionCopies.insert(node.id) }
                         return false
                     }
                     return true
@@ -594,7 +596,9 @@ public enum XcodeFineSelector {
                 fallback("missing_ui_mappings", "\(revision): production changes have no explicit UI feature mappings.", tests: uiTests)
                 continue
             }
-            var matchedFeatures = Set(featurePaths.keys)
+            var uncertainFeaturePaths: [String: [String]] = [:]
+            lazy var uncertainProductionPaths = unverifiedProductionCopies == unverifiedCopies
+                ? uncertainCopies : index.paths(to: unverifiedProductionCopies)
             var coveredChanges = Set<String>()
             var mappedTests = Set<String>()
             let opaqueProduction = declaredUIRuntime || productionUnits.isEmpty ? Set<String>() : Set(graph.functions.values.filter(\.hasOpaqueRuntimeDependency).map(\.id))
@@ -617,6 +621,10 @@ public enum XcodeFineSelector {
                     fallback("unresolved_mapping_selector", "\(revision): feature \(feature.name) has no discovered tests for \(selector)", tests: uiTests)
                 }
                 let roots = featureRoots[feature.name]!
+                if feature.when == nil, !unverifiedProductionCopies.isEmpty,
+                   let path = uncertainProductionPaths?.path(from: roots) {
+                    uncertainFeaturePaths[feature.name] = path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 }
+                }
                 if !productionUnits.isEmpty && !declaredUIRuntime && opaquePaths.path(from: roots) != nil {
                     fallback("unresolved_feature_dependency", "\(revision): feature \(feature.name) reaches opaque runtime dependencies.", tests: tests)
                 }
@@ -630,27 +638,40 @@ public enum XcodeFineSelector {
                     // Source predicates cover its identity from either comparison side.
                     let conditionalSource = conditionSourceCoverage[revision + ":" + feature.name]?.contains(unit.key) == true
                     if directlyMapped || chain != nil || conditionalSource {
-                        featurePaths[feature.name] = (chain ?? []).map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 } + [unit.region.path]
-                        if feature.when == nil { matchedFeatures.insert(feature.name) }
+                        if feature.when == nil {
+                            featurePaths[feature.name] = (chain ?? []).map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 } + [unit.region.path]
+                        }
                         coveredChanges.insert(unit.key)
                     }
                 }
             }
-            var changed = true
-            while changed {
-                changed = false
-                for feature in mappings.features where !matchedFeatures.contains(feature.name) {
-                    if !(Set(feature.dependsOn ?? []).intersection(matchedFeatures)).isEmpty {
-                        matchedFeatures.insert(feature.name); changed = true
-                        featurePaths[feature.name] = (feature.dependsOn ?? []).filter { matchedFeatures.contains($0) }.sorted()
+            // Either kind of evidence can travel through the same declared
+            // feature dependencies. Preserve its kind when explaining the selection.
+            func propagateDependencies(_ paths: inout [String: [String]]) {
+                guard !paths.isEmpty else { return }
+                var count: Int
+                repeat {
+                    count = paths.count
+                    for feature in mappings.features where paths[feature.name] == nil {
+                        let reached = (feature.dependsOn ?? []).filter { paths[$0] != nil }
+                        if !reached.isEmpty { paths[feature.name] = reached.sorted() }
                     }
-                }
+                } while paths.count != count
             }
-            for feature in mappings.features where matchedFeatures.contains(feature.name) {
-                let selectors = mappings.selectors(for: feature)
+            propagateDependencies(&featurePaths)
+            propagateDependencies(&uncertainFeaturePaths)
+            for feature in mappings.features where featurePaths[feature.name] != nil || uncertainFeaturePaths[feature.name] != nil {
                 let tests = mappingIndex.tests[feature.name] ?? []
-                include(tests, kind: "explicitMapping", reason: "Affected UI feature: \(feature.name)", revision: revision, path: [feature.name] + (featurePaths[feature.name] ?? []) + selectors)
-                if tests.isEmpty { fallback("unresolved_feature_tests", "\(revision): affected feature \(feature.name) has no test mappings.", tests: uiTests) }
+                if let path = featurePaths[feature.name] {
+                    let selectors = mappings.selectors(for: feature)
+                    include(tests, kind: "explicitMapping", reason: "Affected UI feature: \(feature.name)", revision: revision, path: [feature.name] + path + selectors)
+                }
+                if let path = uncertainFeaturePaths[feature.name] {
+                    fallback("unverified_source_location", "\(revision): UI feature \(feature.name) reaches an unverified compiler location via " + path.joined(separator: ", "), tests: tests)
+                }
+                if tests.isEmpty {
+                    fallback("unresolved_feature_tests", "\(revision): affected feature \(feature.name) has no test mappings.", tests: uiTests)
+                }
             }
             let missing = uiTests.subtracting(mappedTests)
             if !productionUnits.isEmpty && !missing.isEmpty { fallback("unmapped_ui_tests", "\(revision): UI tests without feature mappings remain conservatively selected.", tests: missing) }
