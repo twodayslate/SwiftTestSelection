@@ -8,6 +8,13 @@ import SwiftSyntax
 import CryptoKit
 #endif
 
+// Preserve syntax structure, token kinds and literal contents, but not
+// trivia. Location values belong to their expression, not the whole file.
+private func fingerprint(_ node: Syntax) -> String {
+    if let token = node.as(TokenSyntax.self) { return "\(token.tokenKind):\(token.text.utf8.count):\(token.text)" }
+    return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(fingerprint).joined(separator: "|") + "]"
+}
+
 extension AttributeSyntax {
     static let inlineAttributeNames: Set<String> = ["inline", "_transparent", "inlinable", "_alwaysEmitIntoClient"]
 
@@ -15,6 +22,31 @@ extension AttributeSyntax {
         guard let type = attributeName.as(IdentifierTypeSyntax.self), type.genericArgumentClause == nil else { return nil }
         let name = type.name.identifier?.name ?? type.name.text
         return Self.inlineAttributeNames.contains(name) ? name : nil
+    }
+
+    var canInlineBody: Bool {
+        guard let name = inlineAttributeName else { return false }
+        if name == "inline", let arguments,
+           let token = arguments.firstToken(viewMode: .sourceAccurate),
+           token.id == arguments.lastToken(viewMode: .sourceAccurate)?.id,
+           token.identifier?.name == "never" { return false }
+        return true
+    }
+
+    // The escaped attribute name uses a different SwiftSyntax argument node.
+    // Derive the four complete subtrees with the same encoder as the archive.
+    static let noInlineFingerprints: [String] = ["inline", "`inline`"].flatMap { name in
+        ["never", "`never`"].map { argument in
+            var parser = Parser("@\(name)(\(argument))")
+            return fingerprint(Syntax(AttributeSyntax.parse(from: &parser)))
+        }
+    }
+
+    static let inlineAttributeHeads: [String] = inlineAttributeNames.flatMap { name in
+        [name, "`" + name + "`"].map { spelling in
+            let attribute = AttributeSyntax(attributeName: IdentifierTypeSyntax(name: .identifier(spelling)))
+            return fingerprint(Syntax(attribute.atSign)) + "|" + fingerprint(Syntax(attribute.attributeName))
+        }
     }
 }
 
@@ -150,7 +182,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 26
+    static let currentParserVersion = 27
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -176,21 +208,33 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         })
     }
 
-    /// v11 introduced per-unit inline flags. Through v25 the parser missed
-    /// backtick-escaped attributes, whose original spelling survives in the fingerprint.
+    /// v11 introduced per-unit flags, v26 recognized escaped attribute names,
+    /// and v27 recognized escaped `never` arguments.
     var unitsWithInlineEvidence: [SourceUnit] {
         let version = parserVersion ?? 0
         let names = AttributeSyntax.inlineAttributeNames
-        guard version < 26, identifierNames?.isDisjoint(with: names) != true else { return units }
-        // Older inventories preserve the written attribute name. A quoted
-        // identifier used as an ordinary function name needs no recovery.
-        let escapedNames = names.map { "`" + $0 + "`" }.filter { spelling in
+        guard version < 27, identifierNames?.isDisjoint(with: names) != true else { return units }
+        let escapedNames = version < 26 ? names.map { "`" + $0 + "`" }.filter { spelling in
             helperDeclarationIssues?.contains { $0.spelling == "@" + spelling } != false
-        }
-        guard version < 11 || !escapedNames.isEmpty else { return units }
+        } : []
         var result = units
-        for i in result.indices where version < 11 || escapedNames.contains(where: result[i].fingerprint.contains) {
-            result[i].hasInlineBody = true
+        for i in result.indices {
+            if version < 11 {
+                result[i].hasInlineBody = true
+                continue
+            }
+            let syntax = result[i].syntaxFingerprint ?? result[i].fingerprint
+            guard result[i].hasInlineBody == true || escapedNames.contains(where: syntax.contains) else { continue }
+            // A nested declaration may carry a different inline attribute. Clear
+            // the flag only when complete noinline subtrees account for every
+            // inline attribute in this unit. Unknown archive layouts stay conservative.
+            var remaining = syntax
+            if syntax.contains("never") {
+                for attribute in AttributeSyntax.noInlineFingerprints {
+                    remaining = remaining.replacingOccurrences(of: attribute, with: "")
+                }
+            }
+            result[i].hasInlineBody = remaining != syntax && !AttributeSyntax.inlineAttributeHeads.contains(where: remaining.contains) ? nil : true
         }
         return result
     }
@@ -382,12 +426,6 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         }
         result.classFinality = [:]
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
-        // Preserve syntax structure, token kinds and literal contents, but not
-        // trivia. Location values belong to their expression, not the whole file.
-        func fingerprint(_ node: Syntax) -> String {
-            if let token = node.as(TokenSyntax.self) { return "\(token.tokenKind):\(token.text.utf8.count):\(token.text)" }
-            return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(fingerprint).joined(separator: "|") + "]"
-        }
         func compactFingerprint(_ node: Syntax) -> String {
             let value = fingerprint(node)
             #if canImport(CryptoKit)
@@ -850,9 +888,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             unit.swiftTestingSuiteMetadata = suiteMetadata
             unit.swiftTestingBodyCandidate = entryInputs?.bare == true && testingBodyCandidate ? true : nil
             unit.hasInlineBody = node.tokens(viewMode: .sourceAccurate).contains(where: { token in
-                guard token.tokenKind == .atSign, let attribute = token.parent?.as(AttributeSyntax.self),
-                      let name = attribute.inlineAttributeName else { return false }
-                return name != "inline" || attribute.arguments?.trimmedDescription != "never"
+                token.tokenKind == .atSign && token.parent?.as(AttributeSyntax.self)?.canInlineBody == true
             }) ? true : nil
             if let function = node.as(FunctionDeclSyntax.self), scope.isEmpty, branch.isEmpty,
                let name = function.name.identifier?.name {

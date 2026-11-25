@@ -20,8 +20,10 @@ struct SwiftTestingSourceEffects {
     init(_ snapshot: XcodeTestGraph, touching paths: Set<String>, historical: [String: SwiftSourceSnapshot]? = nil,
          unowned: [String: SwiftSourceSnapshot] = [:]) {
         guard snapshot.dependencies != nil else { return }
-        unusedInline = Self.unusedBodies(snapshot.sources, in: snapshot, touching: paths, unowned: [:])
-        if let historical { unusedInline.formIntersection(Self.unusedBodies(historical, in: snapshot, touching: paths, unowned: unowned)) }
+        unusedInline = Self.unusedBodies(snapshot.sources, in: snapshot, touching: paths, unowned: [:], exactRevision: historical == nil)
+        if let historical {
+            unusedInline.formIntersection(Self.unusedBodies(historical, in: snapshot, touching: paths, unowned: unowned, exactRevision: false))
+        }
 
         positionIndependent = Self.positionIndependentCallers(snapshot, touching: paths, historical: historical, unowned: unowned)
     }
@@ -112,16 +114,17 @@ struct SwiftTestingSourceEffects {
     }
 
     private static func unusedBodies(_ sources: [String: SwiftSourceSnapshot], in snapshot: XcodeTestGraph, touching paths: Set<String>,
-                                     unowned: [String: SwiftSourceSnapshot]) -> Set<Declaration> {
+                                     unowned: [String: SwiftSourceSnapshot], exactRevision: Bool) -> Set<Declaration> {
         // An expansion in the declaring file could call the function without a
         // written identifier. Internal functions can also be called by other files.
-        let testingSyntax: Set<String> = ["@Test", "@Testing.Test", "@Suite", "@Testing.Suite", "#expect", "#require", "@inline", "@_transparent"]
+        let hasDiscovery = snapshot.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil
+        var testingSyntax: Set<String> = ["@inline", "@_transparent"]
+        if hasDiscovery { testingSyntax.formUnion(["@Test", "@Testing.Test", "@Suite", "@Testing.Suite", "#expect", "#require"]) }
         func hasCompleteNames(_ file: SwiftSourceSnapshot) -> Bool {
             file.identifierNames != nil && file.diagnostics.isEmpty &&
                 file.helperDeclarationIssues?.allSatisfy { testingSyntax.contains($0.spelling) && $0.kind != "macro-declaration" } == true &&
                 file.units.allSatisfy { $0.receiverUnsupportedImports?.subtracting(["import Testing"]).isEmpty == true }
         }
-        let hasDiscovery = snapshot.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil
         var unused = Set<Declaration>()
         var candidates: [SourceUnit] = []
         // Other files can change unqualified macro lookup through declarations
@@ -148,12 +151,11 @@ struct SwiftTestingSourceEffects {
             for unit in named {
                 if unit.fileProvesUnusedInline == true {
                     unused.insert(Declaration(unit))
-                } else if !hasDiscovery {
-                    // Only file-local evidence is independent of the discovery caller audit.
-                    continue
                 } else if unit.filePrivateInlineWithTests == true {
-                    if authenticatedTests { unused.insert(Declaration(unit)) }
-                } else {
+                    if hasDiscovery && authenticatedTests { unused.insert(Declaration(unit)) }
+                } else if exactRevision || hasDiscovery {
+                    // A dual graph owns its revision's inputs. With only head SIL,
+                    // cross-file lookup still requires the discovery caller audit.
                     candidates.append(unit)
                 }
             }

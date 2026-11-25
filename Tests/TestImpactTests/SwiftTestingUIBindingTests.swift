@@ -949,6 +949,100 @@ func xctestOnlyInlineHelperRequiresAFileLocalUnusedProof(used: Bool, escaped: Bo
     }
 }
 
+@Test(arguments: [false, true])
+func xctestInternalInlineHelperRequiresACompleteCallerInventory(used: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let caller = "UI/Ordinary/testFirst()", control = "UI/Control/testSecond()"
+    func capture(_ value: Bool) throws -> XcodeTestGraph {
+        try boundaryGraph([
+            "Helpers.swift": "@_transparent func gate() -> Bool { \(value) }",
+            "Tests.swift": """
+                import XCTest
+                final class Ordinary: XCTestCase { func testFirst() { \(used ? "XCTAssertFalse(gate())" : "") } }
+                final class Control: XCTestCase { func testSecond() {} }
+                """
+        ], tests: [caller, control], root: root)
+    }
+    let base = try capture(false), head = try capture(true)
+    let changes = [FileChange(path: "Helpers.swift")]
+    func select(_ base: XcodeTestGraph, _ head: XcodeTestGraph) -> Set<String> {
+        Set(XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base").selectedTests)
+    }
+    if used {
+        #expect(select(base, head).contains(caller))
+    } else {
+        #expect(select(base, head).isEmpty)
+        var incomplete = base
+        incomplete.sources["UI:Tests.swift"]?.identifierNames = nil
+        #expect(select(incomplete, head) == [caller, control])
+        incomplete = head
+        incomplete.targets[0].sourceFiles.insert("Missing.swift")
+        #expect(select(base, incomplete) == [caller, control])
+        let single = XcodeHeadOnlySelector.select(current: head, source: .init(base: base.sources), changes: changes, baseRevision: "base")
+        #expect(Set(single.selectedTests) == [caller, control])
+    }
+}
+
+@Test(arguments: ["@inline(`never`)", "@`inline`(never)", "@`inline`(`never`)"])
+func escapedNoInlineSelectsOnlyItsXCTestCaller(attribute: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let caller = "UI/Ordinary/testFirst()", control = "UI/Control/testSecond()"
+    func capture(_ value: Bool) throws -> XcodeTestGraph {
+        try boundaryGraph([
+            "Helpers.swift": "\(attribute) func gate() -> Bool { \(value) }",
+            "Tests.swift": """
+                import XCTest
+                final class Ordinary: XCTestCase { func testFirst() { XCTAssertFalse(gate()) } }
+                final class Control: XCTestCase { func testSecond() {} }
+                """
+        ], tests: [caller, control], root: root)
+    }
+    let base = try capture(false), head = try capture(true)
+    func verify(_ base: XcodeTestGraph, _ head: XcodeTestGraph) {
+        let report = XcodeFineSelector.select(current: head, previous: base, changes: [.init(path: "Helpers.swift")], baseRevision: "base")
+        #expect(report.selectedTests == [caller])
+    }
+    verify(base, head)
+    func archived(_ graph: XcodeTestGraph, version: Int) throws -> XcodeTestGraph {
+        var graph = graph
+        var file = try #require(graph.sources["UI:Helpers.swift"])
+        file.parserVersion = version
+        let escapedName = attribute.hasPrefix("@`")
+        if version == 25 && escapedName {
+            file.helperDeclarationIssues?[0].spelling = "@`inline`"
+        }
+        // v25 missed escaped attribute names. Both parsers treated a recognized
+        // inline attribute with an escaped argument as potentially inlined.
+        file.units[0].hasInlineBody = (version == 26 || !escapedName) && attribute.contains("`never`") ? true : nil
+        graph.sources["UI:Helpers.swift"] = file
+        return try GraphArchive.decode(GraphArchive.encode(graph))
+    }
+    for version in [25, 26] {
+        verify(try archived(base, version: version), try archived(head, version: version))
+    }
+}
+
+@Test
+func archivedNoInlinePreservesNestedInlineAttributes() {
+    // Ordinary identifiers and literal text can spell an attribute name too.
+    var plain = SwiftSourceSnapshot.parse(#"@inline(`never`) func inlineHelper() { print("inline") }"#, path: "Helpers.swift", module: "UI")
+    plain.parserVersion = 26
+    plain.units[0].hasInlineBody = true
+    #expect(plain.unitsWithInlineEvidence.first?.hasInlineBody != true)
+    for attribute in ["@inline(always)", "@`inline`(always)", "@_transparent", "@inlinable", "@_alwaysEmitIntoClient"] {
+        let source = "@inline(`never`) func outer() { \(attribute) func nested() {} }"
+        var file = SwiftSourceSnapshot.parse(source, path: "Helpers.swift", module: "UI")
+        for version in [25, 26] {
+            file.parserVersion = version
+            #expect(file.unitsWithInlineEvidence.first?.hasInlineBody == true)
+        }
+    }
+}
+
 @Test
 func firstAndLastSwiftTestingRegistrationUseOnlyTheirOwnRevision() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
