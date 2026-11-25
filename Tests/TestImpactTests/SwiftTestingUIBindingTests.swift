@@ -1027,6 +1027,19 @@ func escapedNoInlineSelectsOnlyItsXCTestCaller(attribute: String) throws {
 }
 
 @Test
+func archivedEscapedInlineEvidenceBelongsToTheAttributedDeclaration() {
+    let source = """
+        @`inline`(never) func unrelated() {}
+        func gate() -> Bool { let `inline` = true; return `inline` }
+        @`_transparent` func nestedGate() -> Bool { true }
+        """
+    var file = SwiftSourceSnapshot.parse(source, path: "Helpers.swift", module: "UI")
+    file.parserVersion = 25
+    for index in file.units.indices { file.units[index].hasInlineBody = nil }
+    #expect(file.unitsWithInlineEvidence.filter { $0.hasInlineBody == true }.compactMap(\.helperCallableName) == ["nestedGate"])
+}
+
+@Test
 func archivedNoInlinePreservesNestedInlineAttributes() {
     // Ordinary identifiers and literal text can spell an attribute name too.
     var plain = SwiftSourceSnapshot.parse(#"@inline(`never`) func inlineHelper() { print("inline") }"#, path: "Helpers.swift", module: "UI")

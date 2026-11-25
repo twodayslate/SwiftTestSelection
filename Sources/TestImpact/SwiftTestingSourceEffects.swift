@@ -18,14 +18,16 @@ struct SwiftTestingSourceEffects {
     private(set) var positionIndependent = Set<Declaration>()
 
     init(_ snapshot: XcodeTestGraph, touching paths: Set<String>, historical: [String: SwiftSourceSnapshot]? = nil,
-         unowned: [String: SwiftSourceSnapshot] = [:]) {
+         unowned: [String: SwiftSourceSnapshot] = [:], hasAuditedCallerInputs: Bool = true) {
         guard snapshot.dependencies != nil else { return }
         unusedInline = Self.unusedBodies(snapshot.sources, in: snapshot, touching: paths, unowned: [:], exactRevision: historical == nil)
         if let historical {
             unusedInline.formIntersection(Self.unusedBodies(historical, in: snapshot, touching: paths, unowned: unowned, exactRevision: false))
         }
 
-        positionIndependent = Self.positionIndependentCallers(snapshot, touching: paths, historical: historical, unowned: unowned)
+        if hasAuditedCallerInputs {
+            positionIndependent = Self.positionIndependentCallers(snapshot, touching: paths, historical: historical, unowned: unowned)
+        }
     }
 
     static func positionIndependentCallers(_ snapshot: XcodeTestGraph, touching paths: Set<String>,
@@ -38,7 +40,24 @@ struct SwiftTestingSourceEffects {
         guard !candidates.isEmpty else { return [] }
         // With no historical SIL, a competing overload in uninspected input
         // could have supplied a caller-location default in the base build.
-        if historical != nil, !snapshot.hasCompleteSwiftSourceInventory(snapshot.sources) { return [] }
+        if let historical {
+            guard snapshot.hasCompleteSwiftSourceInventory(snapshot.sources),
+                  historical.keys == snapshot.sources.keys else { return [] }
+            // Even an unchanged function header can bind differently after an edit
+            // to a typealias, inferred type, import, or conformance in another file.
+            // Reuse the head binding only across identical inputs or a trivia edit
+            // in the inspected files whose complete declaration syntax is stable.
+            for (key, head) in snapshot.sources {
+                guard let base = historical[key], base.diagnostics.isEmpty, head.diagnostics.isEmpty else { return [] }
+                if let blobs = head.sourceBlobIDs, base.sourceBlobIDs?.isDisjoint(with: blobs) == false { continue }
+                guard let path = head.units.first?.region.path, paths.contains(path),
+                      head.helperDeclarationsComplete == true, base.helperDeclarationsComplete == true,
+                      head.units.elementsEqual(base.units, by: {
+                          $0.key == $1.key && $0.conditionalBranch == $1.conditionalBranch &&
+                              ($0.syntaxFingerprint ?? $0.fingerprint) == ($1.syntaxFingerprint ?? $1.fingerprint)
+                      }) else { return [] }
+            }
+        }
         // An unowned base file might previously have contributed an overload.
         // Only top-level bindings in a closed file participate in lookup.
         var unownedNames = Set<String>()
@@ -53,6 +72,11 @@ struct SwiftTestingSourceEffects {
                 unownedNames.insert(SDKTestHelperSyntax.canonicalName(unit.scope))
             }
         }
+        // An unowned declaration can change a type used in a callee's signature
+        // through an intermediate file, even when the callee's own name is unique.
+        if !unownedNames.isEmpty, !snapshot.sources.values.allSatisfy({
+            $0.identifierNames?.isDisjoint(with: unownedNames) == true
+        }) { return [] }
         var callers = Set<Declaration>()
         let units = snapshot.sources.values.flatMap(\.unitsWithInlineEvidence).filter { $0.kind == "function" }
         let functions = Dictionary(grouping: units, by: { $0.helperCallableName ?? "" })
@@ -68,7 +92,7 @@ struct SwiftTestingSourceEffects {
             }
             let oldDirectCallers = Set(old?.units.filter { $0.hasOnlyDirectSourceCalls == true }.map(\.key) ?? [])
             for unit in file.units where unit.hasOnlyDirectSourceCalls == true {
-                guard let names = unit.invocationNames, names.isDisjoint(with: unownedNames), let signature = unit.helperReferenceSignature,
+                guard let names = unit.invocationNames, let signature = unit.helperReferenceSignature,
                       let caller = Self.symbol(for: unit, among: symbols[signature], physicalModules: physicalModules),
                       let refs = caller.compilerReferences, refs.count == names.count,
                       caller.dynamicDeclarations.isEmpty, !caller.hasOpaqueRuntimeDependency else { continue }

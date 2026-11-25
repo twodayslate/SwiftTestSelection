@@ -43,6 +43,9 @@ struct XcodeHeadOnlySources {
     var diagnostics: [String] = []
     /// Git sources absent from the captured head inventory have unknown base ownership.
     var unownedBaseSources: [String: SwiftSourceSnapshot] = [:]
+    // Explicitly supplied base snapshots represent the historical inputs. A scoped
+    // Git read may also contain head placeholders until it performs a caller audit.
+    var hasAuditedCallerInputs = true
     var mappingPath: String = ".swift-test-selection.json"
     /// Processes whose historical linkage cannot be inferred across edits outside this scope.
     var unverifiedScopedProcesses = Set<String>()
@@ -79,7 +82,6 @@ struct XcodeHeadOnlySources {
             // A removed, duplicated or moved callable needs actual base callers,
             // even when another declaration with the same key survives.
             var before: [String: [SourceUnit]] = [:], after: [String: [SourceUnit]] = [:]
-            var scopedBase: [String: SwiftSourceSnapshot] = [:]
             for (key, head) in current.sources {
                 guard let colon = key.firstIndex(of: ":") else { continue }
                 let path = String(key[key.index(after: colon)...])
@@ -88,16 +90,15 @@ struct XcodeHeadOnlySources {
                     after[unit.key, default: []].append(unit)
                 }
                 if let old = try cache.snapshot(path: path, module: String(key[..<colon])) {
-                    scopedBase[key] = old
                     for unit in old.units where unit.helperCallableName != nil {
                         before[unit.key, default: []].append(unit)
                     }
                 }
             }
             let comparison = HeadOnlySourceComparison(head: current.mappings, base: result.mappings)
-            // Only expand the read if head SIL and the scoped base file admit
-            // a proof. The full audit can then rule out competing base bindings.
-            lazy var eligibleCallers = SwiftTestingSourceEffects.positionIndependentCallers(current, touching: paths, historical: scopedBase)
+            // Head SIL identifies candidates for a full base read. Only the
+            // subsequent comparison of audited inputs can certify their bindings.
+            lazy var eligibleCallers = SwiftTestingSourceEffects.positionIndependentCallers(current, touching: paths, historical: nil)
             auditCallers = before.contains { key, old in
                 guard let new = after[key], new.count == old.count else { return true }
                 if old.count == 1 {
@@ -160,6 +161,7 @@ struct XcodeHeadOnlySources {
                 }
             }
         }
+        result.hasAuditedCallerInputs = auditCallers && basePaths != nil
         result.diagnostics += mappingDiagnostics
         return result
     }
@@ -279,7 +281,8 @@ enum XcodeHeadOnlySelector {
         var comparison = HeadOnlySourceComparison(head: current.mappings, base: source.mappings)
         lazy var callerIndex = HeadOnlyDeclarationChange.CallerIndex(current)
         let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
-        let effects = SwiftTestingSourceEffects(current, touching: paths, historical: source.base, unowned: source.unownedBaseSources)
+        let effects = SwiftTestingSourceEffects(current, touching: paths, historical: source.base,
+            unowned: source.unownedBaseSources, hasAuditedCallerInputs: source.hasAuditedCallerInputs)
         comparison.positionIndependent = effects.positionIndependent
         func scopedUnits(_ sources: [String: SwiftSourceSnapshot]) -> [String: [SourceUnit]] {
             let files = sources.values.filter { snapshot in

@@ -192,6 +192,73 @@ func unownedBaseFilesOnlyBlockAffectedLocationProofs(scenario: String) throws {
     #expect(report.selectedTests == (scenario == "manifest" ? [] : [id]))
 }
 
+@Test func scopedCallerLocationsSurviveAnImportedOverloadInTheBase() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let path = "Helpers.swift", entry = "UI/Cases/observes()"
+    let before = "import External\nfunc record(_ value: Payload) -> Int { 0 }\nfunc position() -> Int { record(0) }"
+    let after = before.replacingOccurrences(of: "\nfunc position", with: "\n\nfunc position")
+    let tests = "import Testing\nstruct Cases { @Test func observes() { #expect(position() == 3) } }"
+    try repo.write(path, before)
+    try repo.write("Types.swift", "typealias Payload = String")
+    try repo.write("Tests.swift", tests)
+    let base = try repo.commit()
+    let files = [path: after, "Types.swift": "typealias Payload = Int", "Tests.swift": tests]
+    for (path, text) in files { try repo.write(path, text) }
+    let head = try repo.commit()
+
+    // The base overload supplies #line at the call. The unchanged signature of
+    // the local overload becomes applicable only after the out-of-scope alias edit.
+    try repo.write("External.swift", "public func record(_ value: Int, line: Int = #line) -> Int { line }")
+    let library = repo.root.appendingPathComponent("libExternal.a")
+    _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-library", "-static", "-emit-module", "-module-name", "External",
+        "External.swift", "-o", library.path], at: repo.root)
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    var graph = try boundaryGraph(files, tests: [entry], root: repo.root, compilerArguments: ["-plugin-path", plugins.path, "-I", repo.root.path],
+                                  compiler: compiler, linkArguments: [library.path])
+    graph.mappings = nil
+    let scopes = try XcodeHeadOnlySelector.scopedReports(current: graph, requests: .init(scopes: [.init(name: "helper", paths: [path])]),
+        changes: GitChanges.readComparison(base: base, head: head, at: repo.root), baseRevision: base, headRevision: head,
+        root: repo.root, mappingPath: "mapping.json", documentation: [], buildEvidenceFailure: nil)
+    let report = try #require(scopes.first?.report)
+    #expect(!report.ignoredChanges.contains(path))
+    #expect(report.explanations.contains { $0.test == entry && $0.kind == "dependency" })
+}
+
+@Test(arguments: ["@Test", "@`Test`", "@Testing /* module */ .Test"])
+func equivalentTestSpellingsSelectTheEditedBody(attribute: String) throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let path = "Cases.swift", key = "UI:" + path
+    let entry = "UI/Suite/observes()", control = "UI/Control/unrelated()"
+    let before = "import Testing\nstruct Suite { \(attribute) func observes() { let _ = false } }\nstruct Control { @Test func unrelated() {} }"
+    let after = before.replacingOccurrences(of: "false", with: "true")
+    try repo.write(path, after)
+    let head = try repo.commit()
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let fresh = try boundaryGraph([path: after], tests: [entry, control], root: repo.root, compilerArguments: ["-plugin-path", plugins.path], compiler: compiler)
+    func selected(_ graph: XcodeTestGraph) -> [String] {
+        XcodeHeadOnlySelector.select(current: graph, source: .init(base: [key: .parse(before, path: path, module: "UI")]),
+                                     changes: [.init(path: path)], baseRevision: "base").selectedTests
+    }
+    #expect(selected(fresh) == [entry])
+    if attribute != "@Test" {
+        var legacy = fresh
+        var file = try #require(legacy.sources[key])
+        let index = try #require(file.units.firstIndex { $0.helperCallableName == "observes" })
+        file.parserVersion = 27
+        file.units[index].swiftTestingBodyCandidate = nil
+        file.units[index].swiftTestingRegistrationDeclaration = nil
+        legacy.sources[key] = file
+        legacy = try GraphArchive.decode(GraphArchive.encode(legacy))
+        #expect(Set(selected(legacy)) == [control, entry])
+        try legacy.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
+        #expect(selected(legacy) == [entry])
+    }
+}
+
 @Test(arguments: ["current", "legacy-parser", "missing-head", "archive-substitution"])
 func headSyntaxReuseAuthenticatesFullGitDiffAndParser(scenario: String) throws {
     let repo = try SourceRepository()

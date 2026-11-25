@@ -42,12 +42,13 @@ extension AttributeSyntax {
         }
     }
 
-    static let inlineAttributeHeads: [String] = inlineAttributeNames.flatMap { name in
-        [name, "`" + name + "`"].map { spelling in
-            let attribute = AttributeSyntax(attributeName: IdentifierTypeSyntax(name: .identifier(spelling)))
-            return fingerprint(Syntax(attribute.atSign)) + "|" + fingerprint(Syntax(attribute.attributeName))
-        }
+    private static func archivedHead(_ spelling: String) -> String {
+        let attribute = AttributeSyntax(attributeName: IdentifierTypeSyntax(name: .identifier(spelling)))
+        return fingerprint(Syntax(attribute.atSign)) + "|" + fingerprint(Syntax(attribute.attributeName))
     }
+
+    static let escapedInlineAttributeHeads = inlineAttributeNames.map { archivedHead("`" + $0 + "`") }
+    static let inlineAttributeHeads = inlineAttributeNames.map(archivedHead) + escapedInlineAttributeHeads
 }
 
 public struct SourceUnit: Codable, Sendable {
@@ -182,7 +183,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 27
+    static let currentParserVersion = 28
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -214,9 +215,6 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         let version = parserVersion ?? 0
         let names = AttributeSyntax.inlineAttributeNames
         guard version < 27, identifierNames?.isDisjoint(with: names) != true else { return units }
-        let escapedNames = version < 26 ? names.map { "`" + $0 + "`" }.filter { spelling in
-            helperDeclarationIssues?.contains { $0.spelling == "@" + spelling } != false
-        } : []
         var result = units
         for i in result.indices {
             if version < 11 {
@@ -224,7 +222,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 continue
             }
             let syntax = result[i].syntaxFingerprint ?? result[i].fingerprint
-            guard result[i].hasInlineBody == true || escapedNames.contains(where: syntax.contains) else { continue }
+            guard result[i].hasInlineBody == true ||
+                (version < 26 && AttributeSyntax.escapedInlineAttributeHeads.contains(where: syntax.contains)) else { continue }
             // A nested declaration may carry a different inline attribute. Clear
             // the flag only when complete noinline subtrees account for every
             // inline attribute in this unit. Unknown archive layouts stay conservative.
@@ -683,7 +682,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     enclosing = ancestor.parent
                 }
                 testingBodyCandidate = testingEnclosingSupported && !hasOpaqueResult &&
-                    attributes.contains(where: { ["Test", "Testing.Test"].contains($0) }) &&
+                    function.attributes.contains { $0.as(AttributeSyntax.self).map { SwiftTestingSourceDeclarations.matches($0, "Test") } == true } &&
                     function.body?.tokens(viewMode: .sourceAccurate).allSatisfy { token in
                         guard token.tokenKind == .pound else { return true }
                         guard let macro = token.parent?.as(MacroExpansionExprSyntax.self) else { return false }

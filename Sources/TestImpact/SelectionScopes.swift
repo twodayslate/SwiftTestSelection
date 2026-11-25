@@ -57,6 +57,10 @@ extension XcodeHeadOnlySelector {
             let omittedInputs = changedPaths.subtracting(selectedPaths).subtracting(documentation)
             var source = try XcodeHeadOnlySources.read(current: current, changes: filtered, base: baseRevision, root: root,
                 mappingPath: mappingPath, cache: sourceCache)
+            // An omitted build input can change imported overloads or compilation flags.
+            if omittedInputs.contains(where: { !$0.hasSuffix(".swift") || $0 == "Package.swift" }) {
+                source.hasAuditedCallerInputs = false
+            }
             source.unverifiedScopedProcesses = processesAffectedByOmittedInputs(omittedInputs, in: current)
             measurement(sourceStart.event("scopeSourceSyntax", revision: baseRevision, detail: scope.name, parent: "selectionScopes"))
             let selectionStart = AnalysisMeasurement()

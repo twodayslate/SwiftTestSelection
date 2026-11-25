@@ -84,16 +84,18 @@ extension XcodeAnalysis {
 extension XcodeTestGraph {
     /// Comparisons need the same syntax representation on both sides. Older
     /// captures lack conditional membership (before v5) or physical caller
-    /// coordinates (before v11). Recompute these facts from authenticated bytes
-    /// without changing captured compiler bindings or reviewed helper digests.
+    /// coordinates (before v11), or missed equivalent @Test spellings (before
+    /// v28). Recover these source facts from the authenticated Git blob.
     mutating func refreshLegacyComparisonSyntax(paths: Set<String>, revision: String, root: URL) throws {
         var cache: XcodeBaseSourceCache?
         for (key, var archived) in sources {
-            guard let version = archived.parserVersion, version < 11,
+            guard let version = archived.parserVersion, version < 28,
                   let blobs = archived.sourceBlobIDs, !blobs.isEmpty,
                   let separator = key.firstIndex(of: ":") else { continue }
             let path = String(key[key.index(after: separator)...])
-            guard paths.contains(path) else { continue }
+            guard paths.contains(path), version < 11 || archived.units.contains(where: {
+                $0.swiftTestingEntryInputs?.bare == true && $0.swiftTestingRegistrationDeclaration == nil
+            }) else { continue }
             if cache == nil { cache = try XcodeBaseSourceCache(root: root, base: revision) }
             guard let parsed = try cache?.snapshot(path: path, module: String(key[..<separator])),
                   parsed.diagnostics.isEmpty, let parsedBlobs = parsed.sourceBlobIDs, !blobs.isDisjoint(with: parsedBlobs) else { continue }
@@ -104,9 +106,15 @@ extension XcodeTestGraph {
                 let matches = regions[unit.region]?.filter { parsed.units[$0].key == unit.key }
                 guard let matches, matches.count == 1, let match = matches.first else { continue }
                 let native = parsed.units[match]
-                archived.units[index].callerLocations = native.callerLocations
-                archived.units[index].conditionalBranch = native.conditionalBranch
-                matched.insert(match)
+                if version < 11 {
+                    archived.units[index].callerLocations = native.callerLocations
+                    archived.units[index].conditionalBranch = native.conditionalBranch
+                    matched.insert(match)
+                }
+                if unit.swiftTestingEntryInputs?.bare == true, unit.swiftTestingRegistrationDeclaration == nil {
+                    archived.units[index].swiftTestingRegistrationDeclaration = native.swiftTestingRegistrationDeclaration
+                    archived.units[index].swiftTestingBodyCandidate = native.swiftTestingBodyCandidate
+                }
             }
             if version < 5, matched.count == parsed.units.count, matched.count == archived.units.count {
                 archived.hasVerifiedConditionalMembership = true

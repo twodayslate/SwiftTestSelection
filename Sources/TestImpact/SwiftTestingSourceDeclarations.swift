@@ -46,7 +46,7 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
         attribute.attributeName.tokens(viewMode: .sourceAccurate).map { $0.identifier?.name ?? $0.text }
     }
 
-    private static func matches(_ attribute: AttributeSyntax, _ expected: String) -> Bool {
+    static func matches(_ attribute: AttributeSyntax, _ expected: String) -> Bool {
         let tokens = name(attribute)
         return tokens == [expected] || tokens == ["Testing", ".", expected]
     }
