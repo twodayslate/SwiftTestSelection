@@ -112,8 +112,9 @@ extension XcodeHeadOnlySelector {
         // requested entries, rather than scanning every test body in the graph.
         let regions = Dictionary(grouping: entries.flatMap { graph.tests[$0] ?? [] }
             .flatMap { graph.functions[$0]?.regions ?? [] }, by: \.path)
+        let physicalModules = current.modulesWithPhysicalSourceLocations
         let candidates = current.sources.values.flatMap(\.units).filter { unit in
-            unit.kind == "function" && (regions[unit.region.path] ?? []).contains {
+            unit.kind == "function" && !unit.hasUnverifiedSwiftTestingLocation(in: physicalModules) && (regions[unit.region.path] ?? []).contains {
                 $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine
             }
         }

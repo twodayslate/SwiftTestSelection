@@ -105,6 +105,10 @@ public struct SourceUnit: Codable, Sendable {
     /// Whether this subscript can compete with the SDK identifier getter.
     public var subscriptAcceptsSingleUnlabeledArgument: Bool? = nil
 
+    func hasUnverifiedSwiftTestingLocation(in physicalModules: Set<String>) -> Bool {
+        swiftTestingRole == "test" && !physicalModules.contains(String(key.prefix { $0 != ":" }))
+    }
+
     func comparisonFingerprint(_ policy: UIFeatureMappings.SourceLocationPolicy) -> String {
         let body: String
         switch policy {

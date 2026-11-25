@@ -412,6 +412,10 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
             }
+            if b.hasUnverifiedSwiftTestingLocation(in: registrations.headPhysicalModules) {
+                fallback("unverified_test_location", "Cannot bind the changed Swift Testing entry to physical compiler locations in head: \(b.region.path):\(b.region.startLine)")
+                continue
+            }
             let unusedInline = effects.unusedInline.contains(.init(b))
             guard unusedInline || entryEdits[key] != nil || registrations.supportedBodies.contains(key) || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
                 fallback("head_only_unsupported_body", "Attributes, macros or opaque result types can change callers outside a surviving body: \(b.region.path):\(b.region.startLine)")
@@ -507,7 +511,7 @@ enum XcodeHeadOnlySelector {
             let omittedKeys = Set(excludedChanges.map(\.key))
             for (key, units) in new where !omittedKeys.contains(key) &&
                 (!comparison.equivalent(old[key] ?? [], units) || policyHelpers.contains(key)) {
-                for unit in units where unit.kind == "function" {
+                for unit in units where unit.kind == "function" && !unit.hasUnverifiedSwiftTestingLocation(in: registrations.headPhysicalModules) {
                     let module = String(unit.key.prefix { $0 != ":" })
                     affected.formUnion((index.byFile[unit.region.path] ?? []).filter { id in
                         let node = graph.functions[id]!

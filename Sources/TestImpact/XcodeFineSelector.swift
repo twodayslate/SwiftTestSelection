@@ -429,7 +429,12 @@ public enum XcodeFineSelector {
             var productionUnits: [SourceUnit] = []
             var productionAffected = Set<String>()
             var enumModules = Set<String>()
+            let physicalModules = revision == "base" ? registrations.basePhysicalModules : registrations.headPhysicalModules
             for unit in units {
+                if unit.hasUnverifiedSwiftTestingLocation(in: physicalModules) {
+                    fallback("unverified_test_location", "Cannot bind the changed Swift Testing entry to physical compiler locations in \(revision): \(unit.region.path):\(unit.region.startLine)")
+                    continue
+                }
                 let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
                 let production = owners.isEmpty || owners.contains { !$0.isTest }
                 let candidates = unit.kind != "function" && !unit.scope.isEmpty

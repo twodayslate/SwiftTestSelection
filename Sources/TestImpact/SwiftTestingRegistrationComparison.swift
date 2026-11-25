@@ -6,6 +6,8 @@ import Foundation
 /// An entry-local projection requires matching source declarations and a compiler
 /// proof. Everything else contributes its full inputs to shared discovery.
 struct SwiftTestingRegistrationComparison {
+    let headPhysicalModules: Set<String>
+    let basePhysicalModules: Set<String>
     private(set) var entryEdits: [String: String] = [:]
     private(set) var supportedBodies = Set<String>()
     private(set) var suiteTests = Set<String>()
@@ -61,6 +63,8 @@ struct SwiftTestingRegistrationComparison {
         let indexedPaths = paths.union(old.values.flatMap { $0.map { $0.region.path } })
         let headProof = FactoryIndex(head, inspecting: indexedPaths)
         let baseProof = base.map { FactoryIndex($0, inspecting: indexedPaths) }
+        headPhysicalModules = headProof.physicalModules
+        basePhysicalModules = baseProof?.physicalModules ?? []
         baseDiscovery.incomplete = baseProof?.incomplete ?? .init()
         headDiscovery.incomplete = headProof.incomplete
         if !old.isEmpty {
@@ -350,11 +354,13 @@ struct SwiftTestingRegistrationComparison {
     /// Index by source file once, including tests with overlapping entry regions.
     struct FactoryIndex {
         let snapshot: XcodeTestGraph
+        let physicalModules: Set<String>
         var entries: [String: [(SourceRegion, String)]] = [:]
         var incomplete = IncompleteRegistrations()
 
         init(_ snapshot: XcodeTestGraph, inspecting paths: Set<String>) {
             self.snapshot = snapshot
+            physicalModules = snapshot.modulesWithPhysicalSourceLocations
             guard let graph = snapshot.dependencies, !graph.tests.isEmpty else { return }
             let targets = Set(snapshot.targets.filter { !$0.sourceFiles.isDisjoint(with: paths) }.map(\.name))
             guard !targets.isEmpty else { return }
@@ -400,7 +406,7 @@ struct SwiftTestingRegistrationComparison {
             guard unit.swiftTestingRole == "test", let graph = snapshot.dependencies else { return nil }
             let module = String(unit.key.prefix { $0 != ":" }), fileKey = module + ":" + unit.region.path
             let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
-            guard !owners.isEmpty, owners.allSatisfy(\.isTest),
+            guard physicalModules.contains(module), !owners.isEmpty, owners.allSatisfy(\.isTest),
                   let file = snapshot.sources[fileKey], file.hasSwiftTestingRegistrationMetadata,
                   file.units.filter({ $0.kind == "function" && $0.region.intersects(unit.region) }).count == 1 else { return nil }
             let matches = Set((entries[fileKey] ?? []).compactMap { $0.0.intersects(unit.region) ? $0.1 : nil })

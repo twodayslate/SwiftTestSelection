@@ -750,6 +750,48 @@ func testRegistrationChangesKeepTheirEvaluationScope(scenario: String) throws {
     }
 }
 
+@Test(arguments: [false, true], ["displayName", "body"])
+func registrationEditsRespectPhysicalCompilerLocations(redirected: Bool, edit: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    let first = "UI/Suite/first()", second = "UI/Suite/second()"
+    func capture(base: Bool) throws -> XcodeTestGraph {
+        let file = root.appendingPathComponent("Tests.swift").path
+        let firstMethod = edit == "displayName"
+            ? #"@Test("\#(base ? "Old" : "New")") func first() { #expect(Test.current?.displayName == "Old") }"#
+            : "@Test func first() { #expect(Bool(\(base))) }"
+        let source = """
+        import Testing
+        struct Suite {
+        \(redirected ? "#sourceLocation(file: \"\(file)\", line: 7)" : "")
+        \(firstMethod)
+        \(redirected ? "#sourceLocation()" : "")
+        \(redirected ? "#sourceLocation(file: \"\(file)\", line: 4)" : "")
+        @Test func second() {}
+        \(redirected ? "#sourceLocation()" : "")
+        }
+        """
+        let graph = try boundaryGraph(["Tests.swift": source], tests: [first, second], root: root,
+                                      compilerArguments: ["-plugin-path", plugins.path], compiler: compiler)
+        return try GraphArchive.decode(GraphArchive.encode(graph))
+    }
+    let base = try capture(base: true), head = try capture(base: false)
+    let changes = [FileChange(path: "Tests.swift")]
+    let dual = XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base")
+    let historical = XcodeHeadOnlySources(base: base.sources)
+    func headOnly(excluding entries: Set<String>) -> ImpactReport {
+        XcodeHeadOnlySelector.select(current: head, source: historical, changes: changes, baseRevision: "base",
+                                     excludedTestEntries: entries)
+    }
+    for report in [dual, headOnly(excluding: []), headOnly(excluding: [second])] {
+        #expect(report.selectedTests.contains(first))
+        if !redirected { #expect(report.selectedTests == [first]) }
+    }
+}
+
 @Test
 func firstAndLastSwiftTestingRegistrationUseOnlyTheirOwnRevision() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

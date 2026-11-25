@@ -64,6 +64,21 @@ public struct XcodeTestGraph: Codable, Sendable {
         self.diagnostics = diagnostics
     }
 
+    var modulesWithPhysicalSourceLocations: Set<String> {
+        // A SIL location can point into a different input of the same module.
+        // Prove every input uses physical coordinates before matching any root.
+        var physical = Set(modules.values)
+        for target in targets {
+            guard let module = modules[target.name], physical.contains(module) else { continue }
+            if unsupportedSourceInputs?[module]?.isEmpty == false ||
+                generatedSourceBoundaries?[module]?.allSatisfy({ $0.hasPhysicalLocations == true }) == false ||
+                !target.sourceFiles.allSatisfy({ sources[module + ":" + $0]?.receiverPhysicalLocations == true }) {
+                physical.remove(module)
+            }
+        }
+        return physical
+    }
+
     // Changing the required source key makes old synthesized readers reject
     // new policy-bearing graphs, instead of silently dropping directive metadata.
     enum CodingKeys: String, CodingKey {

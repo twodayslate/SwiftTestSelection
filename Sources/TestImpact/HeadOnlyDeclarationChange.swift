@@ -33,18 +33,7 @@ public struct HeadOnlyDeclarationChange: Codable, Sendable {
 
         init(_ current: XcodeTestGraph) {
             hierarchy = SwiftSuperclassIndex(sources: current.sources)
-            // A SIL location can point into a different input of the same module.
-            // Prove every input uses physical coordinates before matching any root.
-            var physical = Set(current.modules.values)
-            for target in current.targets {
-                guard let module = current.modules[target.name], physical.contains(module) else { continue }
-                if current.unsupportedSourceInputs?[module]?.isEmpty == false ||
-                    current.generatedSourceBoundaries?[module]?.allSatisfy({ $0.hasPhysicalLocations == true }) == false ||
-                    !target.sourceFiles.allSatisfy({ current.sources[module + ":" + $0]?.receiverPhysicalLocations == true }) {
-                    physical.remove(module)
-                }
-            }
-            physicalModules = physical
+            physicalModules = current.modulesWithPhysicalSourceLocations
         }
     }
 
