@@ -63,6 +63,62 @@ private struct SourceRepository {
     #expect(graph.sources[key]?.parserVersion == 4)
 }
 
+@Test func savedReplayProjectsUnchangedConditionalCallersOfRemovedOverload() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let caller = """
+    import XCTest
+    final class Cases: XCTestCase {
+    #if DEBUG
+        func testReading() { queryHelper(1) }
+    #else
+        func testReading() { queryHelper(2) }
+    #endif
+    }
+    """
+    let surviving = "func queryHelper<T>(_ value: T) {}"
+    try repo.write("Suite.swift", caller)
+    try repo.write("Helpers.swift", surviving + "\nfunc queryHelper(_ value: Int) {}")
+    let base = try repo.commit()
+    try repo.write("Helpers.swift", surviving)
+    let head = try repo.commit()
+    let entry = "UI/Cases/testReading()"
+    var graph = try boundaryGraph(["Suite.swift": caller, "Helpers.swift": surviving], tests: [entry],
+                                  root: repo.root, compilerArguments: ["-DDEBUG"])
+    for key in graph.sources.keys {
+        graph.sources[key]!.parserVersion = 4
+        for i in graph.sources[key]!.units.indices { graph.sources[key]!.units[i].conditionalBranch = nil }
+    }
+    let options = XcodeConfiguration(container: .project, path: repo.root.appendingPathComponent("Fixture.xcodeproj"),
+                                     scheme: "Fixture", destination: "fixture")
+    let analysis = XcodeAnalysis(options: options)
+    var context = try analysis.artifactContext(root: repo.root)
+    context["sdkAndArchitecture"] = "fixture"
+    graph.buildArtifact = .init(revision: head, context: context, toolchain: "fixture", buildLogDigest: "log",
+                                buildSettingsDigest: "settings", productsDirectory: repo.root.path,
+                                xctestrun: "Tests.xctestrun", products: ["Tests.xctestrun": "fixture"])
+    graph.buildArtifact?.headOnlyBuildEvidence = .init(buildLogDigest: "log", buildSettingsDigest: "settings", documentation: [])
+    let scopes = SelectionScopes(scopes: [.init(name: "helper", paths: ["Helpers.swift"])])
+    let key = "UI:Suite.swift"
+    let capturedBlobs = try #require(graph.sources[key]?.sourceBlobIDs)
+    let identities: [Set<String>?] = [capturedBlobs, ["unrelated"], nil]
+    for blobs in identities {
+        graph.sources[key]?.sourceBlobIDs = blobs
+        let saved = try GraphArchive.decode(GraphArchive.encode(graph))
+        let report = try analysis.selectHeadOnly(base: base, head: head, headGraph: saved, selectionScopes: scopes)
+        for replay in [report, try #require(report.selectionScopes?.first?.report)] {
+            let removed = try #require(replay.headOnlyDeclarationChanges?.first { $0.change == "removed" })
+            let callers = removed.historicalReferences.filter { $0.sourceKey == key }.flatMap { $0.possibleCallers ?? [] }
+            #expect(Set(callers.map { $0.baseRegion.startLine }) == [4, 6])
+            for caller in callers {
+                let expected = blobs == capturedBlobs && caller.baseRegion.startLine == 4 ? [entry] : []
+                #expect(caller.survivingTestEntries == expected)
+            }
+            #expect(replay.selectedTests == [entry])
+        }
+    }
+}
+
 @Test func unauditedRetainedSourceReadSkipsFullComparison() throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }

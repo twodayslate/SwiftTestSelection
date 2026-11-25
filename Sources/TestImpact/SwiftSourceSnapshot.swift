@@ -141,10 +141,15 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// A legacy capture can recover branch membership from the exact Git blob.
     var hasVerifiedConditionalMembership: Bool? = nil
     /// Older parsers retained the directive but omitted its relationship to declarations.
+    var lacksConditionalMembership: Bool {
+        (parserVersion ?? 0) < 5 && hasVerifiedConditionalMembership != true &&
+            units.contains { $0.kind == "configuration" }
+    }
+
     static func legacyConditionalPaths(in sources: [String: Self], touching paths: Set<String>) -> Set<String> {
         Set(sources.values.compactMap { snapshot in
-            guard (snapshot.parserVersion ?? 0) < 5, snapshot.hasVerifiedConditionalMembership != true, let path = snapshot.units.first?.region.path, paths.contains(path),
-                  snapshot.units.contains(where: { $0.kind == "configuration" }) else { return nil }
+            guard let path = snapshot.units.first?.region.path, paths.contains(path),
+                  snapshot.lacksConditionalMembership else { return nil }
             return path
         })
     }
