@@ -33,7 +33,7 @@ public enum GraphArchive {
         /// Optional for archives written before factory-effect evidence existed.
         var testVTableEntries: [String: Set<String>]?
         var swiftTestingEntryRoots: [String: [Int]]?
-        var swiftTestingPlatformAgentInventory: Bool?
+        var swiftTestingProcessInventoryVersion: Int?
         var swiftTestingFactoriesByTarget: [String: Set<String>]?
         var swiftTestingLinkedRecordsVerified: Bool?
         var swiftTestingRegisteredFactories: [String: Set<String>]?
@@ -84,7 +84,7 @@ public enum GraphArchive {
             modeledDiscoveryBodies = Set(graph.functions.values.filter { $0.hasModeledDiscoveryInstructions == true }.map { ids[$0.id]! })
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
             testVTableEntries = graph.testVTableEntries
-            swiftTestingPlatformAgentInventory = graph.swiftTestingPlatformAgentInventory
+            swiftTestingProcessInventoryVersion = graph.swiftTestingProcessInventoryVersion
             swiftTestingFactoriesByTarget = graph.swiftTestingFactoriesByTarget
             swiftTestingLinkedRecordsVerified = graph.swiftTestingLinkedRecordsVerified
             swiftTestingRegisteredFactories = graph.swiftTestingRegisteredFactories
@@ -109,7 +109,7 @@ public enum GraphArchive {
             var graph = DependencyGraph(toolchain: toolchain, diagnostics: diagnostics)
             graph.schemaVersion = schema; graph.testDiagnostics = testDiagnostics
             graph.testVTableEntries = testVTableEntries
-            graph.swiftTestingPlatformAgentInventory = swiftTestingPlatformAgentInventory
+            graph.swiftTestingProcessInventoryVersion = swiftTestingProcessInventoryVersion
             graph.swiftTestingFactoriesByTarget = swiftTestingFactoriesByTarget
             graph.swiftTestingLinkedRecordsVerified = swiftTestingLinkedRecordsVerified
             graph.swiftTestingRegisteredFactories = swiftTestingRegisteredFactories

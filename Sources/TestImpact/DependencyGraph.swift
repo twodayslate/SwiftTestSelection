@@ -188,8 +188,8 @@ public struct DependencyGraph: Codable, Sendable {
     public var swiftTestingSuiteWitnesses: [String: Set<String>]? = nil
     /// Complete factory inventories independently reached from compiled test registrations.
     public var swiftTestingRegisteredFactories: [String: Set<String>]? = nil
-    /// True for captures that excluded custom hosts and startup hooks from complete inventories.
-    var swiftTestingPlatformAgentInventory: Bool? = nil
+    /// Version of the startup checks used to establish per-target process inventories.
+    var swiftTestingProcessInventoryVersion: Int? = nil
     /// Factories reached from registrations in a platform-agent bundle, keyed by the
     /// Xcode target identifier. An absent key has incomplete linkage evidence.
     public var swiftTestingFactoriesByTarget: [String: Set<String>]? = nil

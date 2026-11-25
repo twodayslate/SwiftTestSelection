@@ -7,7 +7,7 @@ import Testing
 private enum ProcessEdit: CaseIterable {
     case suiteWitness, suiteMetadata, cleanup
     case archivedPredicate, guardedSuite, ambiguousSuite
-    case bodyWithOpaqueCompanion, archivedBody, eagerTrait, eagerTraitInCompanionHost, pluginHost, suiteTrait, nestedMainActorSuite, registrationLocation
+    case bodyWithOpaqueCompanion, archivedBody, eagerTrait, eagerTraitInCompanionHost, pluginHost, principalClassPlugin, suiteTrait, nestedMainActorSuite, registrationLocation
 }
 
 @Test(.serialized, arguments: ProcessEdit.allCases)
@@ -61,6 +61,8 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     let opaque = edit == .bodyWithOpaqueCompanion
     let plugin = edit == .pluginHost
     let appHosted = plugin || edit == .eagerTraitInCompanionHost
+    let principalClassPlugin = edit == .principalClassPlugin
+    let loadsPlugin = plugin || principalClassPlugin
     let companionSuite: String
     switch edit {
     case .suiteWitness: companionSuite = "private struct Other"
@@ -68,6 +70,15 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     case .cleanup: companionSuite = "@Suite(Dropper()) struct Foreign"
     default: companionSuite = predicate ? "extension Local.Other" : (opaque ? "@Suite(Marker()) struct Foreign" : "struct Foreign")
     }
+    let principalClass = """
+    @objc(PluginLoader) final class PluginLoader: NSObject {
+        override init() {
+            super.init()
+            let root = Bundle(for: PluginLoader.self).bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+            try! Bundle(url: root.appendingPathComponent("Local/Fixture.xctest"))!.loadAndReturnError()
+        }
+    }
+    """
     let companion = """
     import Foundation
     import Testing
@@ -77,7 +88,8 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     \(predicate ? "import Local" : "")
     \(edit == .cleanup ? "final class Token { deinit {} }" : "")
     \(edit == .cleanup ? "struct Dropper: SuiteTrait { init() { _ = Token() } }" : "")
-    \(companionSuite) { @Test func observe() { \(plugin ? #"#expect(UserDefaults.standard.bool(forKey: "pluginFlag"))"# : "") } }
+    \(principalClassPlugin ? principalClass : "")
+    \(companionSuite) { @Test func observe() { \(loadsPlugin ? #"#expect(UserDefaults.standard.bool(forKey: "pluginFlag"))"# : "") } }
     final class Case: XCTestCase { func testIndependent() {} }
     """
     try Data(companion.utf8).write(to: root.appendingPathComponent("Companion.swift"))
@@ -86,7 +98,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     var linkArguments = opaque ? ["-L", root.path, "-lSupport", "-Xlinker", "-rpath", "-Xlinker", root.path] : []
     if predicate { linkArguments = ["-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup"] }
     _ = try linkedFixtureRecords(arguments("Companion"), linkArguments: linkArguments,
-        root: root.appendingPathComponent("Companion"), target: "CompanionTests")
+        root: root.appendingPathComponent("Companion"), target: "CompanionTests", principalClass: principalClassPlugin ? "PluginLoader" : nil)
     let localTarget = ["BlueprintName": "LocalTests", "TestBundlePath": "__TESTROOT__/Local/Fixture.xctest"]
     let companionTarget = ["BlueprintName": "CompanionTests", "TestBundlePath": "__TESTROOT__/Companion/Fixture.xctest"]
     let run = root.appendingPathComponent("Both.xctestrun")
@@ -129,11 +141,13 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             \(guarded ? "#endif" : "")
             \(nested ? "}" : "")
             """
-        case .pluginHost:
+        case .pluginHost, .principalClassPlugin:
             source = """
             import Foundation
             import Testing
-            func writePluginFlag(_ value: Bool) { UserDefaults.standard.set(value, forKey: "pluginFlag") }
+            func writePluginFlag(_ value: Bool) {
+                UserDefaults.standard.setVolatileDomain(["pluginFlag": value], forName: UserDefaults.argumentDomain)
+            }
             struct Marker: TestTrait { init(value: Bool) { writePluginFlag(value) } }
             struct Common { @Test func plain() {} }
             struct Other { @Test(Marker(value: \(value))) func marked() {} }
@@ -143,6 +157,11 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         }
         try Data(source.utf8).write(to: root.appendingPathComponent("Local.swift"))
         _ = try linkedFixtureRecords(arguments("Local"), root: root.appendingPathComponent("Local"), target: "LocalTests")
+        if principalClassPlugin {
+            let run = try CommandRunner.run("xcrun", ["xctest", "Companion/Fixture.xctest"], at: root, allowFailure: true)
+            #expect(run.status == (value ? 0 : 1))
+            #expect(String(decoding: run.stdout + run.stderr, as: UTF8.self).contains(value ? "Test observe() passed" : "Test observe() failed"))
+        }
         func records(_ configurations: [[String: Any]]) throws -> [String: Set<String>] {
             let plan = ["TestConfigurations": configurations]
             try PropertyListSerialization.data(fromPropertyList: plan, format: .binary, options: 0).write(to: run)
@@ -197,7 +216,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         let hasSuite = [.suiteTrait, .suiteWitness, .suiteMetadata, .cleanup].contains(edit) || nested || guarded
         let recordCount = predicate ? 5 : (hasSuite ? 3 : 2)
         #expect(linked["LocalTests"]?.count == recordCount)
-        #expect((linked["CompanionTests"] == nil) == (opaque || appHosted))
+        #expect((linked["CompanionTests"] == nil) == (opaque || appHosted || principalClassPlugin))
         #expect(try records([active, ["TestTargets": [hosted]]])["LocalTests"] == nil)
         #expect(try records([active, ["IsEnabled": 0, "TestTargets": [hosted]]])["LocalTests"] == nil)
         let tests = [plain, marked, ordinary] + (includeObserver ? [observer] : []) + (predicate ? [classTest, inherited] : [])
@@ -233,12 +252,12 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             let rebound = try #require(restoredUnknown.dependencies)
             #expect(rebound.testDiagnostics[plain]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
             #expect(rebound.dependencyPath(from: rebound.tests[plain] ?? [], to: [gate]) == nil)
-            legacyGraph.swiftTestingPlatformAgentInventory = nil
+            legacyGraph.swiftTestingProcessInventoryVersion = nil
             legacyGraph.swiftTestingEntryRoots = nil
             var legacy = snapshot
             legacy.dependencies = legacyGraph
             graph.swiftTestingFactoriesByTarget = nil
-            graph.swiftTestingPlatformAgentInventory = nil
+            graph.swiftTestingProcessInventoryVersion = nil
             XcodeCompilerGraph.bind(tests: tests, modules: modules, sources: snapshot.sources, graph: &graph)
             #expect(graph.dependencyPath(from: graph.tests[observer] ?? [], to: [gate]) != nil)
             for data in [try JSONEncoder().encode(legacy), try GraphArchive.encode(legacy)] {
@@ -329,7 +348,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             func migrated(_ snapshot: XcodeTestGraph, compact: Bool, previouslyMigrated: Bool) throws -> XcodeTestGraph {
                 var snapshot = snapshot
                 var graph = try #require(snapshot.dependencies)
-                graph.swiftTestingPlatformAgentInventory = nil
+                graph.swiftTestingProcessInventoryVersion = nil
                 graph.swiftTestingEntryRoots = nil
                 if previouslyMigrated {
                     // The old reader could persist these edges after dropping its linkage flags.
@@ -356,10 +375,10 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
                 }
             }
         }
-        if plugin {
-            // Earlier archives trusted this host's static image list and omitted the plug-in.
+        if loadsPlugin {
+            // Earlier archives trusted the static image list and omitted the plug-in.
             var legacy = head
-            legacy.dependencies?.swiftTestingPlatformAgentInventory = nil
+            legacy.dependencies?.swiftTestingProcessInventoryVersion = nil
             legacy.dependencies?.swiftTestingFactoriesByTarget?["CompanionTests"] = []
             legacy.dependencies?.testDiagnostics[observer] = []
             legacy.dependencies?.functions[SwiftTestingDiscoveryRoots.processRoot("CompanionTests")]?.dependencies = []
@@ -398,9 +417,9 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             case .bodyWithOpaqueCompanion: expected = includeObserver ? [marked, observer] : [marked]
             default: expected = [plain, marked]
             }
-            #expect(Set(report.selectedTests) == Set(expected + (appHosted ? [observer] : [])))
+            #expect(Set(report.selectedTests) == Set(expected + (appHosted || principalClassPlugin ? [observer] : [])))
             let fallback = report.diagnostics.filter { $0.code == "swift_testing_discovery_effects" }
-            if appHosted {
+            if appHosted || principalClassPlugin {
                 #expect(report.explanations.contains {
                     $0.test == observer && $0.kind == "dependency" && $0.path.contains("Testing.discovery in CompanionTests")
                 })
@@ -430,6 +449,33 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         _ = try CommandRunner.run("xcrun", ["clang", "-bundle", file.path, "-framework", "Foundation", "-o", image.path], at: root)
         #expect(LinkedTestingRecords.recordsInImage(image) == (hasStartup ? nil : Set<String>()))
     }
+}
+
+@Test func flatBundleChecksDestinationPrincipalClassMetadata() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let bundle = root.appendingPathComponent("Fixture.xctest")
+    try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data("int fixture(void) { return 1; }".utf8).write(to: root.appendingPathComponent("Fixture.c"))
+    _ = try CommandRunner.run("xcrun", ["clang", "-bundle", "Fixture.c", "-o", "Fixture.xctest/Fixture"], at: root)
+    let run = root.appendingPathComponent("Fixture.xctestrun")
+    let plan = ["TestConfigurations": [["TestTargets": [["BlueprintName": "UI", "TestBundlePath": "__TESTROOT__/Fixture.xctest"]]]]]
+    try PropertyListSerialization.data(fromPropertyList: plan, format: .binary, options: 0).write(to: run)
+    func writeInfo(_ file: String, principalKey: String? = nil) throws {
+        var info = ["CFBundleExecutable": "Fixture", "CFBundlePackageType": "BNDL"]
+        if let principalKey { info[principalKey] = "PluginLoader" }
+        try PropertyListSerialization.data(fromPropertyList: info, format: .binary, options: 0)
+            .write(to: bundle.appendingPathComponent(file))
+    }
+    try writeInfo("Info.plist")
+    #expect(LinkedTestingRecords.capture(testRun: run, products: root)?["UI"] == Set<String>())
+    for key in ["NSPrincipalClass-iphoneos", "NSPrincipalClass~ipad"] {
+        try writeInfo("Info.plist", principalKey: key)
+        #expect(LinkedTestingRecords.capture(testRun: run, products: root) == [:])
+    }
+    try writeInfo("Info.plist")
+    try writeInfo("Info-iphoneos.plist", principalKey: "NSPrincipalClass")
+    #expect(LinkedTestingRecords.capture(testRun: run, products: root) == [:])
 }
 
 @Test func nestedSuiteRegistrationRequiresKnownEnclosingAttributes() throws {

@@ -7,6 +7,9 @@ import Foundation
 /// Unknown dylibs, image layouts and stripped registration symbols leave
 /// discovery open. A source import list cannot establish these facts.
 enum LinkedTestingRecords {
+    // Earlier captures checked host and image startup code but omitted the bundle's principal class.
+    static let inventoryVersion = 2
+
     static func capture(testRun: URL?, products: URL) -> [String: Set<String>]? {
         let run: URL
         if let testRun { run = testRun }
@@ -50,7 +53,7 @@ enum LinkedTestingRecords {
             if let path = target["TestHostPath"] as? String, !platformTestAgents.contains(path) { return nil }
             guard target["IsAppHostedTestBundle"] as? Bool != true, target["UseDestinationArtifacts"] as? Bool != true,
                   let path = target["TestBundlePath"] as? String, let bundle = product(path),
-                  let image = Bundle(url: bundle)?.executableURL else { return nil }
+                  let image = executableWithoutPrincipalClass(in: bundle) else { return nil }
             return records(in: image)
         }
         var recordsByTarget: [String: Set<String>] = [:], incomplete = Set<String>()
@@ -69,6 +72,29 @@ enum LinkedTestingRecords {
             }
         }
         return recordsByTarget
+    }
+
+    private static func executableWithoutPrincipalClass(in bundle: URL) -> URL? {
+        guard let image = Bundle(url: bundle)?.executableURL else { return nil }
+        let directory = image.deletingLastPathComponent()
+        let metadataDirectory: URL
+        if directory.path == bundle.path {
+            metadataDirectory = bundle
+        } else if directory.path == bundle.appendingPathComponent("Contents/MacOS").path {
+            metadataDirectory = bundle.appendingPathComponent("Contents")
+        } else { return nil }
+        // xctest instantiates the principal class before discovery. Check the raw
+        // destination variants as well as the metadata visible on the capture host.
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: metadataDirectory.path),
+              files.contains("Info.plist") else { return nil }
+        for file in files where file == "Info.plist" || (file.hasPrefix("Info-") && file.hasSuffix(".plist")) {
+            guard let data = try? Data(contentsOf: metadataDirectory.appendingPathComponent(file)),
+                  let info = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
+                  info["CFBundleExecutable"] as? String == image.lastPathComponent,
+                  !info.keys.contains(where: { $0 == "NSPrincipalClass" || $0.hasPrefix("NSPrincipalClass-") || $0.hasPrefix("NSPrincipalClass~") })
+            else { return nil }
+        }
+        return image
     }
 
     private static let platformTestAgents = Set(["MacOSX", "iPhoneSimulator", "AppleTVSimulator",

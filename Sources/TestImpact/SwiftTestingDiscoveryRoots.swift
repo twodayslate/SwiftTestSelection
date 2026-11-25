@@ -291,7 +291,7 @@ enum SwiftTestingDiscoveryRoots {
     /// discovery roots in one set and could count an app host's static images as complete.
     static func restore(modules: [String: String], sources: [String: SwiftSourceSnapshot], graph: inout DependencyGraph) {
         guard !modules.values.contains("Testing") else { return }
-        if graph.swiftTestingPlatformAgentInventory != true {
+        if graph.swiftTestingProcessInventoryVersion != LinkedTestingRecords.inventoryVersion {
             graph.swiftTestingFactoriesByTarget = nil
             graph.swiftTestingLinkedRecordsVerified = nil
         }

@@ -45,12 +45,13 @@ func evaluate(_ predicate: () -> Bool) -> Bool { predicate() }
 """
 
 
-func linkedFixtureRecords(_ arguments: [String], linkArguments: [String] = [], root: URL, target: String) throws -> [String: Set<String>] {
+func linkedFixtureRecords(_ arguments: [String], linkArguments: [String] = [], root: URL, target: String, principalClass: String? = nil) throws -> [String: Set<String>] {
     let bundle = root.appendingPathComponent("Fixture.xctest/Contents")
     let binaryDirectory = bundle.appendingPathComponent("MacOS")
     try FileManager.default.createDirectory(at: binaryDirectory, withIntermediateDirectories: true)
     let executable = binaryDirectory.appendingPathComponent("Fixture")
-    let info = ["CFBundleExecutable": "Fixture", "CFBundlePackageType": "BNDL"]
+    var info = ["CFBundleExecutable": "Fixture", "CFBundlePackageType": "BNDL"]
+    info["NSPrincipalClass"] = principalClass
     try PropertyListSerialization.data(fromPropertyList: info, format: .binary, options: 0).write(to: bundle.appendingPathComponent("Info.plist"))
     let platform = try CommandRunner.run("xcrun", ["--sdk", "macosx", "--show-sdk-platform-path"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     _ = try CommandRunner.run("xcrun", arguments + ["-parse-as-library", "-Xlinker", "-bundle", "-L", platform + "/Developer/usr/lib"] +
