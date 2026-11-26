@@ -27,7 +27,7 @@ struct HeadOnlyRuntimeSourceEvidence {
         let headRevision = try GitChanges.revision(head, at: root)
         guard head == headRevision else { throw ImpactError("Runtime boundary requires a resolved captured head revision") }
         let changes = try GitChanges.readComparison(base: baseRevision, head: headRevision, at: root)
-        let paths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+        let paths = Set(changes.flatMap(\.paths))
         let listing = try CommandRunner.run("git", ["ls-tree", "-r", "-z", headRevision, "--"], at: root)
         var headPaths = Set<String>(), regularPaths = Set<String>()
         var blobIDs: [String: String] = [:]

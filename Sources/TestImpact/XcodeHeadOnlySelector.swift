@@ -65,7 +65,7 @@ struct XcodeHeadOnlySources {
                 try result.mappings?.validate()
             } catch { mappingDiagnostics.append("Invalid base mapping policy: \(error)") }
         }
-        let paths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+        let paths = Set(changes.flatMap(\.paths))
         // Internal SDK extensions are visible throughout their test module. A
         // scoped diff cannot substitute head syntax for changed base callers in
         // other files or targets: removed calls/escapes and overloads must remain

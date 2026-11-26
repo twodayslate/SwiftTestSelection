@@ -11,6 +11,8 @@ public struct FileChange: Codable, Sendable {
     public var isPureMove: Bool = false
     public var requiresFallback: Bool
 
+    var paths: [String] { [path] + (previousPath.map { [$0] } ?? []) }
+
     /// Package manifests are build inputs wherever the package lives, including
     /// the toolchain-specific Package@swift-<version>.swift variants.
     static func isSwiftImplementation(_ path: String) -> Bool {

@@ -91,7 +91,7 @@ public enum XcodeFineSelector {
         // and dependency edges can both stay identical while that value changes.
         // Match source invocations as well as compiler edges: transparent helpers
         // and enum constructors can lose their call edges even under -Onone.
-        let touchedPaths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+        let touchedPaths = Set(changes.flatMap(\.paths))
         let headEffects = SwiftTestingSourceEffects(current, touching: touchedPaths)
         let baseEffects = previous.map { SwiftTestingSourceEffects($0, touching: touchedPaths) }
         let callerKinds = locationPolicy == .diagnostic ? [:] : callerLocationKinds(current, units: newUnits.values.flatMap { $0 }, effects: headEffects)
@@ -296,7 +296,7 @@ public enum XcodeFineSelector {
         // paths for byte-identical moves. Apply the same exemption to the
         // repository fingerprint; generator settings/content still compare.
         let projectReferenceMoves = Set(changes.filter {
-            $0.isPureMove && $0.path.hasSuffix(".pbxproj")
+            $0.isPureMove && $0.previousPath == nil && $0.path.hasSuffix(".pbxproj")
         }.map(\.path))
         func comparable(_ boundaries: [GeneratedSourceBoundary]?, ignoring paths: Set<String>) -> [GeneratedSourceBoundary]? {
             boundaries?.map { boundary in
@@ -347,15 +347,18 @@ public enum XcodeFineSelector {
         }).union(oldUnits.values.flatMap { $0 }.map { $0.region.path })
             .union(newUnits.values.flatMap { $0 }.map { $0.region.path })
         for change in changes {
-            let paths = [change.path] + (change.previousPath.map { [$0] } ?? [])
+            let paths = change.paths
+            let analyzedImplementation = paths.allSatisfy {
+                FileChange.isSwiftImplementation($0) && knownPaths.contains($0) && analyzedPaths.contains($0)
+            }
             if paths.allSatisfy(ignoredDocumentation) {
                 ignored.insert(change.path)
-            } else if FileChange.isSwiftImplementation(change.path), knownPaths.contains(change.path), analyzedPaths.contains(change.path),
+            } else if analyzedImplementation,
                       semanticPaths.isDisjoint(with: paths), !policyPaths.contains(change.path) {
                 ignored.insert(change.path)
-            } else if change.isPureMove && change.path.hasSuffix(".pbxproj") {
+            } else if projectReferenceMoves.contains(change.path) {
                 ignored.insert(change.path)
-            } else if !FileChange.isSwiftImplementation(change.path) || !knownPaths.contains(change.path) || !analyzedPaths.contains(change.path) {
+            } else if !analyzedImplementation {
                 let blockers = Set(paths.flatMap { path in
                     generatedBoundaries.flatMap { $0.documentationBlockers?[path] ?? [] }
                 }).sorted()

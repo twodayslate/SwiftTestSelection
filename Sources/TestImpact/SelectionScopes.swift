@@ -44,7 +44,7 @@ extension XcodeHeadOnlySelector {
         let digestCache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
         let sourceCache = try sourceCache ?? XcodeBaseSourceCache(root: root, base: baseRevision)
         try sourceCache.validate(root: root, base: baseRevision)
-        let changedPaths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+        let changedPaths = Set(changes.flatMap(\.paths))
         let compiledSources = Set(current.targets.flatMap { target -> [String] in
             guard let module = current.modules[target.name] else { return [] }
             return target.sourceFiles.filter { FileChange.isSwiftImplementation($0) && current.sources[module + ":" + $0] != nil }
@@ -57,7 +57,7 @@ extension XcodeHeadOnlySelector {
             let filtered = changes.filter { paths.contains($0.path) || ($0.previousPath.map(paths.contains) ?? false) }
             // Derive evidence independently, sharing only immutable reads/parses.
             let sourceStart = AnalysisMeasurement()
-            let selectedPaths = Set(filtered.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+            let selectedPaths = Set(filtered.flatMap(\.paths))
             let omittedInputs = changedPaths.subtracting(selectedPaths).subtracting(documentation)
             // An omitted input is eligible for the historical source audit only
             // when the compiler captured its implementation. Manifests and scripts

@@ -155,14 +155,37 @@ private func selection(_ current: XcodeTestGraph, _ previous: XcodeTestGraph = m
     #expect(report.selectedTests == ["UI/Sharing/testIndependent()"])
 }
 
-@Test func resourceMovesAreNotAssumedBehaviorPreserving() {
+@Test(arguments: ["Resources/renamed.json", "Renamed.xcodeproj/project.pbxproj"])
+func resourceMovesAreNotAssumedBehaviorPreserving(destination: String) {
     let graph = model()
-    var change = FileChange(path: "Resources/renamed.json")
+    var change = FileChange(path: destination)
     change.isPureMove = true
     change.previousPath = "Resources/original.json"
     let report = XcodeSelector.select(current: graph, previous: graph, changes: [change], baseRevision: "base")
     #expect(report.selectedTests == graph.tests)
     #expect(report.diagnostics.contains { $0.code == "unclassified_change" })
+}
+
+@Test(arguments: ["Nested/Package@swift-6.swift", "Fixtures/UI.txt"])
+func movesIntoCompiledSwiftSourcesRetainTheOriginalBuildInput(origin: String) throws {
+    let head = model()
+    var base = model()
+    var change = FileChange(path: "Tests/UI.swift")
+    change.previousPath = origin
+    change.isPureMove = true
+    // The old path was a build input with no Swift declaration inventory.
+    base.targets[0].sourceFiles.remove(change.path)
+    base.sources.removeValue(forKey: change.path)
+    let graph = try #require(head.dependencies)
+    let package = StaticSelector.select(current: graph, previous: graph, changes: [change], baseRevision: "base")
+    #expect(package.selectedTests == head.tests)
+    #expect(!package.fullRunReasons.isEmpty)
+    let fine = XcodeSelector.select(current: head, previous: base, changes: [change], baseRevision: "base")
+    #expect(fine.diagnostics.contains { $0.code == "unclassified_change" })
+    var targetOnly = head
+    targetOnly.dependencies = nil
+    let targets = XcodeSelector.select(current: targetOnly, previous: base, changes: [change], baseRevision: "base")
+    #expect(!targets.fullRunReasons.isEmpty)
 }
 
 @Test func emptyKnownSuitesDoNotHideTopLevelSwiftTestingMethods() throws {

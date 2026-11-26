@@ -184,8 +184,10 @@ public enum XcodeSelector {
         // Ownership in both builds is necessary for removed/moved/shared files.
         let targets = current.targets + (previous?.targets ?? [])
         for change in changes {
-            let owners = targets.filter { $0.sourceFiles.contains(change.path) }
-            if !change.path.hasSuffix(".swift") || owners.isEmpty || owners.contains(where: { !$0.isTest }) || change.requiresFallback {
+            let paths = Set(change.paths)
+            let owners = targets.filter { !$0.sourceFiles.isDisjoint(with: paths) }
+            let hasOwners = paths.allSatisfy { path in owners.contains { $0.sourceFiles.contains(path) } }
+            if !paths.allSatisfy(FileChange.isSwiftImplementation) || !hasOwners || owners.contains(where: { !$0.isTest }) || change.requiresFallback {
                 reasons.append("App, resource, build, or unclassified change requires the full Xcode test selection: \(change.path). XCUITest app interactions cross a process boundary.")
                 continue
             }
