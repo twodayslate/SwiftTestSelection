@@ -89,11 +89,15 @@ public struct XcodeTestGraph: Codable, Sendable {
             generatedSourceBoundaries?.values.contains(where: { !$0.isEmpty }) == true
     }
 
-    func hasCompleteSwiftSourceInventory(_ snapshots: [String: SwiftSourceSnapshot]) -> Bool {
+    func hasCompleteSwiftSourceInventory(_ snapshots: [String: SwiftSourceSnapshot], allowUnqualifiedPaths: Bool = false) -> Bool {
         diagnostics.isEmpty && !hasUninspectedSwiftInputs() &&
             targets.allSatisfy { target in
                 guard let module = modules[target.name] else { return target.sourceFiles.isEmpty }
-                return target.sourceFiles.filter { $0.hasSuffix(".swift") }.allSatisfy { snapshots[module + ":" + $0] != nil }
+                return target.sourceFiles.filter { $0.hasSuffix(".swift") }.allSatisfy { path in
+                    if snapshots[module + ":" + path] != nil { return true }
+                    guard allowUnqualifiedPaths, let file = snapshots[path], !file.units.isEmpty else { return false }
+                    return file.units.allSatisfy { $0.key.hasPrefix(module + ":") && $0.region.path == path }
+                }
             }
     }
 
@@ -198,8 +202,8 @@ public enum XcodeSelector {
         }
         // Ownership in both builds is necessary for removed/moved/shared files.
         let targets = current.targets + (previous?.targets ?? [])
-        let confirmed = current.manifestNamedImplementations(in: current.sources)
-            .intersection(previous.map { $0.manifestNamedImplementations(in: $0.sources) } ?? [])
+        let confirmed = FileChange.confirmedImplementations(base: previous.map { $0.manifestNamedImplementations(in: $0.sources) } ?? [],
+            head: current.manifestNamedImplementations(in: current.sources), changes: changes)
         for change in changes {
             let paths = Set(change.paths)
             let owners = targets.filter { !$0.sourceFiles.isDisjoint(with: paths) }

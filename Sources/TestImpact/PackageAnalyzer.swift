@@ -47,11 +47,11 @@ public struct PackageAnalyzer {
         let sourcePrefix = sourceRoot.path + "/"
         for command in build.swiftCommands.values.sorted(by: { $0.moduleName < $1.moduleName }) where modules.contains(command.moduleName) {
             seenModules.insert(command.moduleName)
-            for path in command.sources where FileChange.hasManifestName(path) {
+            for path in command.sources where SwiftPackageManifest.matches(path) {
                 let url = URL(fileURLWithPath: path, relativeTo: packagePath).standardizedFileURL.resolvingSymlinksInPath()
                 guard url.path.hasPrefix(sourcePrefix), url.deletingLastPathComponent().path != packagePath.path,
                       let text = try? String(contentsOf: url, encoding: .utf8),
-                      FileChange.isOrdinaryManifestNamedSource(path, text: text) else { continue }
+                      SwiftPackageManifest.isCompiledSourceOnly(path, text: text) else { continue }
                 manifestNamedImplementations.insert(String(url.path.dropFirst(sourcePrefix.count)))
             }
             progress("Extracting SIL dependencies: \(command.moduleName)…")

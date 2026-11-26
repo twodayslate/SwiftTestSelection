@@ -448,6 +448,12 @@ expressions and parenthesized/arithmetic defaults retain their evaluated locatio
 `#sourceLocation` adjusts presumed file/line values, and `#column` tracks its own
 expression position.
 
+Result builders can pass a statement's location to an implicit call such as
+`buildExpression(_:line:)`. Both Xcode selectors compare locations inside
+builder bodies, including closures and inferred protocol witnesses. An opaque
+builder implementation retains every location dimension allowed by the policy.
+Saved head-only graphs can recover missing positions from matching Git bytes.
+
 By default, actual location-value changes remain semantic. Choose a policy in
 `.swift-test-selection.json` only when the values it ignores are diagnostic and
 never control application or test behavior:

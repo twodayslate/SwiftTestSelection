@@ -11,23 +11,27 @@ public struct FileChange: Codable, Sendable {
     public var isPureMove: Bool = false
     public var requiresFallback: Bool
 
+    enum AbsentRevision: String, Codable, Sendable { case base, head }
+    var absentRevision: AbsentRevision?
+
     var paths: [String] { [path] + (previousPath.map { [$0] } ?? []) }
 
-    /// Package manifests are build inputs wherever the package lives, including
-    /// the toolchain-specific Package@swift-<version>.swift variants.
-    static func hasManifestName(_ path: String) -> Bool {
-        guard path.hasSuffix(".swift"), let name = path.split(separator: "/").last else { return false }
-        return name == "Package.swift" || name.hasPrefix("Package@swift-")
-    }
-
     static func isSwiftImplementation(_ path: String, confirmed: Set<String> = []) -> Bool {
-        path.hasSuffix(".swift") && (!hasManifestName(path) || confirmed.contains(path))
+        path.hasSuffix(".swift") && (!SwiftPackageManifest.matches(path) || confirmed.contains(path))
     }
 
-    // A compiled source can share a manifest's name. Keep a file that also
-    // declares a SwiftPM tools version eligible for build-input fallback.
-    static func isOrdinaryManifestNamedSource(_ path: String, text: String) -> Bool {
-        hasManifestName(path) && text.range(of: #"(?im)^[\h\uFEFF]*//\h*swift-tools-version\b"#, options: .regularExpression) == nil
+    /// Compiler ownership must agree in every revision where the path exists.
+    /// Missing graph data and an insertion-only hunk are not proof of file creation.
+    static func confirmedImplementations(base: Set<String>, head: Set<String>, changes: [Self]) -> Set<String> {
+        var confirmed = base.intersection(head)
+        for change in changes where change.previousPath == nil {
+            switch change.absentRevision {
+            case .base where head.contains(change.path), .head where base.contains(change.path):
+                confirmed.insert(change.path)
+            default: break
+            }
+        }
+        return confirmed
     }
 
     public init(path: String, oldRegions: [SourceRegion] = [], newRegions: [SourceRegion] = [], requiresFallback: Bool = false) {
@@ -64,7 +68,13 @@ public enum GitChanges {
                     return FileChange(path: path, requiresFallback: true)
                 }
                 let lines = max(1, text.split(separator: "\n", omittingEmptySubsequences: false).count - (text.hasSuffix("\n") ? 1 : 0))
-                return FileChange(path: path, newRegions: [SourceRegion(path: path, startLine: 1, endLine: lines)])
+                var change = FileChange(path: path, newRegions: [SourceRegion(path: path, startLine: 1, endLine: lines)])
+                if SwiftPackageManifest.matches(path) {
+                    let entry = try CommandRunner.run("git", ["--literal-pathspecs", "ls-tree", "-z", base, "--", path], at: root)
+                    if entry.stdout.isEmpty { change.absentRevision = .base }
+                    else { change.requiresFallback = true } // A staged deletion can leave an untracked replacement.
+                }
+                return change
             }
             let diff = try CommandRunner.run("git", ["--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=0", base, "--", path], at: root).text
             return parseHunks(diff, path: path)
@@ -74,6 +84,8 @@ public enum GitChanges {
     public static func parseHunks(_ diff: String, path: String) -> FileChange {
         var change = FileChange(path: path)
         for line in diff.split(separator: "\n") {
+            if line.hasPrefix("new file mode ") { change.absentRevision = .base }
+            if line.hasPrefix("deleted file mode ") { change.absentRevision = .head }
             guard let match = Pattern.groups(#"^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@"#, in: String(line)) else { continue }
             let oldStart = Int(match[0])!
             let oldCount = Int(match[1]) ?? 1

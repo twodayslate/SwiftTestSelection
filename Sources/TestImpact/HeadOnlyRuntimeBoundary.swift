@@ -124,7 +124,8 @@ extension TestRuntimeBoundary {
                 guard Set(before.keys) == Set(after.keys), before.allSatisfy({ key, units in
                     let next = after[key]!
                     return units.count == 1 && next.count == 1 &&
-                        units[0].fingerprint == next[0].fingerprint && units[0].callerLocations == next[0].callerLocations
+                        units[0].fingerprint == next[0].fingerprint && units[0].callerLocations == next[0].callerLocations &&
+                        units[0].builderLocations == next[0].builderLocations
                 }), InlineUIMappings.policyPaths([key: old]) == InlineUIMappings.policyPaths([key: snapshot]),
                     HelperFormattingContracts.declarations([key: old], nil) == HelperFormattingContracts.declarations([key: snapshot], nil) else {
                     return prefix + "closed runtime source changed: " + key

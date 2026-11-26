@@ -85,18 +85,17 @@ extension XcodeTestGraph {
     /// Comparisons need the same syntax representation on both sides. Older
     /// captures lack conditional membership (before v5) or physical caller
     /// coordinates (before v11), or missed equivalent @Test spellings (before
-    /// v28) or implicit interpolation calls (before v29). Recover source facts
+    /// v28), implicit interpolation calls (before v29), or result-builder sites
+    /// (before v30). Recover source facts
     /// only from the authenticated Git blob.
     mutating func refreshLegacyComparisonSyntax(paths: Set<String>, revision: String, root: URL) throws {
         var cache: XcodeBaseSourceCache?
         for (key, var archived) in sources {
-            guard let version = archived.parserVersion, version < 29,
+            guard let version = archived.parserVersion, version < SwiftSourceSnapshot.currentParserVersion,
                   let blobs = archived.sourceBlobIDs, !blobs.isEmpty,
                   let separator = key.firstIndex(of: ":") else { continue }
             let path = String(key[key.index(after: separator)...])
-            guard paths.contains(path), version < 11 || FileChange.hasManifestName(path) || archived.lacksInterpolationLocations || archived.units.contains(where: {
-                $0.swiftTestingEntryInputs?.bare == true && $0.swiftTestingRegistrationDeclaration == nil
-            }) else { continue }
+            guard paths.contains(path) else { continue }
             if cache == nil { cache = try XcodeBaseSourceCache(root: root, base: revision) }
             guard let parsed = try cache?.snapshot(path: path, module: String(key[..<separator])),
                   parsed.diagnostics.isEmpty, let parsedBlobs = parsed.sourceBlobIDs, !blobs.isDisjoint(with: parsedBlobs) else { continue }
@@ -104,6 +103,7 @@ extension XcodeTestGraph {
             let regions = Dictionary(grouping: parsed.units.indices, by: { parsed.units[$0].region })
             var matched = Set<Int>()
             var restoredInterpolations = true
+            var builderMatches = Set<Int>()
             for index in archived.units.indices {
                 let unit = archived.units[index]
                 let matches = regions[unit.region]?.filter { parsed.units[$0].key == unit.key }
@@ -112,6 +112,8 @@ extension XcodeTestGraph {
                     continue
                 }
                 let native = parsed.units[match]
+                builderMatches.insert(match)
+                archived.units[index].builderLocations = native.builderLocations
                 if version < 11 {
                     archived.units[index].callerLocations = native.callerLocations
                     archived.units[index].conditionalBranch = native.conditionalBranch
@@ -127,6 +129,7 @@ extension XcodeTestGraph {
                     archived.units[index].swiftTestingBodyCandidate = native.swiftTestingBodyCandidate
                 }
             }
+            archived.hasVerifiedBuilderLocations = builderMatches.count == parsed.units.count && builderMatches.count == archived.units.count
             archived.hasVerifiedInterpolationLocations = restoredInterpolations
             if version < 5, matched.count == parsed.units.count, matched.count == archived.units.count {
                 archived.hasVerifiedConditionalMembership = true

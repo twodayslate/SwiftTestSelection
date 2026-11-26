@@ -78,6 +78,18 @@ public struct SourceUnit: Codable, Sendable {
     /// source-location default. Separate dimensions avoid line-only changes
     /// affecting callers of a file-only default.
     public var callerLocations: [String: String]? = nil
+    /// Positions in bodies that Swift can lower through a result builder. The
+    /// transform can attach a caller default to any expression or control-flow
+    /// token without leaving a written call or a surviving SIL reference.
+    var builderLocations: [String: String]? = nil
+
+    func builderFingerprint(_ kinds: Set<String>) -> String {
+        guard let builderLocations, !kinds.isEmpty else { return "" }
+        return kinds.sorted().compactMap { kind in
+            builderLocations[kind].map { "@builder[\(kind)=\($0)]" }
+        }.joined()
+    }
+
     /// Syntax proof for a private helper referenced only by direct test/helper calls.
     public var privateTestHelper: PrivateTestHelperSyntax? = nil
     /// Concrete source limitation for an otherwise private test-helper candidate.
@@ -187,7 +199,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 29
+    static let currentParserVersion = 30
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -225,6 +237,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             return path
         })
     }
+
+    var hasVerifiedBuilderLocations: Bool? = nil
 
     /// v11 introduced per-unit flags, v26 recognized escaped attribute names,
     /// and v27 recognized escaped `never` arguments.
@@ -358,7 +372,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         let locations = SourceLocationConverter(fileName: path, tree: tree)
         var result = Self(units: [], inheritance: [:], diagnostics: [])
         result.parserVersion = Self.currentParserVersion
-        result.ordinaryManifestNamedSource = FileChange.isOrdinaryManifestNamedSource(path, text: text) ? true : nil
+        result.ordinaryManifestNamedSource = SwiftPackageManifest.isCompiledSourceOnly(path, text: text, tree: tree) ? true : nil
         if !tree.hasError {
             result.xctestDiscoveryCases = tree.statements.compactMap {
                 $0.item.as(ClassDeclSyntax.self).flatMap { XCTestDiscoveryCase($0, path: path, module: module) }
@@ -457,8 +471,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 (macro.parent?.parent?.is(FunctionParameterSyntax.self) == true ||
                  macro.parent?.parent?.is(EnumCaseParameterSyntax.self) == true)
         }
-        func locationValue(_ name: String, at position: AbsolutePosition) -> String {
-            let location = locations.location(for: position)
+        func locationValue(_ name: String, _ location: SourceLocation) -> String {
             switch name {
             case "line": return String(location.presumedLine)
             case "column": return String(location.column)
@@ -476,6 +489,41 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 ancestor = node.parent
             }
             return "*"
+        }
+        func locationDigest(_ offsets: Set<Int>) -> [String: String] {
+            let positions = offsets.sorted().map { locations.location(for: AbsolutePosition(utf8Offset: $0)) }
+            return Dictionary(uniqueKeysWithValues: locationNames.map { name in
+                let values = positions.map {
+                    var value = locationValue(name, $0)
+                    if name == "line" { value += "|" + String($0.line) }
+                    if name == "filePath" { value += "|" + path }
+                    return "\(value.utf8.count):" + value
+                }.joined(separator: "|")
+                #if canImport(CryptoKit)
+                // Keep archive size bounded even for large generated functions.
+                return (name, Data(SHA256.hash(data: Data(values.utf8))).base64EncodedString())
+                #else
+                return (name, values)
+                #endif
+            })
+        }
+        func builderLocations(_ node: Syntax) -> [String: String]? {
+            var offsets = Set<Int>()
+            func visit(_ syntax: Syntax) {
+                // A member can inherit a builder from a protocol requirement.
+                // A closure can receive one from the callee's parameter, and
+                // nested declarations can carry their own builder attribute.
+                let function = syntax.parent?.as(FunctionDeclSyntax.self)
+                let builderBody = syntax.is(CodeBlockSyntax.self) &&
+                    (function?.parent?.is(MemberBlockItemSyntax.self) == true || function?.attributes.isEmpty == false)
+                if builderBody || syntax.is(ClosureExprSyntax.self) || syntax.is(AccessorBlockSyntax.self) {
+                    offsets.formUnion(syntax.tokens(viewMode: .sourceAccurate).map { $0.positionAfterSkippingLeadingTrivia.utf8Offset })
+                } else {
+                    for child in syntax.children(viewMode: .sourceAccurate) { visit(child) }
+                }
+            }
+            visit(node)
+            return offsets.isEmpty ? nil : locationDigest(offsets)
         }
         func callerInfo(_ node: Syntax, includeAllTokens: Bool = false) -> (locations: [String: String], names: Set<String>, direct: Bool) {
             var direct = true
@@ -527,22 +575,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             if includeAllTokens { record(node.tokens(viewMode: .sourceAccurate)) } else { visit(node) }
             guard !offsets.isEmpty else { return ([:], names, false) }
-            let positions = offsets.sorted().map { AbsolutePosition(utf8Offset: $0) }
-            let valuesByKind = Dictionary(uniqueKeysWithValues: locationNames.map { name in
-                let values = positions.map {
-                    var value = locationValue(name, at: $0)
-                    if name == "line" { value += "|" + String(locations.location(for: $0).line) }
-                    if name == "filePath" { value += "|" + path }
-                    return "\(value.utf8.count):" + value
-                }.joined(separator: "|")
-                #if canImport(CryptoKit)
-                // Keep archive size bounded even for large generated functions.
-                return (name, Data(SHA256.hash(data: Data(values.utf8))).base64EncodedString())
-                #else
-                return (name, values)
-                #endif
-            })
-            return (valuesByKind, names, direct && !names.isEmpty)
+            return (locationDigest(offsets), names, direct && !names.isEmpty)
         }
         func locationValues(_ node: Syntax) -> [String] {
             var values: [String] = []
@@ -553,7 +586,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 if bareDefault(macro) { continue }
                 let name = macro.macroName.text
                 if locationNames.contains(name) {
-                    values.append(name + ":" + locationValue(name, at: macro.positionAfterSkippingLeadingTrivia))
+                    values.append(name + ":" + locationValue(name, locations.location(for: macro.positionAfterSkippingLeadingTrivia)))
                 }
             }
             return values
@@ -797,7 +830,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     bounds.append("line:" + String(locations.location(for: position).line))
                     bounds.append("filePath:" + path)
                     for dimension in dimensions {
-                        bounds.append(dimension + ":" + locationValue(dimension, at: position))
+                        bounds.append(dimension + ":" + locationValue(dimension, locations.location(for: position)))
                     }
                 }
                 let metadata = SwiftTestingSourceDeclarations.Arguments(identity: SourceUnit.withLocations(context, syntax: comments),
@@ -907,6 +940,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                         }
                     }
                 })
+            unit.builderLocations = builderLocations(node)
             if suiteMetadata != nil, registrationDeclaration != nil { unit.swiftTestingSuiteInputs = registrationInputs("Suite") }
             unit.swiftTestingSuiteMetadata = suiteMetadata
             unit.swiftTestingBodyCandidate = entryInputs?.bare == true && testingBodyCandidate ? true : nil

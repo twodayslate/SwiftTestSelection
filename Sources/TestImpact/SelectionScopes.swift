@@ -49,8 +49,9 @@ extension XcodeHeadOnlySelector {
         var confirmed = Set<String>()
         for path in namedSources {
             if let base = try sourceCache.content(path: path), let text = String(data: base, encoding: .utf8),
-               FileChange.isOrdinaryManifestNamedSource(path, text: text) { confirmed.insert(path) }
+               SwiftPackageManifest.isCompiledSourceOnly(path, text: text) { confirmed.insert(path) }
         }
+        confirmed = FileChange.confirmedImplementations(base: confirmed, head: namedSources, changes: changes)
         let compiledSources = Set(current.targets.flatMap { target -> [String] in
             guard let module = current.modules[target.name] else { return [] }
             return target.sourceFiles.filter { FileChange.isSwiftImplementation($0, confirmed: confirmed) && current.sources[module + ":" + $0] != nil }

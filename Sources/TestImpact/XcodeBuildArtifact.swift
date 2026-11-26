@@ -81,7 +81,7 @@ extension XcodeAnalysis {
         try cache?.resetWork()
         defer { if let cache { try? FileManager.default.removeItem(at: cache.work) } }
         var identity = try artifactContext(root: root)
-        identity["schema"] = "existing-build-discovery-10"
+        identity["schema"] = "existing-build-discovery-11"
         identity["revision"] = revision
         identity["sourceRoot"] = root.path
         identity["productsRoot"] = products.path

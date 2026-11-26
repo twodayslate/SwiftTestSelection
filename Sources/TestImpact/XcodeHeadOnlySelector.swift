@@ -6,6 +6,7 @@ import Foundation
 private struct HeadOnlySourceComparison {
     let locationPolicy: UIFeatureMappings.SourceLocationPolicy
 
+    var builderKinds = Set<String>()
     var positionIndependent = Set<SwiftTestingSourceEffects.Declaration>()
 
     init(head: UIFeatureMappings?, base: UIFeatureMappings?) {
@@ -24,7 +25,7 @@ private struct HeadOnlySourceComparison {
     }
 
     private func fingerprint(_ unit: SourceUnit) -> String {
-        let syntax = unit.comparisonFingerprint(locationPolicy)
+        let syntax = unit.comparisonFingerprint(locationPolicy) + unit.builderFingerprint(builderKinds)
         if positionIndependent.contains(.init(unit)) || locationPolicy == .diagnostic || (locationPolicy == .diagnosticLineColumn && unit.fileLocationValues == nil) { return syntax }
         // Over-approximate caller defaults without inventing base compiler
         // edges. This also preserves fixture file identity for moved callers.
@@ -46,6 +47,7 @@ struct XcodeHeadOnlySources {
     // Explicitly supplied base snapshots represent the historical inputs. A scoped
     // Git read may also contain head placeholders until it performs a caller audit.
     var hasAuditedCallerInputs = true
+    var hasUnverifiedBuilderInputs = false
     var mappingPath: String = ".swift-test-selection.json"
     /// Processes whose historical linkage cannot be inferred across edits outside this scope.
     var unverifiedScopedProcesses = Set<String>()
@@ -84,6 +86,9 @@ struct XcodeHeadOnlySources {
             // even when another declaration with the same key survives.
             var before: [String: [SourceUnit]] = [:], after: [String: [SourceUnit]] = [:]
             var scopedBase: [String: SwiftSourceSnapshot] = [:]
+            let locationPolicy = UIFeatureMappings.SourceLocationPolicy.agreed(head: current.mappings, base: result.mappings)
+            let dimensions = ResultBuilderLocations.dimensions(locationPolicy)
+            var builderMoved = false
             for (key, head) in current.sources {
                 guard let colon = key.firstIndex(of: ":") else { continue }
                 let path = String(key[key.index(after: colon)...])
@@ -93,6 +98,15 @@ struct XcodeHeadOnlySources {
                 }
                 if let old = try cache.snapshot(path: path, module: String(key[..<colon])) {
                     scopedBase[key] = old
+                    if !dimensions.isEmpty, !builderMoved {
+                        let prior = Dictionary(grouping: old.units, by: \.key)
+                        builderMoved = head.units.contains { unit in
+                            prior[unit.key]?.contains { before in
+                                before.fingerprint == unit.fingerprint &&
+                                    before.builderFingerprint(dimensions) != unit.builderFingerprint(dimensions)
+                            } == true
+                        }
+                    }
                     for unit in old.units where unit.helperCallableName != nil {
                         before[unit.key, default: []].append(unit)
                     }
@@ -102,7 +116,10 @@ struct XcodeHeadOnlySources {
             // Use the same file-local binding requirements as the final proof.
             // Only candidates found here can justify reading the remaining base files.
             lazy var eligibleCallers = SwiftTestingSourceEffects.boundCallers(current, touching: paths, historical: scopedBase)
-            auditCallers = before.contains { key, old in
+            // A builder or conformance outside a filtered diff can have disappeared
+            // at head. Inspect historical sources only for a position-only edit
+            // that can actually depend on that historical lookup.
+            auditCallers = (builderMoved && allowHistoricalCallerProofs) || before.contains { key, old in
                 guard let new = after[key], new.count == old.count else { return true }
                 if old.count == 1 {
                     let a = old[0], b = new[0]
@@ -165,6 +182,7 @@ struct XcodeHeadOnlySources {
             }
         }
         result.hasAuditedCallerInputs = allowHistoricalCallerProofs && auditCallers && basePaths != nil
+        result.hasUnverifiedBuilderInputs = !allowHistoricalCallerProofs || (auditCallers && basePaths == nil)
         result.diagnostics += mappingDiagnostics
         return result
     }
@@ -284,6 +302,10 @@ enum XcodeHeadOnlySelector {
         var comparison = HeadOnlySourceComparison(head: current.mappings, base: source.mappings)
         lazy var callerIndex = HeadOnlyDeclarationChange.CallerIndex(current)
         let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
+        let builders = ResultBuilderLocations(policy: comparison.locationPolicy, sources: [current.sources, source.base, source.unownedBaseSources],
+            modules: Set(current.modules.values), incompleteInputs: source.hasUnverifiedBuilderInputs ||
+                !current.hasCompleteSwiftSourceInventory(current.sources, allowUnqualifiedPaths: true), touching: paths)
+        comparison.builderKinds = builders.kinds
         let effects = SwiftTestingSourceEffects(current, touching: paths, historical: source.base,
             unowned: source.unownedBaseSources, hasAuditedCallerInputs: source.hasAuditedCallerInputs)
         comparison.positionIndependent = effects.positionIndependent
@@ -321,6 +343,10 @@ enum XcodeHeadOnlySelector {
                 semanticPaths.formUnion(incomplete)
                 fallback("incomplete_caller_locations", "Saved snapshots lack interpolation caller locations for " + incomplete.sorted().joined(separator: ", ") + ". Recapture the graph.")
             }
+        }
+        if !builders.incompletePaths.isEmpty {
+            semanticPaths.formUnion(builders.incompletePaths)
+            fallback("incomplete_caller_locations", "Saved snapshots lack result-builder locations for " + builders.incompletePaths.sorted().joined(separator: ", ") + ". Recapture the graph.")
         }
         let legacyConditionalPaths = SwiftSourceSnapshot.legacyConditionalPaths(in: current.sources, touching: paths)
         if !legacyConditionalPaths.isEmpty {
@@ -441,8 +467,8 @@ enum XcodeHeadOnlySelector {
         }
         fallbackUnits = []
         let owned = Set(current.targets.flatMap(\.sourceFiles))
-        let confirmed = current.manifestNamedImplementations(in: current.sources)
-            .intersection(current.manifestNamedImplementations(in: source.base))
+        let confirmed = FileChange.confirmedImplementations(base: current.manifestNamedImplementations(in: source.base),
+            head: current.manifestNamedImplementations(in: current.sources), changes: changes)
         func onlyContractMappingChange() -> Bool {
             guard var before = source.mappings, var after = originalCurrent.mappings else { return false }
             before.helperFormattingContracts = nil; after.helperFormattingContracts = nil

@@ -353,6 +353,103 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
     }
 }
 
+@Test(arguments: ["function", "closure", "witness", "binary"])
+func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let path = "Helpers.swift", key = "UI:" + path
+    var support = """
+        @resultBuilder enum LineBuilder {
+            @_transparent static func buildExpression(_ value: Int, line: Int = #line) -> Int { line }
+            @_transparent static func buildBlock(_ value: Int) -> Int { value }
+        }
+        func evaluate(@LineBuilder _ body: () -> Int) -> Int { body() }
+        protocol Reading { @LineBuilder var value: Int { get } }
+        """
+    let library = FileManager.default.temporaryDirectory.appendingPathComponent("builder-kit-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: library) }
+    var compilerArguments: [String] = [], linkArguments: [String] = []
+    let before: String
+    switch form {
+    case "binary":
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        let source = library.appendingPathComponent("Builder.swift")
+        try support.replacingOccurrences(of: "enum LineBuilder", with: "public enum LineBuilder")
+            .replacingOccurrences(of: "static func", with: "public static func")
+            .write(to: source, atomically: true, encoding: .utf8)
+        _ = try CommandRunner.run("xcrun", ["swiftc", "-parse-as-library", "-emit-module", "-emit-library",
+            "-static", "-module-name", "BuilderKit", "Builder.swift"], at: library)
+        compilerArguments = ["-I", library.path]
+        linkArguments = [library.appendingPathComponent("libBuilderKit.a").path]
+        support = ""
+        before = "import BuilderKit\n@LineBuilder func caller() -> Int {\n    1\n}"
+    case "function": before = "@LineBuilder func caller() -> Int {\n    1\n}"
+    case "closure": before = "func caller() -> Int { evaluate {\n    1\n} }"
+    default: before = "struct Reader: Reading { var value: Int {\n    1\n} }\nfunc caller() -> Int { Reader().value }"
+    }
+    let after = before.replacingOccurrences(of: "    1", with: "\n    1")
+    let entry = "UI/Suite/observes()", control = "UI/Control/unrelated()"
+    let expected = form == "binary" ? 3 : 2
+    let tests = "import Testing\nstruct Suite { @Test func observes() { #expect(caller() == \(expected)) } }\nstruct Control { @Test func unrelated() {} }"
+    try repo.write("Support.swift", support)
+    try repo.write("Tests.swift", tests)
+    try repo.write(path, before)
+    let base = try repo.commit()
+    try repo.write(path, after)
+    let head = try repo.commit()
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    func capture(_ text: String) throws -> XcodeTestGraph {
+        var graph = try boundaryGraph([path: text, "Support.swift": support, "Tests.swift": tests], tests: [entry, control],
+            root: repo.root, compilerArguments: ["-plugin-path", plugins.path] + compilerArguments, compiler: compiler, linkArguments: linkArguments)
+        graph.mappings = nil
+        return graph
+    }
+    let old = try capture(before), current = try capture(after)
+    let changes = try GitChanges.readComparison(base: base, head: head, at: repo.root)
+    func reports(_ baseGraph: XcodeTestGraph, _ headGraph: XcodeTestGraph) throws -> [ImpactReport] {
+        let source = try XcodeHeadOnlySources.read(current: headGraph, changes: changes, base: base, root: repo.root, mappingPath: "mapping.json")
+        return [XcodeFineSelector.select(current: headGraph, previous: baseGraph, changes: changes, baseRevision: base),
+                XcodeHeadOnlySelector.select(current: headGraph, source: source, changes: changes, baseRevision: base)]
+    }
+    for report in try reports(old, current) {
+        #expect(report.selectedTests.contains(entry))
+        #expect(!report.ignoredChanges.contains(path))
+    }
+    var diagnostic = current, previousDiagnostic = old
+    diagnostic.mappings = UIFeatureMappings(features: [])
+    diagnostic.mappings?.sourceLocationPolicy = .diagnosticLineColumn
+    previousDiagnostic.mappings = diagnostic.mappings
+    let diagnosticSource = XcodeHeadOnlySources(base: old.sources, mappings: diagnostic.mappings)
+    #expect(XcodeFineSelector.select(current: diagnostic, previous: previousDiagnostic, changes: changes, baseRevision: base).selectedTests.isEmpty)
+    #expect(XcodeHeadOnlySelector.select(current: diagnostic, source: diagnosticSource, changes: changes, baseRevision: base).selectedTests.isEmpty)
+
+    var legacy = current
+    legacy.sources[key]?.parserVersion = 29
+    for i in legacy.sources[key]!.units.indices { legacy.sources[key]!.units[i].builderLocations = nil }
+    for report in try reports(old, legacy) {
+        #expect(report.selectedTests.contains(entry))
+        #expect(report.diagnostics.contains { $0.code == "incomplete_caller_locations" })
+    }
+    try legacy.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
+    for report in try reports(old, legacy) {
+        #expect(report.selectedTests.contains(entry))
+        #expect(!report.diagnostics.contains { $0.code == "incomplete_caller_locations" })
+    }
+    if form == "closure" {
+        // Another changed file removes the builder's only location default at
+        // head. A scope containing only the caller still needs base evidence.
+        support = support.replacingOccurrences(of: "line: Int = #line", with: "line: Int = 0")
+        try repo.write("Support.swift", support)
+        let next = try repo.commit()
+        let graph = try capture(after)
+        let scoped = try XcodeHeadOnlySelector.scopedReports(current: graph, requests: .init(scopes: [.init(name: "caller", paths: [path])]),
+            changes: GitChanges.readComparison(base: base, head: next, at: repo.root), baseRevision: base, headRevision: next,
+            root: repo.root, mappingPath: "mapping.json", documentation: [], buildEvidenceFailure: nil)
+        #expect(scoped.first?.report.selectedTests.contains(entry) == true)
+    }
+}
+
 @Test func versionedPackageManifestsAreTrackedAsBuildInputs() throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }

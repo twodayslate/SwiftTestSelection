@@ -69,8 +69,13 @@ public enum XcodeFineSelector {
         // Both revisions must opt into treating source locations as diagnostics.
         // Explicit macro/directive syntax remains executable under either policy.
         let locationPolicy = UIFeatureMappings.SourceLocationPolicy.agreed(head: current.mappings, base: previous?.mappings)
+        let touchedPaths = Set(changes.flatMap(\.paths))
+        let builders = ResultBuilderLocations(policy: locationPolicy, sources: [current.sources, previous?.sources ?? [:]],
+            modules: Set(current.modules.values).intersection(previous.map { Set($0.modules.values) } ?? []),
+            incompleteInputs: !current.hasCompleteSwiftSourceInventory(current.sources, allowUnqualifiedPaths: true) ||
+                previous.map { !$0.hasCompleteSwiftSourceInventory($0.sources, allowUnqualifiedPaths: true) } == true, touching: touchedPaths)
         func fingerprint(_ unit: SourceUnit) -> String {
-            unit.comparisonFingerprint(locationPolicy)
+            unit.comparisonFingerprint(locationPolicy) + unit.builderFingerprint(builders.kinds)
         }
         let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.comparisonUnits) ?? [], by: \.key)
         let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.comparisonUnits), by: \.key)
@@ -91,10 +96,12 @@ public enum XcodeFineSelector {
         // and dependency edges can both stay identical while that value changes.
         // Match source invocations as well as compiler edges: transparent helpers
         // and enum constructors can lose their call edges even under -Onone.
-        let touchedPaths = Set(changes.flatMap(\.paths))
         let legacyInterpolationPaths = locationPolicy == .diagnostic ? [] :
             SwiftSourceSnapshot.legacyInterpolationPaths(in: current.sources, touching: touchedPaths)
                 .union(SwiftSourceSnapshot.legacyInterpolationPaths(in: previous?.sources ?? [:], touching: touchedPaths))
+        if !builders.incompletePaths.isEmpty {
+            fallback("incomplete_caller_locations", "Saved snapshots lack result-builder locations for " + builders.incompletePaths.sorted().joined(separator: ", ") + ". Regenerate both graphs.")
+        }
         if !legacyInterpolationPaths.isEmpty {
             fallback("incomplete_caller_locations", "Saved snapshots lack interpolation caller locations for " + legacyInterpolationPaths.sorted().joined(separator: ", ") + ". Regenerate both graphs.")
         }
@@ -286,8 +293,8 @@ public enum XcodeFineSelector {
             }
         }
         let knownPaths = Set((current.targets + (previous?.targets ?? [])).flatMap(\.sourceFiles))
-        let confirmed = current.manifestNamedImplementations(in: current.sources)
-            .intersection(previous.map { $0.manifestNamedImplementations(in: $0.sources) } ?? [])
+        let confirmed = FileChange.confirmedImplementations(base: previous.map { $0.manifestNamedImplementations(in: $0.sources) } ?? [],
+            head: current.manifestNamedImplementations(in: current.sources), changes: changes)
         let generatedBoundaries = Array(current.generatedSourceBoundaries?.values ?? [:].values).flatMap { $0 } +
             Array(previous?.generatedSourceBoundaries?.values ?? [:].values).flatMap { $0 }
         func ignoredDocumentation(_ path: String) -> Bool {
@@ -349,7 +356,7 @@ public enum XcodeFineSelector {
                 fallback("generated_input_changed", "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for \(module).")
             }
         }
-        let semanticPaths = legacyConditionalPaths.union(legacyInterpolationPaths).union(registrations.semanticPaths)
+        let semanticPaths = legacyConditionalPaths.union(legacyInterpolationPaths).union(builders.incompletePaths).union(registrations.semanticPaths)
             .union((oldChanged + newChanged).map { $0.region.path })
         let analyzedPaths = Set((Array(current.sources.keys) + Array(previous?.sources.keys ?? [:].keys)).compactMap { key in
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) }

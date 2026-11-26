@@ -74,7 +74,8 @@ public enum StaticSelector {
             fallback += previous?.diagnostics ?? ["The base revision's dependency graph is unavailable."]
         }
         // A Git rename has no changed line ranges. Path literals can still change.
-        let confirmed = (current.manifestNamedImplementations ?? []).intersection(previous?.manifestNamedImplementations ?? [])
+        let confirmed = FileChange.confirmedImplementations(base: previous?.manifestNamedImplementations ?? [],
+            head: current.manifestNamedImplementations ?? [], changes: changes)
         for change in changes where change.previousPath != nil || !FileChange.isSwiftImplementation(change.path, confirmed: confirmed) || change.requiresFallback {
             fallback.append("Change cannot be narrowed to Swift functions: \(change.path)")
         }
