@@ -204,7 +204,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 32
+    static let currentParserVersion = 33
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -521,18 +521,21 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 if syntax.is(ClosureExprSyntax.self) || syntax.is(DeclSyntax.self) { return false }
                 return syntax.children(viewMode: .sourceAccurate).contains(where: containsReturn)
             }
-            func visit(_ syntax: Syntax) {
-                let candidate: Bool
-                if let block = syntax.as(CodeBlockSyntax.self), let function = syntax.parent?.as(FunctionDeclSyntax.self) {
-                    // A member can inherit a builder from a protocol requirement.
-                    candidate = (function.parent?.is(MemberBlockItemSyntax.self) == true || !function.attributes.isEmpty) &&
-                        !containsReturn(Syntax(block.statements))
-                } else if let closure = syntax.as(ClosureExprSyntax.self) {
-                    candidate = !containsReturn(Syntax(closure.statements))
-                } else {
-                    candidate = syntax.is(AccessorBlockSyntax.self)
+            func candidateStatements(_ syntax: Syntax) -> CodeBlockItemListSyntax? {
+                if let closure = syntax.as(ClosureExprSyntax.self) { return closure.statements }
+                if let block = syntax.as(AccessorBlockSyntax.self) {
+                    // A shorthand getter owns these statements. An explicit accessor
+                    // list has a separate body for each get, set or observer.
+                    return block.accessors.as(CodeBlockItemListSyntax.self)
                 }
-                if candidate {
+                if let accessor = syntax.as(AccessorDeclSyntax.self) { return accessor.body?.statements }
+                // A member can inherit a builder from a protocol requirement.
+                guard let block = syntax.as(CodeBlockSyntax.self), let function = syntax.parent?.as(FunctionDeclSyntax.self),
+                      function.parent?.is(MemberBlockItemSyntax.self) == true || !function.attributes.isEmpty else { return nil }
+                return block.statements
+            }
+            func visit(_ syntax: Syntax) {
+                if let statements = candidateStatements(syntax), !containsReturn(Syntax(statements)) {
                     offsets.formUnion(syntax.tokens(viewMode: .sourceAccurate).map { $0.positionAfterSkippingLeadingTrivia.utf8Offset })
                 } else {
                     for child in syntax.children(viewMode: .sourceAccurate) { visit(child) }

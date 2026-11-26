@@ -288,29 +288,35 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
     #expect(report.diagnostics.contains { $0.code == "head_only_unsupported_body" })
 }
 
-@Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn"])
+@Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn", "shorthandGetter", "explicitGetter", "subscriptGetter"])
 func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
     let entry = "UI/Suite/observes()", control = "UI/Control/unrelated()"
     let path = "Helpers.swift", key = "UI:" + path
     let before: String, after: String, support: String
-    switch form {
-    case "trailingClosure":
+    let ordinaryBodies = [
+        "explicitReturn": ("func value() -> Int { BODY }", "Plain().value()"),
+        "shorthandGetter": ("var value: Int { BODY }", "Plain().value"),
+        "explicitGetter": ("var value: Int { get { BODY } }", "Plain().value"),
+        "subscriptGetter": ("subscript(_ i: Int) -> Int { get { BODY } set {} }", "Plain()[0]")
+    ]
+    if let (declaration, call) = ordinaryBodies[form] {
+        support = "import Dispatch"
+        let source = "private struct Plain { \(declaration) }\nfunc caller() -> Int { \(call) }"
+        before = source.replacingOccurrences(of: " BODY ", with: "\n    return 2\n\n")
+        after = source.replacingOccurrences(of: " BODY ", with: "\n\n    return 2\n")
+    } else if form == "trailingClosure" {
         support = "func read(line: Int = #line, _ f: () -> Int, next: () -> Int) -> Int { line }"
         before = "func caller() -> Int { read\n    { 2 } next: { 3 }\n\n}"
         after = "func caller() -> Int { read\n\n    { 2 } next: { 3 }\n}"
-    case "keyPathSubscript":
+    } else if form == "keyPathSubscript" {
         support = "struct Source { subscript(_ i: Int, line: Int = #line) -> Int { line } }"
         let literal = #"    let path = \Source.[0]"#
         let apply = "    return Source()[keyPath: path]\n}"
         before = "func caller() -> Int {\n" + literal + "\n\n" + apply
         after = "func caller() -> Int {\n\n" + literal + "\n" + apply
-    case "explicitReturn":
-        support = "import Dispatch"
-        before = "private struct Plain { func value() -> Int {\n    return 2\n\n} }\nfunc caller() -> Int { Plain().value() }"
-        after = before.replacingOccurrences(of: "    return 2\n\n", with: "\n    return 2\n")
-    default:
+    } else {
         before = "func pass(_ value: Output) -> Int { value.line }" + "\n" + #"func caller() -> Int { pass("\(2)") }"#
         after = "\n" + before
         support = """
@@ -360,7 +366,7 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         #expect(caller.hasOnlyDirectSourceCalls != true)
     }
     for report in try reports(current) {
-        if form == "explicitReturn" {
+        if ordinaryBodies[form] != nil {
             #expect(report.selectedTests.isEmpty)
             #expect(report.ignoredChanges.contains(path))
         } else {
@@ -370,15 +376,17 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         #expect(report.diagnostics.isEmpty)
     }
     var legacy = current
-    legacy.sources[key]?.parserVersion = form == "interpolation" ? 28 : 31
-    if form == "explicitReturn" {
-        let method = try #require(current.sources[key]?.units.firstIndex { $0.helperCallableName == "value" })
-        legacy.sources[key]?.units[method].builderLocations = ["line": "legacy method body"]
+    if ordinaryBodies[form] != nil {
+        legacy.sources[key]?.parserVersion = form == "explicitReturn" ? 31 : 32
+        for i in legacy.sources[key]!.units.indices {
+            legacy.sources[key]!.units[i].builderLocations = ["line": "legacy body"]
+        }
         try legacy.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
-        #expect(legacy.sources[key]?.units[method].builderLocations == [:])
+        #expect(legacy.sources[key]?.units.map(\.builderLocations) == current.sources[key]?.units.map(\.builderLocations))
         for report in try reports(legacy) { #expect(report.selectedTests.isEmpty) }
         return
     }
+    legacy.sources[key]?.parserVersion = form == "interpolation" ? 28 : 31
     legacy.sources[key]?.units[index].hasOnlyDirectSourceCalls = true
     legacy.sources[key]?.units[index].invocationNames = ["pass"]
     legacy.sources[key]?.units[index].callerLocations = [:]
@@ -397,7 +405,7 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     }
 }
 
-@Test(arguments: ["function", "closure", "nestedClosure", "conditionalReturn", "witness", "binary", "macro"])
+@Test(arguments: ["function", "closure", "nestedClosure", "nestedGetterClosure", "conditionalReturn", "witness", "explicitGetWitness", "binary", "macro"])
 func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -413,7 +421,7 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     let library = FileManager.default.temporaryDirectory.appendingPathComponent("builder-kit-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: library) }
     var compilerArguments: [String] = [], linkArguments: [String] = []
-    let before: String
+    let helperSource: String
     switch form {
     case "macro":
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
@@ -426,7 +434,7 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
                 @_transparent static func buildBlock(_ value: Int) -> Int { value }
             }
             """
-        before = "@LineBuilder func caller() -> Int {\n    1\n}"
+        helperSource = "@LineBuilder func caller() -> Int {\n    1\n}"
     case "binary":
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         let source = library.appendingPathComponent("Builder.swift")
@@ -438,16 +446,22 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
         compilerArguments = ["-I", library.path]
         linkArguments = [library.appendingPathComponent("libBuilderKit.a").path]
         support = ""
-        before = "import BuilderKit\n@LineBuilder func caller() -> Int {\n    1\n}"
+        helperSource = "import BuilderKit\n@LineBuilder func caller() -> Int {\n    1\n}"
     case "conditionalReturn":
-        before = "@LineBuilder func caller() -> Int {\n#if NEVER_DEFINED\nreturn 0\n#endif\n    1\n}"
+        helperSource = "@LineBuilder func caller() -> Int {\n#if NEVER_DEFINED\nreturn 0\n#endif\n    1\n}"
     case "nestedClosure":
-        before = "struct Plain { func value() -> Int { return evaluate {\n    1\n} } }\nfunc caller() -> Int { Plain().value() }"
-    case "function": before = "@LineBuilder func caller() -> Int {\n    1\n}"
-    case "closure": before = "func caller() -> Int { evaluate {\n    1\n} }"
-    default: before = "struct Reader: Reading { var value: Int {\n    1\n} }\nfunc caller() -> Int { Reader().value }"
+        helperSource = "struct Plain { func value() -> Int { return evaluate {\n    1\n} } }\nfunc caller() -> Int { Plain().value() }"
+    case "nestedGetterClosure":
+        helperSource = "struct Plain { var value: Int { get { return evaluate {\n    1\n} } } }\nfunc caller() -> Int { Plain().value }"
+    case "explicitGetWitness":
+        helperSource = "struct Reader: Reading { var value: Int { get {\n    1\n} } }\nfunc caller() -> Int { Reader().value }"
+    case "function": helperSource = "@LineBuilder func caller() -> Int {\n    1\n}"
+    case "closure": helperSource = "func caller() -> Int { evaluate {\n    1\n} }"
+    default: helperSource = "struct Reader: Reading { var value: Int {\n    1\n} }\nfunc caller() -> Int { Reader().value }"
     }
-    let after = before.replacingOccurrences(of: "    1", with: "\n    1")
+    // Move only the builder expression. Callers and enclosing source bounds stay fixed.
+    let before = helperSource.replacingOccurrences(of: "    1\n", with: "    1\n\n")
+    let after = helperSource.replacingOccurrences(of: "    1\n", with: "\n    1\n")
     let entry = "UI/Suite/observes()", control = "UI/Control/unrelated()"
     let expected = try #require(before.components(separatedBy: "\n").firstIndex(of: "    1")) + 1
     let tests = "import Testing\nstruct Suite { @Test func observes() { #expect(caller() == \(expected)) } }\nstruct Control { @Test func unrelated() {} }"
