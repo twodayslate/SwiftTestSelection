@@ -43,8 +43,17 @@ public struct PackageAnalyzer {
         var dispatchTargets: [String: Set<String>] = [:]
         var externalWitnesses: [String: Set<String>] = [:]
         var seenModules = Set<String>()
+        var manifestNamedImplementations = Set<String>()
+        let sourcePrefix = sourceRoot.path + "/"
         for command in build.swiftCommands.values.sorted(by: { $0.moduleName < $1.moduleName }) where modules.contains(command.moduleName) {
             seenModules.insert(command.moduleName)
+            for path in command.sources where FileChange.hasManifestName(path) {
+                let url = URL(fileURLWithPath: path, relativeTo: packagePath).standardizedFileURL.resolvingSymlinksInPath()
+                guard url.path.hasPrefix(sourcePrefix), url.deletingLastPathComponent().path != packagePath.path,
+                      let text = try? String(contentsOf: url, encoding: .utf8),
+                      FileChange.isOrdinaryManifestNamedSource(path, text: text) else { continue }
+                manifestNamedImplementations.insert(String(url.path.dropFirst(sourcePrefix.count)))
+            }
             progress("Extracting SIL dependencies: \(command.moduleName)…")
             let output = scratch.appendingPathComponent("\(command.moduleName).sil")
             var arguments = Self.silArguments(command.otherArguments)
@@ -66,6 +75,7 @@ public struct PackageAnalyzer {
             }
             for (key, owners) in parsed.externalWitnesses ?? [:] { externalWitnesses[key, default: []].formUnion(owners) }
         }
+        graph.manifestNamedImplementations = manifestNamedImplementations
         for missing in modules.subtracting(seenModules).sorted() {
             graph.diagnostics.append("No compiler invocation was found for target \(missing).")
         }

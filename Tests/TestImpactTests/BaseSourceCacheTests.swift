@@ -288,6 +288,71 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
     #expect(report.diagnostics.contains { $0.code == "head_only_unsupported_body" })
 }
 
+@Test func inlinedStringInterpolationRetainsItsCallerLocation() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let entry = "UI/Suite/observes()", control = "UI/Control/unrelated()"
+    let path = "Helpers.swift", key = "UI:" + path
+    let before = "func pass(_ value: Output) -> Int { value.line }" + "\n" + #"func caller() -> Int { pass("\(2)") }"#
+    let after = "\n" + before
+    try repo.write(path, before)
+    let base = try repo.commit()
+    try repo.write(path, after)
+    let head = try repo.commit()
+    let support = """
+        struct Output: ExpressibleByStringInterpolation {
+            struct Builder: StringInterpolationProtocol {
+                var line: Int
+                @_transparent init(literalCapacity: Int, interpolationCount: Int) { line = 0 }
+                @_transparent mutating func appendLiteral(_ value: StaticString) {}
+                @_transparent mutating func appendInterpolation(_ value: Int, line: Int = #line) { self.line = line }
+            }
+            var line: Int
+            @_transparent init(stringLiteral value: StaticString) { line = 0 }
+            @_transparent init(stringInterpolation: Builder) { line = stringInterpolation.line }
+        }
+        """
+    let tests = "import Testing\nstruct Suite { @Test func observes() { #expect(caller() == 2) } }\nstruct Control { @Test func unrelated() {} }"
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    func capture(_ text: String) throws -> XcodeTestGraph {
+        var graph = try boundaryGraph([path: text, "Support.swift": support, "Tests.swift": tests], tests: [entry, control],
+            root: repo.root, compilerArguments: ["-plugin-path", plugins.path], compiler: compiler)
+        graph.mappings = nil
+        return graph
+    }
+    let previous = try capture(before), current = try capture(after)
+    let changes = try GitChanges.readComparison(base: base, head: head, at: repo.root)
+    func reports(_ graph: XcodeTestGraph) -> [ImpactReport] {
+        [XcodeFineSelector.select(current: graph, previous: previous, changes: changes, baseRevision: base),
+         XcodeHeadOnlySelector.select(current: graph, source: .init(base: previous.sources), changes: changes, baseRevision: base)]
+    }
+    let index = try #require(current.sources[key]?.units.firstIndex { $0.helperCallableName == "caller" })
+    let caller = try #require(current.sources[key]?.units[index])
+    #expect(caller.invocationNames == ["pass", "appendInterpolation"])
+    #expect(caller.hasOnlyDirectSourceCalls != true)
+    for report in reports(current) {
+        #expect(report.selectedTests.contains(entry))
+        #expect(!report.ignoredChanges.contains(path))
+    }
+    var legacy = current
+    legacy.sources[key]?.parserVersion = 28
+    legacy.sources[key]?.units[index].hasOnlyDirectSourceCalls = true
+    legacy.sources[key]?.units[index].invocationNames = ["pass"]
+    legacy.sources[key]?.units[index].callerLocations = [:]
+    legacy = try GraphArchive.decode(GraphArchive.encode(legacy))
+    for report in reports(legacy) {
+        #expect(report.selectedTests.contains(entry))
+        #expect(report.diagnostics.contains { $0.code == "incomplete_caller_locations" })
+    }
+    try legacy.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
+    #expect(legacy.sources[key]?.units[index].callerLocations == caller.callerLocations)
+    for report in reports(legacy) {
+        #expect(report.selectedTests.contains(entry))
+        #expect(!report.diagnostics.contains { $0.code == "incomplete_caller_locations" })
+    }
+}
+
 @Test func versionedPackageManifestsAreTrackedAsBuildInputs() throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }

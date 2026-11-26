@@ -15,9 +15,19 @@ public struct FileChange: Codable, Sendable {
 
     /// Package manifests are build inputs wherever the package lives, including
     /// the toolchain-specific Package@swift-<version>.swift variants.
-    static func isSwiftImplementation(_ path: String) -> Bool {
+    static func hasManifestName(_ path: String) -> Bool {
         guard path.hasSuffix(".swift"), let name = path.split(separator: "/").last else { return false }
-        return name != "Package.swift" && !name.hasPrefix("Package@swift-")
+        return name == "Package.swift" || name.hasPrefix("Package@swift-")
+    }
+
+    static func isSwiftImplementation(_ path: String, confirmed: Set<String> = []) -> Bool {
+        path.hasSuffix(".swift") && (!hasManifestName(path) || confirmed.contains(path))
+    }
+
+    // A compiled source can share a manifest's name. Keep a file that also
+    // declares a SwiftPM tools version eligible for build-input fallback.
+    static func isOrdinaryManifestNamedSource(_ path: String, text: String) -> Bool {
+        hasManifestName(path) && text.range(of: #"(?im)^[\h\uFEFF]*//\h*swift-tools-version\b"#, options: .regularExpression) == nil
     }
 
     public init(path: String, oldRegions: [SourceRegion] = [], newRegions: [SourceRegion] = [], requiresFallback: Bool = false) {

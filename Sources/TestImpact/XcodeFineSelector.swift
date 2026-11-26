@@ -92,6 +92,12 @@ public enum XcodeFineSelector {
         // Match source invocations as well as compiler edges: transparent helpers
         // and enum constructors can lose their call edges even under -Onone.
         let touchedPaths = Set(changes.flatMap(\.paths))
+        let legacyInterpolationPaths = locationPolicy == .diagnostic ? [] :
+            SwiftSourceSnapshot.legacyInterpolationPaths(in: current.sources, touching: touchedPaths)
+                .union(SwiftSourceSnapshot.legacyInterpolationPaths(in: previous?.sources ?? [:], touching: touchedPaths))
+        if !legacyInterpolationPaths.isEmpty {
+            fallback("incomplete_caller_locations", "Saved snapshots lack interpolation caller locations for " + legacyInterpolationPaths.sorted().joined(separator: ", ") + ". Regenerate both graphs.")
+        }
         let headEffects = SwiftTestingSourceEffects(current, touching: touchedPaths)
         let baseEffects = previous.map { SwiftTestingSourceEffects($0, touching: touchedPaths) }
         let callerKinds = locationPolicy == .diagnostic ? [:] : callerLocationKinds(current, units: newUnits.values.flatMap { $0 }, effects: headEffects)
@@ -280,6 +286,8 @@ public enum XcodeFineSelector {
             }
         }
         let knownPaths = Set((current.targets + (previous?.targets ?? [])).flatMap(\.sourceFiles))
+        let confirmed = current.manifestNamedImplementations(in: current.sources)
+            .intersection(previous.map { $0.manifestNamedImplementations(in: $0.sources) } ?? [])
         let generatedBoundaries = Array(current.generatedSourceBoundaries?.values ?? [:].values).flatMap { $0 } +
             Array(previous?.generatedSourceBoundaries?.values ?? [:].values).flatMap { $0 }
         func ignoredDocumentation(_ path: String) -> Bool {
@@ -333,6 +341,7 @@ public enum XcodeFineSelector {
                     return files[path] == nil || documentation.contains(path)
                 }
             })
+            excluded.formUnion(confirmed)
             excluded.formUnion(projectReferenceMoves.filter { path in
                 boundaries.allSatisfy { $0.repositoryInputFiles?[path] != nil }
             })
@@ -340,7 +349,7 @@ public enum XcodeFineSelector {
                 fallback("generated_input_changed", "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for \(module).")
             }
         }
-        let semanticPaths = legacyConditionalPaths.union(registrations.semanticPaths)
+        let semanticPaths = legacyConditionalPaths.union(legacyInterpolationPaths).union(registrations.semanticPaths)
             .union((oldChanged + newChanged).map { $0.region.path })
         let analyzedPaths = Set((Array(current.sources.keys) + Array(previous?.sources.keys ?? [:].keys)).compactMap { key in
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) }
@@ -349,7 +358,7 @@ public enum XcodeFineSelector {
         for change in changes {
             let paths = change.paths
             let analyzedImplementation = paths.allSatisfy {
-                FileChange.isSwiftImplementation($0) && knownPaths.contains($0) && analyzedPaths.contains($0)
+                FileChange.isSwiftImplementation($0, confirmed: confirmed) && knownPaths.contains($0) && analyzedPaths.contains($0)
             }
             if paths.allSatisfy(ignoredDocumentation) {
                 ignored.insert(change.path)

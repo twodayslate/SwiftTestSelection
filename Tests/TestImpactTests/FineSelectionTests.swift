@@ -188,6 +188,26 @@ func movesIntoCompiledSwiftSourcesRetainTheOriginalBuildInput(origin: String) th
     #expect(!targets.fullRunReasons.isEmpty)
 }
 
+@Test(arguments: ["Sources/UI/Package.swift", "Sources/UI/Package@swift-6.swift"])
+func compiledManifestNamesFollowTheirRoleInBothRevisions(path: String) throws {
+    let edited = uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")
+    let head = model(ui: edited, uiPath: path)
+    let base = model(uiPath: path)
+    let change = [FileChange(path: path)]
+    let fine = XcodeFineSelector.select(current: head, previous: base, changes: change, baseRevision: "base")
+    #expect(fine.selectedTests == ["UI/Sharing/testIndependent()"])
+    func headOnly(_ old: XcodeTestGraph) -> ImpactReport {
+        XcodeHeadOnlySelector.select(current: head, source: .init(base: old.sources), changes: change, baseRevision: "base")
+    }
+    #expect(!headOnly(base).diagnostics.contains { $0.code == "head_only_build_input" })
+
+    // A file with a second role as a manifest cannot borrow a source-only proof.
+    let manifest = model(ui: "// swift-tools-version: 6.0\n" + uiSource, uiPath: path)
+    #expect(headOnly(manifest).diagnostics.contains { $0.code == "head_only_build_input" })
+    #expect(XcodeFineSelector.select(current: head, previous: manifest, changes: change, baseRevision: "base")
+        .diagnostics.contains { $0.code == "unclassified_change" })
+}
+
 @Test func emptyKnownSuitesDoNotHideTopLevelSwiftTestingMethods() throws {
     let data = Data(#"{"errors":[],"values":[{"enabledTests":[{"identifier":"UI/Base"},{"identifier":"UnitTests/example()"},{"identifier":"UI/Suite/testA()"}]}]}"#.utf8)
     #expect(try XcodeTestEnumeration.parse(data, emptySuiteIdentifiers: ["UI/Base"]) == ["UI/Suite/testA()", "UnitTests/example()"])

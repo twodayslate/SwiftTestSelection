@@ -45,9 +45,15 @@ extension XcodeHeadOnlySelector {
         let sourceCache = try sourceCache ?? XcodeBaseSourceCache(root: root, base: baseRevision)
         try sourceCache.validate(root: root, base: baseRevision)
         let changedPaths = Set(changes.flatMap(\.paths))
+        let namedSources = current.manifestNamedImplementations(in: current.sources).intersection(changedPaths)
+        var confirmed = Set<String>()
+        for path in namedSources {
+            if let base = try sourceCache.content(path: path), let text = String(data: base, encoding: .utf8),
+               FileChange.isOrdinaryManifestNamedSource(path, text: text) { confirmed.insert(path) }
+        }
         let compiledSources = Set(current.targets.flatMap { target -> [String] in
             guard let module = current.modules[target.name] else { return [] }
-            return target.sourceFiles.filter { FileChange.isSwiftImplementation($0) && current.sources[module + ":" + $0] != nil }
+            return target.sourceFiles.filter { FileChange.isSwiftImplementation($0, confirmed: confirmed) && current.sources[module + ":" + $0] != nil }
         })
         return try requests.scopes.map { scope in
             guard Set(scope.paths).isSubset(of: changedPaths), Set(scope.excludedTestEntries).isSubset(of: Set(current.tests)) else {

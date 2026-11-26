@@ -101,4 +101,14 @@ with tempfile.TemporaryDirectory(prefix="swift-impact-integration-") as director
     assert dot.startswith("digraph TestImpact") and "calculateTax" in dot
     print("PASS Graphviz export", flush=True)
 
+    # SwiftPM compiles this file into Shop despite its manifest-like basename.
+    run(["git", "restore", "."], work)
+    (work / "Sources/Shop/NewFile.swift").unlink()
+    run(["git", "mv", "Sources/Shop/Checkout.swift", "Sources/Shop/Package.swift"], work)
+    run(["git", "-c", "user.name=Integration Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "Rename source"], work)
+    (work / "Sources/Shop/Package.swift").write_text(original.replace("amount / 10", "amount / 5"))
+    report, _ = select()
+    assert report["selectedTests"] == expected and not report["fullRunReasons"], report
+    print("PASS compiled Package.swift: selected only the three callers of the edited function", flush=True)
+
 print("All integration checks passed.", flush=True)

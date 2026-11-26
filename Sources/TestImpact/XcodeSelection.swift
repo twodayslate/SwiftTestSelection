@@ -64,6 +64,21 @@ public struct XcodeTestGraph: Codable, Sendable {
         self.diagnostics = diagnostics
     }
 
+    /// Match the physical compiler input to its parsed bytes. Older captures
+    /// without the source-role evidence keep treating ambiguous names as build inputs.
+    func manifestNamedImplementations(in snapshots: [String: SwiftSourceSnapshot]) -> Set<String> {
+        var paths = Set<String>()
+        for (key, file) in snapshots where file.ordinaryManifestNamedSource == true {
+            let separator = key.firstIndex(of: ":")
+            let path = separator.map { String(key[key.index(after: $0)...]) } ?? key
+            let module = separator.map { String(key[..<$0]) }
+            if targets.contains(where: { $0.sourceFiles.contains(path) && (module == nil || modules[$0.name] == module) }) {
+                paths.insert(path)
+            }
+        }
+        return paths
+    }
+
     /// Generated boundaries can establish stable bytes and physical locations,
     /// but contain no inventory of names, calls, macros, or overloads.
     func hasUninspectedSwiftInputs(in module: String? = nil) -> Bool {
@@ -183,11 +198,13 @@ public enum XcodeSelector {
         }
         // Ownership in both builds is necessary for removed/moved/shared files.
         let targets = current.targets + (previous?.targets ?? [])
+        let confirmed = current.manifestNamedImplementations(in: current.sources)
+            .intersection(previous.map { $0.manifestNamedImplementations(in: $0.sources) } ?? [])
         for change in changes {
             let paths = Set(change.paths)
             let owners = targets.filter { !$0.sourceFiles.isDisjoint(with: paths) }
             let hasOwners = paths.allSatisfy { path in owners.contains { $0.sourceFiles.contains(path) } }
-            if !paths.allSatisfy(FileChange.isSwiftImplementation) || !hasOwners || owners.contains(where: { !$0.isTest }) || change.requiresFallback {
+            if !paths.allSatisfy({ FileChange.isSwiftImplementation($0, confirmed: confirmed) }) || !hasOwners || owners.contains(where: { !$0.isTest }) || change.requiresFallback {
                 reasons.append("App, resource, build, or unclassified change requires the full Xcode test selection: \(change.path). XCUITest app interactions cross a process boundary.")
                 continue
             }

@@ -174,6 +174,8 @@ public struct FunctionNode: Codable, Sendable, Equatable {
 public struct DependencyGraph: Codable, Sendable {
     public var schemaVersion = 1
     public var toolchain: String
+    /// SwiftPM compiler inputs whose basenames could otherwise designate manifests.
+    var manifestNamedImplementations: Set<String>? = nil
     public var functions: [String: FunctionNode]
     /// SwiftPM test identifier -> one or more compiler function symbols.
     public var tests: [String: Set<String>]

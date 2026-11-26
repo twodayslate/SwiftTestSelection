@@ -148,6 +148,10 @@ public struct SourceUnit: Codable, Sendable {
     /// Whether this subscript can compete with the SDK identifier getter.
     public var subscriptAcceptsSingleUnlabeledArgument: Bool? = nil
 
+    var containsStringInterpolation: Bool {
+        (syntaxFingerprint ?? fingerprint).contains("expressionSegment[")
+    }
+
     func hasUnverifiedCompilerLocation(in physicalModules: Set<String>) -> Bool {
         !physicalModules.contains(String(key.prefix { $0 != ":" }))
     }
@@ -183,7 +187,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 28
+    static let currentParserVersion = 29
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -192,6 +196,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     var swiftTestingDeclarations: SwiftTestingSourceDeclarations? = nil
     /// Source evidence for case implementations that can run before Swift Testing discovery.
     var xctestDiscoveryCases: [XCTestDiscoveryCase]? = nil
+    var ordinaryManifestNamedSource: Bool? = nil
+    var hasVerifiedInterpolationLocations: Bool? = nil
     public var parserVersion: Int? = nil
     /// A legacy capture can recover branch membership from the exact Git blob.
     var hasVerifiedConditionalMembership: Bool? = nil
@@ -205,6 +211,17 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         Set(sources.values.compactMap { snapshot in
             guard let path = snapshot.units.first?.region.path, paths.contains(path),
                   snapshot.lacksConditionalMembership else { return nil }
+            return path
+        })
+    }
+
+    var lacksInterpolationLocations: Bool {
+        (parserVersion ?? 0) < 29 && hasVerifiedInterpolationLocations != true && units.contains(where: \.containsStringInterpolation)
+    }
+
+    static func legacyInterpolationPaths(in sources: [String: Self], touching paths: Set<String>) -> Set<String> {
+        Set(sources.values.compactMap { file in
+            guard let path = file.units.first?.region.path, paths.contains(path), file.lacksInterpolationLocations else { return nil }
             return path
         })
     }
@@ -341,6 +358,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         let locations = SourceLocationConverter(fileName: path, tree: tree)
         var result = Self(units: [], inheritance: [:], diagnostics: [])
         result.parserVersion = Self.currentParserVersion
+        result.ordinaryManifestNamedSource = FileChange.isOrdinaryManifestNamedSource(path, text: text) ? true : nil
         if !tree.hasError {
             result.xctestDiscoveryCases = tree.statements.compactMap {
                 $0.item.as(ClassDeclSyntax.self).flatMap { XCTestDiscoveryCase($0, path: path, module: module) }
@@ -482,6 +500,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     for token in [call.leftParen, call.rightParen].compactMap({ $0 }) {
                         offsets.insert(token.positionAfterSkippingLeadingTrivia.utf8Offset)
                     }
+                } else if let segment = node.as(ExpressionSegmentSyntax.self) {
+                    // The compiler synthesizes appendInterpolation at the segment. Its
+                    // caller defaults survive even if mandatory inlining erases the edge.
+                    direct = false
+                    names.insert("appendInterpolation")
+                    record(segment.tokens(viewMode: .sourceAccurate))
                 } else if let call = node.as(SubscriptCallExprSyntax.self) {
                     direct = false
                     names.insert("subscript")

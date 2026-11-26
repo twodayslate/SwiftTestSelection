@@ -24,6 +24,7 @@ public enum GraphArchive {
         var diagnostics: [String]
         var testDiagnostics: [String: [String]]
         var compilerClassIdentities: [String: CompilerClassIdentity]?
+        var manifestNamedImplementations: Set<String>?
         var compilerImplicitImports: [String: Set<String>]?
         var assertionFormattingSites: [String: Set<String>]?
         var captureModules: [String: Set<String>]?
@@ -80,6 +81,7 @@ public enum GraphArchive {
             strings = table; toolchain = graph.toolchain; schema = graph.schemaVersion
             diagnostics = graph.diagnostics; testDiagnostics = graph.testDiagnostics
             compilerClassIdentities = graph.compilerClassIdentities
+            manifestNamedImplementations = graph.manifestNamedImplementations
             compilerImplicitImports = graph.compilerImplicitImports
             assertionFormattingSites = graph.functions.compactMapValues(\.assertionFormattingSites)
             modeledDiscoveryBodies = Set(graph.functions.values.filter { $0.hasModeledDiscoveryInstructions == true }.map { ids[$0.id]! })
@@ -118,6 +120,7 @@ public enum GraphArchive {
             graph.swiftTestingRegisteredFactories = swiftTestingRegisteredFactories
             graph.swiftTestingSuiteWitnesses = swiftTestingSuiteWitnesses
             graph.compilerClassIdentities = compilerClassIdentities
+            graph.manifestNamedImplementations = manifestNamedImplementations
             graph.compilerImplicitImports = compilerImplicitImports
             guard nodes.count.isMultiple(of: 8) else { throw ImpactError("Truncated compact graph integers") }
             let words: [Int] = nodes.withUnsafeBytes { bytes in

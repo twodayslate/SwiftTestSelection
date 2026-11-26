@@ -314,6 +314,14 @@ enum XcodeHeadOnlySelector {
         var changed: [SourceUnit] = []
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
         semanticPaths.formUnion(registrations.semanticPaths)
+        if comparison.locationPolicy != .diagnostic {
+            let incomplete = SwiftSourceSnapshot.legacyInterpolationPaths(in: current.sources, touching: paths)
+                .union(SwiftSourceSnapshot.legacyInterpolationPaths(in: source.base, touching: paths))
+            if !incomplete.isEmpty {
+                semanticPaths.formUnion(incomplete)
+                fallback("incomplete_caller_locations", "Saved snapshots lack interpolation caller locations for " + incomplete.sorted().joined(separator: ", ") + ". Recapture the graph.")
+            }
+        }
         let legacyConditionalPaths = SwiftSourceSnapshot.legacyConditionalPaths(in: current.sources, touching: paths)
         if !legacyConditionalPaths.isEmpty {
             semanticPaths.formUnion(legacyConditionalPaths)
@@ -433,6 +441,8 @@ enum XcodeHeadOnlySelector {
         }
         fallbackUnits = []
         let owned = Set(current.targets.flatMap(\.sourceFiles))
+        let confirmed = current.manifestNamedImplementations(in: current.sources)
+            .intersection(current.manifestNamedImplementations(in: source.base))
         func onlyContractMappingChange() -> Bool {
             guard var before = source.mappings, var after = originalCurrent.mappings else { return false }
             before.helperFormattingContracts = nil; after.helperFormattingContracts = nil
@@ -450,7 +460,7 @@ enum XcodeHeadOnlySelector {
                 continue
             } else if change.previousPath != nil {
                 fallback("head_only_move", "Moved source/file identity lacks old compiler ownership: \(change.previousPath!) → \(change.path)")
-            } else if FileChange.isSwiftImplementation(change.path), owned.contains(change.path), analyzed.contains(change.path) {
+            } else if FileChange.isSwiftImplementation(change.path, confirmed: confirmed), owned.contains(change.path), analyzed.contains(change.path) {
                 if !semanticPaths.contains(change.path) { ignored.insert(change.path) }
             } else if change.path.hasSuffix(".md"), documentation.contains(change.path), !owned.contains(change.path),
                       [current.mappings, source.mappings].allSatisfy({ $0?.ignoredDocumentation?.contains { UIFeatureMappings.matches(change.path, pattern: $0) } == true }) {

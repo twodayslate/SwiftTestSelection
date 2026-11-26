@@ -15,9 +15,9 @@ struct HeadOnlyRuntimeSourceEvidence {
     let buildInputPaths: Set<String>
     var failure: String? { validationFailure(ignoringDocumentation: []) }
 
-    func validationFailure(ignoringDocumentation documentation: Set<String>) -> String? {
+    func validationFailure(ignoringDocumentation documentation: Set<String>, confirmedSources: Set<String> = []) -> String? {
         if let structuralFailure { return structuralFailure }
-        return buildInputPaths.subtracting(documentation).sorted().first.map {
+        return buildInputPaths.subtracting(documentation).subtracting(confirmedSources).sorted().first.map {
             "Changed build, resource or policy input requires historical evidence: " + $0
         }
     }
@@ -87,7 +87,9 @@ extension TestRuntimeBoundary {
             unchangedPolicy && path.hasSuffix(".md") && !owned.contains(path) &&
                 current.mappings?.ignoredDocumentation?.contains { UIFeatureMappings.matches(path, pattern: $0) } == true
         }
-        if let failure = evidence.validationFailure(ignoringDocumentation: documentation) { return prefix + failure }
+        let confirmed = current.manifestNamedImplementations(in: current.sources)
+            .intersection(current.manifestNamedImplementations(in: source.base))
+        if let failure = evidence.validationFailure(ignoringDocumentation: documentation, confirmedSources: confirmed) { return prefix + failure }
         guard source.diagnostics.isEmpty, source.unownedBaseSources.isEmpty else {
             return prefix + "missing or unowned historical Swift sources"
         }
