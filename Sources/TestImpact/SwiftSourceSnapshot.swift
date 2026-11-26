@@ -84,7 +84,7 @@ public struct SourceUnit: Codable, Sendable {
     var builderLocations: [String: String]? = nil
 
     func builderFingerprint(_ kinds: Set<String>) -> String {
-        guard let builderLocations, !kinds.isEmpty else { return "" }
+        guard let builderLocations, !builderLocations.isEmpty, !kinds.isEmpty else { return "" }
         return kinds.sorted().compactMap { kind in
             builderLocations[kind].map { "@builder[\(kind)=\($0)]" }
         }.joined()
@@ -199,7 +199,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 30
+    static let currentParserVersion = 31
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -237,8 +237,6 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             return path
         })
     }
-
-    var hasVerifiedBuilderLocations: Bool? = nil
 
     /// v11 introduced per-unit flags, v26 recognized escaped attribute names,
     /// and v27 recognized escaped `never` arguments.
@@ -507,7 +505,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 #endif
             })
         }
-        func builderLocations(_ node: Syntax) -> [String: String]? {
+        func builderLocations(_ node: Syntax) -> [String: String] {
             var offsets = Set<Int>()
             func visit(_ syntax: Syntax) {
                 // A member can inherit a builder from a protocol requirement.
@@ -523,7 +521,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 }
             }
             visit(node)
-            return offsets.isEmpty ? nil : locationDigest(offsets)
+            return offsets.isEmpty ? [:] : locationDigest(offsets)
         }
         func callerInfo(_ node: Syntax, includeAllTokens: Bool = false) -> (locations: [String: String], names: Set<String>, direct: Bool) {
             var direct = true

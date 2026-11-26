@@ -8,7 +8,7 @@ import Testing
 /// A native compiler plugin implementing the length-prefixed JSON protocol.
 /// Fixed expansions keep this regression independent of a second SwiftSyntax
 /// build, and run inside the compiler's normal plugin sandbox.
-private func macroPlugin(expansion: String, root: URL) throws -> String {
+func macroPlugin(expansion: String, root: URL) throws -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = .withoutEscapingSlashes
     func literal(_ response: [String: Any]) throws -> String {

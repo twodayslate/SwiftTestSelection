@@ -91,7 +91,8 @@ extension XcodeTestGraph {
     mutating func refreshLegacyComparisonSyntax(paths: Set<String>, revision: String, root: URL) throws {
         var cache: XcodeBaseSourceCache?
         for (key, var archived) in sources {
-            guard let version = archived.parserVersion, version < SwiftSourceSnapshot.currentParserVersion,
+            guard let version = archived.parserVersion, version <= SwiftSourceSnapshot.currentParserVersion,
+                  version < SwiftSourceSnapshot.currentParserVersion || archived.units.contains(where: { $0.builderLocations == nil }),
                   let blobs = archived.sourceBlobIDs, !blobs.isEmpty,
                   let separator = key.firstIndex(of: ":") else { continue }
             let path = String(key[key.index(after: separator)...])
@@ -129,7 +130,9 @@ extension XcodeTestGraph {
                     archived.units[index].swiftTestingBodyCandidate = native.swiftTestingBodyCandidate
                 }
             }
-            archived.hasVerifiedBuilderLocations = builderMatches.count == parsed.units.count && builderMatches.count == archived.units.count
+            if builderMatches.count != parsed.units.count || builderMatches.count != archived.units.count {
+                for index in archived.units.indices { archived.units[index].builderLocations = nil }
+            }
             archived.hasVerifiedInterpolationLocations = restoredInterpolations
             if version < 5, matched.count == parsed.units.count, matched.count == archived.units.count {
                 archived.hasVerifiedConditionalMembership = true

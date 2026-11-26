@@ -31,21 +31,24 @@ struct ResultBuilderLocations {
         for revision in sources {
             for file in revision.values {
                 if let path = file.units.first?.region.path, paths.contains(path),
-                   (file.parserVersion ?? 0) < 30, file.hasVerifiedBuilderLocations != true {
+                   file.units.contains(where: { $0.builderLocations == nil }) {
                     missing.insert(path)
                 }
-                // A binary module or generated declaration can supply a builder
+                // A binary module, macro expansion or generated input can supply a builder
                 // through a parameter or protocol witness in another file.
-                if let unit = file.units.first,
-                   unit.receiverUnsupportedImports?.isSubset(of: knownImports) != true || !file.diagnostics.isEmpty {
+                guard !opaque else { continue }
+                guard file.diagnostics.isEmpty,
+                      file.helperDeclarationIssues?.contains(where: { $0.kind == "macro-declaration" }) == false,
+                      file.units.first?.receiverUnsupportedImports?.isSubset(of: knownImports) ?? file.units.isEmpty else {
                     opaque = true
+                    continue
                 }
-                if !opaque {
-                    for unit in file.units where unit.locationDefaultKinds?.isEmpty == false {
-                        for (name, defaults) in unit.locationDefaultNames ?? [:] where methods.contains(name) {
-                            observed.formUnion(defaults)
-                        }
+                for unit in file.units {
+                    guard let defaults = unit.locationDefaultNames else {
+                        opaque = true
+                        break
                     }
+                    for (name, values) in defaults where methods.contains(name) { observed.formUnion(values) }
                 }
             }
         }

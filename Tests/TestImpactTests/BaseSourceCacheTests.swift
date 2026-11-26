@@ -353,7 +353,7 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
     }
 }
 
-@Test(arguments: ["function", "closure", "witness", "binary"])
+@Test(arguments: ["function", "closure", "witness", "binary", "macro"])
 func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -371,6 +371,18 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     var compilerArguments: [String] = [], linkArguments: [String] = []
     let before: String
     switch form {
+    case "macro":
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        let plugin = try macroPlugin(expansion: "@_transparent static func buildExpression(_ value: Int, line: Int = #line) -> Int { line }", root: library)
+        compilerArguments = ["-load-plugin-executable", plugin]
+        support = """
+            @attached(member, names: named(buildExpression))
+            macro addBuilderStep() = #externalMacro(module: "ReviewMacros", type: "MakeBindings")
+            @resultBuilder @addBuilderStep enum LineBuilder {
+                @_transparent static func buildBlock(_ value: Int) -> Int { value }
+            }
+            """
+        before = "@LineBuilder func caller() -> Int {\n    1\n}"
     case "binary":
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         let source = library.appendingPathComponent("Builder.swift")
@@ -425,11 +437,13 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     #expect(XcodeHeadOnlySelector.select(current: diagnostic, source: diagnosticSource, changes: changes, baseRevision: base).selectedTests.isEmpty)
 
     var legacy = current
-    legacy.sources[key]?.parserVersion = 29
     for i in legacy.sources[key]!.units.indices { legacy.sources[key]!.units[i].builderLocations = nil }
-    for report in try reports(old, legacy) {
-        #expect(report.selectedTests.contains(entry))
-        #expect(report.diagnostics.contains { $0.code == "incomplete_caller_locations" })
+    for version in [SwiftSourceSnapshot.currentParserVersion, 30, 29] {
+        legacy.sources[key]?.parserVersion = version
+        for report in try reports(old, legacy) {
+            #expect(report.selectedTests.contains(entry))
+            #expect(report.diagnostics.contains { $0.code == "incomplete_caller_locations" })
+        }
     }
     try legacy.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
     for report in try reports(old, legacy) {
