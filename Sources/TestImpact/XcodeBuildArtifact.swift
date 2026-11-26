@@ -156,7 +156,11 @@ extension XcodeAnalysis {
         }
         try validateMappings(in: headGraph, revision: comparison.head!)
         let changes = try GitChanges.readComparison(base: comparison.base, head: comparison.head, at: root)
-        var report = XcodeSelector.select(current: headGraph, previous: baseGraph, changes: changes, baseRevision: comparison.base)
+        let paths = Set(changes.flatMap(\.paths))
+        var previous = baseGraph, current = headGraph
+        try previous.refreshLegacyComparisonSyntax(paths: paths, revision: old.revision, root: root)
+        try current.refreshLegacyComparisonSyntax(paths: paths, revision: new.revision, root: root)
+        var report = XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base)
         report.headRevision = comparison.head
         report.buildArtifactID = new.id
         report.comparisonMode = comparison.mode
@@ -165,7 +169,7 @@ extension XcodeAnalysis {
             report.onlyTestingArguments = report.selectedTests.map { "-only-testing:" + $0 }
             report.explanations += report.selectedTests.map { TestExplanation(test: $0, reason: "Full suite explicitly requested", revision: "head", path: [], kind: "fullSuite") }
         }
-        selectionGraphObserver?(headGraph)
+        selectionGraphObserver?(current)
         return report
     }
 

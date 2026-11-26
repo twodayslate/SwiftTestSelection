@@ -95,11 +95,9 @@ extension XcodeTestGraph {
             guard let version = archived.parserVersion, version <= SwiftSourceSnapshot.currentParserVersion,
                   version < SwiftSourceSnapshot.currentParserVersion || archived.units.contains(where: { $0.builderLocations == nil }),
                   let blobs = archived.sourceBlobIDs, !blobs.isEmpty,
-                  let separator = key.firstIndex(of: ":") else { continue }
-            let path = String(key[key.index(after: separator)...])
-            guard paths.contains(path) else { continue }
+                  let id = archived.sourceIdentity(storedAs: key), paths.contains(id.path) else { continue }
             if cache == nil { cache = try XcodeBaseSourceCache(root: root, base: revision) }
-            guard let parsed = try cache?.snapshot(path: path, module: String(key[..<separator])),
+            guard let parsed = try cache?.snapshot(path: id.path, module: id.module),
                   parsed.diagnostics.isEmpty, let parsedBlobs = parsed.sourceBlobIDs, !blobs.isDisjoint(with: parsedBlobs) else { continue }
             archived.ordinaryManifestNamedSource = parsed.ordinaryManifestNamedSource
             let regions = Dictionary(grouping: parsed.units.indices, by: { parsed.units[$0].region })

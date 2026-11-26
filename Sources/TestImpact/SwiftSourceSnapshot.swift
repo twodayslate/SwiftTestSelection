@@ -83,6 +83,8 @@ public struct SourceUnit: Codable, Sendable {
     /// token without leaving a written call or a surviving SIL reference.
     var builderLocations: [String: String]? = nil
 
+    var qualifiedSourcePath: String { key.prefix(while: { $0 != ":" }) + ":" + region.path }
+
     func builderFingerprint(_ kinds: Set<String>) -> String {
         guard let builderLocations, !builderLocations.isEmpty, !kinds.isEmpty else { return "" }
         return kinds.sorted().compactMap { kind in
@@ -201,10 +203,39 @@ public struct SourceUnit: Codable, Sendable {
 }
 
 public struct SwiftSourceSnapshot: Codable, Sendable {
+    /// Older graphs stored a bare path. The units must agree on its module
+    /// before that path can identify a physical parser input.
+    func sourceIdentity(storedAs key: String) -> (module: String, path: String)? {
+        if let unit = units.first, key == unit.region.path {
+            let module = unit.key.prefix { $0 != ":" }
+            guard units.allSatisfy({ $0.region.path == key && $0.key.prefix(while: { $0 != ":" }) == module }) else { return nil }
+            return (String(module), key)
+        }
+        guard let separator = key.firstIndex(of: ":") else { return nil }
+        return (String(key[..<separator]), String(key[key.index(after: separator)...]))
+    }
+
+    static func identicalPositionInputs(_ before: [String: Self], _ after: [String: Self]) -> Set<String> {
+        func identities(_ sources: [String: Self]) -> [String: Set<String>] {
+            var files: [String: Set<String>] = [:]
+            for (key, file) in sources {
+                guard let id = file.sourceIdentity(storedAs: key) else { continue }
+                let name = id.module + ":" + id.path
+                // Ambiguous duplicate records cannot authenticate a comparison.
+                files[name] = files[name] == nil ? file.sourceBlobIDs ?? [] : []
+            }
+            return files
+        }
+        let base = identities(before)
+        return Set(identities(after).compactMap { key, blobs in
+            base[key]?.isDisjoint(with: blobs) == false ? key : nil
+        })
+    }
+
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 33
+    static let currentParserVersion = 34
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -512,38 +543,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 #endif
             })
         }
-        func builderLocations(_ node: Syntax) -> [String: String] {
-            var offsets = Set<Int>()
-            // An explicit return disables the transform in its own body. A return
-            // in a nested declaration, closure or inactive #if branch cannot prove that.
-            func containsReturn(_ syntax: Syntax) -> Bool {
-                if syntax.is(ReturnStmtSyntax.self) { return true }
-                if syntax.is(ClosureExprSyntax.self) || syntax.is(DeclSyntax.self) { return false }
-                return syntax.children(viewMode: .sourceAccurate).contains(where: containsReturn)
-            }
-            func candidateStatements(_ syntax: Syntax) -> CodeBlockItemListSyntax? {
-                if let closure = syntax.as(ClosureExprSyntax.self) { return closure.statements }
-                if let block = syntax.as(AccessorBlockSyntax.self) {
-                    // A shorthand getter owns these statements. An explicit accessor
-                    // list has a separate body for each get, set or observer.
-                    return block.accessors.as(CodeBlockItemListSyntax.self)
-                }
-                if let accessor = syntax.as(AccessorDeclSyntax.self) { return accessor.body?.statements }
-                // A member can inherit a builder from a protocol requirement.
-                guard let block = syntax.as(CodeBlockSyntax.self), let function = syntax.parent?.as(FunctionDeclSyntax.self),
-                      function.parent?.is(MemberBlockItemSyntax.self) == true || !function.attributes.isEmpty else { return nil }
-                return block.statements
-            }
-            func visit(_ syntax: Syntax) {
-                if let statements = candidateStatements(syntax), !containsReturn(Syntax(statements)) {
-                    offsets.formUnion(syntax.tokens(viewMode: .sourceAccurate).map { $0.positionAfterSkippingLeadingTrivia.utf8Offset })
-                } else {
-                    for child in syntax.children(viewMode: .sourceAccurate) { visit(child) }
-                }
-            }
-            visit(node)
-            return offsets.isEmpty ? [:] : locationDigest(offsets)
-        }
+        let builderBodies = ResultBuilderBodySyntax(tree, hasUnresolvedDeclarations: !declarationIssues.isEmpty)
         func callerInfo(_ node: Syntax, includeAllTokens: Bool = false) -> (locations: [String: String], names: Set<String>, direct: Bool) {
             var direct = true
             var offsets = Set<Int>()
@@ -967,7 +967,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                         }
                     }
                 })
-            unit.builderLocations = builderLocations(node)
+            let builderOffsets = builderBodies.locations(in: node)
+            unit.builderLocations = builderOffsets.isEmpty ? [:] : locationDigest(builderOffsets)
             if suiteMetadata != nil, registrationDeclaration != nil { unit.swiftTestingSuiteInputs = registrationInputs("Suite") }
             unit.swiftTestingSuiteMetadata = suiteMetadata
             unit.swiftTestingBodyCandidate = entryInputs?.bare == true && testingBodyCandidate ? true : nil

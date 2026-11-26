@@ -63,6 +63,61 @@ private struct SourceRepository {
     #expect(graph.sources[key]?.parserVersion == 4)
 }
 
+@Test(arguments: ["otherFile", "getter", "builder"])
+func savedGraphLocationComparisonAcrossParserVersions(edit: String) throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let options = XcodeConfiguration(container: .project, path: repo.root.appendingPathComponent("Fixture.xcodeproj"),
+                                     scheme: "Fixture", destination: "fixture")
+    let analysis = XcodeAnalysis(options: options)
+    var context = try analysis.artifactContext(root: repo.root)
+    context["sdkAndArchitecture"] = "fixture"
+    let path = "Helpers.swift", key = "UI:" + path
+    let entry = "UI/Suite/observes()", control = "UI/Control/unrelated()"
+    let tests = "import Testing\nstruct Suite { @Test func observes() { #expect(caller() == 2) } }\nstruct Control { @Test func unrelated() {} }"
+    let declaration = edit == "builder" ? "@B func caller() -> Int {\n    2\n\n}" :
+        "private struct Plain { var value: Int {\n    return 2\n\n} }\nfunc caller() -> Int { Plain().value }"
+    let support = "import Dispatch\n@resultBuilder enum B { static func buildExpression(_ x: Int, line: Int = #line) -> Int { line }; static func buildBlock(_ x: Int) -> Int { x } }"
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    func capture(_ helper: String, support: String) throws -> (XcodeTestGraph, String) {
+        let files = [path: helper, "Tests.swift": tests, "Support.swift": support]
+        for (path, text) in files { try repo.write(path, text) }
+        _ = try repo.git(["add", "Helpers.swift", "Tests.swift", "Support.swift"])
+        _ = try repo.git(["commit", "-qm", "source revision"])
+        let revision = try repo.git(["rev-parse", "HEAD"])
+        var graph = try boundaryGraph(files, tests: [entry, control], root: repo.root,
+                                      compilerArguments: ["-plugin-path", plugins.path], compiler: compiler)
+        graph.mappings = nil
+        graph.buildArtifact = .init(revision: revision, context: context, toolchain: "fixture", buildLogDigest: "log",
+                                    buildSettingsDigest: "settings", productsDirectory: repo.root.path,
+                                    xctestrun: "Tests.xctestrun", products: ["Tests.xctestrun": "fixture"])
+        return (graph, revision)
+    }
+    let before = try capture(declaration, support: support)
+    let after = try capture(edit == "otherFile" ? declaration :
+        declaration.replacingOccurrences(of: "\n    ", with: "\n\n    ").replacingOccurrences(of: "2\n\n}", with: "2\n}"),
+        support: edit == "otherFile" ? support + "\n// documentation" : support)
+    func legacy(_ native: XcodeTestGraph) throws -> XcodeTestGraph {
+        var graph = native
+        graph.sources[key]!.parserVersion = 32
+        for i in graph.sources[key]!.units.indices {
+            graph.sources[key]!.units[i].builderLocations = ["line": "v32 positions"]
+        }
+        return try GraphArchive.decode(GraphArchive.encode(graph))
+    }
+    let pairs = try [(legacy(before.0), after.0), (before.0, legacy(after.0))]
+    for (base, head) in pairs {
+        for barePath in [false, true] {
+            var previous = base
+            if barePath { previous.sources[path] = previous.sources.removeValue(forKey: key) }
+            let report = try analysis.select(base: before.1, head: after.1, baseGraph: previous, headGraph: head)
+            #expect(report.selectedTests == (edit == "builder" ? [entry] : []))
+            #expect(report.diagnostics.isEmpty)
+        }
+    }
+}
+
 @Test func savedReplayProjectsUnchangedConditionalCallersOfRemovedOverload() throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -288,7 +343,8 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
     #expect(report.diagnostics.contains { $0.code == "head_only_unsupported_body" })
 }
 
-@Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn", "shorthandGetter", "explicitGetter", "subscriptGetter"])
+@Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn", "shorthandGetter", "explicitGetter", "subscriptGetter",
+                  "setter", "observer", "closureBinding", "wrappedClosureBinding", "returnedClosure", "implicitMethod", "implicitGetter"])
 func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -296,16 +352,25 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let path = "Helpers.swift", key = "UI:" + path
     let before: String, after: String, support: String
     let ordinaryBodies = [
-        "explicitReturn": ("func value() -> Int { BODY }", "Plain().value()"),
-        "shorthandGetter": ("var value: Int { BODY }", "Plain().value"),
-        "explicitGetter": ("var value: Int { get { BODY } }", "Plain().value"),
-        "subscriptGetter": ("subscript(_ i: Int) -> Int { get { BODY } set {} }", "Plain()[0]")
+        "explicitReturn": ("func value() -> Int { BODY }", "Plain().value()", "return 2"),
+        "shorthandGetter": ("var value: Int { BODY }", "Plain().value", "return 2"),
+        "explicitGetter": ("var value: Int { get { BODY } }", "Plain().value", "return 2"),
+        "subscriptGetter": ("subscript(_ i: Int) -> Int { get { BODY } set {} }", "Plain()[0]", "return 2"),
+        "setter": ("var storage = 1; var value: Int { get { storage } set { BODY } }",
+                   "var p = Plain(); p.value = 2; return p.value", "storage = newValue"),
+        "observer": ("var storage = 1; var value = 0 { didSet { BODY } }",
+                     "var p = Plain(); p.value = 2; return p.storage", "storage = value"),
+        "closureBinding": ("func value() -> Int { let f: () -> Int = { BODY }; return f() }", "Plain().value()", "2"),
+        "wrappedClosureBinding": ("func value() -> Int { let f = ({ BODY }); return f() }", "Plain().value()", "2"),
+        "returnedClosure": ("func value() -> () -> Int { return { BODY } }", "Plain().value()()", "2"),
+        "implicitMethod": ("func value() -> Int { BODY }", "Plain().value()", "2"),
+        "implicitGetter": ("var value: Int { BODY }", "Plain().value", "2")
     ]
-    if let (declaration, call) = ordinaryBodies[form] {
+    if let (declaration, call, statement) = ordinaryBodies[form] {
         support = "import Dispatch"
         let source = "private struct Plain { \(declaration) }\nfunc caller() -> Int { \(call) }"
-        before = source.replacingOccurrences(of: " BODY ", with: "\n    return 2\n\n")
-        after = source.replacingOccurrences(of: " BODY ", with: "\n\n    return 2\n")
+        before = source.replacingOccurrences(of: " BODY ", with: "\n    \(statement)\n\n")
+        after = source.replacingOccurrences(of: " BODY ", with: "\n\n    \(statement)\n")
     } else if form == "trailingClosure" {
         support = "func read(line: Int = #line, _ f: () -> Int, next: () -> Int) -> Int { line }"
         before = "func caller() -> Int { read\n    { 2 } next: { 3 }\n\n}"
@@ -405,7 +470,8 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     }
 }
 
-@Test(arguments: ["function", "closure", "nestedClosure", "nestedGetterClosure", "conditionalReturn", "witness", "explicitGetWitness", "binary", "macro"])
+@Test(arguments: ["function", "closure", "nestedClosure", "nestedGetterClosure", "nestedSetterClosure", "nestedBindingClosure",
+                  "attributedSetter", "extensionWitness", "groupedArgument", "conditionalReturn", "witness", "explicitGetWitness", "binary", "macro"])
 func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -453,6 +519,17 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
         helperSource = "struct Plain { func value() -> Int { return evaluate {\n    1\n} } }\nfunc caller() -> Int { Plain().value() }"
     case "nestedGetterClosure":
         helperSource = "struct Plain { var value: Int { get { return evaluate {\n    1\n} } } }\nfunc caller() -> Int { Plain().value }"
+    case "groupedArgument":
+        helperSource = "func caller() -> Int { evaluate(({\n    1\n})) }"
+    case "nestedSetterClosure":
+        helperSource = "struct Plain { var storage = 0; var value: Int { get { storage } set { storage = evaluate {\n    1\n} } } }\nfunc caller() -> Int { var p = Plain(); p.value = 2; return p.value }"
+    case "nestedBindingClosure":
+        helperSource = "func caller() -> Int { let f: () -> Int = { evaluate {\n    1\n} }; return f() }"
+    case "attributedSetter":
+        support += "\n@resultBuilder enum SetterBuilder { static func buildExpression(_ x: Int, line: Int = #line) -> Int { line }; static func buildBlock(_ x: Int) { saved = x } }; var saved = 0"
+        helperSource = "struct Plain { var value: Int { get { saved } @SetterBuilder set {\n    1\n} } }\nfunc caller() -> Int { var p = Plain(); p.value = 2; return p.value }"
+    case "extensionWitness":
+        helperSource = "private struct Reader { var value: Int {\n    1\n} }\nextension Reader: Reading {}\nfunc caller() -> Int { Reader().value }"
     case "explicitGetWitness":
         helperSource = "struct Reader: Reading { var value: Int { get {\n    1\n} } }\nfunc caller() -> Int { Reader().value }"
     case "function": helperSource = "@LineBuilder func caller() -> Int {\n    1\n}"

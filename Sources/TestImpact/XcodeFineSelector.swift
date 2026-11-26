@@ -74,9 +74,10 @@ public enum XcodeFineSelector {
             modules: Set(current.modules.values).intersection(previous.map { Set($0.modules.values) } ?? []),
             incompleteInputs: !current.hasCompleteSwiftSourceInventory(current.sources, allowUnqualifiedPaths: true) ||
                 previous.map { !$0.hasCompleteSwiftSourceInventory($0.sources, allowUnqualifiedPaths: true) } == true, touching: touchedPaths)
-        func fingerprint(_ unit: SourceUnit) -> String {
-            unit.comparisonFingerprint(locationPolicy) + unit.builderFingerprint(builders.kinds)
-        }
+        // The module, path and source bytes completely determine source positions.
+        // On identical inputs a parser upgrade can change the encoding of those
+        // positions, but cannot change the values observed by the running code.
+        let identicalSourceFiles = previous.map { SwiftSourceSnapshot.identicalPositionInputs($0.sources, current.sources) } ?? []
         let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.comparisonUnits) ?? [], by: \.key)
         let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.comparisonUnits), by: \.key)
         let sourceUnits: [SourceUnit] = oldUnits.values.flatMap { $0 } + newUnits.values.flatMap { $0 }
@@ -110,10 +111,13 @@ public enum XcodeFineSelector {
         let callerKinds = locationPolicy == .diagnostic ? [:] : callerLocationKinds(current, units: newUnits.values.flatMap { $0 }, effects: headEffects)
             .merging(previous.map { callerLocationKinds($0, units: oldUnits.values.flatMap { $0 }, effects: baseEffects!) } ?? [:], uniquingKeysWith: { $0.union($1) })
         func comparisonFingerprint(_ unit: SourceUnit) -> String {
+            let syntax = unit.comparisonFingerprint(locationPolicy)
+            if identicalSourceFiles.contains(unit.qualifiedSourcePath) { return syntax }
+            let fingerprint = syntax + unit.builderFingerprint(builders.kinds)
             var kinds = callerKinds[unit.key] ?? []
             if locationPolicy == .diagnosticLineColumn { kinds.subtract(["line", "column"]) }
-            guard !kinds.isEmpty else { return fingerprint(unit) }
-            return fingerprint(unit) + "@caller[" + kinds.sorted().map { kind in
+            guard !kinds.isEmpty else { return fingerprint }
+            return fingerprint + "@caller[" + kinds.sorted().map { kind in
                 let value = unit.callerLocations.map { $0[kind] ?? "" }
                 return kind + ":" + (value ?? "unknown:" + unit.region.path + ":" + String(unit.region.startLine))
             }.joined(separator: "|") + "]"
