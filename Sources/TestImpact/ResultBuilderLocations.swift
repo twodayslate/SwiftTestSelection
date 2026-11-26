@@ -96,7 +96,7 @@ struct ResultBuilderBodySyntax {
         return !declaration.attributes.isEmpty || mayInheritBuilder(owner)
     }
 
-    private func closureCanUseBuilder(_ closure: ClosureExprSyntax) -> Bool {
+    private func closureCanUseBuilder(_ closure: ClosureExprSyntax, ordinaryStatements: SyntaxIdentifier?) -> Bool {
         // A plain variable initializer has no builder-annotated parameter.
         // Wrappers and member-attribute macros can supply a different initializer.
         guard closure.signature?.attributes.isEmpty != false else { return true }
@@ -105,6 +105,11 @@ struct ResultBuilderBodySyntax {
               let tuple = element.parent?.parent?.as(TupleExprSyntax.self),
               tuple.elements.count == 1, element.label == nil, element.trailingComma == nil {
             expression = Syntax(tuple)
+        }
+        // A builder can pass this expression to a builder-annotated
+        // buildExpression parameter. An ordinary body returns or discards it.
+        if let ordinaryStatements, expression.parent?.as(CodeBlockItemSyntax.self)?.parent?.id == ordinaryStatements {
+            return false
         }
         if expression.parent?.is(ReturnStmtSyntax.self) == true ||
             expression.parent?.as(FunctionCallExprSyntax.self)?.calledExpression.id == expression.id { return false }
@@ -121,9 +126,9 @@ struct ResultBuilderBodySyntax {
         return false
     }
 
-    private func body(_ syntax: Syntax) -> (statements: CodeBlockItemListSyntax, eligible: Bool)? {
+    private func body(_ syntax: Syntax, ordinaryStatements: SyntaxIdentifier?) -> (statements: CodeBlockItemListSyntax, eligible: Bool)? {
         if let closure = syntax.as(ClosureExprSyntax.self) {
-            return (closure.statements, closureCanUseBuilder(closure))
+            return (closure.statements, closureCanUseBuilder(closure, ordinaryStatements: ordinaryStatements))
         }
         if let accessors = syntax.as(AccessorBlockSyntax.self),
            let getter = accessors.accessors.as(CodeBlockItemListSyntax.self) {
@@ -157,23 +162,26 @@ struct ResultBuilderBodySyntax {
 
     func locations(in node: Syntax) -> Set<Int> {
         var offsets = Set<Int>()
-        func visit(_ syntax: Syntax, recording: Bool) {
+        func visit(_ syntax: Syntax, recording: Bool, ordinaryStatements: SyntaxIdentifier?) {
             if let token = syntax.as(TokenSyntax.self) {
                 if recording { offsets.insert(token.positionAfterSkippingLeadingTrivia.utf8Offset) }
                 return
             }
-            if let body = body(syntax) {
+            if let body = body(syntax, ordinaryStatements: ordinaryStatements) {
                 let transformed = body.eligible && !containsReturn(Syntax(body.statements))
                 for child in syntax.children(viewMode: .sourceAccurate) {
                     // The enclosing builder can use the boundaries of a nested
                     // expression. Only the nested builder owns its statements.
-                    visit(child, recording: transformed || (recording && child.id != body.statements.id))
+                    visit(child, recording: transformed || (recording && child.id != body.statements.id),
+                          ordinaryStatements: transformed ? nil : body.statements.id)
                 }
             } else {
-                for child in syntax.children(viewMode: .sourceAccurate) { visit(child, recording: recording) }
+                for child in syntax.children(viewMode: .sourceAccurate) {
+                    visit(child, recording: recording, ordinaryStatements: ordinaryStatements)
+                }
             }
         }
-        visit(node, recording: false)
+        visit(node, recording: false, ordinaryStatements: nil)
         return offsets
     }
 }

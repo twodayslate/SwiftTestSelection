@@ -344,7 +344,7 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
 }
 
 @Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn", "shorthandGetter", "explicitGetter", "subscriptGetter",
-                  "setter", "observer", "closureBinding", "wrappedClosureBinding", "returnedClosure", "implicitMethod", "implicitGetter"])
+                  "setter", "observer", "closureBinding", "wrappedClosureBinding", "returnedClosure", "implicitlyReturnedClosure", "implicitMethod", "implicitGetter"])
 func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -363,6 +363,7 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         "closureBinding": ("func value() -> Int { let f: () -> Int = { BODY }; return f() }", "Plain().value()", "2"),
         "wrappedClosureBinding": ("func value() -> Int { let f = ({ BODY }); return f() }", "Plain().value()", "2"),
         "returnedClosure": ("func value() -> () -> Int { return { BODY } }", "Plain().value()()", "2"),
+        "implicitlyReturnedClosure": ("func value() -> () -> Int { ({ BODY }) }", "Plain().value()()", "2"),
         "implicitMethod": ("func value() -> Int { BODY }", "Plain().value()", "2"),
         "implicitGetter": ("var value: Int { BODY }", "Plain().value", "2")
     ]
@@ -471,7 +472,7 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
 }
 
 @Test(arguments: ["function", "closure", "nestedClosure", "nestedGetterClosure", "nestedSetterClosure", "nestedBindingClosure",
-                  "attributedSetter", "extensionWitness", "groupedArgument", "conditionalReturn", "witness", "explicitGetWitness", "binary", "macro"])
+                  "attributedSetter", "extensionWitness", "groupedArgument", "builderExpressionClosure", "conditionalReturn", "witness", "explicitGetWitness", "binary", "macro"])
 func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -521,6 +522,9 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
         helperSource = "struct Plain { var value: Int { get { return evaluate {\n    1\n} } } }\nfunc caller() -> Int { Plain().value }"
     case "groupedArgument":
         helperSource = "func caller() -> Int { evaluate(({\n    1\n})) }"
+    case "builderExpressionClosure":
+        support += "\n@resultBuilder enum Outer { static func buildExpression(@LineBuilder _ f: () -> Int) -> Int { f() }; static func buildBlock(_ x: Int) -> Int { x } }"
+        helperSource = "@Outer func caller() -> Int {\n    {\n    1\n    }\n}"
     case "nestedSetterClosure":
         helperSource = "struct Plain { var storage = 0; var value: Int { get { storage } set { storage = evaluate {\n    1\n} } } }\nfunc caller() -> Int { var p = Plain(); p.value = 2; return p.value }"
     case "nestedBindingClosure":
