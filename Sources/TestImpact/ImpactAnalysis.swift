@@ -66,8 +66,8 @@ public struct ImpactAnalysis {
             let relative = String(packagePath.path.dropFirst(root.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             executionPackage = relative.isEmpty ? temporary : temporary.appendingPathComponent(relative)
         }
-        let result = try CommandRunner.run("swift", [
-            "test", "--package-path", executionPackage.path,
+        let result = try CommandRunner.run("swift", ["test"] + PackageAnalyzer.buildSystemArguments + [
+            "--package-path", executionPackage.path,
             "--scratch-path", executionPackage.appendingPathComponent(".build/test-impact").path,
             "--filter", filter
         ], at: executionPackage, allowFailure: true)

@@ -14,13 +14,16 @@ public struct PackageAnalyzer {
         self.progress = progress
     }
 
+    // The compiler command inventory in description.json comes from SwiftPM's native engine.
+    static let buildSystemArguments = ["--build-system", "native"]
+
     public func analyze() throws -> DependencyGraph {
         let fm = FileManager.default
         guard fm.fileExists(atPath: packagePath.appendingPathComponent("Package.swift").path) else {
             throw ImpactError("No Package.swift at \(packagePath.path). This version analyzes SwiftPM packages.")
         }
         let scratch = packagePath.appendingPathComponent(".build/test-impact")
-        let common = ["--package-path", packagePath.path, "--scratch-path", scratch.path, "-c", "debug"]
+        let common = Self.buildSystemArguments + ["--package-path", packagePath.path, "--scratch-path", scratch.path, "-c", "debug"]
         progress("Building package and tests (test bodies are not executed)…")
         _ = try CommandRunner.run("swift", ["build"] + common + ["--build-tests", "-Xswiftc", "-g"], at: packagePath)
         let binPath = try CommandRunner.run("swift", ["build"] + common + ["--show-bin-path"], at: packagePath).text
