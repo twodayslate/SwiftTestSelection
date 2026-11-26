@@ -160,8 +160,13 @@ public struct SourceUnit: Codable, Sendable {
     /// Whether this subscript can compete with the SDK identifier getter.
     public var subscriptAcceptsSingleUnlabeledArgument: Bool? = nil
 
-    var containsStringInterpolation: Bool {
-        (syntaxFingerprint ?? fingerprint).contains("expressionSegment[")
+    /// Older archives retain the trivia-free syntax tree even when the caller
+    /// digest omits an invocation. A call without parentheses has its argument
+    /// list immediately followed by the first trailing closure.
+    func needsCallerLocationRefresh(version: Int, verifiedInterpolation: Bool) -> Bool {
+        let syntax = syntaxFingerprint ?? fingerprint
+        return version < 29 && !verifiedInterpolation && syntax.contains("expressionSegment[") ||
+            version < 32 && (syntax.contains("keyPathSubscriptComponent[") || syntax.contains("|labeledExprList[]|closureExpr["))
     }
 
     func hasUnverifiedCompilerLocation(in physicalModules: Set<String>) -> Bool {
@@ -199,7 +204,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 31
+    static let currentParserVersion = 32
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -210,6 +215,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     var xctestDiscoveryCases: [XCTestDiscoveryCase]? = nil
     var ordinaryManifestNamedSource: Bool? = nil
     var hasVerifiedInterpolationLocations: Bool? = nil
+    var hasVerifiedInvocationLocations: Bool? = nil
     public var parserVersion: Int? = nil
     /// A legacy capture can recover branch membership from the exact Git blob.
     var hasVerifiedConditionalMembership: Bool? = nil
@@ -227,14 +233,15 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         })
     }
 
-    var lacksInterpolationLocations: Bool {
-        (parserVersion ?? 0) < 29 && hasVerifiedInterpolationLocations != true && units.contains(where: \.containsStringInterpolation)
-    }
-
-    static func legacyInterpolationPaths(in sources: [String: Self], touching paths: Set<String>) -> Set<String> {
+    static func legacyCallerLocationPaths(in sources: [String: Self], touching paths: Set<String>) -> Set<String> {
         Set(sources.values.compactMap { file in
-            guard let path = file.units.first?.region.path, paths.contains(path), file.lacksInterpolationLocations else { return nil }
-            return path
+            let version = file.parserVersion ?? 0
+            guard version < 32, file.hasVerifiedInvocationLocations != true,
+                  let path = file.units.first?.region.path, paths.contains(path) else { return nil }
+            let missing = file.units.contains {
+                $0.needsCallerLocationRefresh(version: version, verifiedInterpolation: file.hasVerifiedInterpolationLocations == true)
+            }
+            return missing ? path : nil
         })
     }
 
@@ -507,14 +514,25 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         }
         func builderLocations(_ node: Syntax) -> [String: String] {
             var offsets = Set<Int>()
+            // An explicit return disables the transform in its own body. A return
+            // in a nested declaration, closure or inactive #if branch cannot prove that.
+            func containsReturn(_ syntax: Syntax) -> Bool {
+                if syntax.is(ReturnStmtSyntax.self) { return true }
+                if syntax.is(ClosureExprSyntax.self) || syntax.is(DeclSyntax.self) { return false }
+                return syntax.children(viewMode: .sourceAccurate).contains(where: containsReturn)
+            }
             func visit(_ syntax: Syntax) {
-                // A member can inherit a builder from a protocol requirement.
-                // A closure can receive one from the callee's parameter, and
-                // nested declarations can carry their own builder attribute.
-                let function = syntax.parent?.as(FunctionDeclSyntax.self)
-                let builderBody = syntax.is(CodeBlockSyntax.self) &&
-                    (function?.parent?.is(MemberBlockItemSyntax.self) == true || function?.attributes.isEmpty == false)
-                if builderBody || syntax.is(ClosureExprSyntax.self) || syntax.is(AccessorBlockSyntax.self) {
+                let candidate: Bool
+                if let block = syntax.as(CodeBlockSyntax.self), let function = syntax.parent?.as(FunctionDeclSyntax.self) {
+                    // A member can inherit a builder from a protocol requirement.
+                    candidate = (function.parent?.is(MemberBlockItemSyntax.self) == true || !function.attributes.isEmpty) &&
+                        !containsReturn(Syntax(block.statements))
+                } else if let closure = syntax.as(ClosureExprSyntax.self) {
+                    candidate = !containsReturn(Syntax(closure.statements))
+                } else {
+                    candidate = syntax.is(AccessorBlockSyntax.self)
+                }
+                if candidate {
                     offsets.formUnion(syntax.tokens(viewMode: .sourceAccurate).map { $0.positionAfterSkippingLeadingTrivia.utf8Offset })
                 } else {
                     for child in syntax.children(viewMode: .sourceAccurate) { visit(child) }
@@ -543,7 +561,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                         direct = false
                     }
                     record(call.calledExpression.tokens(viewMode: .sourceAccurate))
-                    for token in [call.leftParen, call.rightParen].compactMap({ $0 }) {
+                    // Without an argument clause Swift supplies defaults at the
+                    // first trailing closure's opening brace, including multi-closure calls.
+                    let start = call.leftParen ?? call.trailingClosure?.leftBrace
+                    for token in [start, call.rightParen].compactMap({ $0 }) {
                         offsets.insert(token.positionAfterSkippingLeadingTrivia.utf8Offset)
                     }
                 } else if let segment = node.as(ExpressionSegmentSyntax.self) {
@@ -558,6 +579,11 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     record(call.calledExpression.tokens(viewMode: .sourceAccurate))
                     offsets.insert(call.leftSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
                     offsets.insert(call.rightSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
+                } else if let component = node.as(KeyPathSubscriptComponentSyntax.self) {
+                    // The key path captures default arguments when constructed.
+                    direct = false
+                    names.insert("subscript")
+                    offsets.insert(component.leftSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
                 } else if let attribute = node.as(AttributeSyntax.self) {
                     direct = false
                     names.insert(attribute.attributeName.trimmedDescription)

@@ -288,18 +288,32 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
     #expect(report.diagnostics.contains { $0.code == "head_only_unsupported_body" })
 }
 
-@Test func inlinedStringInterpolationRetainsItsCallerLocation() throws {
+@Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn"])
+func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
     let entry = "UI/Suite/observes()", control = "UI/Control/unrelated()"
     let path = "Helpers.swift", key = "UI:" + path
-    let before = "func pass(_ value: Output) -> Int { value.line }" + "\n" + #"func caller() -> Int { pass("\(2)") }"#
-    let after = "\n" + before
-    try repo.write(path, before)
-    let base = try repo.commit()
-    try repo.write(path, after)
-    let head = try repo.commit()
-    let support = """
+    let before: String, after: String, support: String
+    switch form {
+    case "trailingClosure":
+        support = "func read(line: Int = #line, _ f: () -> Int, next: () -> Int) -> Int { line }"
+        before = "func caller() -> Int { read\n    { 2 } next: { 3 }\n\n}"
+        after = "func caller() -> Int { read\n\n    { 2 } next: { 3 }\n}"
+    case "keyPathSubscript":
+        support = "struct Source { subscript(_ i: Int, line: Int = #line) -> Int { line } }"
+        let literal = #"    let path = \Source.[0]"#
+        let apply = "    return Source()[keyPath: path]\n}"
+        before = "func caller() -> Int {\n" + literal + "\n\n" + apply
+        after = "func caller() -> Int {\n\n" + literal + "\n" + apply
+    case "explicitReturn":
+        support = "import Dispatch"
+        before = "private struct Plain { func value() -> Int {\n    return 2\n\n} }\nfunc caller() -> Int { Plain().value() }"
+        after = before.replacingOccurrences(of: "    return 2\n\n", with: "\n    return 2\n")
+    default:
+        before = "func pass(_ value: Output) -> Int { value.line }" + "\n" + #"func caller() -> Int { pass("\(2)") }"#
+        after = "\n" + before
+        support = """
         struct Output: ExpressibleByStringInterpolation {
             struct Builder: StringInterpolationProtocol {
                 var line: Int
@@ -312,7 +326,14 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
             @_transparent init(stringInterpolation: Builder) { line = stringInterpolation.line }
         }
         """
+    }
     let tests = "import Testing\nstruct Suite { @Test func observes() { #expect(caller() == 2) } }\nstruct Control { @Test func unrelated() {} }"
+    try repo.write("Support.swift", support)
+    try repo.write("Tests.swift", tests)
+    try repo.write(path, before)
+    let base = try repo.commit()
+    try repo.write(path, after)
+    let head = try repo.commit()
     let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
     func capture(_ text: String) throws -> XcodeTestGraph {
@@ -323,37 +344,60 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
     }
     let previous = try capture(before), current = try capture(after)
     let changes = try GitChanges.readComparison(base: base, head: head, at: repo.root)
-    func reports(_ graph: XcodeTestGraph) -> [ImpactReport] {
-        [XcodeFineSelector.select(current: graph, previous: previous, changes: changes, baseRevision: base),
-         XcodeHeadOnlySelector.select(current: graph, source: .init(base: previous.sources), changes: changes, baseRevision: base)]
+    func reports(_ graph: XcodeTestGraph) throws -> [ImpactReport] {
+        let source = try XcodeHeadOnlySources.read(current: graph, changes: changes, base: base, root: repo.root, mappingPath: "mapping.json")
+        return [XcodeFineSelector.select(current: graph, previous: previous, changes: changes, baseRevision: base),
+                XcodeHeadOnlySelector.select(current: graph, source: source, changes: changes, baseRevision: base)]
     }
     let index = try #require(current.sources[key]?.units.firstIndex { $0.helperCallableName == "caller" })
     let caller = try #require(current.sources[key]?.units[index])
-    #expect(caller.invocationNames == ["pass", "appendInterpolation"])
-    #expect(caller.hasOnlyDirectSourceCalls != true)
-    for report in reports(current) {
-        #expect(report.selectedTests.contains(entry))
-        #expect(!report.ignoredChanges.contains(path))
+    if form == "interpolation" {
+        #expect(caller.invocationNames == ["pass", "appendInterpolation"])
+        #expect(caller.hasOnlyDirectSourceCalls != true)
+    }
+    if form == "keyPathSubscript" {
+        #expect(caller.invocationNames?.contains("subscript") == true)
+        #expect(caller.hasOnlyDirectSourceCalls != true)
+    }
+    for report in try reports(current) {
+        if form == "explicitReturn" {
+            #expect(report.selectedTests.isEmpty)
+            #expect(report.ignoredChanges.contains(path))
+        } else {
+            #expect(report.selectedTests.contains(entry))
+            #expect(!report.ignoredChanges.contains(path))
+        }
+        #expect(report.diagnostics.isEmpty)
     }
     var legacy = current
-    legacy.sources[key]?.parserVersion = 28
+    legacy.sources[key]?.parserVersion = form == "interpolation" ? 28 : 31
+    if form == "explicitReturn" {
+        let method = try #require(current.sources[key]?.units.firstIndex { $0.helperCallableName == "value" })
+        legacy.sources[key]?.units[method].builderLocations = ["line": "legacy method body"]
+        try legacy.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
+        #expect(legacy.sources[key]?.units[method].builderLocations == [:])
+        for report in try reports(legacy) { #expect(report.selectedTests.isEmpty) }
+        return
+    }
     legacy.sources[key]?.units[index].hasOnlyDirectSourceCalls = true
     legacy.sources[key]?.units[index].invocationNames = ["pass"]
     legacy.sources[key]?.units[index].callerLocations = [:]
     legacy = try GraphArchive.decode(GraphArchive.encode(legacy))
-    for report in reports(legacy) {
+    for report in try reports(legacy) {
         #expect(report.selectedTests.contains(entry))
         #expect(report.diagnostics.contains { $0.code == "incomplete_caller_locations" })
     }
     try legacy.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
     #expect(legacy.sources[key]?.units[index].callerLocations == caller.callerLocations)
-    for report in reports(legacy) {
+    #expect(legacy.sources[key]?.units[index].invocationNames == caller.invocationNames)
+    #expect(legacy.sources[key]?.units[index].hasOnlyDirectSourceCalls == caller.hasOnlyDirectSourceCalls)
+    for report in try reports(legacy) {
         #expect(report.selectedTests.contains(entry))
         #expect(!report.diagnostics.contains { $0.code == "incomplete_caller_locations" })
     }
 }
 
-@Test(arguments: ["function", "closure", "witness", "binary", "macro"])
+@Test(arguments: ["function", "closure", "nestedClosure", "conditionalReturn", "witness", "binary", "macro"])
 func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -395,13 +439,17 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
         linkArguments = [library.appendingPathComponent("libBuilderKit.a").path]
         support = ""
         before = "import BuilderKit\n@LineBuilder func caller() -> Int {\n    1\n}"
+    case "conditionalReturn":
+        before = "@LineBuilder func caller() -> Int {\n#if NEVER_DEFINED\nreturn 0\n#endif\n    1\n}"
+    case "nestedClosure":
+        before = "struct Plain { func value() -> Int { return evaluate {\n    1\n} } }\nfunc caller() -> Int { Plain().value() }"
     case "function": before = "@LineBuilder func caller() -> Int {\n    1\n}"
     case "closure": before = "func caller() -> Int { evaluate {\n    1\n} }"
     default: before = "struct Reader: Reading { var value: Int {\n    1\n} }\nfunc caller() -> Int { Reader().value }"
     }
     let after = before.replacingOccurrences(of: "    1", with: "\n    1")
     let entry = "UI/Suite/observes()", control = "UI/Control/unrelated()"
-    let expected = form == "binary" ? 3 : 2
+    let expected = try #require(before.components(separatedBy: "\n").firstIndex(of: "    1")) + 1
     let tests = "import Testing\nstruct Suite { @Test func observes() { #expect(caller() == \(expected)) } }\nstruct Control { @Test func unrelated() {} }"
     try repo.write("Support.swift", support)
     try repo.write("Tests.swift", tests)

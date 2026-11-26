@@ -337,11 +337,11 @@ enum XcodeHeadOnlySelector {
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
         semanticPaths.formUnion(registrations.semanticPaths)
         if comparison.locationPolicy != .diagnostic {
-            let incomplete = SwiftSourceSnapshot.legacyInterpolationPaths(in: current.sources, touching: paths)
-                .union(SwiftSourceSnapshot.legacyInterpolationPaths(in: source.base, touching: paths))
+            let incomplete = SwiftSourceSnapshot.legacyCallerLocationPaths(in: current.sources, touching: paths)
+                .union(SwiftSourceSnapshot.legacyCallerLocationPaths(in: source.base, touching: paths))
             if !incomplete.isEmpty {
                 semanticPaths.formUnion(incomplete)
-                fallback("incomplete_caller_locations", "Saved snapshots lack interpolation caller locations for " + incomplete.sorted().joined(separator: ", ") + ". Recapture the graph.")
+                fallback("incomplete_caller_locations", "Saved snapshots lack invocation locations for " + incomplete.sorted().joined(separator: ", ") + ". Recapture the graph.")
             }
         }
         if !builders.incompletePaths.isEmpty {

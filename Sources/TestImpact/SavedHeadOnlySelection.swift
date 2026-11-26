@@ -86,7 +86,8 @@ extension XcodeTestGraph {
     /// captures lack conditional membership (before v5) or physical caller
     /// coordinates (before v11), or missed equivalent @Test spellings (before
     /// v28), implicit interpolation calls (before v29), or result-builder sites
-    /// (before v30). Recover source facts
+    /// (before v30). Before v32 key-path subscripts and calls with only trailing
+    /// closures omitted the location supplying their defaults. Recover source facts
     /// only from the authenticated Git blob.
     mutating func refreshLegacyComparisonSyntax(paths: Set<String>, revision: String, root: URL) throws {
         var cache: XcodeBaseSourceCache?
@@ -103,13 +104,14 @@ extension XcodeTestGraph {
             archived.ordinaryManifestNamedSource = parsed.ordinaryManifestNamedSource
             let regions = Dictionary(grouping: parsed.units.indices, by: { parsed.units[$0].region })
             var matched = Set<Int>()
-            var restoredInterpolations = true
+            var restoredInvocations = true
             var builderMatches = Set<Int>()
             for index in archived.units.indices {
                 let unit = archived.units[index]
+                let refreshCalls = unit.needsCallerLocationRefresh(version: version, verifiedInterpolation: archived.hasVerifiedInterpolationLocations == true)
                 let matches = regions[unit.region]?.filter { parsed.units[$0].key == unit.key }
                 guard let matches, matches.count == 1, let match = matches.first else {
-                    if unit.containsStringInterpolation { restoredInterpolations = false }
+                    if refreshCalls { restoredInvocations = false }
                     continue
                 }
                 let native = parsed.units[match]
@@ -120,8 +122,9 @@ extension XcodeTestGraph {
                     archived.units[index].conditionalBranch = native.conditionalBranch
                     matched.insert(match)
                 }
-                if unit.containsStringInterpolation {
+                if refreshCalls {
                     archived.units[index].callerLocations = native.callerLocations
+                    archived.units[index].swiftTestingArguments = native.swiftTestingArguments
                     archived.units[index].invocationNames = native.invocationNames
                     archived.units[index].hasOnlyDirectSourceCalls = native.hasOnlyDirectSourceCalls
                 }
@@ -133,7 +136,7 @@ extension XcodeTestGraph {
             if builderMatches.count != parsed.units.count || builderMatches.count != archived.units.count {
                 for index in archived.units.indices { archived.units[index].builderLocations = nil }
             }
-            archived.hasVerifiedInterpolationLocations = restoredInterpolations
+            archived.hasVerifiedInvocationLocations = restoredInvocations
             if version < 5, matched.count == parsed.units.count, matched.count == archived.units.count {
                 archived.hasVerifiedConditionalMembership = true
             }

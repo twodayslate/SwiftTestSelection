@@ -96,14 +96,14 @@ public enum XcodeFineSelector {
         // and dependency edges can both stay identical while that value changes.
         // Match source invocations as well as compiler edges: transparent helpers
         // and enum constructors can lose their call edges even under -Onone.
-        let legacyInterpolationPaths = locationPolicy == .diagnostic ? [] :
-            SwiftSourceSnapshot.legacyInterpolationPaths(in: current.sources, touching: touchedPaths)
-                .union(SwiftSourceSnapshot.legacyInterpolationPaths(in: previous?.sources ?? [:], touching: touchedPaths))
+        let legacyCallerLocationPaths = locationPolicy == .diagnostic ? [] :
+            SwiftSourceSnapshot.legacyCallerLocationPaths(in: current.sources, touching: touchedPaths)
+                .union(SwiftSourceSnapshot.legacyCallerLocationPaths(in: previous?.sources ?? [:], touching: touchedPaths))
         if !builders.incompletePaths.isEmpty {
             fallback("incomplete_caller_locations", "Saved snapshots lack result-builder locations for " + builders.incompletePaths.sorted().joined(separator: ", ") + ". Regenerate both graphs.")
         }
-        if !legacyInterpolationPaths.isEmpty {
-            fallback("incomplete_caller_locations", "Saved snapshots lack interpolation caller locations for " + legacyInterpolationPaths.sorted().joined(separator: ", ") + ". Regenerate both graphs.")
+        if !legacyCallerLocationPaths.isEmpty {
+            fallback("incomplete_caller_locations", "Saved snapshots lack invocation locations for " + legacyCallerLocationPaths.sorted().joined(separator: ", ") + ". Regenerate both graphs.")
         }
         let headEffects = SwiftTestingSourceEffects(current, touching: touchedPaths)
         let baseEffects = previous.map { SwiftTestingSourceEffects($0, touching: touchedPaths) }
@@ -356,7 +356,7 @@ public enum XcodeFineSelector {
                 fallback("generated_input_changed", "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for \(module).")
             }
         }
-        let semanticPaths = legacyConditionalPaths.union(legacyInterpolationPaths).union(builders.incompletePaths).union(registrations.semanticPaths)
+        let semanticPaths = legacyConditionalPaths.union(legacyCallerLocationPaths).union(builders.incompletePaths).union(registrations.semanticPaths)
             .union((oldChanged + newChanged).map { $0.region.path })
         let analyzedPaths = Set((Array(current.sources.keys) + Array(previous?.sources.keys ?? [:].keys)).compactMap { key in
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) }
