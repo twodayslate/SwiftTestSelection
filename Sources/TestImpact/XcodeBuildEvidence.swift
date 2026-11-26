@@ -412,7 +412,7 @@ struct XcodeBuildEvidence {
                 let values = try file.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                 if values.isSymbolicLink == true { throw ImpactError("Generated input validation does not support repository symlinks") }
                 if values.isDirectory == true { try walk(file, prefix: prefix + file.lastPathComponent + "/") }
-                else if file.pathExtension != "swift" || file.lastPathComponent == "Package.swift" {
+                else if !FileChange.isSwiftImplementation(file.lastPathComponent) {
                     result[prefix + file.lastPathComponent] = try ArtifactFiles.digest(file)
                 }
             }

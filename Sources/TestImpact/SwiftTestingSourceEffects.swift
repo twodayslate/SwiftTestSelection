@@ -20,44 +20,48 @@ struct SwiftTestingSourceEffects {
     init(_ snapshot: XcodeTestGraph, touching paths: Set<String>, historical: [String: SwiftSourceSnapshot]? = nil,
          unowned: [String: SwiftSourceSnapshot] = [:], hasAuditedCallerInputs: Bool = true) {
         guard snapshot.dependencies != nil else { return }
-        unusedInline = Self.unusedBodies(snapshot.sources, in: snapshot, touching: paths, unowned: [:], exactRevision: historical == nil)
+        unusedInline = Self.unusedBodies(snapshot.sources, in: snapshot, touching: paths, unowned: [:],
+                                       exactRevision: historical == nil, auditedCallers: hasAuditedCallerInputs)
         if let historical {
-            unusedInline.formIntersection(Self.unusedBodies(historical, in: snapshot, touching: paths, unowned: unowned, exactRevision: false))
+            unusedInline.formIntersection(Self.unusedBodies(historical, in: snapshot, touching: paths, unowned: unowned,
+                                                         exactRevision: false, auditedCallers: hasAuditedCallerInputs))
         }
 
         if hasAuditedCallerInputs {
-            positionIndependent = Self.positionIndependentCallers(snapshot, touching: paths, historical: historical, unowned: unowned)
+            let callers = Self.boundCallers(snapshot, touching: paths, historical: historical, unowned: unowned)
+            if !callers.isEmpty, historical.map({ Self.hasStableLookupInputs(snapshot, historical: $0, touching: paths) }) ?? true {
+                positionIndependent = callers
+            }
         }
     }
 
-    static func positionIndependentCallers(_ snapshot: XcodeTestGraph, touching paths: Set<String>,
-                                           historical: [String: SwiftSourceSnapshot]?, unowned: [String: SwiftSourceSnapshot] = [:]) -> Set<Declaration> {
+    private static func hasStableLookupInputs(_ snapshot: XcodeTestGraph, historical: [String: SwiftSourceSnapshot],
+                                              touching paths: Set<String>) -> Bool {
+        guard historical.keys == snapshot.sources.keys else { return false }
+        // A typealias, inferred type, import or conformance elsewhere can change
+        // overload resolution even if the caller and callee headers are identical.
+        for (key, head) in snapshot.sources {
+            guard let base = historical[key], base.diagnostics.isEmpty, head.diagnostics.isEmpty else { return false }
+            if let blobs = head.sourceBlobIDs, base.sourceBlobIDs?.isDisjoint(with: blobs) == false { continue }
+            guard let path = head.units.first?.region.path, paths.contains(path),
+                  head.helperDeclarationsComplete == true, base.helperDeclarationsComplete == true,
+                  head.units.elementsEqual(base.units, by: {
+                      $0.key == $1.key && $0.conditionalBranch == $1.conditionalBranch &&
+                          ($0.syntaxFingerprint ?? $0.fingerprint) == ($1.syntaxFingerprint ?? $1.fingerprint)
+                  }) else { return false }
+        }
+        return true
+    }
+
+    static func boundCallers(_ snapshot: XcodeTestGraph, touching paths: Set<String>,
+                             historical: [String: SwiftSourceSnapshot]?, unowned: [String: SwiftSourceSnapshot] = [:]) -> Set<Declaration> {
         guard let graph = snapshot.dependencies, graph.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil else { return [] }
         let candidates = snapshot.sources.filter {
             guard let path = $0.value.units.first?.region.path, paths.contains(path) else { return false }
             return $0.value.units.contains { $0.hasOnlyDirectSourceCalls == true }
         }
         guard !candidates.isEmpty else { return [] }
-        // With no historical SIL, a competing overload in uninspected input
-        // could have supplied a caller-location default in the base build.
-        if let historical {
-            guard snapshot.hasCompleteSwiftSourceInventory(snapshot.sources),
-                  historical.keys == snapshot.sources.keys else { return [] }
-            // Even an unchanged function header can bind differently after an edit
-            // to a typealias, inferred type, import, or conformance in another file.
-            // Reuse the head binding only across identical inputs or a trivia edit
-            // in the inspected files whose complete declaration syntax is stable.
-            for (key, head) in snapshot.sources {
-                guard let base = historical[key], base.diagnostics.isEmpty, head.diagnostics.isEmpty else { return [] }
-                if let blobs = head.sourceBlobIDs, base.sourceBlobIDs?.isDisjoint(with: blobs) == false { continue }
-                guard let path = head.units.first?.region.path, paths.contains(path),
-                      head.helperDeclarationsComplete == true, base.helperDeclarationsComplete == true,
-                      head.units.elementsEqual(base.units, by: {
-                          $0.key == $1.key && $0.conditionalBranch == $1.conditionalBranch &&
-                              ($0.syntaxFingerprint ?? $0.fingerprint) == ($1.syntaxFingerprint ?? $1.fingerprint)
-                      }) else { return [] }
-            }
-        }
+        if historical != nil, !snapshot.hasCompleteSwiftSourceInventory(snapshot.sources) { return [] }
         // An unowned base file might previously have contributed an overload.
         // Only top-level bindings in a closed file participate in lookup.
         var unownedNames = Set<String>()
@@ -138,7 +142,7 @@ struct SwiftTestingSourceEffects {
     }
 
     private static func unusedBodies(_ sources: [String: SwiftSourceSnapshot], in snapshot: XcodeTestGraph, touching paths: Set<String>,
-                                     unowned: [String: SwiftSourceSnapshot], exactRevision: Bool) -> Set<Declaration> {
+                                     unowned: [String: SwiftSourceSnapshot], exactRevision: Bool, auditedCallers: Bool) -> Set<Declaration> {
         // An expansion in the declaring file could call the function without a
         // written identifier. Internal functions can also be called by other files.
         let hasDiscovery = snapshot.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil
@@ -175,6 +179,9 @@ struct SwiftTestingSourceEffects {
             for unit in named {
                 if unit.fileProvesUnusedInline == true {
                     unused.insert(Declaration(unit))
+                } else if !auditedCallers {
+                    // Macro bindings and other compilation inputs can differ at base.
+                    continue
                 } else if unit.filePrivateInlineWithTests == true {
                     if hasDiscovery && authenticatedTests { unused.insert(Declaration(unit)) }
                 } else if exactRevision || hasDiscovery {

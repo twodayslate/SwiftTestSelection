@@ -49,7 +49,7 @@ struct HeadOnlyRuntimeSourceEvidence {
             failure = "Moved or unclassified source lacks historical ownership"
         } else { failure = nil }
         return .init(baseRevision: baseRevision, headRevision: headRevision, changedPaths: paths, sourcePaths: headPaths, regularSourcePaths: regularPaths, sourceBlobIDs: blobIDs, structuralFailure: failure,
-            buildInputPaths: paths.filter { !$0.hasSuffix(".swift") || $0 == "Package.swift" })
+            buildInputPaths: paths.filter { !FileChange.isSwiftImplementation($0) })
     }
 }
 

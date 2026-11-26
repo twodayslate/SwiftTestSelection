@@ -45,6 +45,10 @@ extension XcodeHeadOnlySelector {
         let sourceCache = try sourceCache ?? XcodeBaseSourceCache(root: root, base: baseRevision)
         try sourceCache.validate(root: root, base: baseRevision)
         let changedPaths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+        let compiledSources = Set(current.targets.flatMap { target -> [String] in
+            guard let module = current.modules[target.name] else { return [] }
+            return target.sourceFiles.filter { FileChange.isSwiftImplementation($0) && current.sources[module + ":" + $0] != nil }
+        })
         return try requests.scopes.map { scope in
             guard Set(scope.paths).isSubset(of: changedPaths), Set(scope.excludedTestEntries).isSubset(of: Set(current.tests)) else {
                 throw ImpactError("Selection scope contains paths outside the review diff or unknown tests: \(scope.name)")
@@ -55,12 +59,11 @@ extension XcodeHeadOnlySelector {
             let sourceStart = AnalysisMeasurement()
             let selectedPaths = Set(filtered.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
             let omittedInputs = changedPaths.subtracting(selectedPaths).subtracting(documentation)
+            // An omitted input is eligible for the historical source audit only
+            // when the compiler captured its implementation. Manifests and scripts
+            // can change the compiler invocation even when written in Swift.
             var source = try XcodeHeadOnlySources.read(current: current, changes: filtered, base: baseRevision, root: root,
-                mappingPath: mappingPath, cache: sourceCache)
-            // An omitted build input can change imported overloads or compilation flags.
-            if omittedInputs.contains(where: { !$0.hasSuffix(".swift") || $0 == "Package.swift" }) {
-                source.hasAuditedCallerInputs = false
-            }
+                mappingPath: mappingPath, cache: sourceCache, allowHistoricalCallerProofs: omittedInputs.isSubset(of: compiledSources))
             source.unverifiedScopedProcesses = processesAffectedByOmittedInputs(omittedInputs, in: current)
             measurement(sourceStart.event("scopeSourceSyntax", revision: baseRevision, detail: scope.name, parent: "selectionScopes"))
             let selectionStart = AnalysisMeasurement()

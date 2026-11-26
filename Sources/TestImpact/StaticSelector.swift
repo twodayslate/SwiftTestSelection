@@ -73,7 +73,7 @@ public enum StaticSelector {
             fallback += current.diagnostics
             fallback += previous?.diagnostics ?? ["The base revision's dependency graph is unavailable."]
         }
-        for change in changes where !change.path.hasSuffix(".swift") || change.path == "Package.swift" || change.requiresFallback {
+        for change in changes where !FileChange.isSwiftImplementation(change.path) || change.requiresFallback {
             fallback.append("Change cannot be narrowed to Swift functions: \(change.path)")
         }
 

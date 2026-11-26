@@ -142,25 +142,32 @@ private struct SourceRepository {
     #expect(result.base["App:App.swift"]?.units.map(\.fingerprint) == SwiftSourceSnapshot.parse(before, path: "App.swift", module: "App").units.map(\.fingerprint))
 }
 
-@Test(arguments: ["sdk", "local"])
+@Test(arguments: ["sdk", "local", "crossFile", "unverifiedInputs"])
 func scopedIndentationAuditsOnlyEligibleLocalCalls(callee: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
     let call = callee == "sdk" ? "print(1)" : "local()"
-    let before = "func local() {}\nfunc caller() {\n    " + call + "\n}"
+    let declaration = callee == "crossFile" ? "" : "func local() {}\n"
+    let before = declaration + "func caller() {\n    " + call + "\n}"
     let after = before.replacingOccurrences(of: "    ", with: "        ")
     try repo.write("Caller.swift", before)
     try repo.write("Unowned.swift", "func other() {}")
+    var files = ["Caller.swift": after]
+    if callee == "crossFile" {
+        files["Support.swift"] = "func local() {}"
+        try repo.write("Support.swift", "func local() {}")
+    }
     let base = try repo.commit()
-    var current = try boundaryGraph(["Caller.swift": after], tests: [], root: repo.root)
+    var current = try boundaryGraph(files, tests: [], root: repo.root)
     current.mappings = nil
     let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
     current.dependencies?.functions[discovery] = FunctionNode(id: discovery, module: "Testing", name: "discovery")
     let cache = try XcodeBaseSourceCache(root: repo.root, base: base)
     let result = try XcodeHeadOnlySources.read(current: current, changes: [.init(path: "Caller.swift")], base: base,
-                                                root: repo.root, mappingPath: "mapping.json", cache: cache)
-    #expect(cache.counts.treeReads == (callee == "sdk" ? 0 : 1))
-    #expect(cache.counts.parses == (callee == "sdk" ? 1 : 2))
+                                                root: repo.root, mappingPath: "mapping.json", cache: cache,
+                                                allowHistoricalCallerProofs: callee != "unverifiedInputs")
+    #expect(cache.counts.treeReads == (callee == "local" ? 1 : 0))
+    #expect(cache.counts.parses == (callee == "local" ? 2 : 1))
     #expect((result.unownedBaseSources["Unowned.swift"] != nil) == (callee == "local"))
 }
 
@@ -192,7 +199,8 @@ func unownedBaseFilesOnlyBlockAffectedLocationProofs(scenario: String) throws {
     #expect(report.selectedTests == (scenario == "manifest" ? [] : [id]))
 }
 
-@Test func scopedCallerLocationsSurviveAnImportedOverloadInTheBase() throws {
+@Test(arguments: ["Types.swift", "Kit/Package.swift", "Kit/Package@swift-6.swift", "Generator.swift"])
+func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
     let path = "Helpers.swift", entry = "UI/Cases/observes()"
@@ -200,15 +208,31 @@ func unownedBaseFilesOnlyBlockAffectedLocationProofs(scenario: String) throws {
     let after = before.replacingOccurrences(of: "\nfunc position", with: "\n\nfunc position")
     let tests = "import Testing\nstruct Cases { @Test func observes() { #expect(position() == 3) } }"
     try repo.write(path, before)
-    try repo.write("Types.swift", "typealias Payload = String")
+    let conditionalAlias = "#if BASE_TYPE\ntypealias Payload = String\n#else\ntypealias Payload = Int\n#endif"
+    func writeBuildInput(define: Bool) throws {
+        if input.hasPrefix("Kit/") {
+            try FileManager.default.createDirectory(at: repo.root.appendingPathComponent("Kit"), withIntermediateDirectories: true)
+            let settings = define ? #".define("BASE_TYPE")"# : ""
+            try repo.write(input, """
+                // swift-tools-version: 6.0
+                import PackageDescription
+                let package = Package(name: "Fixture", targets: [.testTarget(name: "UI", swiftSettings: [\(settings)])])
+                """)
+        } else if input == "Generator.swift" {
+            try repo.write(input, define ? #"print("-D BASE_TYPE")"# : #"print("")"#)
+        }
+    }
+    try writeBuildInput(define: true)
+    try repo.write("Types.swift", input == "Types.swift" ? "typealias Payload = String" : conditionalAlias)
     try repo.write("Tests.swift", tests)
     let base = try repo.commit()
-    let files = [path: after, "Types.swift": "typealias Payload = Int", "Tests.swift": tests]
+    try writeBuildInput(define: false)
+    let files = [path: after, "Types.swift": input == "Types.swift" ? "typealias Payload = Int" : conditionalAlias, "Tests.swift": tests]
     for (path, text) in files { try repo.write(path, text) }
     let head = try repo.commit()
 
     // The base overload supplies #line at the call. The unchanged signature of
-    // the local overload becomes applicable only after the out-of-scope alias edit.
+    // the local overload becomes applicable only after the out-of-scope change.
     try repo.write("External.swift", "public func record(_ value: Int, line: Int = #line) -> Int { line }")
     let library = repo.root.appendingPathComponent("libExternal.a")
     _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-library", "-static", "-emit-module", "-module-name", "External",
@@ -224,6 +248,61 @@ func unownedBaseFilesOnlyBlockAffectedLocationProofs(scenario: String) throws {
     let report = try #require(scopes.first?.report)
     #expect(!report.ignoredChanges.contains(path))
     #expect(report.explanations.contains { $0.test == entry && $0.kind == "dependency" })
+}
+
+@Test func omittedBuildInputPreservesPotentialInlinedCallers() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let path = "Helpers.swift", entry = "UI/Suite/observes()"
+    let before = "@_transparent func gate() -> Bool { false }"
+    let after = "@_transparent func gate() -> Bool { true }"
+    let tests = "import Testing\nstruct Suite { @Test func observes() { #expect(!result()) } }"
+    let resultSource = "#if HEAD\nfunc result() -> Bool { false }\n#endif"
+    // The base target compiles a generated implementation. At head it compiles
+    // the tracked implementation instead and no longer includes Generated.swift.
+    try repo.write(path, before)
+    try repo.write("Tests.swift", tests)
+    try repo.write("Result.swift", resultSource)
+    try repo.write("Build.xcconfig", "SWIFT_ACTIVE_COMPILATION_CONDITIONS = BASE")
+    let base = try repo.commit()
+    try repo.write("Build.xcconfig", "SWIFT_ACTIVE_COMPILATION_CONDITIONS = HEAD\nEXCLUDED_SOURCE_FILE_NAMES = Generated.swift")
+    try repo.write(path, after)
+    let head = try repo.commit()
+    try repo.write("Generated.swift", "func result() -> Bool { gate() }")
+    try repo.write("main.swift", "print(result())")
+    for (implementation, expected) in [(before, "false"), (after, "true")] {
+        try repo.write(path, implementation)
+        _ = try CommandRunner.run("xcrun", ["swiftc", path, "Generated.swift", "Result.swift", "main.swift", "-o", "probe"], at: repo.root)
+        #expect(try CommandRunner.run(repo.root.appendingPathComponent("probe").path, [], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines) == expected)
+    }
+    let files = [path: after, "Tests.swift": tests, "Result.swift": resultSource]
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
+    var graph = try boundaryGraph(files, tests: [entry], root: repo.root, compilerArguments: ["-plugin-path", plugins.path, "-D", "HEAD"], compiler: compiler)
+    graph.mappings = nil
+    let scopes = try XcodeHeadOnlySelector.scopedReports(current: graph, requests: .init(scopes: [.init(name: "helper", paths: [path])]),
+        changes: GitChanges.readComparison(base: base, head: head, at: repo.root), baseRevision: base, headRevision: head,
+        root: repo.root, mappingPath: "mapping.json", documentation: [], buildEvidenceFailure: nil)
+    let report = try #require(scopes.first?.report)
+    #expect(report.selectedTests == [entry])
+    #expect(report.diagnostics.contains { $0.code == "head_only_unsupported_body" })
+}
+
+@Test func versionedPackageManifestsAreTrackedAsBuildInputs() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    try FileManager.default.createDirectory(at: repo.root.appendingPathComponent("Nested"), withIntermediateDirectories: true)
+    let manifests: Set<String> = ["Package.swift", "Nested/Package.swift", "Nested/Package@swift-6.0.swift"]
+    let implementations = ["Nested/PackageTools.swift", "Notes.swift"]
+    let paths = manifests.union(implementations)
+    for path in paths { try repo.write(path, "// base") }
+    let base = try repo.commit()
+    for path in paths { try repo.write(path, "// head") }
+    let head = try repo.commit()
+    let evidence = try HeadOnlyRuntimeSourceEvidence.read(head: head, root: repo.root, cache: XcodeBaseSourceCache(root: repo.root, base: base))
+    #expect(evidence.buildInputPaths == manifests)
+    let inputs = try XcodeBuildEvidence.repositoryInputFiles(root: repo.root, derived: repo.root.appendingPathComponent("DerivedData"))
+    #expect(Set(inputs.keys) == manifests)
 }
 
 @Test(arguments: ["@Test", "@`Test`", "@Testing /* module */ .Test"])

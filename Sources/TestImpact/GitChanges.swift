@@ -11,6 +11,13 @@ public struct FileChange: Codable, Sendable {
     public var isPureMove: Bool = false
     public var requiresFallback: Bool
 
+    /// Package manifests are build inputs wherever the package lives, including
+    /// the toolchain-specific Package@swift-<version>.swift variants.
+    static func isSwiftImplementation(_ path: String) -> Bool {
+        guard path.hasSuffix(".swift"), let name = path.split(separator: "/").last else { return false }
+        return name != "Package.swift" && !name.hasPrefix("Package@swift-")
+    }
+
     public init(path: String, oldRegions: [SourceRegion] = [], newRegions: [SourceRegion] = [], requiresFallback: Bool = false) {
         self.path = path
         self.oldRegions = oldRegions

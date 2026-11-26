@@ -350,12 +350,12 @@ public enum XcodeFineSelector {
             let paths = [change.path] + (change.previousPath.map { [$0] } ?? [])
             if paths.allSatisfy(ignoredDocumentation) {
                 ignored.insert(change.path)
-            } else if change.path.hasSuffix(".swift"), knownPaths.contains(change.path), analyzedPaths.contains(change.path),
+            } else if FileChange.isSwiftImplementation(change.path), knownPaths.contains(change.path), analyzedPaths.contains(change.path),
                       semanticPaths.isDisjoint(with: paths), !policyPaths.contains(change.path) {
                 ignored.insert(change.path)
             } else if change.isPureMove && change.path.hasSuffix(".pbxproj") {
                 ignored.insert(change.path)
-            } else if !change.path.hasSuffix(".swift") || !knownPaths.contains(change.path) || !analyzedPaths.contains(change.path) {
+            } else if !FileChange.isSwiftImplementation(change.path) || !knownPaths.contains(change.path) || !analyzedPaths.contains(change.path) {
                 let blockers = Set(paths.flatMap { path in
                     generatedBoundaries.flatMap { $0.documentationBlockers?[path] ?? [] }
                 }).sorted()

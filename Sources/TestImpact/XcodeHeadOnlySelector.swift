@@ -52,7 +52,8 @@ struct XcodeHeadOnlySources {
     /// Full Git comparison, never the filtered scope. Produced only by read().
     var runtimeBoundaryEvidence: HeadOnlyRuntimeSourceEvidence? = nil
 
-    static func read(current: XcodeTestGraph, changes: [FileChange], base: String, root: URL, mappingPath: String, cache: XcodeBaseSourceCache? = nil) throws -> Self {
+    static func read(current: XcodeTestGraph, changes: [FileChange], base: String, root: URL, mappingPath: String, cache: XcodeBaseSourceCache? = nil,
+                     allowHistoricalCallerProofs: Bool = true) throws -> Self {
         let cache = try cache ?? XcodeBaseSourceCache(root: root, base: base)
         try cache.validate(root: root, base: base)
         var result = Self(base: current.sources)
@@ -82,6 +83,7 @@ struct XcodeHeadOnlySources {
             // A removed, duplicated or moved callable needs actual base callers,
             // even when another declaration with the same key survives.
             var before: [String: [SourceUnit]] = [:], after: [String: [SourceUnit]] = [:]
+            var scopedBase: [String: SwiftSourceSnapshot] = [:]
             for (key, head) in current.sources {
                 guard let colon = key.firstIndex(of: ":") else { continue }
                 let path = String(key[key.index(after: colon)...])
@@ -90,15 +92,16 @@ struct XcodeHeadOnlySources {
                     after[unit.key, default: []].append(unit)
                 }
                 if let old = try cache.snapshot(path: path, module: String(key[..<colon])) {
+                    scopedBase[key] = old
                     for unit in old.units where unit.helperCallableName != nil {
                         before[unit.key, default: []].append(unit)
                     }
                 }
             }
             let comparison = HeadOnlySourceComparison(head: current.mappings, base: result.mappings)
-            // Head SIL identifies candidates for a full base read. Only the
-            // subsequent comparison of audited inputs can certify their bindings.
-            lazy var eligibleCallers = SwiftTestingSourceEffects.positionIndependentCallers(current, touching: paths, historical: nil)
+            // Use the same file-local binding requirements as the final proof.
+            // Only candidates found here can justify reading the remaining base files.
+            lazy var eligibleCallers = SwiftTestingSourceEffects.boundCallers(current, touching: paths, historical: scopedBase)
             auditCallers = before.contains { key, old in
                 guard let new = after[key], new.count == old.count else { return true }
                 if old.count == 1 {
@@ -106,8 +109,8 @@ struct XcodeHeadOnlySources {
                     if a.region.path != b.region.path || a.conditionalBranch != b.conditionalBranch { return true }
                     guard current.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil,
                           !comparison.equivalent(old, new) else { return false }
-                    if b.fileUnreferencedInlineName != nil && b.fileProvesUnusedInline != true { return true }
-                    return b.hasOnlyDirectSourceCalls == true && a.fingerprint == b.fingerprint && eligibleCallers.contains(.init(b))
+                    if allowHistoricalCallerProofs && b.fileUnreferencedInlineName != nil && b.fileProvesUnusedInline != true { return true }
+                    return allowHistoricalCallerProofs && b.hasOnlyDirectSourceCalls == true && a.fingerprint == b.fingerprint && eligibleCallers.contains(.init(b))
                 }
                 return !comparison.equivalent(old, new)
             }
@@ -161,7 +164,7 @@ struct XcodeHeadOnlySources {
                 }
             }
         }
-        result.hasAuditedCallerInputs = auditCallers && basePaths != nil
+        result.hasAuditedCallerInputs = allowHistoricalCallerProofs && auditCallers && basePaths != nil
         result.diagnostics += mappingDiagnostics
         return result
     }
@@ -447,7 +450,7 @@ enum XcodeHeadOnlySelector {
                 continue
             } else if change.previousPath != nil {
                 fallback("head_only_move", "Moved source/file identity lacks old compiler ownership: \(change.previousPath!) → \(change.path)")
-            } else if change.path.hasSuffix(".swift"), owned.contains(change.path), analyzed.contains(change.path) {
+            } else if FileChange.isSwiftImplementation(change.path), owned.contains(change.path), analyzed.contains(change.path) {
                 if !semanticPaths.contains(change.path) { ignored.insert(change.path) }
             } else if change.path.hasSuffix(".md"), documentation.contains(change.path), !owned.contains(change.path),
                       [current.mappings, source.mappings].allSatisfy({ $0?.ignoredDocumentation?.contains { UIFeatureMappings.matches(change.path, pattern: $0) } == true }) {
