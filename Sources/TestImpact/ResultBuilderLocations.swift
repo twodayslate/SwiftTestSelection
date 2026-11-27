@@ -114,10 +114,16 @@ struct ResultBuilderBodySyntax {
     private func mayInheritBuilder(_ declaration: Syntax) -> Bool {
         guard declaration.parent?.is(MemberBlockItemSyntax.self) == true else { return false }
         var parent = declaration.parent
+        var foundOwner = false
         while let ancestor = parent {
             if let group = ancestor.asProtocol(DeclGroupSyntax.self) {
-                guard group.inheritanceClause == nil, !ancestor.is(ProtocolDeclSyntax.self),
-                      !group.attributes.maySupplyBuilder else { return true }
+                if group.attributes.maySupplyBuilder { return true }
+                // Only the member's own type supplies an inherited requirement.
+                // Enclosing types still determine visibility and can carry macros.
+                if !foundOwner {
+                    if group.inheritanceClause != nil || ancestor.is(ProtocolDeclSyntax.self) { return true }
+                    foundOwner = true
+                }
                 if !mayHaveConformanceOutsideDeclaration,
                    group.modifiers.contains(where: { [.keyword(.private), .keyword(.fileprivate)].contains($0.name.tokenKind) }) { return false }
             }
