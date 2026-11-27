@@ -181,7 +181,7 @@ struct ResultBuilderBodySyntax {
         // Wrappers and member-attribute macros can supply a different initializer.
         guard closure.signature?.attributes.maySupplyBuilder != true else { return true }
         var expression = Syntax(closure)
-        var arrayDepth = 0
+        var insideArrayLiteral = false
         while true {
             if let element = expression.parent?.as(LabeledExprSyntax.self),
                let tuple = element.parent?.parent?.as(TupleExprSyntax.self),
@@ -189,13 +189,16 @@ struct ResultBuilderBodySyntax {
                 expression = Syntax(tuple)
             } else if let element = expression.parent?.as(ArrayElementSyntax.self),
                       let array = element.parent?.parent?.as(ArrayExprSyntax.self) {
-                arrayDepth += 1
+                // A literal passes its elements to the variadic ExpressibleByArrayLiteral
+                // requirement. That parameter has array type and cannot carry a result
+                // builder for an element closure, even for a custom literal conformer.
+                insideArrayLiteral = true
                 expression = Syntax(array)
             } else { break }
         }
         // A builder can pass this expression to a builder-annotated
         // buildExpression parameter. An ordinary body returns or discards it.
-        if arrayDepth == 0 {
+        if !insideArrayLiteral {
             if let ordinaryStatements, expression.parent?.as(CodeBlockItemSyntax.self)?.parent?.id == ordinaryStatements {
                 return false
             }
@@ -205,13 +208,6 @@ struct ResultBuilderBodySyntax {
         guard let binding = expression.parent?.as(InitializerClauseSyntax.self)?.parent?.as(PatternBindingSyntax.self),
               let variable = binding.parent?.parent?.as(VariableDeclSyntax.self), !variable.attributes.maySupplyBuilder
         else { return true }
-        // Only bracket types establish the standard array conversion at each
-        // layer. A call or a custom literal context needs its own evidence.
-        var elementType = binding.typeAnnotation?.type
-        for _ in 0..<arrayDepth {
-            guard let array = elementType?.as(ArrayTypeSyntax.self) else { return true }
-            elementType = array.element
-        }
         if variable.parent?.is(MemberBlockItemSyntax.self) == true {
             var parent = variable.parent
             while let ancestor = parent {
