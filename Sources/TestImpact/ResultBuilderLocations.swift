@@ -98,18 +98,39 @@ private extension AttributeListSyntax {
 /// Swift attaches a builder to an executable body. Nested declarations and closures
 /// have their own context even when their surrounding expression is transformed.
 struct ResultBuilderBodySyntax {
-    private let mayHaveConformanceOutsideDeclaration: Bool
+    // nil means an alias, expansion or unbound extension may supply a conformance.
+    private let conformanceTargets: Set<SyntaxIdentifier>?
 
     init(_ file: SourceFileSyntax, declarationIssues: [HelperDeclarationIssue]) {
-        // A conformance-bearing extension or a macro can supply a witness.
-        // Extensions that only add members cannot introduce a conformance.
-        // Check attributes from their syntax so escaped compiler names carry
-        // the same meaning. Other unresolved source expansions stay opaque.
-        mayHaveConformanceOutsideDeclaration = declarationIssues.contains { $0.kind != "unresolved-attribute" } ||
-            file.tokens(viewMode: .sourceAccurate).contains {
-                ($0.tokenKind == .keyword(.extension) && $0.parent?.as(ExtensionDeclSyntax.self)?.inheritanceClause != nil) ||
-                    ($0.tokenKind == .atSign && $0.parent?.as(AttributeSyntax.self)?.isNonBuilderCompilerAttribute != true)
+        guard declarationIssues.allSatisfy({ $0.kind == "unresolved-attribute" }) else {
+            conformanceTargets = nil
+            return
+        }
+        // An unqualified extension can resolve to an unconditional nominal in
+        // this file. A qualified name or an alias needs more lookup evidence.
+        lazy var nominals = file.statements.reduce(into: [String: SyntaxIdentifier]()) { result, statement in
+            let item = statement.item
+            if item.asProtocol(DeclGroupSyntax.self) != nil,
+               let name = item.asProtocol(NamedDeclSyntax.self)?.name.identifier?.name {
+                result[name] = item.id
             }
+        }
+        var targets = Set<SyntaxIdentifier>()
+        for token in file.tokens(viewMode: .sourceAccurate) {
+            if token.tokenKind == .atSign && token.parent?.as(AttributeSyntax.self)?.isNonBuilderCompilerAttribute != true {
+                conformanceTargets = nil
+                return
+            }
+            guard token.tokenKind == .keyword(.extension),
+                  let ext = token.parent?.as(ExtensionDeclSyntax.self), ext.inheritanceClause != nil else { continue }
+            guard let name = ext.extendedType.as(IdentifierTypeSyntax.self)?.name.identifier?.name,
+                  let nominal = nominals[name] else {
+                conformanceTargets = nil
+                return
+            }
+            targets.insert(nominal)
+        }
+        conformanceTargets = targets
     }
 
     private func mayInheritBuilder(_ declaration: Syntax) -> Bool {
@@ -124,10 +145,11 @@ struct ResultBuilderBodySyntax {
                 // Only the member's own type supplies an inherited requirement.
                 // Enclosing types still determine visibility and can carry macros.
                 if !foundOwner {
-                    if group.inheritanceClause != nil || ancestor.is(ProtocolDeclSyntax.self) { return true }
+                    if group.inheritanceClause != nil || ancestor.is(ProtocolDeclSyntax.self) ||
+                        conformanceTargets?.contains(ancestor.id) == true { return true }
                     foundOwner = true
                 }
-                if !mayHaveConformanceOutsideDeclaration,
+                if conformanceTargets != nil,
                    group.modifiers.contains(where: { [.keyword(.private), .keyword(.fileprivate)].contains($0.name.tokenKind) }) { return false }
             }
             // A nominal declared inside an executable body cannot be named in
