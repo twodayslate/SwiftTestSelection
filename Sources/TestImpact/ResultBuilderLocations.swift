@@ -99,38 +99,41 @@ private extension AttributeListSyntax {
 /// have their own context even when their surrounding expression is transformed.
 struct ResultBuilderBodySyntax {
     // nil means an alias, expansion or unbound extension may supply a conformance.
-    private let conformanceTargets: Set<SyntaxIdentifier>?
+    private let conformances: (targets: Set<SyntaxIdentifier>, owners: [SyntaxIdentifier: Syntax])?
 
     init(_ file: SourceFileSyntax, declarationIssues: [HelperDeclarationIssue]) {
         guard declarationIssues.allSatisfy({ $0.kind == "unresolved-attribute" }) else {
-            conformanceTargets = nil
+            conformances = nil
             return
         }
         // An unqualified extension can resolve to an unconditional nominal in
         // this file. A qualified name or an alias needs more lookup evidence.
-        lazy var nominals = file.statements.reduce(into: [String: SyntaxIdentifier]()) { result, statement in
+        lazy var nominals = file.statements.reduce(into: [String: Syntax]()) { result, statement in
             let item = statement.item
             if item.asProtocol(DeclGroupSyntax.self) != nil,
                let name = item.asProtocol(NamedDeclSyntax.self)?.name.identifier?.name {
-                result[name] = item.id
+                result[name] = Syntax(item)
             }
         }
         var targets = Set<SyntaxIdentifier>()
+        var owners: [SyntaxIdentifier: Syntax] = [:]
         for token in file.tokens(viewMode: .sourceAccurate) {
             if token.tokenKind == .atSign && token.parent?.as(AttributeSyntax.self)?.isNonBuilderCompilerAttribute != true {
-                conformanceTargets = nil
+                conformances = nil
                 return
             }
             guard token.tokenKind == .keyword(.extension),
-                  let ext = token.parent?.as(ExtensionDeclSyntax.self), ext.inheritanceClause != nil else { continue }
+                  let ext = token.parent?.as(ExtensionDeclSyntax.self) else { continue }
             guard let name = ext.extendedType.as(IdentifierTypeSyntax.self)?.name.identifier?.name,
                   let nominal = nominals[name] else {
-                conformanceTargets = nil
+                guard ext.inheritanceClause != nil else { continue }
+                conformances = nil
                 return
             }
-            targets.insert(nominal)
+            owners[ext.id] = nominal
+            if ext.inheritanceClause != nil { targets.insert(nominal.id) }
         }
-        conformanceTargets = targets
+        conformances = (targets, owners)
     }
 
     private func mayInheritBuilder(_ declaration: Syntax) -> Bool {
@@ -141,15 +144,20 @@ struct ResultBuilderBodySyntax {
             if let group = ancestor.asProtocol(DeclGroupSyntax.self) {
                 // An extension's access modifier supplies a default for its
                 // members. It does not establish the extended type's visibility.
-                if ancestor.is(ExtensionDeclSyntax.self) || group.attributes.maySupplyBuilder { return true }
+                if group.attributes.maySupplyBuilder { return true }
+                if ancestor.is(ExtensionDeclSyntax.self) {
+                    guard let nominal = conformances?.owners[ancestor.id] else { return true }
+                    parent = nominal
+                    continue
+                }
                 // Only the member's own type supplies an inherited requirement.
                 // Enclosing types still determine visibility and can carry macros.
                 if !foundOwner {
                     if group.inheritanceClause != nil || ancestor.is(ProtocolDeclSyntax.self) ||
-                        conformanceTargets?.contains(ancestor.id) == true { return true }
+                        conformances?.targets.contains(ancestor.id) == true { return true }
                     foundOwner = true
                 }
-                if conformanceTargets != nil,
+                if conformances != nil,
                    group.modifiers.contains(where: { [.keyword(.private), .keyword(.fileprivate)].contains($0.name.tokenKind) }) { return false }
             }
             // A nominal declared inside an executable body cannot be named in
