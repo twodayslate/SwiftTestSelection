@@ -5,20 +5,24 @@ import UIKit
 
 @main
 @MainActor
-final class AppDelegate: UIResponder, UIApplicationDelegate {
+final class AppDelegate: UIResponder, UIApplicationDelegate {}
+
+@MainActor
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
+        guard let windowScene = scene as? UIWindowScene else { return }
         let controller = UIViewController()
         controller.view.backgroundColor = .systemBackground
         let label = UILabel(frame: CGRect(x: 30, y: 120, width: 300, height: 50))
         label.text = "Hello, checkout"
         label.accessibilityIdentifier = "welcome"
         controller.view.addSubview(label)
-        let window = UIWindow(frame: UIScreen.main.bounds)
+        let window = UIWindow(windowScene: windowScene)
         window.rootViewController = controller
         self.window = window
         window.makeKeyAndVisible()
-        return true
     }
 }
 #else

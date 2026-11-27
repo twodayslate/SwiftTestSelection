@@ -137,6 +137,8 @@
 				<string>NO</string>
 				<key>INFOPLIST_KEY_NSPrincipalClass[sdk=macosx*]</key>
 				<string>NSApplication</string>
+				<key>INFOPLIST_FILE[sdk=iphone*]</key>
+				<string>App/Info.plist</string>
 				<key>INFOPLIST_KEY_UILaunchScreen_Generation</key>
 				<string>YES</string>
 			</dict>
