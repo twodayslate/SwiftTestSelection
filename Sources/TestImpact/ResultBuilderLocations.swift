@@ -87,7 +87,8 @@ struct ResultBuilderBodySyntax {
     }
 
     private func mayInheritBuilder(_ declaration: Syntax) -> Bool {
-        guard !mayHaveConformanceOutsideDeclaration, declaration.parent?.is(MemberBlockItemSyntax.self) == true else { return true }
+        guard declaration.parent?.is(MemberBlockItemSyntax.self) == true else { return false }
+        guard !mayHaveConformanceOutsideDeclaration else { return true }
         var parent = declaration.parent
         while let ancestor = parent {
             if let group = ancestor.asProtocol(DeclGroupSyntax.self) {
