@@ -11,8 +11,27 @@ import CryptoKit
 // Preserve syntax structure, token kinds and literal contents, but not
 // trivia. Location values belong to their expression, not the whole file.
 private func fingerprint(_ node: Syntax) -> String {
-    if let token = node.as(TokenSyntax.self) { return "\(token.tokenKind):\(token.text.utf8.count):\(token.text)" }
-    return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(fingerprint).joined(separator: "|") + "]"
+    enum Part { case node(Syntax), separator, end }
+    var pending = [Part.node(node)]
+    var result = ""
+    while let part = pending.popLast() {
+        switch part {
+        case .separator: result += "|"
+        case .end: result += "]"
+        case .node(let node):
+            if let token = node.as(TokenSyntax.self) {
+                result += "\(token.tokenKind):\(token.text.utf8.count):\(token.text)"
+            } else {
+                result += "\(node.kind)["
+                pending.append(.end)
+                for (index, child) in node.children(viewMode: .sourceAccurate).reversed().enumerated() {
+                    if index > 0 { pending.append(.separator) }
+                    pending.append(.node(child))
+                }
+            }
+        }
+    }
+    return result
 }
 
 extension AttributeSyntax {
@@ -565,15 +584,18 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             var offsets = Set<Int>()
             var names = Set<String>()
             func calledName(_ expression: ExprSyntax) -> String {
+                var expression = expression
+                while let generic = expression.as(GenericSpecializationExprSyntax.self) { expression = generic.expression }
                 if let reference = expression.as(DeclReferenceExprSyntax.self) { return reference.baseName.identifier?.name ?? reference.baseName.text }
                 if let member = expression.as(MemberAccessExprSyntax.self) { return member.declName.baseName.identifier?.name ?? member.declName.baseName.text }
-                if let generic = expression.as(GenericSpecializationExprSyntax.self) { return calledName(generic.expression) }
                 return "*"
             }
             func record(_ tokens: TokenSequence) {
                 offsets.formUnion(tokens.map { $0.positionAfterSkippingLeadingTrivia.utf8Offset })
             }
-            func visit(_ node: Syntax) {
+            if includeAllTokens { record(node.tokens(viewMode: .sourceAccurate)) }
+            var pending = includeAllTokens ? [] : [node]
+            while let node = pending.popLast() {
                 if let call = node.as(FunctionCallExprSyntax.self) {
                     let name = calledName(call.calledExpression)
                     if !names.insert(name).inserted || !call.calledExpression.is(DeclReferenceExprSyntax.self) {
@@ -614,9 +636,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     names.insert("*")
                     record(macro.tokens(viewMode: .sourceAccurate))
                 }
-                for child in node.children(viewMode: .sourceAccurate) { visit(child) }
+                pending.append(contentsOf: node.children(viewMode: .sourceAccurate).reversed())
             }
-            if includeAllTokens { record(node.tokens(viewMode: .sourceAccurate)) } else { visit(node) }
             guard !offsets.isEmpty else { return ([:], names, false) }
             return (locationDigest(offsets), names, direct && !names.isEmpty)
         }
@@ -635,8 +656,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             return values
         }
         func containsOpaqueResult(_ node: Syntax) -> Bool {
-            node.is(SomeOrAnyTypeSyntax.self) ||
-                node.children(viewMode: .sourceAccurate).contains(where: containsOpaqueResult)
+            var pending = [node]
+            while let type = pending.popLast() {
+                if type.is(SomeOrAnyTypeSyntax.self) { return true }
+                pending.append(contentsOf: type.children(viewMode: .sourceAccurate))
+            }
+            return false
         }
         func singleGetter(_ block: AccessorBlockSyntax?) -> Bool {
             guard let accessors = block?.accessors.as(AccessorDeclListSyntax.self) else { return true }
