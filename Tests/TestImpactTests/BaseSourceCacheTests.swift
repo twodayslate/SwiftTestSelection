@@ -433,7 +433,8 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
 }
 
 @Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn", "shorthandGetter", "explicitGetter", "subscriptGetter",
-                  "setter", "observer", "closureBinding", "wrappedClosureBinding", "returnedClosure", "implicitlyReturnedClosure", "implicitMethod", "implicitGetter", "unusedPrivateInitializer"])
+                  "setter", "observer", "closureBinding", "wrappedClosureBinding", "returnedClosure", "implicitlyReturnedClosure", "implicitMethod", "implicitGetter",
+                  "unusedPrivateInitializer", "unusedPrivateStep", "inlinedPrivateInitializer"])
 func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -456,8 +457,13 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         "implicitMethod": ("func value() -> Int { BODY }", "Plain().value()", "2"),
         "implicitGetter": ("var value: Int { BODY }", "Plain().value", "2")
     ]
-    if form == "unusedPrivateInitializer" {
-        support = "private struct Stamp { init(line: Int = #line) {} }"
+    let privateMembers = [
+        "unusedPrivateInitializer": "init(line: Int = #line) {}",
+        "unusedPrivateStep": "static func buildExpression(_ value: Int, line: Int = #line) -> Int { line }",
+        "inlinedPrivateInitializer": "@inline(__always) init(line: Int = #line) {}"
+    ]
+    if let member = privateMembers[form] {
+        support = "private struct Stamp { \(member) }"
         before = "struct Plain { func answer() -> Int {\n    2\n\n} }\nfunc caller() -> Int { Plain().answer() }"
         after = before.replacingOccurrences(of: "\n    2\n\n", with: "\n\n    2\n")
     } else if let (declaration, call, statement) = ordinaryBodies[form] {
@@ -524,7 +530,7 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         #expect(caller.invocationNames?.contains("subscript") == true)
         #expect(caller.hasOnlyDirectSourceCalls != true)
     }
-    let ignoresEdit = ordinaryBodies[form] != nil || form == "unusedPrivateInitializer"
+    let ignoresEdit = ordinaryBodies[form] != nil || privateMembers[form] != nil
     for report in try reports(current) {
         if ignoresEdit {
             #expect(report.selectedTests.isEmpty)
@@ -536,17 +542,17 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         #expect(report.diagnostics.isEmpty)
     }
     var legacy = current
-    if form == "unusedPrivateInitializer" {
+    if privateMembers[form] != nil {
         let provider = "UI:Support.swift"
-        legacy.sources[provider]?.parserVersion = 35
-        legacy.sources[provider]?.unreferencedPrivateTypes = nil
+        legacy.sources[provider]?.parserVersion = form == "inlinedPrivateInitializer" ? 36 : 35
+        legacy.sources[provider]?.privateLocationDefaultOwners = nil
         legacy = try GraphArchive.decode(GraphArchive.encode(legacy))
         for report in try reports(legacy) { #expect(report.selectedTests.contains(entry)) }
 
         var differentBlob = legacy
         differentBlob.sources[provider]?.sourceBlobIDs = ["different"]
         try differentBlob.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
-        #expect(differentBlob.sources[provider]?.unreferencedPrivateTypes == nil)
+        #expect(differentBlob.sources[provider]?.privateLocationDefaultOwners == legacy.sources[provider]?.privateLocationDefaultOwners)
     }
     if ignoresEdit {
         legacy.sources[key]?.parserVersion = form == "explicitReturn" ? 31 : 32
@@ -554,8 +560,8 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
             legacy.sources[key]!.units[i].builderLocations = ["line": "legacy body"]
         }
         try legacy.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
-        if form == "unusedPrivateInitializer" {
-            #expect(legacy.sources["UI:Support.swift"]?.unreferencedPrivateTypes == ["Stamp"])
+        if privateMembers[form] != nil {
+            #expect(legacy.sources["UI:Support.swift"]?.privateLocationDefaultOwners == ["Stamp"])
         }
         #expect(legacy.sources[key]?.units.map(\.builderLocations) == current.sources[key]?.units.map(\.builderLocations))
         for report in try reports(legacy) { #expect(report.selectedTests.isEmpty) }
@@ -587,7 +593,98 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let sources = ["App:" + path: caller, "App:Stamp.swift": stamp]
     let locations = ResultBuilderLocations(policy: .semantic, sources: [sources], modules: ["App"],
         incompleteInputs: false, touching: [path])
-    #expect(locations.kinds.isEmpty)
+    #expect(caller.units.allSatisfy { locations.kinds[$0].isEmpty })
+}
+
+@Test(arguments: [false, true]) func unusedPrivateDefaultsDoNotAffectOtherCompiledCalls(sameTypeName: Bool) throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let path = "Helpers.swift", test = "UI/Suite/testObserves()"
+    let owner = sameTypeName ? "Stamp" : "Plain"
+    let support = "private struct Stamp { init(line: Int = #line) {}; func answer() -> Int { identity(1) } }"
+    let tests = "import XCTest\nfinal class Suite: XCTestCase { func testObserves() { XCTAssertEqual(caller(), 2) } }"
+    let before = "func identity(_ x: Int) -> Int { x }\nprivate struct \(owner) { func answer() -> Int {\n    identity(2)\n\n} }\nfunc caller() -> Int { \(owner)().answer() }"
+    let after = before.replacingOccurrences(of: "\n    identity(2)\n\n", with: "\n\n    identity(2)\n")
+    func capture(_ text: String) throws -> XcodeTestGraph {
+        var graph = try boundaryGraph([path: text, "Support.swift": support, "Tests.swift": tests], tests: [test], root: repo.root)
+        graph.mappings = nil
+        return graph
+    }
+    let previous = try capture(before), current = try capture(after)
+    let report = XcodeFineSelector.select(current: current, previous: previous, changes: [.init(path: path)], baseRevision: "base")
+    #expect(report.selectedTests.isEmpty)
+    #expect(report.ignoredChanges.contains(path))
+    #expect(report.diagnostics.isEmpty)
+}
+
+@Test func privateLocationDefaultsStayWithTheirOwnerAndNestedTypes() throws {
+    let path = "Helpers.swift"
+    let text = """
+        #if !OTHER
+        @resultBuilder private struct Stamp {
+            @inline(__always) static func buildExpression(_ x: Int, line: Int = #line) -> Int { line }
+            static func buildBlock(_ x: Int) -> Int { x }
+            struct Nested { func inside() -> Int { buildExpression(1) } }
+        }
+        #endif
+        struct Other { func outside() -> Int { 2 } }
+        """
+    let file = SwiftSourceSnapshot.parse(text, path: path, module: "App")
+    let otherFile = SwiftSourceSnapshot.parse("struct Stamp { func elsewhere() -> Int { 2 } }", path: "Other.swift", module: "App")
+    let otherModule = SwiftSourceSnapshot.parse("struct Stamp { func elsewhere() -> Int { 2 } }", path: path, module: "Other")
+    let sources = ["App:Helpers.swift": file, "App:Other.swift": otherFile, "Other:Helpers.swift": otherModule]
+    let locations = ResultBuilderLocations(policy: .semantic, sources: [sources], modules: ["App", "Other"],
+        incompleteInputs: false, touching: [path])
+    #expect(file.privateLocationDefaultOwners == ["Stamp"])
+    let inside = try #require(file.units.first { $0.helperCallableName == "inside" })
+    #expect(locations.kinds[inside] == ["line"])
+    let outside = try #require(file.units.first { $0.helperCallableName == "outside" })
+    #expect(locations.kinds[outside].isEmpty)
+    #expect((otherFile.units + otherModule.units).allSatisfy { locations.kinds[$0].isEmpty })
+}
+
+@Test func privateClassDefaultsRemainVisibleToDynamicMemberLookup() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let path = "Helpers.swift", entry = "UI/Suite/testCaller()"
+    let before = """
+        import Foundation
+        private final class Stamp { @objc func stamped(_ value: Int = #line) -> Int { value } }
+        func caller(_ value: AnyObject) -> Int {
+            return value.stamped?() ?? 0
+
+        }
+        """
+    let after = before.replacingOccurrences(of: "    return value.stamped?() ?? 0\n\n", with: "\n    return value.stamped?() ?? 0\n")
+    let tests = "import XCTest\nfinal class Suite: XCTestCase { func testCaller() { XCTAssertEqual(caller(NSObject()), 0) } }"
+    try repo.write(path, before)
+    try repo.write("Tests.swift", tests)
+    let base = try repo.commit()
+    try repo.write(path, after)
+    let head = try repo.commit()
+    func capture(_ text: String) throws -> XcodeTestGraph {
+        var graph = try boundaryGraph([path: text, "Tests.swift": tests], tests: [entry], root: repo.root)
+        graph.mappings = nil
+        return graph
+    }
+    let previous = try capture(before), current = try capture(after)
+    let file = try #require(current.sources["UI:" + path])
+    #expect(file.privateLocationDefaultOwners?.isEmpty == true)
+    // The v36 archive field only proved absence of a written type name.
+    var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(file)) as? [String: Any])
+    json["parserVersion"] = 36
+    json["unreferencedPrivateTypes"] = ["Stamp"]
+    json.removeValue(forKey: "privateLocationDefaultOwners")
+    let archived = try JSONDecoder().decode(SwiftSourceSnapshot.self, from: JSONSerialization.data(withJSONObject: json))
+    #expect(archived.privateLocationDefaultOwners == nil)
+    var legacy = current
+    legacy.sources["UI:" + path] = archived
+    let changes = try GitChanges.readComparison(base: base, head: head, at: repo.root)
+    for graph in [current, legacy] {
+        let source = try XcodeHeadOnlySources.read(current: graph, changes: changes, base: base, root: repo.root, mappingPath: "mapping.json")
+        #expect(XcodeFineSelector.select(current: graph, previous: previous, changes: changes, baseRevision: base).selectedTests == [entry])
+        #expect(XcodeHeadOnlySelector.select(current: graph, source: source, changes: changes, baseRevision: base).selectedTests == [entry])
+    }
 }
 
 @Test(arguments: ["function", "closure", "nestedClosure", "nestedGetterClosure", "nestedSetterClosure", "nestedBindingClosure",

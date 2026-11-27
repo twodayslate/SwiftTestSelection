@@ -99,20 +99,29 @@ extension XcodeTestGraph {
                   let id = archived.sourceIdentity(storedAs: key) else { continue }
             let touched = paths.contains(id.path)
             // An unchanged declaration can supply a default to a changed builder
-            // body elsewhere. Revisit only candidate owners missing the v36 proof.
+            // body elsewhere. Authenticate the defining file before narrowing its scope.
             if !touched {
-                guard comparingSwift, archived.unreferencedPrivateTypes == nil,
+                guard comparingSwift, archived.privateLocationDefaultOwners == nil,
                       archived.units.contains(where: { unit in
-                          !unit.scope.isEmpty && SourceUnit.indirectLocationDefaultNames.contains { unit.locationDefaultNames?[$0] != nil }
+                          !unit.scope.isEmpty && unit.locationDefaultNames?.isEmpty == false
                       }) else { continue }
             }
             if cache == nil { cache = try XcodeBaseSourceCache(root: root, base: revision) }
             guard let parsed = try cache?.snapshot(path: id.path, module: id.module),
                   parsed.diagnostics.isEmpty, let parsedBlobs = parsed.sourceBlobIDs, !blobs.isDisjoint(with: parsedBlobs) else { continue }
-            archived.unreferencedPrivateTypes = parsed.unreferencedPrivateTypes
+            let regions = Dictionary(grouping: parsed.units.indices, by: { parsed.units[$0].region })
+            var owners = parsed.privateLocationDefaultOwners ?? []
+            for unit in archived.units where owners.contains(unit.scope) && unit.locationDefaultNames?.isEmpty == false {
+                // The bytes certify the parsed declaration. An older unit must
+                // also identify that declaration before inheriting its visibility.
+                if regions[unit.region]?.contains(where: {
+                    let native = parsed.units[$0]
+                    return native.key == unit.key && native.scope == unit.scope && native.locationDefaultNames == unit.locationDefaultNames
+                }) != true { owners.remove(unit.scope) }
+            }
+            archived.privateLocationDefaultOwners = owners
             if !touched { sources[key] = archived; continue }
             archived.ordinaryManifestNamedSource = parsed.ordinaryManifestNamedSource
-            let regions = Dictionary(grouping: parsed.units.indices, by: { parsed.units[$0].region })
             var matched = Set<Int>()
             var restoredInvocations = true
             var builderMatches = Set<Int>()

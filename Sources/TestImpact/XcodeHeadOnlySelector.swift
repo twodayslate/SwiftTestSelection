@@ -6,7 +6,7 @@ import Foundation
 private struct HeadOnlySourceComparison {
     let locationPolicy: UIFeatureMappings.SourceLocationPolicy
 
-    var builderKinds = Set<String>()
+    var builderKinds = ScopedLocationKinds()
     var positionIndependent = Set<SwiftTestingSourceEffects.Declaration>()
 
     init(head: UIFeatureMappings?, base: UIFeatureMappings?) {
@@ -25,7 +25,7 @@ private struct HeadOnlySourceComparison {
     }
 
     private func fingerprint(_ unit: SourceUnit) -> String {
-        let syntax = unit.comparisonFingerprint(locationPolicy) + unit.builderFingerprint(builderKinds)
+        let syntax = unit.comparisonFingerprint(locationPolicy) + unit.builderFingerprint(builderKinds[unit])
         if positionIndependent.contains(.init(unit)) || locationPolicy == .diagnostic || (locationPolicy == .diagnosticLineColumn && unit.fileLocationValues == nil) { return syntax }
         // Over-approximate caller defaults without inventing base compiler
         // edges. This also preserves fixture file identity for moved callers.

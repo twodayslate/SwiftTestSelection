@@ -112,8 +112,8 @@ public enum XcodeFineSelector {
         func comparisonFingerprint(_ unit: SourceUnit) -> String {
             let syntax = unit.comparisonFingerprint(locationPolicy)
             if identicalSourceFiles.contains(unit.qualifiedSourcePath) { return syntax }
-            let fingerprint = syntax + unit.builderFingerprint(builders.kinds)
-            var kinds = callerKinds[unit.key] ?? []
+            let fingerprint = syntax + unit.builderFingerprint(builders.kinds[unit])
+            var kinds = callerKinds[.init(unit)] ?? []
             if locationPolicy == .diagnosticLineColumn { kinds.subtract(["line", "column"]) }
             guard !kinds.isEmpty else { return fingerprint }
             return fingerprint + "@caller[" + kinds.sorted().map { kind in
@@ -765,24 +765,32 @@ public enum XcodeFineSelector {
         return report
     }
 
-    private static func callerLocationKinds(_ snapshot: XcodeTestGraph, units: [SourceUnit], effects: SwiftTestingSourceEffects) -> [String: Set<String>] {
-        let defaults = units.filter { !($0.locationDefaultKinds?.isEmpty ?? true) }
+    private static func callerLocationKinds(_ snapshot: XcodeTestGraph, units: [SourceUnit], effects: SwiftTestingSourceEffects) -> [SwiftTestingSourceEffects.Declaration: Set<String>] {
+        let defaults = snapshot.sources.values.flatMap { file in
+            file.units.compactMap { unit -> (unit: SourceUnit, owner: LocationDefaultOwner?)? in
+                guard unit.locationDefaultKinds?.isEmpty == false else { return nil }
+                return (unit, file.privateDefaultOwner(of: unit))
+            }
+        }
         let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
         let inlineBodies = units.filter { $0.hasInlineBody == true }
         guard !defaults.isEmpty || !inlineBodies.isEmpty || snapshot.dependencies?.functions[discovery] != nil else { return [:] }
-        let allKinds = defaults.reduce(into: Set<String>()) { $0.formUnion($1.locationDefaultKinds ?? []) }
-        var kindsByName: [String: Set<String>] = [:]
-        for unit in defaults {
+        var allKinds = ScopedLocationKinds()
+        var kindsByName: [String: ScopedLocationKinds] = [:]
+        for (unit, owner) in defaults {
+            allKinds.include(unit.locationDefaultKinds ?? [], owner: owner)
             for (name, kinds) in unit.locationDefaultNames ?? [:] {
-                kindsByName[name, default: []].formUnion(kinds)
+                kindsByName[name, default: .init()].include(kinds, owner: owner)
             }
         }
         // Name matching is deliberately an over-approximation across modules,
         // overloads, receivers and argument slots. A surviving SIL definition is
         // not evidence that all its calls survived mandatory inlining/lowering.
-        var result: [String: Set<String>] = [:]
-        let indirectKinds = SourceUnit.indirectLocationDefaultNames.reduce(into: Set<String>()) {
-            $0.formUnion(kindsByName[$1] ?? [])
+        // Private functions in different files may have identical declaration keys.
+        typealias Declaration = SwiftTestingSourceEffects.Declaration
+        var result: [Declaration: Set<String>] = [:]
+        let indirectKinds = SourceUnit.indirectLocationDefaultNames.reduce(into: ScopedLocationKinds()) {
+            if let kinds = kindsByName[$1] { $0.formUnion(kinds) }
         }
         for unit in units {
             let names = unit.invocationNames ?? []
@@ -791,16 +799,18 @@ public enum XcodeFineSelector {
             // callAsFunction. Its edge can disappear through mandatory inlining,
             // so source names cannot rule out an implicit callable-object call.
             // Interpret the stored declaration name here to cover saved graphs too.
-            var kinds = indirectKinds
-            for name in names { kinds.formUnion(name == "*" ? allKinds : kindsByName[name] ?? []) }
-            if !kinds.isEmpty { result[unit.key, default: []].formUnion(kinds) }
+            var kinds = indirectKinds[unit]
+            for name in names {
+                if let matching = name == "*" ? allKinds : kindsByName[name] { kinds.formUnion(matching[unit]) }
+            }
+            if !kinds.isEmpty { result[Declaration(unit), default: []].formUnion(kinds) }
         }
         guard let graph = snapshot.dependencies else {
-            return Dictionary(units.map { ($0.key, allKinds) }, uniquingKeysWith: { $0.union($1) })
+            return Dictionary(units.map { (Declaration($0), allKinds[$0]) }, uniquingKeysWith: { $0.union($1) })
         }
         let byFile = Dictionary(grouping: units, by: { $0.region.path })
-        var symbolsByUnit: [String: Set<String>] = [:]
-        var unitsBySymbol: [String: Set<String>] = [:]
+        var symbolsByUnit: [Declaration: Set<String>] = [:]
+        var unitsBySymbol: [String: Set<Declaration>] = [:]
         // A binary callee can declare a caller-location default absent from
         // captured source. Include transitive calls made during discovery.
         var pending = Array(Set(graph.tests.values.filter { $0.contains(discovery) }.flatMap { $0 }).union([discovery]))
@@ -811,9 +821,9 @@ public enum XcodeFineSelector {
         }
         let physicalModules = snapshot.modulesWithPhysicalSourceLocations
         for unit in units where unit.hasUnverifiedCompilerLocation(in: physicalModules) {
-            result[unit.key, default: []].formUnion(allKinds)
+            result[Declaration(unit), default: []].formUnion(allKinds[unit])
             if graph.functions[discovery] != nil, let locations = unit.callerLocations {
-                result[unit.key, default: []].formUnion(locations.keys)
+                result[Declaration(unit), default: []].formUnion(locations.keys)
             }
         }
         func index(_ node: FunctionNode) {
@@ -822,11 +832,11 @@ public enum XcodeFineSelector {
                 for unit in byFile[region.path] ?? [] where unit.key.hasPrefix(node.module + ":") &&
                     region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine {
                     if discoverySymbols.contains(node.id), !effects.positionIndependent.contains(.init(unit)), let locations = unit.callerLocations, !locations.isEmpty {
-                        result[unit.key, default: []].formUnion(locations.keys)
+                        result[Declaration(unit), default: []].formUnion(locations.keys)
                     }
                     if !defaults.isEmpty {
-                        symbolsByUnit[unit.key, default: []].insert(node.id)
-                        unitsBySymbol[node.id, default: []].insert(unit.key)
+                        symbolsByUnit[Declaration(unit), default: []].insert(node.id)
+                        unitsBySymbol[node.id, default: []].insert(Declaration(unit))
                     }
                 }
             }
@@ -834,7 +844,7 @@ public enum XcodeFineSelector {
         // Mandatory inlining can erase both the call and its debug origin.
         // A location-sensitive inline body must still participate in comparison.
         for unit in inlineBodies {
-            result[unit.key, default: []].formUnion(unit.callerLocations?.keys.map { $0 } ?? [])
+            result[Declaration(unit), default: []].formUnion(unit.callerLocations?.keys.map { $0 } ?? [])
         }
         if defaults.isEmpty {
             for id in discoverySymbols { if let node = graph.functions[id] { index(node) } }
@@ -842,11 +852,11 @@ public enum XcodeFineSelector {
         }
         for node in graph.functions.values { index(node) }
         var defaultSymbols: [String: Set<String>] = [:]
-        var unresolved = Set<String>()
-        for unit in defaults {
+        var unresolved = ScopedLocationKinds()
+        for (unit, owner) in defaults {
             let kinds = unit.locationDefaultKinds ?? []
-            let symbols = symbolsByUnit[unit.key] ?? []
-            if symbols.isEmpty { unresolved.formUnion(kinds) }
+            let symbols = symbolsByUnit[Declaration(unit)] ?? []
+            if symbols.isEmpty { unresolved.include(kinds, owner: owner) }
             for symbol in symbols { defaultSymbols[symbol, default: []].formUnion(kinds) }
         }
         // A missing declaration binding cannot prove absence of callers.
@@ -855,11 +865,12 @@ public enum XcodeFineSelector {
             let kinds = node.dependencies.reduce(into: Set<String>()) { $0.formUnion(defaultSymbols[$1] ?? []) }
             guard !kinds.isEmpty else { continue }
             let callers = unitsBySymbol[node.id] ?? []
-            if callers.isEmpty && sourceModules.contains(node.module) { unresolved.formUnion(kinds) }
+            if callers.isEmpty && sourceModules.contains(node.module) { unresolved.shared.formUnion(kinds) }
             for key in callers { result[key, default: []].formUnion(kinds) }
         }
-        if !unresolved.isEmpty {
-            for unit in units { result[unit.key, default: []].formUnion(unresolved) }
+        for unit in units {
+            let kinds = unresolved[unit]
+            if !kinds.isEmpty { result[Declaration(unit), default: []].formUnion(kinds) }
         }
         return result
     }
