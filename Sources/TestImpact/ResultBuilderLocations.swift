@@ -74,6 +74,27 @@ struct ResultBuilderLocations {
     }
 }
 
+private extension AttributeSyntax {
+    // These compiler modifiers cannot name a result builder or expand to an
+    // extension. A custom attribute, including a global actor name, needs proof.
+    static let nonBuilderAttributes = inlineAttributeNames.union([
+        "available", "autoclosure", "convention", "discardableResult", "escaping",
+        "nonobjc", "objc", "objcMembers", "preconcurrency", "resultBuilder", "_functionBuilder",
+        "testable", "_exported", "usableFromInline"
+    ])
+
+    var isNonBuilderCompilerAttribute: Bool {
+        guard let type = attributeName.as(IdentifierTypeSyntax.self), type.genericArgumentClause == nil else { return false }
+        return Self.nonBuilderAttributes.contains(type.name.identifier?.name ?? type.name.text)
+    }
+}
+
+private extension AttributeListSyntax {
+    var maySupplyBuilder: Bool {
+        contains { $0.as(AttributeSyntax.self)?.isNonBuilderCompilerAttribute != true }
+    }
+}
+
 /// Swift attaches a builder to an executable body. Nested declarations and closures
 /// have their own context even when their surrounding expression is transformed.
 struct ResultBuilderBodySyntax {
@@ -81,9 +102,13 @@ struct ResultBuilderBodySyntax {
 
     init(_ file: SourceFileSyntax, declarationIssues: [HelperDeclarationIssue]) {
         // An extension or macro can attach a conformance outside the declaration.
-        mayHaveConformanceOutsideDeclaration = !declarationIssues.isEmpty || file.tokens(viewMode: .sourceAccurate).contains {
-            $0.tokenKind == .keyword(.extension) || $0.tokenKind == .atSign
-        }
+        // Check attributes from their syntax so escaped compiler names carry
+        // the same meaning. Other unresolved source expansions stay opaque.
+        mayHaveConformanceOutsideDeclaration = declarationIssues.contains { $0.kind != "unresolved-attribute" } ||
+            file.tokens(viewMode: .sourceAccurate).contains {
+                $0.tokenKind == .keyword(.extension) ||
+                    ($0.tokenKind == .atSign && $0.parent?.as(AttributeSyntax.self)?.isNonBuilderCompilerAttribute != true)
+            }
     }
 
     private func mayInheritBuilder(_ declaration: Syntax) -> Bool {
@@ -103,13 +128,13 @@ struct ResultBuilderBodySyntax {
     private func getterCanUseBuilder(_ block: AccessorBlockSyntax) -> Bool {
         let owner = block.parent?.as(PatternBindingSyntax.self)?.parent?.parent ?? block.parent
         guard let owner, let declaration = owner.asProtocol(WithAttributesSyntax.self) else { return true }
-        return !declaration.attributes.isEmpty || mayInheritBuilder(owner)
+        return declaration.attributes.maySupplyBuilder || mayInheritBuilder(owner)
     }
 
     private func closureCanUseBuilder(_ closure: ClosureExprSyntax, ordinaryStatements: SyntaxIdentifier?) -> Bool {
         // A plain variable initializer has no builder-annotated parameter.
         // Wrappers and member-attribute macros can supply a different initializer.
-        guard closure.signature?.attributes.isEmpty != false else { return true }
+        guard closure.signature?.attributes.maySupplyBuilder != true else { return true }
         var expression = Syntax(closure)
         while let element = expression.parent?.as(LabeledExprSyntax.self),
               let tuple = element.parent?.parent?.as(TupleExprSyntax.self),
@@ -124,12 +149,12 @@ struct ResultBuilderBodySyntax {
         if expression.parent?.is(ReturnStmtSyntax.self) == true ||
             expression.parent?.as(FunctionCallExprSyntax.self)?.calledExpression.id == expression.id { return false }
         guard let binding = expression.parent?.as(InitializerClauseSyntax.self)?.parent?.as(PatternBindingSyntax.self),
-              let variable = binding.parent?.parent?.as(VariableDeclSyntax.self), variable.attributes.isEmpty
+              let variable = binding.parent?.parent?.as(VariableDeclSyntax.self), !variable.attributes.maySupplyBuilder
         else { return true }
         if variable.parent?.is(MemberBlockItemSyntax.self) == true {
             var parent = variable.parent
             while let ancestor = parent {
-                if let group = ancestor.asProtocol(DeclGroupSyntax.self), !group.attributes.isEmpty { return true }
+                if let group = ancestor.asProtocol(DeclGroupSyntax.self), group.attributes.maySupplyBuilder { return true }
                 parent = ancestor.parent
             }
         }
@@ -146,10 +171,10 @@ struct ResultBuilderBodySyntax {
         }
         guard let block = syntax.as(CodeBlockSyntax.self), let owner = syntax.parent else { return nil }
         if let function = owner.as(FunctionDeclSyntax.self) {
-            return (block.statements, !function.attributes.isEmpty || mayInheritBuilder(owner))
+            return (block.statements, function.attributes.maySupplyBuilder || mayInheritBuilder(owner))
         }
         if let accessor = owner.as(AccessorDeclSyntax.self) {
-            if !accessor.attributes.isEmpty { return (block.statements, true) }
+            if accessor.attributes.maySupplyBuilder { return (block.statements, true) }
             switch accessor.accessorSpecifier.tokenKind {
             case .keyword(.get):
                 let property = owner.parent?.parent?.as(AccessorBlockSyntax.self)

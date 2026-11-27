@@ -434,7 +434,7 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
 
 @Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn", "shorthandGetter", "explicitGetter", "subscriptGetter",
                   "setter", "observer", "closureBinding", "wrappedClosureBinding", "returnedClosure", "implicitlyReturnedClosure", "implicitMethod", "implicitGetter",
-                  "unusedPrivateInitializer", "unusedPrivateStep", "inlinedPrivateInitializer", "nestedPrivateInitializer", "nestedPrivateStep", "nestedImplicitMethod"])
+                  "unusedPrivateInitializer", "unusedPrivateStep", "inlinedPrivateInitializer", "nestedPrivateInitializer", "nestedPrivateStep", "nestedImplicitMethod", "unrelatedInlineAttribute", "availableMethod", "escapedCompilerAttribute", "escapedAvailableMethod"])
 func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -456,6 +456,10 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         "implicitlyReturnedClosure": ("func value() -> () -> Int { ({ BODY }) }", "Plain().value()()", "2"),
         "implicitMethod": ("func value() -> Int { BODY }", "Plain().value()", "2"),
         "nestedImplicitMethod": ("func value() -> Int { BODY }", "Container.Plain().value()", "2"),
+        "unrelatedInlineAttribute": ("func value() -> Int { BODY }", "Plain().value()", "2"),
+        "availableMethod": ("@available(macOS 10.15, *) func value() -> Int { BODY }", "Plain().value()", "2"),
+        "escapedCompilerAttribute": ("@`discardableResult` func value() -> Int { BODY }", "Plain().value()", "2"),
+        "escapedAvailableMethod": ("@`available`(macOS 10.15, *) func value() -> Int { BODY }", "Plain().value()", "2"),
         "implicitGetter": ("var value: Int { BODY }", "Plain().value", "2")
     ]
     let privateMembers = [
@@ -476,7 +480,8 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     } else if let (declaration, call, statement) = ordinaryBodies[form] {
         support = "import Dispatch"
         let nominal = form == "nestedImplicitMethod" ? "private enum Container { struct Plain { \(declaration) } }" : "private struct Plain { \(declaration) }"
-        let source = "\(nominal)\nfunc caller() -> Int { \(call) }"
+        let prefix = form == "unrelatedInlineAttribute" ? "@inline(never) func other() -> Int { 0 }\n" : ""
+        let source = prefix + "\(nominal)\nfunc caller() -> Int { \(call) }"
         before = source.replacingOccurrences(of: " BODY ", with: "\n    \(statement)\n\n")
         after = source.replacingOccurrences(of: " BODY ", with: "\n\n    \(statement)\n")
     } else if form == "trailingClosure" {
@@ -527,6 +532,15 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         let source = try XcodeHeadOnlySources.read(current: graph, changes: changes, base: base, root: repo.root, mappingPath: "mapping.json")
         return [XcodeFineSelector.select(current: graph, previous: previous, changes: changes, baseRevision: base),
                 XcodeHeadOnlySelector.select(current: graph, source: source, changes: changes, baseRevision: base)]
+    }
+    // Some SwiftSyntax versions parse escaped availability arguments as
+    // ordinary expressions. A partial parse cannot certify the body.
+    if form == "escapedAvailableMethod", current.sources[key]?.diagnostics.isEmpty == false {
+        for report in try reports(current) {
+            #expect(Set(report.selectedTests) == [control, entry])
+            #expect(report.diagnostics.contains { $0.message.contains("could not be parsed completely") })
+        }
+        return
     }
     let index = try #require(current.sources[key]?.units.firstIndex { $0.helperCallableName == "caller" })
     let caller = try #require(current.sources[key]?.units[index])
