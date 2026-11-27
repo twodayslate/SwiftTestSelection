@@ -94,6 +94,9 @@ public struct XcodeTestGraph: Codable, Sendable {
     var comparisonGraph: Self {
         var result = self
         var unresolved: [String] = []
+        func hasQualifiedRecord(_ path: String, _ module: String) -> Bool {
+            sources[module + ":" + path]?.matchesSourceMembership(path: path, module: module) == true
+        }
         for (path, file) in sources {
             guard file.units.isEmpty || file.units.first?.region.path == path else { continue }
             let targetsForPath = targets.filter { $0.sourceFiles.contains(path) }
@@ -103,22 +106,20 @@ public struct XcodeTestGraph: Codable, Sendable {
                targets.contains(where: { modules[$0.name] == qualified.module && $0.sourceFiles.contains(qualified.path) }) {
                 // The same string can name both a qualified key and a literal path
                 // containing a colon. Require separate records for the latter.
-                if knownOwners && owners.allSatisfy({ sources[$0 + ":" + path] != nil }) { continue }
+                if file.matchesSourceMembership(path: qualified.path, module: qualified.module),
+                   knownOwners && owners.allSatisfy({ hasQualifiedRecord(path, $0) }) { continue }
                 unresolved.append(path)
                 continue
             }
             let module: String?
             if file.units.isEmpty {
-                module = owners.count == 1 ? owners.first : nil
+                module = file.inlineMappings?.module ?? (owners.count == 1 ? owners.first : nil)
             } else {
                 module = file.sourceIdentity(storedAs: path)?.module
             }
-            guard knownOwners, let module, !module.isEmpty, owners.contains(module), sources[module + ":" + path] == nil,
-                  owners.allSatisfy({ owner in
-                      if owner == module { return true }
-                      guard let other = sources[owner + ":" + path] else { return false }
-                      return other.units.allSatisfy { $0.region.path == path && $0.key.hasPrefix(owner + ":") }
-                  }) else {
+            guard knownOwners, let module, !module.isEmpty, owners.contains(module),
+                  file.matchesSourceMembership(path: path, module: module), sources[module + ":" + path] == nil,
+                  owners.allSatisfy({ $0 == module || hasQualifiedRecord(path, $0) }) else {
                 unresolved.append(path)
                 continue
             }
@@ -140,6 +141,15 @@ public struct XcodeTestGraph: Codable, Sendable {
                     return file.units.allSatisfy { $0.key.hasPrefix(module + ":") && $0.region.path == path }
                 }
             }
+    }
+
+    /// A frontend import can make a binary builder visible without any Swift
+    /// import declaration. Only captured modules have inspectable builder steps.
+    var hasUninspectedBuilderInputs: Bool {
+        guard hasCompleteSwiftSourceInventory(sources, allowUnqualifiedPaths: true),
+              let imports = dependencies?.compilerImplicitImports else { return true }
+        let captured = Set(modules.values)
+        return captured.contains { imports[$0]?.isSubset(of: captured) != true }
     }
 
     var modulesWithPhysicalSourceLocations: Set<String> {

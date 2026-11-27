@@ -72,8 +72,7 @@ public enum XcodeFineSelector {
         let touchedPaths = Set(changes.flatMap(\.paths))
         let builders = ResultBuilderLocations(policy: locationPolicy, sources: [current.sources, previous?.sources ?? [:]],
             modules: Set(current.modules.values).intersection(previous.map { Set($0.modules.values) } ?? []),
-            incompleteInputs: !current.hasCompleteSwiftSourceInventory(current.sources, allowUnqualifiedPaths: true) ||
-                previous.map { !$0.hasCompleteSwiftSourceInventory($0.sources, allowUnqualifiedPaths: true) } == true, touching: touchedPaths)
+            incompleteInputs: current.hasUninspectedBuilderInputs || previous?.hasUninspectedBuilderInputs == true, touching: touchedPaths)
         // The module, path and source bytes completely determine source positions.
         // On identical inputs a parser upgrade can change the encoding of those
         // positions, but cannot change the values observed by the running code.

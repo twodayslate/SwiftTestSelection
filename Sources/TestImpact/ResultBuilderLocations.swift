@@ -23,13 +23,14 @@ struct ResultBuilderLocations {
         guard !dimensions.isEmpty else { kinds = []; incompletePaths = []; return }
         let stepNames: Set<String> = ["buildExpression", "buildBlock", "buildPartialBlock", "buildOptional", "buildIf",
             "buildEither", "buildArray", "buildLimitedAvailability", "buildFinalResult"]
-        let defaultNames = stepNames.union(SourceUnit.indirectLocationDefaultNames)
         var knownImports: Set<String> = ["import Testing"]
         for module in modules {
             knownImports.insert("import " + module)
             knownImports.insert("@testable import " + module)
         }
         var observed = Set<String>(), missing = Set<String>()
+        var indirect = Set<String>()
+        var mayHaveIndirectStep = false
         var opaque = incompleteInputs
         for revision in sources {
             for file in revision.values {
@@ -46,15 +47,25 @@ struct ResultBuilderLocations {
                     opaque = true
                     continue
                 }
+                // A local initializer alone cannot supply a builder step. Source
+                // must name a step, or an import or expansion can supply one.
+                if !mayHaveIndirectStep {
+                    mayHaveIndirectStep = file.identifierNames?.isDisjoint(with: stepNames) != true ||
+                        file.units.contains { $0.kind == "import" } || file.helperDeclarationIssues?.isEmpty != true
+                }
                 for unit in file.units {
                     guard let defaults = unit.locationDefaultNames else {
                         opaque = true
                         break
                     }
-                    for (name, values) in defaults where defaultNames.contains(name) { observed.formUnion(values) }
+                    for (name, values) in defaults {
+                        if stepNames.contains(name) { observed.formUnion(values) }
+                        if SourceUnit.indirectLocationDefaultNames.contains(name) { indirect.formUnion(values) }
+                    }
                 }
             }
         }
+        if mayHaveIndirectStep { observed.formUnion(indirect) }
         kinds = opaque ? dimensions : observed.intersection(dimensions)
         incompletePaths = kinds.isEmpty ? [] : missing
     }

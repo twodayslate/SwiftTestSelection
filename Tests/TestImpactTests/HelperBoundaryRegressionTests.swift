@@ -85,6 +85,7 @@ func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compil
     }
     if let compiler { parsed = try SILOwnership.resolve(parsed, module: module, compiler: compiler, directory: root) }
     var graph = DependencyGraph(functions: parsed.functions)
+    graph.compilerImplicitImports = [module: try XcodeCompilerGraph.implicitImports(arguments)]
     XcodeCompilerGraph.resolveDispatch(&graph, tables: parsed.dispatchTargets, linkedTestingRecords: records)
     var current = XcodeTestGraph(targets: [.init(name: target, productType: "com.apple.product-type.bundle.ui-testing", sourceFiles: Set(files.keys))], tests: tests)
     current.modules = [target: module]

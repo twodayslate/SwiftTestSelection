@@ -207,6 +207,13 @@ public struct SourceUnit: Codable, Sendable {
 }
 
 public struct SwiftSourceSnapshot: Codable, Sendable {
+    /// Empty source files can carry the parser's module in their import inventory.
+    /// For older files without that field, each available declaration must agree.
+    func matchesSourceMembership(path: String, module: String) -> Bool {
+        if let captured = inlineMappings?.module, captured != module { return false }
+        return units.allSatisfy { $0.region.path == path && $0.key.hasPrefix(module + ":") }
+    }
+
     /// Older graphs stored a bare path. The units must agree on its module
     /// before that path can identify a physical parser input.
     func sourceIdentity(storedAs key: String) -> (module: String, path: String)? {

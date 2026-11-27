@@ -307,7 +307,7 @@ enum XcodeHeadOnlySelector {
         let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
         let builders = ResultBuilderLocations(policy: comparison.locationPolicy, sources: [current.sources, source.base, source.unownedBaseSources],
             modules: Set(current.modules.values), incompleteInputs: source.hasUnverifiedBuilderInputs ||
-                !current.hasCompleteSwiftSourceInventory(current.sources, allowUnqualifiedPaths: true), touching: paths)
+                current.hasUninspectedBuilderInputs, touching: paths)
         comparison.builderKinds = builders.kinds
         let effects = SwiftTestingSourceEffects(current, touching: paths, historical: source.base,
             unowned: source.unownedBaseSources, hasAuditedCallerInputs: source.hasAuditedCallerInputs)

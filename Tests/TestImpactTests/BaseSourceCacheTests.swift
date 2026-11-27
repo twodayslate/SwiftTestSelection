@@ -105,7 +105,14 @@ private struct SourceRepository {
     graph.targets[1].sourceFiles = ["Shared.swift"]
     #expect(!graph.comparisonGraph.diagnostics.isEmpty)
     graph.sources["Other:" + path] = empty
+    #expect(!graph.comparisonGraph.diagnostics.isEmpty)
+    graph.sources[path] = SwiftSourceSnapshot.parse("", path: "Shared.swift", module: "UI")
     #expect(Set(graph.comparisonGraph.sources.keys) == [path, "Other:" + path])
+    #expect(graph.comparisonGraph.diagnostics.isEmpty)
+    graph.targets.removeLast()
+    graph.sources = [path: empty]
+    graph.sources[path]?.inlineMappings?.module = nil
+    #expect(Set(graph.comparisonGraph.sources.keys) == ["Other:" + path])
     #expect(graph.comparisonGraph.diagnostics.isEmpty)
 }
 
@@ -167,6 +174,7 @@ func savedGraphLocationComparisonAcrossParserVersions(edit: String) throws {
     if edit == "getter" {
         var retained = try legacy(after.0)
         for file in [path, "Placeholder.swift"] { retained.sources[file] = retained.sources.removeValue(forKey: "UI:" + file) }
+        retained.sources["Placeholder.swift"]?.inlineMappings?.module = nil
         retained.buildArtifact?.headOnlyBuildEvidence = .init(buildLogDigest: "log", buildSettingsDigest: "settings", documentation: [])
         let replay = try analysis.selectHeadOnly(base: before.1, head: after.1, headGraph: retained)
         #expect(replay.selectedTests.isEmpty)
@@ -534,8 +542,18 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     }
 }
 
+@Test func unrelatedInitializerCannotMakeAnOrdinaryMethodABuilder() {
+    let path = "Caller.swift"
+    let caller = SwiftSourceSnapshot.parse("struct Plain { func answer() -> Int { 2 } }", path: path, module: "App")
+    let stamp = SwiftSourceSnapshot.parse("struct Stamp { init(line: Int = #line) {} }", path: "Stamp.swift", module: "App")
+    let sources = ["App:" + path: caller, "App:Stamp.swift": stamp]
+    let locations = ResultBuilderLocations(policy: .semantic, sources: [sources], modules: ["App"],
+        incompleteInputs: false, touching: [path])
+    #expect(locations.kinds.isEmpty)
+}
+
 @Test(arguments: ["function", "closure", "nestedClosure", "nestedGetterClosure", "nestedSetterClosure", "nestedBindingClosure",
-                  "attributedSetter", "extensionWitness", "groupedArgument", "builderExpressionClosure", "callableStep", "constructorStep", "conditionalReturn", "witness", "explicitGetWitness", "binary", "macro"])
+                  "attributedSetter", "extensionWitness", "groupedArgument", "builderExpressionClosure", "callableStep", "constructorStep", "conditionalReturn", "witness", "explicitGetWitness", "binary", "implicitBinary", "macro"])
 func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -565,7 +583,7 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
             }
             """
         helperSource = "@LineBuilder func caller() -> Int {\n    1\n}"
-    case "binary":
+    case "binary", "implicitBinary":
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         let source = library.appendingPathComponent("Builder.swift")
         try support.replacingOccurrences(of: "enum LineBuilder", with: "public enum LineBuilder")
@@ -576,7 +594,14 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
         compilerArguments = ["-I", library.path]
         linkArguments = [library.appendingPathComponent("libBuilderKit.a").path]
         support = ""
-        helperSource = "import BuilderKit\n@LineBuilder func caller() -> Int {\n    1\n}"
+        let imported: String
+        if form == "implicitBinary" {
+            compilerArguments += ["-Xfrontend", "-import-module", "-Xfrontend", "BuilderKit"]
+            imported = ""
+        } else {
+            imported = "import BuilderKit\n"
+        }
+        helperSource = imported + "@LineBuilder func caller() -> Int {\n    1\n}"
     case "constructorStep":
         // The String overload enables buildExpression. For integer literals,
         // Swift resolves the same name to an initializer through the type alias.
@@ -659,6 +684,15 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     for report in try reports(old, current) {
         #expect(report.selectedTests.contains(entry))
         #expect(!report.ignoredChanges.contains(path))
+    }
+    if form == "implicitBinary" {
+        var savedBase = old, savedHead = current
+        savedBase.dependencies?.compilerImplicitImports = nil
+        savedHead.dependencies?.compilerImplicitImports = nil
+        for report in try reports(savedBase, savedHead) {
+            #expect(report.selectedTests.contains(entry))
+            #expect(!report.ignoredChanges.contains(path))
+        }
     }
     var diagnostic = current, previousDiagnostic = old
     diagnostic.mappings = UIFeatureMappings(features: [])
