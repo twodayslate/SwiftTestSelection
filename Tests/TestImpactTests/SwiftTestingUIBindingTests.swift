@@ -46,6 +46,7 @@ import Testing
         #expect(graph.functions.values.compactMap(\.swiftTestingEmptyFactory).sorted() == ["member", "top-level"])
         let suite = try #require(graph.functions.values.first { $0.swiftTestingFactoryType == "OtherSuite" })
         let member = try #require(graph.functions.values.first { $0.swiftTestingFactoryType == "Independent" })
+        #expect(member.swiftTestingDeferredProviderCount == 0)
         XcodeCompilerGraph.bind(tests: tests, modules: ["Tests": "Tests"], sources: sources, graph: &graph)
         #expect(graph.testDiagnostics.isEmpty)
         #expect(graph.dependencyPath(from: graph.tests[tests[2]] ?? [], to: [suite.id]) != nil)
@@ -53,12 +54,16 @@ import Testing
             var uncertain = DependencyGraph(functions: graph.functions)
             uncertain.functions[suite.id]?.swiftTestingFactoryType = type
             XcodeCompilerGraph.bind(tests: tests, modules: ["Tests": "Tests"], sources: sources, graph: &uncertain)
-            #expect(uncertain.testDiagnostics[tests[2]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+            #expect(uncertain.testDiagnostics[tests[2]]?.contains(SwiftTestingDiscoveryRoots.traitRuntimeEvidence) == true)
         }
         var unknown = DependencyGraph(functions: graph.functions)
         unknown.functions[member.id]?.swiftTestingFactoryType = nil
+        // An archived empty member factory predates explicit zero-provider counts.
+        unknown.functions[member.id]?.swiftTestingDeferredProviderCount = nil
+        unknown.testDiagnostics[tests[2]] = [SwiftTestingDiscoveryRoots.runtimeEvidence]
         XcodeCompilerGraph.bind(tests: tests, modules: ["Tests": "Tests"], sources: sources, graph: &unknown)
-        #expect(unknown.testDiagnostics[tests[2]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+        #expect(unknown.testDiagnostics[tests[2]]?.contains(SwiftTestingDiscoveryRoots.traitRuntimeEvidence) == true)
+        #expect(unknown.testDiagnostics[tests[2]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == false)
         if let reference {
             #expect(graph.functions == reference.functions)
             #expect(graph.tests == reference.tests)
@@ -150,17 +155,16 @@ import Testing
     XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": source], graph: &graph)
     for test in tests { #expect(graph.tests[test]?.isEmpty == false, "\(test)") }
     #expect(graph.testDiagnostics[tests[0]] == [SwiftTestingDiscoveryRoots.unresolvedEffects])
-    #expect(graph.testDiagnostics[tests[1]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+    #expect(graph.testDiagnostics[tests[1]]?.contains(SwiftTestingDiscoveryRoots.traitRuntimeEvidence) == true)
     #expect(graph.testDiagnostics[tests[3]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
     #expect(graph.testDiagnostics[tests[4]]?.isEmpty ?? true)
-    for test in tests[5...6] {
-        #expect(graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
-    }
+    #expect(graph.testDiagnostics[tests[5]]?.contains(SwiftTestingDiscoveryRoots.traitRuntimeEvidence) == true)
+    #expect(graph.testDiagnostics[tests[6]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
     // A namesake macro's source spelling cannot hide compiler-emitted traits.
     let plainSpelling = SwiftSourceSnapshot.parse(text.replacingOccurrences(of: "@Test(Wrapper(payload: [Incidental()]), RuntimeTrait())", with: "@Test"), path: "Tests.swift", module: "UI")
     var hiddenTrait = DependencyGraph(functions: parsed.functions)
     XcodeCompilerGraph.bind(tests: tests, modules: ["UI": "UI"], sources: ["UI:Tests.swift": plainSpelling], graph: &hiddenTrait)
-    #expect(hiddenTrait.testDiagnostics[tests[5]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+    #expect(hiddenTrait.testDiagnostics[tests[5]]?.contains(SwiftTestingDiscoveryRoots.traitRuntimeEvidence) == true)
     let index = DependencyIndex(graph)
     let incidental = try #require(graph.functions.values.first { $0.name == "incidentalHook()" }?.id)
     #expect(index.paths(to: [incidental]).path(from: graph.tests[tests[5]] ?? []) == nil)
@@ -303,7 +307,7 @@ import Testing
     let (previous, _) = try capture(before)
     let (current, sil) = try capture(after)
     for test in tests.prefix(3) { #expect(current.dependencies?.testDiagnostics[test]?.isEmpty ?? true) }
-    #expect(current.dependencies?.testDiagnostics[tests[3]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+    #expect(current.dependencies?.testDiagnostics[tests[3]]?.contains(SwiftTestingDiscoveryRoots.traitRuntimeEvidence) == true)
     let changes = [FileChange(path: "Tests.swift")]
     let headOnly = XcodeHeadOnlySelector.select(current: current, source: .init(base: previous.sources), changes: changes, baseRevision: "base")
     let twoGraphs = XcodeFineSelector.select(current: current, previous: previous, changes: changes, baseRevision: "base")
@@ -352,7 +356,10 @@ import Testing
 
     // Older archives and nonempty trait allocations cannot authorize exclusions.
     var legacy = current.dependencies!
-    for id in legacy.functions.keys { legacy.functions[id]?.swiftTestingEmptyFactory = nil }
+    for id in legacy.functions.keys {
+        legacy.functions[id]?.swiftTestingEmptyFactory = nil
+        legacy.functions[id]?.swiftTestingDeferredProviderCount = nil
+    }
     legacy.tests = [:]; legacy.testDiagnostics = [:]
     XcodeCompilerGraph.bind(tests: tests, modules: current.modules, sources: current.sources, graph: &legacy)
     #expect(legacy.testDiagnostics[tests[0]]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)

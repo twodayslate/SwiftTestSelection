@@ -17,6 +17,9 @@ enum SwiftTestingDiscoveryRoots {
     static let missingEvidence = "Swift Testing discovery roots are incomplete; compiler evidence for argument generation and traits is required"
     static let runtimeEvidence = "Swift Testing argument/trait factory roots are bound, but runtime trait/scoping callbacks and generic argument-iteration witnesses remain unproven"
 
+    static let traitRuntimeEvidence = "Swift Testing bound a nonparameterized test factory. Runtime trait and scoping callback effects remain unproven."
+    static let runtimeDiagnostics: Set<String> = [runtimeEvidence, traitRuntimeEvidence]
+
     /// Follow each Mach-O test record's C accessor to the function supplied to
     /// Testing.Test.__store. Unknown lowering or a missing record body leaves
     /// the module on the conservative source-inventory check.
@@ -248,7 +251,7 @@ enum SwiftTestingDiscoveryRoots {
     private static let legacyIndirectCallback = "Swift Testing discovery invokes an indirect callback before test filtering"
     static let parameterizedArguments = "Parameterized test arguments may execute outside the test body; compiler evidence for argument generation and traits is required"
 
-    private static let derivedDiagnostics: Set<String> = [missingEvidence, runtimeEvidence, unresolvedEffects, legacyIndirectCallback]
+    private static let derivedDiagnostics: Set<String> = runtimeDiagnostics.union([missingEvidence, unresolvedEffects, legacyIndirectCallback])
 
     static func nominalOwner(of entries: [FunctionNode]) -> String? {
         guard let owner = entries.first?.nominalTypeContext, !owner.isEmpty,
@@ -496,7 +499,10 @@ enum SwiftTestingDiscoveryRoots {
             } ?? false
             if factoryKind != "top-level" && (hasUnknownCallbacks ||
                 !(factoryKind == "member" && localMember && (emptySuites || unrelatedSuites))) {
-                graph.testDiagnostics[test, default: []].append(runtimeEvidence)
+                // Older captures can prove the same no-argument overload from
+                // their empty or comment-only member factory.
+                let noArguments = (factory?.swiftTestingDeferredProviderCount).map { $0 == 0 } ?? (factoryKind == "member")
+                graph.testDiagnostics[test, default: []].append(noArguments ? traitRuntimeEvidence : runtimeEvidence)
             }
         }
         graph.swiftTestingEntryRoots = compilerRoots.isEmpty ? nil : compilerRoots

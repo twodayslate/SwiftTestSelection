@@ -45,6 +45,7 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     var swiftTestingCommentOnlyFactory: String? = nil
     var swiftTestingMetadataFactory: String? { swiftTestingEmptyFactory ?? swiftTestingCommentOnlyFactory }
     /// Capture-free argument providers passed to a verified SDK factory with a recognized traits array.
+    /// Zero also identifies the verified SDK overload that accepts no argument providers.
     public var swiftTestingDeferredProviderCount: Int? = nil
     /// Capture-free SDK predicates and their positions in the registration’s traits array.
     /// Suite factories also require proof that eager evaluation only constructs SDK metadata.

@@ -356,6 +356,9 @@ enum SwiftTestingFactoryProof {
         guard uses[arguments[0]]?.contains(where: isOutputParameter) == true,
               uses[arguments[0]]?.allSatisfy({ $0 == call || isOutputParameter($0) }) == true else { return evidence }
         evidence.verifiedFactoryCall = true
+        // This SDK overload has no argument-provider operands, even when the
+        // test carries a custom trait whose runtime effects are still unknown.
+        if function { evidence.deferredProviderCount = 0 }
         evidence.cleanupIsSDKMetadata = metadataCleanup(releases, factory: call, definitions: definitions, uses: uses, references: references, header: header)
         if modeledInstructions && !evidence.cleanupIsSDKMetadata {
             evidence.cleanupIsSDKMetadata = constructsOnlyMetadata(header: header, definitions: definitions,
@@ -374,7 +377,7 @@ enum SwiftTestingFactoryProof {
         }
         // A nonempty traits array still permits entry-local provider edits
         // when source comparison preserves every eager trait and its location.
-        if !evidence.traitTypes.isEmpty { evidence.deferredProviderCount = provenProviders }
+        if !evidence.traitTypes.isEmpty, let provenProviders { evidence.deferredProviderCount = provenProviders }
         // Bind the actual SDK metatype operand as well as its generic substitution.
         let type = fields[1]
         if Pattern.groups(nominalPath, in: type) != nil {

@@ -299,7 +299,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             let restoredUnknown = try GraphArchive.decode(GraphArchive.encode(snapshot))
             unknownOwners[value] = restoredUnknown
             let rebound = try #require(restoredUnknown.dependencies)
-            #expect(rebound.testDiagnostics[plain]?.contains(SwiftTestingDiscoveryRoots.runtimeEvidence) == true)
+            #expect(rebound.testDiagnostics[plain]?.contains(SwiftTestingDiscoveryRoots.traitRuntimeEvidence) == true)
             #expect(rebound.dependencyPath(from: rebound.tests[plain] ?? [], to: [gate]) == nil)
             legacyGraph.swiftTestingProcessInventoryVersion = nil
             legacyGraph.swiftTestingEntryRoots = nil

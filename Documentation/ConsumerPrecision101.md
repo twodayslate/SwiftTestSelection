@@ -1,5 +1,15 @@
 # Consumer precision for #101
 
+## Historical bindings and receipt isolation
+
+An independent validation compile used all 46 UI-test Swift sources from each normalized Git base. In #380 the compiler bound three direct invocations of the deleted private query to two tests. One runs inside an XCTest assertion autoclosure. In #383 the old and new helpers each had two direct callers and used the same application factory. The momentum test’s Objective-C entry changed from returning void to returning a Boolean and accepting an error pointer. The production selector uses a single head build. These baseline compilations provide reference answers for checking its historical analysis.
+
+On the original #383 simulator product, the edited converted-row test wrote eight activity receipts, two comment-version receipts and one note-header receipt. A reset-disabled launch preserved all 11 values. The subsequent unread-dot relaunch test passed in the same app container and finished with 21 receipt keys, none shared with the first test. Both XCTest entries passed. Eight head-side tests explicitly disable reset, and six of them fall outside the 91-test alternate policy. This run exercises one of those six.
+
+The hostless Core report now distinguishes a verified Swift Testing factory with zero argument providers from a parameterized factory. For `CacheRecoveryTests/localCacheCloudRecoveryMarkerMergesAndClearsByRequestID()`, the unresolved effects belong to the suite’s runtime callbacks and test discovery. Its registration requires no generic argument iteration. The boundary remains unproven.
+
+[Download the compiler input hashes, call sites, receipt observations and complete policy identifiers](ConsumerPrecision101Controls.json.gz).
+
 ## Consumer changes that preserve the historical Git base
 
 Fresh captures at `2570f2c` ran the complete consumer policy on the original comparisons and two alternate heads. Each built the head once, consumed ten build-time SIL modules, verified the retained build and passed strict UI mapping. Replaying the saved graphs at `cdf8d3c` reproduced the primary and scoped test IDs, reason kinds and final execution lists. Both alternate heads preserve every production edit. Only the UI test sources change.
@@ -11,7 +21,7 @@ Fresh captures at `2570f2c` ran the complete consumer policy on the original com
 | #383 | Original | 47 | 316 | 363 | 1,853 |
 | #383 | Test-owned scenarios with both old and new XCTest entries | 47 | 44 | 91 | 1,853 |
 
-For #380, moving the geometry assertion into its only test caller and restoring the unused private query leaves five independently executed edited methods and no shared test-support path. The 52 UI identifiers match the earlier two-sided refactor exactly. The compiled restored query uses the SDK’s button query, predicate initializer, matching and first-match APIs. In the original capture, the assertion calls the UI module’s waiting helper, which passes a block capturing the predicate closures to XCTest. Safe exclusion on the original diff still requires the deleted query’s historical bindings and the callback’s lifetime and effects through that wait.
+For #380, moving the geometry assertion into its only test caller and restoring the unused private query leaves five independently executed edited methods and no shared test-support path. The 52 UI identifiers match the earlier two-sided refactor exactly. The compiled restored query uses the SDK’s button query, predicate initializer, matching and first-match APIs. In the original capture, the assertion calls the UI module’s waiting helper, which passes a block capturing the predicate closures to XCTest. Safe exclusion on the original diff still requires the selector to establish the historical bindings from its own inputs and account for the callback’s lifetime and effects through that wait.
 
 For #383, the two historical entries execute the revised scenarios, and two entries under the new names forward to them. The control retains the unused private helper and the original nonthrowing XCTest selector of the momentum test. Its 91 UI identifiers include all 89 from the earlier refactor plus both historical entries. This preserves the 42 independently identified fixture consumers and the modified receipt-relaunch test. The two names for each scenario also mean duplicate execution when running the full suite. On the original diff the renamed tests, persistent receipt state across app launches, and the edit to the compiled Core source `ChainOfCustodyCore/Data/AppStore.swift` still matter.
 
