@@ -29,13 +29,25 @@ struct SwiftTestingSourceDeclarations: Codable, Sendable {
 
     /// Preserves the rest of the declaration while projecting out registration arguments.
     /// Scoping the projected arguments to a test or suite requires matching SDK factory evidence.
-    struct RegistrationInputs: Codable, Sendable {
+    /// Most units have no registration. Storing this immutable evidence out of line
+    /// keeps unit copies small on the selection and helper-isolation call stacks.
+    final class RegistrationInputs: Codable, Sendable {
         let declaration: String
         let providers: Int
         let eager: [Arguments]
-        var bare: Bool?
-        var conditions: SwiftTestingFactoryProof.Conditions?
-        var nonliteralPredicates: [Arguments]?
+        let bare: Bool?
+        let conditions: SwiftTestingFactoryProof.Conditions?
+        let nonliteralPredicates: [Arguments]?
+
+        init(declaration: String, providers: Int, eager: [Arguments], bare: Bool?,
+             conditions: SwiftTestingFactoryProof.Conditions?, nonliteralPredicates: [Arguments]?) {
+            self.declaration = declaration
+            self.providers = providers
+            self.eager = eager
+            self.bare = bare
+            self.conditions = conditions
+            self.nonliteralPredicates = nonliteralPredicates
+        }
 
         var hasNoRuntimeInputs: Bool {
             providers == 0 && eager.isEmpty && conditions == nil && nonliteralPredicates == nil
