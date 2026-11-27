@@ -92,7 +92,10 @@ public struct InlineMappingSyntax: Codable, Sendable {
             }
             return values
         }
-        func walk(_ node: Syntax, scope: String, conditional: Bool, member: Bool) {
+        // Property initializers can have deeply nested syntax, especially SwiftUI
+        // expressions. Keep traversal state off the calling worker's limited stack.
+        var pending: [(node: Syntax, scope: String, conditional: Bool, member: Bool)] = [(Syntax(tree), "", false, false)]
+        while let (node, scope, conditional, member) = pending.popLast() {
             if let imported = node.as(ImportDeclSyntax.self), imported.importKindSpecifier == nil,
                let name = imported.path.first?.name {
                 let module = name.identifier?.name ?? name.text
@@ -149,18 +152,16 @@ public struct InlineMappingSyntax: Codable, Sendable {
                     superclass: superclass, region: .init(path: path, startLine: node.startLocation(converter: locations).line,
                                                           endLine: node.endLocation(converter: locations).line),
                     conditional: conditional, directives: annotations))
-                if kind == "method" { return }
             }
-            if node.is(FunctionDeclSyntax.self) || node.is(InitializerDeclSyntax.self) { return }
-            for child in node.children(viewMode: .sourceAccurate) {
-                // Only class/extension members can be annotated methods. Nested
-                // structs/enums/protocols must not borrow an enclosing class.
-                let isOtherType = node.is(StructDeclSyntax.self) || node.is(EnumDeclSyntax.self) || node.is(ProtocolDeclSyntax.self)
-                walk(child, scope: nextScope, conditional: conditional || node.is(IfConfigDeclSyntax.self),
-                     member: isOtherType ? false : (kind == "class" || kind == "extension" || member))
+            if node.is(FunctionDeclSyntax.self) || node.is(InitializerDeclSyntax.self) { continue }
+            // Nested structs/enums/protocols must not borrow an enclosing class.
+            let isOtherType = node.is(StructDeclSyntax.self) || node.is(EnumDeclSyntax.self) || node.is(ProtocolDeclSyntax.self)
+            let childMember = !isOtherType && (kind == "class" || kind == "extension" || member)
+            let childConditional = conditional || node.is(IfConfigDeclSyntax.self)
+            for child in node.children(viewMode: .sourceAccurate).reversed() {
+                pending.append((child, nextScope, childConditional, childMember))
             }
         }
-        walk(Syntax(tree), scope: "", conditional: false, member: false)
         if hasDirectives {
             for token in tree.tokens(viewMode: .sourceAccurate) {
                 let all = directives(token.leadingTrivia, at: token.position) + directives(token.trailingTrivia, at: token.endPositionBeforeTrailingTrivia)
