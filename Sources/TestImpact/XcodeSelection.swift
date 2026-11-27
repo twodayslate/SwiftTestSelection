@@ -92,41 +92,54 @@ public struct XcodeTestGraph: Codable, Sendable {
     /// Resolve path-only archive records before any comparison or discovery lookup.
     /// A file without declarations can still be identified by its captured target.
     var comparisonGraph: Self {
+        var normalized = sources
+        var candidates: [String: Set<String>] = [:]
+        var required: [String: (path: String, module: String)] = [:]
+        var unresolved = Set<String>()
+        for (key, file) in sources {
+            guard file.units.isEmpty || file.units.first?.region.path == key else { continue }
+            var options = Set<String>()
+            func consider(path: String, module: String) {
+                let qualified = module + ":" + path
+                required[qualified] = (path, module)
+                if file.matchesSourceMembership(path: path, module: module) { options.insert(qualified) }
+            }
+            for target in targets where target.sourceFiles.contains(key) {
+                if let module = modules[target.name], !module.isEmpty { consider(path: key, module: module) }
+                else { unresolved.insert(key) }
+            }
+            // A colon in a filename can make a raw key identical to another
+            // file's qualified key. Consider both target memberships.
+            if let colon = key.firstIndex(of: ":") {
+                let module = String(key[..<colon]), path = String(key[key.index(after: colon)...])
+                if targets.contains(where: { modules[$0.name] == module && $0.sourceFiles.contains(path) }) {
+                    consider(path: path, module: module)
+                }
+            }
+            candidates[key] = options
+            normalized.removeValue(forKey: key)
+        }
+        // Assign from the original records into a separate dictionary. A legacy
+        // key may need to vacate the very slot another legacy record belongs in.
+        while !candidates.isEmpty {
+            let assignments = candidates.compactMapValues { options -> String? in
+                let available = options.filter { normalized[$0] == nil }
+                return available.count == 1 ? available.first : nil
+            }
+            guard !assignments.isEmpty else { unresolved.formUnion(candidates.keys); break }
+            for (key, destination) in assignments {
+                if normalized[destination] != nil { unresolved.insert(destination) }
+                normalized[destination] = sources[key]
+                candidates.removeValue(forKey: key)
+            }
+        }
+        for (key, id) in required where normalized[key]?.matchesSourceMembership(path: id.path, module: id.module) != true {
+            unresolved.insert(key)
+        }
         var result = self
-        var unresolved: [String] = []
-        func hasQualifiedRecord(_ path: String, _ module: String) -> Bool {
-            sources[module + ":" + path]?.matchesSourceMembership(path: path, module: module) == true
-        }
-        for (path, file) in sources {
-            guard file.units.isEmpty || file.units.first?.region.path == path else { continue }
-            let targetsForPath = targets.filter { $0.sourceFiles.contains(path) }
-            let owners = Set(targetsForPath.compactMap { modules[$0.name] })
-            let knownOwners = targetsForPath.allSatisfy { modules[$0.name] != nil }
-            if file.units.isEmpty, let qualified = file.sourceIdentity(storedAs: path),
-               targets.contains(where: { modules[$0.name] == qualified.module && $0.sourceFiles.contains(qualified.path) }) {
-                // The same string can name both a qualified key and a literal path
-                // containing a colon. Require separate records for the latter.
-                if file.matchesSourceMembership(path: qualified.path, module: qualified.module),
-                   knownOwners && owners.allSatisfy({ hasQualifiedRecord(path, $0) }) { continue }
-                unresolved.append(path)
-                continue
-            }
-            let module: String?
-            if file.units.isEmpty {
-                module = file.inlineMappings?.module ?? (owners.count == 1 ? owners.first : nil)
-            } else {
-                module = file.sourceIdentity(storedAs: path)?.module
-            }
-            guard knownOwners, let module, !module.isEmpty, owners.contains(module),
-                  file.matchesSourceMembership(path: path, module: module), sources[module + ":" + path] == nil,
-                  owners.allSatisfy({ $0 == module || hasQualifiedRecord(path, $0) }) else {
-                unresolved.append(path)
-                continue
-            }
-            result.sources[module + ":" + path] = result.sources.removeValue(forKey: path)
-        }
-        for key in unresolved.sorted() {
-            result.diagnostics.append("Cannot resolve captured source ownership for " + key)
+        if unresolved.isEmpty { result.sources = normalized }
+        else {
+            result.diagnostics += unresolved.sorted().map { "Cannot resolve captured source ownership for " + $0 }
         }
         return result
     }

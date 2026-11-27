@@ -116,6 +116,24 @@ private struct SourceRepository {
     #expect(graph.comparisonGraph.diagnostics.isEmpty)
 }
 
+@Test(arguments: [false, true])
+func legacyPathCanOccupyAnotherRecordsQualifiedKey(empty: Bool) {
+    let path = "Shared.swift", prefixed = "UI:" + path
+    let contents = empty ? "// placeholder" : "func value() {}"
+    var graph = XcodeTestGraph(targets: [
+        .init(name: "UI", productType: "test", sourceFiles: [path]),
+        .init(name: "Other", productType: "test", sourceFiles: [prefixed])
+    ], tests: [])
+    graph.modules = ["UI": "UI", "Other": "Other"]
+    graph.sources = [path: .parse(contents, path: path, module: "UI"),
+                     prefixed: .parse(contents, path: prefixed, module: "Other")]
+    for key in graph.sources.keys { graph.sources[key]?.inlineMappings?.module = nil }
+    let comparison = graph.comparisonGraph
+    #expect(comparison.diagnostics.isEmpty)
+    #expect(Set(comparison.sources.keys) == ["UI:" + path, "Other:" + prefixed])
+    #expect(Set(graph.sources.keys) == [path, prefixed])
+}
+
 @Test(arguments: ["otherFile", "getter", "builder"])
 func savedGraphLocationComparisonAcrossParserVersions(edit: String) throws {
     let repo = try SourceRepository()
