@@ -29,6 +29,7 @@ private func model(ui: String = uiSource, app: String = appSource, uiPath: Strin
     let uiSnapshot = SwiftSourceSnapshot.parse(ui, path: uiPath, module: "UI")
     let appSnapshot = SwiftSourceSnapshot.parse(app, path: "App/Features.swift", module: "App")
     var graph = DependencyGraph()
+    graph.compilerImplicitImports = ["UI": [], "App": []]
     for (module, snapshot, source) in [("UI", uiSnapshot, ui), ("App", appSnapshot, app)] {
         let lines = source.components(separatedBy: .newlines)
         for unit in snapshot.units where unit.kind == "function" {
