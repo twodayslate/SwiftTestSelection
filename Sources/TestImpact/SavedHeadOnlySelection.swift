@@ -129,13 +129,16 @@ extension XcodeTestGraph {
                 }
                 guard touched else { continue }
                 archived.units[index].builderLocations = native.builderLocations
-                if version < 11 {
+                // Through v45, invocation digests included closing parentheses.
+                // Compare authenticated calls using the same location rules on both sides.
+                if version < 46 {
                     archived.units[index].callerLocations = native.callerLocations
+                }
+                if version < 11 {
                     archived.units[index].conditionalBranch = native.conditionalBranch
                     matched.insert(match)
                 }
                 if refreshCalls {
-                    archived.units[index].callerLocations = native.callerLocations
                     archived.units[index].swiftTestingArguments = native.swiftTestingArguments
                     archived.units[index].invocationNames = native.invocationNames
                     archived.units[index].hasOnlyDirectSourceCalls = native.hasOnlyDirectSourceCalls

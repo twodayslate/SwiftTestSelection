@@ -268,7 +268,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 45
+    static let currentParserVersion = 46
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -602,11 +602,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                         direct = false
                     }
                     record(call.calledExpression.tokens(viewMode: .sourceAccurate))
-                    // Without an argument clause Swift supplies defaults at the
-                    // first trailing closure's opening brace, including multi-closure calls.
-                    let start = call.leftParen ?? call.trailingClosure?.leftBrace
-                    for token in [start, call.rightParen].compactMap({ $0 }) {
-                        offsets.insert(token.positionAfterSkippingLeadingTrivia.utf8Offset)
+                    // Swift locates a default argument at the start of the argument list.
+                    // For calls written without parentheses this is the first trailing closure.
+                    if let start = call.leftParen ?? call.trailingClosure?.leftBrace {
+                        offsets.insert(start.positionAfterSkippingLeadingTrivia.utf8Offset)
                     }
                 } else if let segment = node.as(ExpressionSegmentSyntax.self) {
                     // The compiler synthesizes appendInterpolation at the segment. Its

@@ -181,30 +181,30 @@ struct ResultBuilderBodySyntax {
         // Wrappers and member-attribute macros can supply a different initializer.
         guard closure.signature?.attributes.maySupplyBuilder != true else { return true }
         var expression = Syntax(closure)
-        var insideArrayLiteral = false
-        while true {
-            if let element = expression.parent?.as(LabeledExprSyntax.self),
-               let tuple = element.parent?.parent?.as(TupleExprSyntax.self),
-               tuple.elements.count == 1, element.label == nil, element.trailingComma == nil {
-                expression = Syntax(tuple)
-            } else if let element = expression.parent?.as(ArrayElementSyntax.self),
-                      let array = element.parent?.parent?.as(ArrayExprSyntax.self) {
-                // A literal passes its elements to the variadic ExpressibleByArrayLiteral
-                // requirement. That parameter has array type and cannot carry a result
-                // builder for an element closure, even for a custom literal conformer.
-                insideArrayLiteral = true
-                expression = Syntax(array)
-            } else { break }
+        while let element = expression.parent?.as(LabeledExprSyntax.self),
+              let tuple = element.parent?.parent?.as(TupleExprSyntax.self),
+              tuple.elements.count == 1, element.label == nil, element.trailingComma == nil {
+            expression = Syntax(tuple)
+        }
+        if let element = expression.parent?.as(ArrayElementSyntax.self), element.parent?.parent?.is(ArrayExprSyntax.self) == true {
+            // The literal supplies a variadic element to ExpressibleByArrayLiteral.
+            // Returning or passing the array cannot attach a builder to that element.
+            // A macro can splice the original closure into a different call.
+            var parent = expression.parent
+            while let ancestor = parent {
+                if ancestor.is(MacroExpansionExprSyntax.self) || ancestor.is(MacroExpansionDeclSyntax.self) ||
+                    ancestor.is(AttributeSyntax.self) { return true }
+                parent = ancestor.parent
+            }
+            return false
         }
         // A builder can pass this expression to a builder-annotated
         // buildExpression parameter. An ordinary body returns or discards it.
-        if !insideArrayLiteral {
-            if let ordinaryStatements, expression.parent?.as(CodeBlockItemSyntax.self)?.parent?.id == ordinaryStatements {
-                return false
-            }
-            if expression.parent?.is(ReturnStmtSyntax.self) == true ||
-                expression.parent?.as(FunctionCallExprSyntax.self)?.calledExpression.id == expression.id { return false }
+        if let ordinaryStatements, expression.parent?.as(CodeBlockItemSyntax.self)?.parent?.id == ordinaryStatements {
+            return false
         }
+        if expression.parent?.is(ReturnStmtSyntax.self) == true ||
+            expression.parent?.as(FunctionCallExprSyntax.self)?.calledExpression.id == expression.id { return false }
         guard let binding = expression.parent?.as(InitializerClauseSyntax.self)?.parent?.as(PatternBindingSyntax.self),
               let variable = binding.parent?.parent?.as(VariableDeclSyntax.self), !variable.attributes.maySupplyBuilder
         else { return true }

@@ -114,6 +114,13 @@ runner behavior. Swift Testing macros/traits remain outside the head-only helper
 isolation proof, and inline XCTest-specific mapping syntax is not extended here;
 JSON mappings can use enumerated IDs. Full 27.3 runner validation remains open.
 
+The mixed-runner integration test edits one Swift Testing UI method and one XCTest UI method in the same fixture. It checks both compiled entries, the Swift Testing factory, the strict mapping and the execution filters from the retained head build. Each filter must execute its named UI method once with zero failures or skips. Run it with Xcode 27.3 or later and a compatible simulator destination.
+
+```sh
+swift build -c release
+python3 Scripts/xcode_swift_testing_ui_test.py --destination 'platform=iOS Simulator,id=<UDID>' --output /tmp/swift-testing-ui.json
+```
+
 Switching frameworks does not reveal dependencies across the app/test process
 boundary. There is no measured precision or speed benefit from dropping XCTest;
 keep both frameworks and improve the evidence they share.
