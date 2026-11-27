@@ -73,7 +73,7 @@ private struct SourceRepository {
     ], tests: [])
     graph.modules = ["UITests": "UI", "OtherTests": "Other"]
     graph.sources = [path: ui]
-    #expect(Set(graph.comparisonSources.keys) == [path])
+    #expect(Set(graph.comparisonGraph.sources.keys) == [path])
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
     try repo.write(path, "func value() {}")
@@ -82,11 +82,31 @@ private struct SourceRepository {
     #expect(read.diagnostics.contains("Invalid source snapshot key: " + path))
 
     graph.sources["Other:" + path] = ui
-    #expect(graph.comparisonSources[path] != nil)
+    #expect(graph.comparisonGraph.sources[path] != nil)
     graph.sources["Other:" + path] = other
-    #expect(Set(graph.comparisonSources.keys) == ["UI:" + path, "Other:" + path])
+    #expect(Set(graph.comparisonGraph.sources.keys) == ["UI:" + path, "Other:" + path])
     graph.sources["UI:" + path] = ui
-    #expect(Set(graph.comparisonSources.keys) == Set(graph.sources.keys))
+    #expect(Set(graph.comparisonGraph.sources.keys) == Set(graph.sources.keys))
+}
+
+@Test func emptyArchiveRecordsRequireUnambiguousTargetMembership() {
+    let path = "UI:Shared.swift"
+    let empty = SwiftSourceSnapshot.parse("// placeholder", path: path, module: "Other")
+    var graph = XcodeTestGraph(targets: [
+        .init(name: "OtherTests", productType: "test", sourceFiles: [path])
+    ], tests: [])
+    graph.modules = ["OtherTests": "Other", "UITests": "UI"]
+    graph.sources = [path: empty]
+    #expect(Set(graph.comparisonGraph.sources.keys) == ["Other:" + path])
+    #expect(graph.comparisonGraph.diagnostics.isEmpty)
+
+    graph.targets.append(.init(name: "UITests", productType: "test", sourceFiles: [path]))
+    #expect(!graph.comparisonGraph.diagnostics.isEmpty)
+    graph.targets[1].sourceFiles = ["Shared.swift"]
+    #expect(!graph.comparisonGraph.diagnostics.isEmpty)
+    graph.sources["Other:" + path] = empty
+    #expect(Set(graph.comparisonGraph.sources.keys) == [path, "Other:" + path])
+    #expect(graph.comparisonGraph.diagnostics.isEmpty)
 }
 
 @Test(arguments: ["otherFile", "getter", "builder"])
@@ -107,9 +127,9 @@ func savedGraphLocationComparisonAcrossParserVersions(edit: String) throws {
     let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let plugins = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib/swift/host/plugins/testing")
     func capture(_ helper: String, support: String) throws -> (XcodeTestGraph, String) {
-        let files = [path: helper, "Tests.swift": tests, "Support.swift": support]
+        let files = [path: helper, "Tests.swift": tests, "Support.swift": support, "Placeholder.swift": "// Reserved."]
         for (path, text) in files { try repo.write(path, text) }
-        _ = try repo.git(["add", "Helpers.swift", "Tests.swift", "Support.swift"])
+        _ = try repo.git(["add"] + files.keys.sorted())
         _ = try repo.git(["commit", "-qm", "source revision"])
         let revision = try repo.git(["rev-parse", "HEAD"])
         var graph = try boundaryGraph(files, tests: [entry, control], root: repo.root,
@@ -136,7 +156,9 @@ func savedGraphLocationComparisonAcrossParserVersions(edit: String) throws {
     for (base, head) in pairs {
         for barePath in [false, true] {
             var previous = base
-            if barePath { previous.sources[path] = previous.sources.removeValue(forKey: key) }
+            if barePath {
+                for file in [path, "Placeholder.swift"] { previous.sources[file] = previous.sources.removeValue(forKey: "UI:" + file) }
+            }
             let report = try analysis.select(base: before.1, head: after.1, baseGraph: previous, headGraph: head)
             #expect(report.selectedTests == (edit == "builder" ? [entry] : []))
             #expect(report.diagnostics.isEmpty)
@@ -144,7 +166,7 @@ func savedGraphLocationComparisonAcrossParserVersions(edit: String) throws {
     }
     if edit == "getter" {
         var retained = try legacy(after.0)
-        retained.sources[path] = retained.sources.removeValue(forKey: key)
+        for file in [path, "Placeholder.swift"] { retained.sources[file] = retained.sources.removeValue(forKey: "UI:" + file) }
         retained.buildArtifact?.headOnlyBuildEvidence = .init(buildLogDigest: "log", buildSettingsDigest: "settings", documentation: [])
         let replay = try analysis.selectHeadOnly(base: before.1, head: after.1, headGraph: retained)
         #expect(replay.selectedTests.isEmpty)
@@ -513,7 +535,7 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
 }
 
 @Test(arguments: ["function", "closure", "nestedClosure", "nestedGetterClosure", "nestedSetterClosure", "nestedBindingClosure",
-                  "attributedSetter", "extensionWitness", "groupedArgument", "builderExpressionClosure", "conditionalReturn", "witness", "explicitGetWitness", "binary", "macro"])
+                  "attributedSetter", "extensionWitness", "groupedArgument", "builderExpressionClosure", "callableStep", "constructorStep", "conditionalReturn", "witness", "explicitGetWitness", "binary", "macro"])
 func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -555,6 +577,32 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
         linkArguments = [library.appendingPathComponent("libBuilderKit.a").path]
         support = ""
         helperSource = "import BuilderKit\n@LineBuilder func caller() -> Int {\n    1\n}"
+    case "constructorStep":
+        // The String overload enables buildExpression. For integer literals,
+        // Swift resolves the same name to an initializer through the type alias.
+        support = """
+        struct Step {
+            let line: Int
+            init(_ value: Int, line: Int = #line) { self.line = line }
+        }
+        protocol Expressions {}
+        extension Expressions { static func buildExpression(_ text: String) -> Step { Step(0) } }
+        @resultBuilder enum LineBuilder: Expressions {
+            typealias buildExpression = Step
+            static func buildBlock(_ step: Step) -> Int { step.line }
+        }
+        """
+        helperSource = "@LineBuilder func caller() -> Int {\n    1\n}"
+    case "callableStep":
+        support = """
+        struct Step { @_transparent func callAsFunction(_ value: Int, line: Int = #line) -> Int { line } }
+        @resultBuilder enum LineBuilder {
+            static let buildExpression = Step()
+            static func buildExpression(_ text: String) -> Int { 0 }
+            static func buildBlock(_ value: Int) -> Int { value }
+        }
+        """
+        helperSource = "@LineBuilder func caller() -> Int {\n    1\n}"
     case "conditionalReturn":
         helperSource = "@LineBuilder func caller() -> Int {\n#if NEVER_DEFINED\nreturn 0\n#endif\n    1\n}"
     case "nestedClosure":

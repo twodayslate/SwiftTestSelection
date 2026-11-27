@@ -157,9 +157,7 @@ extension XcodeAnalysis {
         try validateMappings(in: headGraph, revision: comparison.head!)
         let changes = try GitChanges.readComparison(base: comparison.base, head: comparison.head, at: root)
         let paths = Set(changes.flatMap(\.paths))
-        var previous = baseGraph, current = headGraph
-        previous.sources = baseGraph.comparisonSources
-        current.sources = headGraph.comparisonSources
+        var previous = baseGraph.comparisonGraph, current = headGraph.comparisonGraph
         try previous.refreshLegacyComparisonSyntax(paths: paths, revision: old.revision, root: root)
         try current.refreshLegacyComparisonSyntax(paths: paths, revision: new.revision, root: root)
         var report = XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base)

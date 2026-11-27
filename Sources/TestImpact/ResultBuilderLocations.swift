@@ -21,8 +21,9 @@ struct ResultBuilderLocations {
          modules: Set<String>, incompleteInputs: Bool, touching paths: Set<String>) {
         let dimensions = Self.dimensions(policy)
         guard !dimensions.isEmpty else { kinds = []; incompletePaths = []; return }
-        let methods: Set<String> = ["buildExpression", "buildBlock", "buildPartialBlock", "buildOptional", "buildIf",
+        let stepNames: Set<String> = ["buildExpression", "buildBlock", "buildPartialBlock", "buildOptional", "buildIf",
             "buildEither", "buildArray", "buildLimitedAvailability", "buildFinalResult"]
+        let defaultNames = stepNames.union(SourceUnit.indirectLocationDefaultNames)
         var knownImports: Set<String> = ["import Testing"]
         for module in modules {
             knownImports.insert("import " + module)
@@ -50,7 +51,7 @@ struct ResultBuilderLocations {
                         opaque = true
                         break
                     }
-                    for (name, values) in defaults where methods.contains(name) { observed.formUnion(values) }
+                    for (name, values) in defaults where defaultNames.contains(name) { observed.formUnion(values) }
                 }
             }
         }

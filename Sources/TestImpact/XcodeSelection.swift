@@ -89,22 +89,43 @@ public struct XcodeTestGraph: Codable, Sendable {
             generatedSourceBoundaries?.values.contains(where: { !$0.isEmpty }) == true
     }
 
-    /// Older archives index each snapshot by path. Recover the module-qualified
-    /// key only when declarations and captured target membership agree. A shared
-    /// file needs a separate captured snapshot for every other owning module.
-    var comparisonSources: [String: SwiftSourceSnapshot] {
-        var result = sources
-        for (path, file) in sources where file.units.first?.region.path == path {
-            guard let id = file.sourceIdentity(storedAs: path), !id.module.isEmpty else { continue }
-            let key = id.module + ":" + path
-            let owners = targets.filter { $0.sourceFiles.contains(path) }.map { modules[$0.name] }
-            guard sources[key] == nil, owners.contains(id.module), owners.allSatisfy({ owner in
-                guard let owner else { return false }
-                if owner == id.module { return true }
-                guard let other = sources[owner + ":" + path] else { return false }
-                return other.units.allSatisfy { $0.region.path == path && $0.key.hasPrefix(owner + ":") }
-            }) else { continue }
-            result[key] = result.removeValue(forKey: path)
+    /// Resolve path-only archive records before any comparison or discovery lookup.
+    /// A file without declarations can still be identified by its captured target.
+    var comparisonGraph: Self {
+        var result = self
+        var unresolved: [String] = []
+        for (path, file) in sources {
+            guard file.units.isEmpty || file.units.first?.region.path == path else { continue }
+            let targetsForPath = targets.filter { $0.sourceFiles.contains(path) }
+            let owners = Set(targetsForPath.compactMap { modules[$0.name] })
+            let knownOwners = targetsForPath.allSatisfy { modules[$0.name] != nil }
+            if file.units.isEmpty, let qualified = file.sourceIdentity(storedAs: path),
+               targets.contains(where: { modules[$0.name] == qualified.module && $0.sourceFiles.contains(qualified.path) }) {
+                // The same string can name both a qualified key and a literal path
+                // containing a colon. Require separate records for the latter.
+                if knownOwners && owners.allSatisfy({ sources[$0 + ":" + path] != nil }) { continue }
+                unresolved.append(path)
+                continue
+            }
+            let module: String?
+            if file.units.isEmpty {
+                module = owners.count == 1 ? owners.first : nil
+            } else {
+                module = file.sourceIdentity(storedAs: path)?.module
+            }
+            guard knownOwners, let module, !module.isEmpty, owners.contains(module), sources[module + ":" + path] == nil,
+                  owners.allSatisfy({ owner in
+                      if owner == module { return true }
+                      guard let other = sources[owner + ":" + path] else { return false }
+                      return other.units.allSatisfy { $0.region.path == path && $0.key.hasPrefix(owner + ":") }
+                  }) else {
+                unresolved.append(path)
+                continue
+            }
+            result.sources[module + ":" + path] = result.sources.removeValue(forKey: path)
+        }
+        for key in unresolved.sorted() {
+            result.diagnostics.append("Cannot resolve captured source ownership for " + key)
         }
         return result
     }

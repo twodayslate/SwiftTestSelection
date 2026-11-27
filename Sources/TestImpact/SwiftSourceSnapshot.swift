@@ -85,6 +85,10 @@ public struct SourceUnit: Codable, Sendable {
 
     var qualifiedSourcePath: String { key.prefix(while: { $0 != ":" }) + ":" + region.path }
 
+    /// A written or compiler-synthesized invocation can select an initializer
+    /// through a type alias or a callable value through callAsFunction.
+    static let indirectLocationDefaultNames: Set<String> = ["*", "callAsFunction"]
+
     func builderFingerprint(_ kinds: Set<String>) -> String {
         guard let builderLocations, !builderLocations.isEmpty, !kinds.isEmpty else { return "" }
         return kinds.sorted().compactMap { kind in

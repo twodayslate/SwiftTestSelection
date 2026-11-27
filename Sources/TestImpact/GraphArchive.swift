@@ -229,7 +229,7 @@ public enum GraphArchive {
     }
     private static func upgradeDiscovery(_ snapshot: inout XcodeTestGraph) {
         guard var graph = snapshot.dependencies, !graph.tests.isEmpty else { return }
-        SwiftTestingDiscoveryRoots.restore(modules: snapshot.modules, sources: snapshot.comparisonSources, graph: &graph)
+        SwiftTestingDiscoveryRoots.restore(modules: snapshot.modules, sources: snapshot.comparisonGraph.sources, graph: &graph)
         snapshot.dependencies = graph
     }
 

@@ -782,6 +782,9 @@ public enum XcodeFineSelector {
         // overloads, receivers and argument slots. A surviving SIL definition is
         // not evidence that all its calls survived mandatory inlining/lowering.
         var result: [String: Set<String>] = [:]
+        let indirectKinds = SourceUnit.indirectLocationDefaultNames.reduce(into: Set<String>()) {
+            $0.formUnion(kindsByName[$1] ?? [])
+        }
         for unit in units {
             let names = unit.invocationNames ?? []
             guard !names.isEmpty else { continue }
@@ -789,7 +792,7 @@ public enum XcodeFineSelector {
             // callAsFunction. Its edge can disappear through mandatory inlining,
             // so source names cannot rule out an implicit callable-object call.
             // Interpret the stored declaration name here to cover saved graphs too.
-            var kinds = (kindsByName["*"] ?? []).union(kindsByName["callAsFunction"] ?? [])
+            var kinds = indirectKinds
             for name in names { kinds.formUnion(name == "*" ? allKinds : kindsByName[name] ?? []) }
             if !kinds.isEmpty { result[unit.key, default: []].formUnion(kinds) }
         }

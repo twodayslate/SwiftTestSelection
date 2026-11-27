@@ -31,8 +31,7 @@ extension XcodeAnalysis {
         guard let proof = artifact.headOnlyBuildEvidence, proof.matches(artifact) else {
             throw ImpactError("Saved graph lacks matching head-only build evidence; capture again with --head-only and --retain-build")
         }
-        var current = headGraph
-        current.sources = headGraph.comparisonSources
+        var current = headGraph.comparisonGraph
         if let bindingReviews {
             guard current.mappings != nil else { throw ImpactError("Binding reviews require the captured mapping policy") }
             current.mappings!.helperBindingContracts = bindingReviews
