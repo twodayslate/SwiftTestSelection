@@ -434,7 +434,7 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
 
 @Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn", "shorthandGetter", "explicitGetter", "subscriptGetter",
                   "setter", "observer", "closureBinding", "wrappedClosureBinding", "returnedClosure", "implicitlyReturnedClosure", "implicitMethod", "implicitGetter",
-                  "unusedPrivateInitializer", "unusedPrivateStep", "inlinedPrivateInitializer"])
+                  "unusedPrivateInitializer", "unusedPrivateStep", "inlinedPrivateInitializer", "nestedPrivateInitializer", "nestedPrivateStep", "nestedImplicitMethod"])
 func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -455,20 +455,28 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         "returnedClosure": ("func value() -> () -> Int { return { BODY } }", "Plain().value()()", "2"),
         "implicitlyReturnedClosure": ("func value() -> () -> Int { ({ BODY }) }", "Plain().value()()", "2"),
         "implicitMethod": ("func value() -> Int { BODY }", "Plain().value()", "2"),
+        "nestedImplicitMethod": ("func value() -> Int { BODY }", "Container.Plain().value()", "2"),
         "implicitGetter": ("var value: Int { BODY }", "Plain().value", "2")
     ]
     let privateMembers = [
         "unusedPrivateInitializer": "init(line: Int = #line) {}",
         "unusedPrivateStep": "static func buildExpression(_ value: Int, line: Int = #line) -> Int { line }",
-        "inlinedPrivateInitializer": "@inline(__always) init(line: Int = #line) {}"
+        "inlinedPrivateInitializer": "@inline(__always) init(line: Int = #line) {}",
+        "nestedPrivateInitializer": "init(line: Int = #line) {}",
+        "nestedPrivateStep": "static func buildExpression(_ value: Int, line: Int = #line) -> Int { line }"
     ]
     if let member = privateMembers[form] {
-        support = "private struct Stamp { \(member) }"
+        switch form {
+        case "nestedPrivateInitializer": support = "private enum Namespace { struct Stamp { \(member) } }"
+        case "nestedPrivateStep": support = "enum Namespace { private struct Stamp { \(member) } }"
+        default: support = "private struct Stamp { \(member) }"
+        }
         before = "struct Plain { func answer() -> Int {\n    2\n\n} }\nfunc caller() -> Int { Plain().answer() }"
         after = before.replacingOccurrences(of: "\n    2\n\n", with: "\n\n    2\n")
     } else if let (declaration, call, statement) = ordinaryBodies[form] {
         support = "import Dispatch"
-        let source = "private struct Plain { \(declaration) }\nfunc caller() -> Int { \(call) }"
+        let nominal = form == "nestedImplicitMethod" ? "private enum Container { struct Plain { \(declaration) } }" : "private struct Plain { \(declaration) }"
+        let source = "\(nominal)\nfunc caller() -> Int { \(call) }"
         before = source.replacingOccurrences(of: " BODY ", with: "\n    \(statement)\n\n")
         after = source.replacingOccurrences(of: " BODY ", with: "\n\n    \(statement)\n")
     } else if form == "trailingClosure" {
@@ -544,15 +552,25 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     var legacy = current
     if privateMembers[form] != nil {
         let provider = "UI:Support.swift"
-        legacy.sources[provider]?.parserVersion = form == "inlinedPrivateInitializer" ? 36 : 35
-        legacy.sources[provider]?.privateLocationDefaultOwners = nil
+        legacy.sources[provider]?.parserVersion = form.hasPrefix("nested") ? 37 : 35
+        for index in legacy.sources[provider]!.units.indices {
+            legacy.sources[provider]!.units[index].privateLocationDefaultScope = nil
+        }
         legacy = try GraphArchive.decode(GraphArchive.encode(legacy))
         for report in try reports(legacy) { #expect(report.selectedTests.contains(entry)) }
+
+        if form == "nestedPrivateInitializer" {
+            var incomplete = legacy
+            incomplete.sources[provider]?.units.removeAll { $0.kind == "type" }
+            try incomplete.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
+            #expect(incomplete.sources[provider]?.units.allSatisfy { $0.privateLocationDefaultScope == nil } == true)
+            for report in try reports(incomplete) { #expect(report.selectedTests.contains(entry)) }
+        }
 
         var differentBlob = legacy
         differentBlob.sources[provider]?.sourceBlobIDs = ["different"]
         try differentBlob.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
-        #expect(differentBlob.sources[provider]?.privateLocationDefaultOwners == legacy.sources[provider]?.privateLocationDefaultOwners)
+        #expect(differentBlob.sources[provider]?.units.allSatisfy { $0.privateLocationDefaultScope == nil } == true)
     }
     if ignoresEdit {
         legacy.sources[key]?.parserVersion = form == "explicitReturn" ? 31 : 32
@@ -561,7 +579,8 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         }
         try legacy.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
         if privateMembers[form] != nil {
-            #expect(legacy.sources["UI:Support.swift"]?.privateLocationDefaultOwners == ["Stamp"])
+            #expect(legacy.sources["UI:Support.swift"]?.units.map(\.privateLocationDefaultScope) ==
+                    current.sources["UI:Support.swift"]?.units.map(\.privateLocationDefaultScope))
         }
         #expect(legacy.sources[key]?.units.map(\.builderLocations) == current.sources[key]?.units.map(\.builderLocations))
         for report in try reports(legacy) { #expect(report.selectedTests.isEmpty) }
@@ -635,7 +654,7 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let sources = ["App:Helpers.swift": file, "App:Other.swift": otherFile, "Other:Helpers.swift": otherModule]
     let locations = ResultBuilderLocations(policy: .semantic, sources: [sources], modules: ["App", "Other"],
         incompleteInputs: false, touching: [path])
-    #expect(file.privateLocationDefaultOwners == ["Stamp"])
+    #expect(file.units.compactMap(\.privateLocationDefaultScope) == ["Stamp"])
     let inside = try #require(file.units.first { $0.helperCallableName == "inside" })
     #expect(locations.kinds[inside] == ["line"])
     let outside = try #require(file.units.first { $0.helperCallableName == "outside" })
@@ -643,13 +662,54 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     #expect((otherFile.units + otherModule.units).allSatisfy { locations.kinds[$0].isEmpty })
 }
 
-@Test(arguments: [false, true]) func objcDefaultsRemainVisibleToDynamicMemberLookup(nestedActor: Bool) throws {
+@Test func nestedLocationDefaultsRespectLexicalCallersAndEscapes() throws {
+    let source = """
+        private enum Namespace {
+            #if !OTHER
+            struct Stamp { init(line: Int = #line) {} }
+            #endif
+            struct Payload: Equatable {}
+            struct Sibling { func inside() { _ = Stamp() } }
+        }
+        struct Plain { func outside() {} }
+        """
+    let file = SwiftSourceSnapshot.parse(source, path: "Defaults.swift", module: "App")
+    let provider = try #require(file.units.first { $0.locationDefaultKinds == ["line"] })
+    #expect(provider.privateLocationDefaultScope == "Namespace")
+    var kinds = ScopedLocationKinds()
+    kinds.include(["line"], owner: provider.privateDefaultOwner)
+    let inside = try #require(file.units.first { $0.helperCallableName == "inside" })
+    let outside = try #require(file.units.first { $0.helperCallableName == "outside" })
+    #expect(kinds[inside] == ["line"])
+    #expect(kinds[outside].isEmpty)
+
+    let escaped = source + "\nextension Namespace { static func make() -> Stamp { .init() } }"
+    let extended = SwiftSourceSnapshot.parse(escaped, path: "Defaults.swift", module: "App")
+    let used = try #require(extended.units.first { $0.locationDefaultKinds == ["line"] })
+    #expect(used.privateDefaultOwner == nil)
+
+    // An associated type can take its witness from the enclosing type by name.
+    let witness = """
+        struct Outer: ImportedProtocol { fileprivate struct Member { init(line: Int = #line) {} } }
+        """
+    let conforming = SwiftSourceSnapshot.parse(witness, path: "Witness.swift", module: "App")
+    let member = try #require(conforming.units.first { $0.locationDefaultKinds == ["line"] })
+    #expect(member.privateDefaultOwner == nil)
+}
+
+@Test(arguments: ["class", "nestedActor", "nestedClass"])
+func objcDefaultsRemainVisibleToDynamicMemberLookup(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
     let path = "Helpers.swift", entry = "UI/Suite/testCaller()"
-    let declaration = nestedActor
-        ? "private struct Stamp { actor Inner { @objc nonisolated func stamped(_ value: Int = #line) -> Int { value } } }"
-        : "private final class Stamp { @objc func stamped(_ value: Int = #line) -> Int { value } }"
+    let method = "@objc func stamped(_ value: Int = #line) -> Int { value }"
+    let declaration: String
+    switch form {
+    case "nestedActor":
+        declaration = "private struct Stamp { actor Inner { @objc nonisolated func stamped(_ value: Int = #line) -> Int { value } } }"
+    case "nestedClass": declaration = "private struct Stamp { final class Inner { \(method) } }"
+    default: declaration = "private final class Stamp { \(method) }"
+    }
     let before = """
         import Foundation
         \(declaration)
@@ -679,14 +739,14 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let previous = try capture(before), current = try capture(after)
     let file = try #require(current.sources["UI:" + path])
     let provider = try #require(file.units.first { $0.locationDefaultNames?["stamped"] != nil })
-    #expect(file.privateDefaultOwner(of: provider) == nil)
-    // The v36 archive field only proved absence of a written type name.
+    #expect(provider.privateDefaultOwner == nil)
+    // Older file-wide fields cannot establish ownership for a particular default.
     var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(file)) as? [String: Any])
-    json["parserVersion"] = 36
+    json["parserVersion"] = form == "class" ? 36 : 37
     json["unreferencedPrivateTypes"] = ["Stamp"]
-    json.removeValue(forKey: "privateLocationDefaultOwners")
+    json["privateLocationDefaultOwners"] = ["Stamp"]
     let archived = try JSONDecoder().decode(SwiftSourceSnapshot.self, from: JSONSerialization.data(withJSONObject: json))
-    #expect(archived.privateLocationDefaultOwners == nil)
+    #expect(archived.units.allSatisfy { $0.privateLocationDefaultScope == nil })
     var legacy = current
     legacy.sources["UI:" + path] = archived
     let changes = try GitChanges.readComparison(base: base, head: head, at: repo.root)

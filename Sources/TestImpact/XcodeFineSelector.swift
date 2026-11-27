@@ -769,7 +769,7 @@ public enum XcodeFineSelector {
         let defaults = snapshot.sources.values.flatMap { file in
             file.units.compactMap { unit -> (unit: SourceUnit, owner: LocationDefaultOwner?)? in
                 guard unit.locationDefaultKinds?.isEmpty == false else { return nil }
-                return (unit, file.privateDefaultOwner(of: unit))
+                return (unit, unit.privateDefaultOwner)
             }
         }
         let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID

@@ -58,7 +58,7 @@ struct ResultBuilderLocations {
                         break
                     }
                     guard !defaults.isEmpty else { continue }
-                    let owner = file.privateDefaultOwner(of: unit)
+                    let owner = unit.privateDefaultOwner
                     for (name, values) in defaults {
                         let relevant = values.intersection(dimensions)
                         if stepNames.contains(name) { observed.include(relevant, owner: owner) }
@@ -77,60 +77,23 @@ struct ResultBuilderLocations {
 /// Swift attaches a builder to an executable body. Nested declarations and closures
 /// have their own context even when their surrounding expression is transformed.
 struct ResultBuilderBodySyntax {
-    private let nonWitnessMembers: Set<SyntaxIdentifier>
-    private(set) var privateLocationDefaultOwners: Set<String> = []
+    private let mayHaveConformanceOutsideDeclaration: Bool
 
-    init(_ file: SourceFileSyntax, identifiers: [String: [TokenSyntax]], declarationIssues: [HelperDeclarationIssue]) {
-        // An extension (including one emitted by a macro) can add a conformance.
-        // Without either, an unadorned file-private nominal with no inheritance
-        // cannot acquire a builder through a protocol requirement.
-        // These compiler attributes cannot synthesize a use of a private type.
-        // Unknown attributes and macro expansions in any branch still can.
-        guard declarationIssues.allSatisfy({ issue in
-            issue.kind == "unresolved-attribute" && ["@inline", "@_transparent", "@resultBuilder", "@_functionBuilder"].contains(issue.spelling)
-        }) else { nonWitnessMembers = []; return }
-        let mayExtend = file.tokens(viewMode: .sourceAccurate).contains(where: {
+    init(_ file: SourceFileSyntax, declarationIssues: [HelperDeclarationIssue]) {
+        // An extension or macro can attach a conformance outside the declaration.
+        mayHaveConformanceOutsideDeclaration = !declarationIssues.isEmpty || file.tokens(viewMode: .sourceAccurate).contains {
             $0.tokenKind == .keyword(.extension) || $0.tokenKind == .atSign
-        })
-        var members = Set<SyntaxIdentifier>()
-        var statements = Array(file.statements)
-        while let item = statements.popLast() {
-            if let conditional = item.item.as(IfConfigDeclSyntax.self) {
-                for clause in conditional.clauses {
-                    if let items = clause.elements?.as(CodeBlockItemListSyntax.self) { statements.append(contentsOf: items) }
-                }
-                continue
-            }
-            guard let group = item.item.asProtocol(DeclGroupSyntax.self), group.inheritanceClause == nil,
-                  !item.item.is(ProtocolDeclSyntax.self),
-                  group.modifiers.contains(where: { [.keyword(.private), .keyword(.fileprivate)].contains($0.name.tokenKind) })
-            else { continue }
-            if !mayExtend { members.insert(group.memberBlock.members.id) }
-            // A private nominal with no uses in its defining file cannot supply
-            // a builder's callable value or type alias in another file.
-            let ordinaryAttributes = group.attributes.allSatisfy {
-                guard let name = $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription else { return false }
-                return ["available", "resultBuilder", "_functionBuilder"].contains(name)
-            }
-            if ordinaryAttributes, let name = item.item.asProtocol(NamedDeclSyntax.self)?.name,
-               let spelling = name.identifier?.name, identifiers[spelling]?.count == 1 {
-                // AnyObject can resolve an Objective-C method and its Swift
-                // defaults without any source mention of the declaring class.
-                if item.item.is(ClassDeclSyntax.self), group.memberBlock.tokens(viewMode: .sourceAccurate).contains(where: { token in
-                    token.tokenKind == .keyword(.dynamic) ||
-                        (token.tokenKind == .atSign && token.parent?.as(AttributeSyntax.self)?.inlineAttributeName == nil)
-                }) { continue }
-                privateLocationDefaultOwners.insert(name.text)
-            }
         }
-        nonWitnessMembers = members
     }
 
     private func mayInheritBuilder(_ declaration: Syntax) -> Bool {
-        guard let member = declaration.parent?.as(MemberBlockItemSyntax.self) else { return false }
-        var parent = member.parent
+        guard !mayHaveConformanceOutsideDeclaration, declaration.parent?.is(MemberBlockItemSyntax.self) == true else { return true }
+        var parent = declaration.parent
         while let ancestor = parent {
-            if let block = ancestor.as(MemberBlockSyntax.self) { return !nonWitnessMembers.contains(block.members.id) }
+            if let group = ancestor.asProtocol(DeclGroupSyntax.self) {
+                guard group.inheritanceClause == nil, !ancestor.is(ProtocolDeclSyntax.self) else { return true }
+                if group.modifiers.contains(where: { [.keyword(.private), .keyword(.fileprivate)].contains($0.name.tokenKind) }) { return false }
+            }
             parent = ancestor.parent
         }
         return true

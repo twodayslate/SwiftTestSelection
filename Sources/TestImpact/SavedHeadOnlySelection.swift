@@ -101,7 +101,7 @@ extension XcodeTestGraph {
             // An unchanged declaration can supply a default to a changed builder
             // body elsewhere. Authenticate the defining file before narrowing its scope.
             if !touched {
-                guard comparingSwift, archived.privateLocationDefaultOwners == nil,
+                guard comparingSwift, version < 38,
                       archived.units.contains(where: { unit in
                           !unit.scope.isEmpty && unit.locationDefaultNames?.isEmpty == false
                       }) else { continue }
@@ -110,31 +110,24 @@ extension XcodeTestGraph {
             guard let parsed = try cache?.snapshot(path: id.path, module: id.module),
                   parsed.diagnostics.isEmpty, let parsedBlobs = parsed.sourceBlobIDs, !blobs.isDisjoint(with: parsedBlobs) else { continue }
             let regions = Dictionary(grouping: parsed.units.indices, by: { parsed.units[$0].region })
-            var owners = parsed.privateLocationDefaultOwners ?? []
-            for unit in archived.units where owners.contains(unit.scope) && unit.locationDefaultNames?.isEmpty == false {
-                // The bytes certify the parsed declaration. An older unit must
-                // also identify that declaration before inheriting its visibility.
-                if regions[unit.region]?.contains(where: {
-                    let native = parsed.units[$0]
-                    return native.key == unit.key && native.scope == unit.scope && native.locationDefaultNames == unit.locationDefaultNames
-                }) != true { owners.remove(unit.scope) }
-            }
-            archived.privateLocationDefaultOwners = owners
-            if !touched { sources[key] = archived; continue }
-            archived.ordinaryManifestNamedSource = parsed.ordinaryManifestNamedSource
+            if touched { archived.ordinaryManifestNamedSource = parsed.ordinaryManifestNamedSource }
             var matched = Set<Int>()
             var restoredInvocations = true
-            var builderMatches = Set<Int>()
+            var unitMatches = Set<Int>()
             for index in archived.units.indices {
                 let unit = archived.units[index]
                 let refreshCalls = unit.needsCallerLocationRefresh(version: version, verifiedInterpolation: archived.hasVerifiedInterpolationLocations == true)
-                let matches = regions[unit.region]?.filter { parsed.units[$0].key == unit.key }
+                let matches = regions[unit.region]?.filter { parsed.units[$0].key == unit.key && parsed.units[$0].scope == unit.scope }
                 guard let matches, matches.count == 1, let match = matches.first else {
                     if refreshCalls { restoredInvocations = false }
                     continue
                 }
                 let native = parsed.units[match]
-                builderMatches.insert(match)
+                unitMatches.insert(match)
+                if native.locationDefaultNames == unit.locationDefaultNames, native.locationDefaultKinds == unit.locationDefaultKinds {
+                    archived.units[index].privateLocationDefaultScope = native.privateLocationDefaultScope
+                }
+                guard touched else { continue }
                 archived.units[index].builderLocations = native.builderLocations
                 if version < 11 {
                     archived.units[index].callerLocations = native.callerLocations
@@ -152,9 +145,15 @@ extension XcodeTestGraph {
                     archived.units[index].swiftTestingBodyCandidate = native.swiftTestingBodyCandidate
                 }
             }
-            if builderMatches.count != parsed.units.count || builderMatches.count != archived.units.count {
-                for index in archived.units.indices { archived.units[index].builderLocations = nil }
+            // A missing or differently grouped consumer could use a scoped
+            // default from outside the archive's recorded lexical boundary.
+            if unitMatches.count != parsed.units.count || unitMatches.count != archived.units.count {
+                for index in archived.units.indices {
+                    archived.units[index].privateLocationDefaultScope = nil
+                    if touched { archived.units[index].builderLocations = nil }
+                }
             }
+            if !touched { sources[key] = archived; continue }
             archived.hasVerifiedInvocationLocations = restoredInvocations
             if version < 5, matched.count == parsed.units.count, matched.count == archived.units.count {
                 archived.hasVerifiedConditionalMembership = true

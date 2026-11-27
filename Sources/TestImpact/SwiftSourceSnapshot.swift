@@ -56,6 +56,8 @@ public struct SourceUnit: Codable, Sendable {
     public var fingerprint: String
     public var kind: String
     public var scope: String
+    /// Outermost proven lexical boundary for all caller defaults in this unit.
+    var privateLocationDefaultScope: String? = nil
     public var region: SourceRegion
     /// Enclosing conditional clauses, from the outermost directive to this declaration.
     public var conditionalBranch: String? = nil
@@ -247,10 +249,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 37
-    /// Defaults on these private types can be bound only within the owner.
-    /// v36's unreferencedPrivateTypes did not check Objective-C member lookup.
-    var privateLocationDefaultOwners: Set<String>? = nil
+    static let currentParserVersion = 38
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -558,8 +557,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 #endif
             })
         }
-        let builderBodies = ResultBuilderBodySyntax(tree, identifiers: identifiers, declarationIssues: declarationIssues)
-        result.privateLocationDefaultOwners = builderBodies.privateLocationDefaultOwners
+        let builderBodies = ResultBuilderBodySyntax(tree, declarationIssues: declarationIssues)
+        let privateDefaults = PrivateLocationDefaultSyntax(tree, identifiers: identifiers, declarationIssues: declarationIssues)
+        var privateLocationDefaultScope: String?
         func callerInfo(_ node: Syntax, includeAllTokens: Bool = false) -> (locations: [String: String], names: Set<String>, direct: Bool) {
             var direct = true
             var offsets = Set<Int>()
@@ -914,6 +914,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
                 kind: kind, scope: scope.joined(separator: "."),
+                privateLocationDefaultScope: defaults.isEmpty ? nil : privateLocationDefaultScope,
                 region: SourceRegion(path: path, startLine: start, endLine: end),
                 conditionalBranch: branch.isEmpty ? nil : branch,
                 syntaxFingerprint: semantic == syntax ? nil : syntax,
@@ -1027,6 +1028,11 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             result.units.append(unit)
         }
         func walk(_ node: Syntax, scope: [String]) {
+            let enclosingDefaultScope = privateLocationDefaultScope
+            if enclosingDefaultScope == nil {
+                privateLocationDefaultScope = privateDefaults?.scope(for: node, in: scope)
+            }
+            defer { privateLocationDefaultScope = enclosingDefaultScope }
             if let item = node.as(CodeBlockItemSyntax.self), !item.item.is(DeclSyntax.self) {
                 add(node, header: node, kind: "topLevel", scope: scope)
             } else if let value = node.as(IfConfigDeclSyntax.self) {
