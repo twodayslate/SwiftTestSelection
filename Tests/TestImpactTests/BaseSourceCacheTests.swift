@@ -142,6 +142,15 @@ func savedGraphLocationComparisonAcrossParserVersions(edit: String) throws {
             #expect(report.diagnostics.isEmpty)
         }
     }
+    if edit == "getter" {
+        var retained = try legacy(after.0)
+        retained.sources[path] = retained.sources.removeValue(forKey: key)
+        retained.buildArtifact?.headOnlyBuildEvidence = .init(buildLogDigest: "log", buildSettingsDigest: "settings", documentation: [])
+        let replay = try analysis.selectHeadOnly(base: before.1, head: after.1, headGraph: retained)
+        #expect(replay.selectedTests.isEmpty)
+        #expect(replay.ignoredChanges.contains(path))
+        #expect(replay.diagnostics.isEmpty)
+    }
 }
 
 @Test(arguments: [false, true])
