@@ -659,7 +659,13 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         }
         """
     let after = before.replacingOccurrences(of: "    return value.stamped?() ?? 0\n\n", with: "\n    return value.stamped?() ?? 0\n")
-    let tests = "import XCTest\nfinal class Suite: XCTestCase { func testCaller() { XCTAssertEqual(caller(NSObject()), 0) } }"
+    // Swift binds the default from stamped(_:), then Objective-C dispatches
+    // its selector to a receiver that returns the supplied caller line.
+    let tests = """
+        import XCTest
+        final class Receiver: NSObject { @objc(stamped:) func echo(_ line: Int) -> Int { line } }
+        final class Suite: XCTestCase { func testCaller() { XCTAssertEqual(caller(Receiver()), 4) } }
+        """
     try repo.write(path, before)
     try repo.write("Tests.swift", tests)
     let base = try repo.commit()
