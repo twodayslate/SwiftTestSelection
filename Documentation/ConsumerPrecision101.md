@@ -1,5 +1,36 @@
 # Consumer precision for #101
 
+## Historical comparisons and consumer refactors at 5b602d4 and eff7597
+
+The original #380 and #383 comparisons still schedule 360 and 363 UI tests. Two changes to how the consumer organizes its tests reduced the complete policies to 52 and 89 UI tests. The table shows the final execution lists after the consumer independently selected shared helpers and fixtures. Each primary query still selected every test in the plan. The first captures used 5b602d4. At eff7597, fresh builds of both original comparisons and saved-graph replays of the three source refactors reproduced their raw primary IDs, independently scoped IDs, reason kinds and final execution lists.
+
+| Comparison | Test source used for comparison | Base UI | Regression UI | Total UI | Non-UI |
+| --- | --- | ---: | ---: | ---: | ---: |
+| #380 | Original | 47 | 313 | 360 | 1,848 |
+| #380 | Geometry assertion local to its caller, old query inlined at its three uses | 47 | 5 | 52 | 1,848 |
+| #383 | Original | 47 | 316 | 363 | 1,853 |
+| #383 | Construct the application in the two tests and pass it to the private helper | 47 | 316 | 363 | 1,853 |
+| #383 | Move the two scenarios into their tests, keeping the original base names and signature | 47 | 316 | 363 | 1,853 |
+| #383 | Same test-owned scenarios, with XCTest names and throwing signature established in the base | 47 | 42 | 89 | 1,853 |
+
+**#380.** The base control substitutes the deleted private query's body at all three call sites in its two historical callers. The head control moves the geometry assertion into its sole caller as a local function, preserving the call positions and its diagnostic defaults. The resulting consumer request identifies five edited test entries and zero shared paths. All five ran against the retained products and passed with zero skips. This policy schedules 308 fewer UI tests.
+
+**#383.** Passing the application into the helper exposes the next unsupported operation, the nested function `closeViewer`. Moving the two scenarios into their test entries removes that helper, while the original base names and throwing signature still select all 363 UI tests. Replaying each changed test file independently reproduces this result. A compiled XCTest control exposes the Objective-C selectors `testReading` and `testReadingAndReturnError:` for the nonthrowing and throwing forms. Name-based pairing would miss that distinction.
+
+Establishing the head signatures before changing the scenarios leaves one shared path in the regression-support request, the original application fixture. Its 42 UI consumers match the independently verified historical fixture list exactly. Each of the two changed test files individually contributes zero further UI candidates after excluding the independently executed edited tests. The complete policy retains all 47 Base entries and every edited test. It also retains the edited read-receipt relaunch test that the earlier 88-test union missed. This policy schedules 274 fewer UI tests.
+
+**Callback and application-state controls.** On iOS Simulator 26.2 the original #380 waiter released a captured reference by the time it returned for an already-ready predicate, deferred fulfillment, timeout and interruption. The controls observed 1, 2, 2 and 2 calls respectively. A deliberately retained predicate remained callable and kept the reference alive until explicitly released. These observations apply to the tested helper and runtime. A general exclusion still needs an authenticated binding and effect model for the project callback and its callees.
+
+Launching the original #383 app with the changed helper's fixture seeded five activity receipt keys. A fresh process with reset disabled preserved all five values, and a launch with reset enabled cleared all five. No comment-version keys appeared in that run. On a clean simulator, two default note fixture launches used distinct activity-reader namespaces and shared one note-header key. An explicit pairing ID produced the expected reader namespace. The relaunch test uses a fixed pairing and exercises persistence for its own note. The shared storage and distinct reader and note identities both matter to a historical isolation proof.
+
+**Execution and reproduction.** Both converted-row tests and the fixed-pairing relaunch passed on the retained #383 products with zero skips. The focused runs took 182 seconds for five #380 regressions and 101 seconds for three #383 methods, including runner startup. As an execution control, the original #380 policy also selected `SettingsLayoutUITests/testPairingMenuAndCloudStatusNavigation()`. It ran successfully in 29.15 seconds on the original products. The refactored policy omits that method. Full-suite elapsed savings remain unmeasured. The ownership-only #383 control reuses the same compiled head as the stable-signature comparison and applies the consumer policy against the alternate Git base. Each other comparison uses the complete consumer selector with a fresh single head build, ten captured SIL modules, strict UI mappings and retained-product verification.
+
+Both head-side refactors also apply to ChainOfCustody main at `7ba9db9`. On that checkout the local impact report identified the reply geometry test and both converted-row tests. All three executed and passed in the regression test plan on iOS Simulator 26.2. The converted-row tests retain their current XCTest names and duplicate the setup and checks common to both scenarios. The archive includes the exact input and output tree identifiers.
+
+The original comparisons retain their fallbacks for the deleted query's historical bindings, the waiter, the renamed XCTest entries and application state. The hostless Core runtime boundary also remains unproven. Keep #101 open for narrowing the unchanged historical sources. The consumer alternatives require changes on the base side and cannot be applied retrospectively by updating the analyzer pin.
+
+[Download the raw primary and scope IDs, per-path controls, fallback decisions, final execution IDs, build and source-tree identities, patch digests and focused execution records](ConsumerPrecision101Controls.json.gz).
+
 ## Recheck at 0e7ae80
 
 The complete policies for #380 and #383 still select every UI test. Fresh captures reproduced every Base UI, Regression UI and non-UI identifier from the earlier capture. Each comparison built the head once, consumed all ten build-time SIL modules, and verified its retained products. The two #380 historical callers and the #383 read-receipt relaunch test passed on those products with zero skips. The complete policies save zero test executions. [Download the exact selections, independent controls, build hashes and focused execution results](ConsumerPrecision101Recheck.json.gz).
