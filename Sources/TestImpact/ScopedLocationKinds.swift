@@ -10,7 +10,11 @@ struct LocationDefaultOwner {
 
 extension SwiftSourceSnapshot {
     func privateDefaultOwner(of unit: SourceUnit) -> LocationDefaultOwner? {
-        guard privateLocationDefaultOwners?.contains(unit.scope) == true else { return nil }
+        // An opaque declaration, such as an entire nested actor, also stores
+        // defaults from its children. Its enclosing scope does not own them.
+        guard privateLocationDefaultOwners?.contains(unit.scope) == true,
+              unit.kind == "function" || unit.kind == "state" || unit.helperEnumCaseWithoutDefaults != nil
+        else { return nil }
         return LocationDefaultOwner(source: unit.qualifiedSourcePath, type: unit.scope)
     }
 }

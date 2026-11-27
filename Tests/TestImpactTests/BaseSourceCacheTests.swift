@@ -643,13 +643,16 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     #expect((otherFile.units + otherModule.units).allSatisfy { locations.kinds[$0].isEmpty })
 }
 
-@Test func privateClassDefaultsRemainVisibleToDynamicMemberLookup() throws {
+@Test(arguments: [false, true]) func objcDefaultsRemainVisibleToDynamicMemberLookup(nestedActor: Bool) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
     let path = "Helpers.swift", entry = "UI/Suite/testCaller()"
+    let declaration = nestedActor
+        ? "private struct Stamp { actor Inner { @objc nonisolated func stamped(_ value: Int = #line) -> Int { value } } }"
+        : "private final class Stamp { @objc func stamped(_ value: Int = #line) -> Int { value } }"
     let before = """
         import Foundation
-        private final class Stamp { @objc func stamped(_ value: Int = #line) -> Int { value } }
+        \(declaration)
         func caller(_ value: AnyObject) -> Int {
             return value.stamped?() ?? 0
 
@@ -669,7 +672,8 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     }
     let previous = try capture(before), current = try capture(after)
     let file = try #require(current.sources["UI:" + path])
-    #expect(file.privateLocationDefaultOwners?.isEmpty == true)
+    let provider = try #require(file.units.first { $0.locationDefaultNames?["stamped"] != nil })
+    #expect(file.privateDefaultOwner(of: provider) == nil)
     // The v36 archive field only proved absence of a written type name.
     var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(file)) as? [String: Any])
     json["parserVersion"] = 36
