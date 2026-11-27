@@ -434,7 +434,8 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
 
 @Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn", "shorthandGetter", "explicitGetter", "subscriptGetter",
                   "setter", "observer", "closureBinding", "wrappedClosureBinding", "returnedClosure", "implicitlyReturnedClosure", "implicitMethod", "implicitGetter",
-                  "unusedPrivateInitializer", "unusedPrivateStep", "inlinedPrivateInitializer", "nestedPrivateInitializer", "nestedPrivateStep", "nestedImplicitMethod", "unrelatedInlineAttribute", "availableMethod", "escapedCompilerAttribute", "escapedAvailableMethod"])
+                  "unusedPrivateInitializer", "unusedPrivateStep", "inlinedPrivateInitializer", "nestedPrivateInitializer", "nestedPrivateStep", "nestedImplicitMethod", "unrelatedInlineAttribute", "availableMethod", "escapedCompilerAttribute", "escapedAvailableMethod",
+                  "functionLocal", "closureLocal", "getterLocal"])
 func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -469,6 +470,11 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         "nestedPrivateInitializer": "init(line: Int = #line) {}",
         "nestedPrivateStep": "static func buildExpression(_ value: Int, line: Int = #line) -> Int { line }"
     ]
+    let localTypes = [
+        "functionLocal": "func caller() -> Int { struct Local { func value() -> Int { BODY } }; return Local().value() }",
+        "closureLocal": "func caller() -> Int { let f = { struct Local { struct Inner { var value: Int { BODY } } }; return Local.Inner().value }; return f() }",
+        "getterLocal": "struct Container { var value: Int { struct Local { subscript(_ i: Int) -> Int { BODY } }; return Local()[0] } }; func caller() -> Int { Container().value }"
+    ]
     if let member = privateMembers[form] {
         switch form {
         case "nestedPrivateInitializer": support = "private enum Namespace { struct Stamp { \(member) } }"
@@ -477,6 +483,11 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         }
         before = "struct Plain { func answer() -> Int {\n    2\n\n} }\nfunc caller() -> Int { Plain().answer() }"
         after = before.replacingOccurrences(of: "\n    2\n\n", with: "\n\n    2\n")
+    } else if let local = localTypes[form] {
+        support = "import Dispatch"
+        let source = "extension Int {}\n" + local
+        before = source.replacingOccurrences(of: " BODY ", with: "\n    2\n\n")
+        after = source.replacingOccurrences(of: " BODY ", with: "\n\n    2\n")
     } else if let (declaration, call, statement) = ordinaryBodies[form] {
         support = "import Dispatch"
         let nominal = form == "nestedImplicitMethod" ? "private enum Container { struct Plain { \(declaration) } }" : "private struct Plain { \(declaration) }"
@@ -552,7 +563,7 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         #expect(caller.invocationNames?.contains("subscript") == true)
         #expect(caller.hasOnlyDirectSourceCalls != true)
     }
-    let ignoresEdit = ordinaryBodies[form] != nil || privateMembers[form] != nil
+    let ignoresEdit = ordinaryBodies[form] != nil || privateMembers[form] != nil || localTypes[form] != nil
     for report in try reports(current) {
         if ignoresEdit {
             #expect(report.selectedTests.isEmpty)
@@ -587,7 +598,7 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         #expect(differentBlob.sources[provider]?.units.allSatisfy { $0.privateLocationDefaultScope == nil } == true)
     }
     if ignoresEdit {
-        legacy.sources[key]?.parserVersion = form == "explicitReturn" ? 31 : 32
+        legacy.sources[key]?.parserVersion = localTypes[form] != nil ? 39 : (form == "explicitReturn" ? 31 : 32)
         for i in legacy.sources[key]!.units.indices {
             legacy.sources[key]!.units[i].builderLocations = ["line": "legacy body"]
         }
@@ -772,7 +783,7 @@ func objcDefaultsRemainVisibleToDynamicMemberLookup(form: String) throws {
 }
 
 @Test(arguments: ["function", "closure", "nestedClosure", "nestedGetterClosure", "nestedSetterClosure", "nestedBindingClosure",
-                  "attributedSetter", "extensionWitness", "groupedArgument", "builderExpressionClosure", "callableStep", "constructorStep", "privateConstructorStep", "conditionalReturn", "witness", "explicitGetWitness", "binary", "implicitBinary", "macro"])
+                  "attributedSetter", "extensionWitness", "groupedArgument", "builderExpressionClosure", "callableStep", "constructorStep", "privateConstructorStep", "conditionalReturn", "witness", "explicitGetWitness", "localWitness", "localAttribute", "binary", "implicitBinary", "macro"])
 func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -876,6 +887,10 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
         helperSource = "private struct Reader { var value: Int {\n    1\n} }\nextension Reader: Reading {}\nfunc caller() -> Int { Reader().value }"
     case "explicitGetWitness":
         helperSource = "struct Reader: Reading { var value: Int { get {\n    1\n} } }\nfunc caller() -> Int { Reader().value }"
+    case "localWitness":
+        helperSource = "func caller() -> Int { struct Reader: Reading { var value: Int {\n    1\n} }; return Reader().value }"
+    case "localAttribute":
+        helperSource = "func caller() -> Int { struct Reader { @LineBuilder func read() -> Int {\n    1\n} }; return Reader().read() }"
     case "function": helperSource = "@LineBuilder func caller() -> Int {\n    1\n}"
     case "closure": helperSource = "func caller() -> Int { evaluate {\n    1\n} }"
     default: helperSource = "struct Reader: Reading { var value: Int {\n    1\n} }\nfunc caller() -> Int { Reader().value }"

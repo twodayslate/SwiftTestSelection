@@ -113,13 +113,19 @@ struct ResultBuilderBodySyntax {
 
     private func mayInheritBuilder(_ declaration: Syntax) -> Bool {
         guard declaration.parent?.is(MemberBlockItemSyntax.self) == true else { return false }
-        guard !mayHaveConformanceOutsideDeclaration else { return true }
         var parent = declaration.parent
         while let ancestor = parent {
             if let group = ancestor.asProtocol(DeclGroupSyntax.self) {
-                guard group.inheritanceClause == nil, !ancestor.is(ProtocolDeclSyntax.self) else { return true }
-                if group.modifiers.contains(where: { [.keyword(.private), .keyword(.fileprivate)].contains($0.name.tokenKind) }) { return false }
+                guard group.inheritanceClause == nil, !ancestor.is(ProtocolDeclSyntax.self),
+                      !group.attributes.maySupplyBuilder else { return true }
+                if !mayHaveConformanceOutsideDeclaration,
+                   group.modifiers.contains(where: { [.keyword(.private), .keyword(.fileprivate)].contains($0.name.tokenKind) }) { return false }
             }
+            // A nominal declared inside an executable body cannot be named in
+            // a file-scope extension. Only declarations inside this boundary
+            // can supply its witness, including an attached member attribute.
+            if ancestor.is(CodeBlockSyntax.self) || ancestor.is(ClosureExprSyntax.self) ||
+                ancestor.is(AccessorBlockSyntax.self) { return false }
             parent = ancestor.parent
         }
         return true
