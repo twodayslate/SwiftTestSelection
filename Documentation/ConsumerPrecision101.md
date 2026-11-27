@@ -1,5 +1,26 @@
 # Consumer precision for #101
 
+## Consumer changes that preserve the historical Git base
+
+Fresh captures at `2570f2c` ran the complete consumer policy on the original comparisons and two alternate heads. Each built the head once, consumed ten build-time SIL modules, verified the retained build and passed strict UI mapping. Replaying the saved graphs at `cdf8d3c` reproduced the primary and scoped test IDs, reason kinds and final execution lists. Both alternate heads preserve every production edit. Only the UI test sources change.
+
+| Historical comparison | UI test source at head | Base UI | Regression UI | Total UI | Non-UI |
+| --- | --- | ---: | ---: | ---: | ---: |
+| #380 | Original | 47 | 313 | 360 | 1,848 |
+| #380 | Local assertion, historical private query retained | 47 | 5 | 52 | 1,848 |
+| #383 | Original | 47 | 316 | 363 | 1,853 |
+| #383 | Test-owned scenarios with both old and new XCTest entries | 47 | 44 | 91 | 1,853 |
+
+For #380, moving the geometry assertion into its only test caller and restoring the unused private query leaves five independently executed edited methods and no shared test-support path. The 52 UI identifiers match the earlier two-sided refactor exactly. The compiled restored query uses the SDK’s button query, predicate initializer, matching and first-match APIs. In the original capture, the assertion calls the UI module’s waiting helper, which passes a block capturing the predicate closures to XCTest. Safe exclusion on the original diff still requires the deleted query’s historical bindings and the callback’s lifetime and effects through that wait.
+
+For #383, the two historical entries execute the revised scenarios, and two entries under the new names forward to them. The control retains the unused private helper and the original nonthrowing XCTest selector of the momentum test. Its 91 UI identifiers include all 89 from the earlier refactor plus both historical entries. This preserves the 42 independently identified fixture consumers and the modified receipt-relaunch test. The two names for each scenario also mean duplicate execution when running the full suite. On the original diff the renamed tests, persistent receipt state across app launches, and the edit to the compiled Core source `ChainOfCustodyCore/Data/AppStore.swift` still matter.
+
+On iOS Simulator 26.2, four of five focused #380 regressions passed on the first run. `testCopyCommentsFilterAndPostToSelectedDestination()` timed out waiting for the edited text to refresh. That test body is byte-identical in the two products. It passed on clean simulators using both the original product and the alternate product. All six focused #383 tests passed with zero skips, including both historical entries, both new entries, the receipt relaunch and the momentum test.
+
+The alternate policies schedule 308 and 272 fewer UI executions than the respective originals. These are selection counts. The unchanged historical inputs still save zero executions with this analyzer, and #101 remains open.
+
+[Download the exact identifiers, fallback decisions, build and patch identities, compiler binding checks and focused simulator results](ConsumerPrecision101Controls.json.gz). The new results are under `originalBaseHeadControls`. Its `blankLineControls` entry includes the Xcode fixture overlay, both one-line insertions and the selected test IDs in each analysis mode.
+
 ## Historical comparisons and consumer refactors at 5b602d4 and eff7597
 
 The original #380 and #383 comparisons still schedule 360 and 363 UI tests. Two changes to how the consumer organizes its tests reduced the complete policies to 52 and 89 UI tests. The table shows the final execution lists after the consumer independently selected shared helpers and fixtures. Each primary query still selected every test in the plan. The first captures used 5b602d4. At eff7597, fresh builds of both original comparisons and saved-graph replays of the three source refactors reproduced their raw primary IDs, independently scoped IDs, reason kinds and final execution lists.
@@ -27,7 +48,7 @@ Launching the original #383 app with the changed helper's fixture seeded five ac
 
 Both head-side refactors also apply to ChainOfCustody main at `7ba9db9`. On that checkout the local impact report identified the reply geometry test and both converted-row tests. All three executed and passed in the regression test plan on iOS Simulator 26.2. The converted-row tests retain their current XCTest names and duplicate the setup and checks common to both scenarios. The archive includes the exact input and output tree identifiers.
 
-The original comparisons retain their fallbacks for the deleted query's historical bindings, the waiter, the renamed XCTest entries and application state. The hostless Core runtime boundary also remains unproven. Keep #101 open for narrowing the unchanged historical sources. The consumer alternatives require changes on the base side and cannot be applied retrospectively by updating the analyzer pin.
+The original comparisons retain their fallbacks for the deleted query's historical bindings, the waiter, the renamed XCTest entries and application state. The hostless Core runtime boundary also remains unproven. Keep #101 open for narrowing the unchanged historical sources. The earlier 52- and 89-test comparisons both changed the base test sources. Reproducing those results requires the corresponding consumer edits.
 
 [Download the raw primary and scope IDs, per-path controls, fallback decisions, final execution IDs, build and source-tree identities, patch digests and focused execution records](ConsumerPrecision101Controls.json.gz).
 
