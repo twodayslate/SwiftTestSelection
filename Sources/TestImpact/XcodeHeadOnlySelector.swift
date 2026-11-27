@@ -143,7 +143,10 @@ struct XcodeHeadOnlySources {
             if basePaths == nil { result.diagnostics.append("Cannot enumerate base sources at \(base)") }
         }
         for key in current.sources.keys.sorted() {
-            guard let colon = key.firstIndex(of: ":") else { result.diagnostics.append("Invalid source snapshot key: \(key)"); continue }
+            guard let colon = key.firstIndex(of: ":"), current.sources[key]?.units.first?.region.path != key else {
+                result.diagnostics.append("Invalid source snapshot key: \(key)")
+                continue
+            }
             let module = String(key[..<colon]), path = String(key[key.index(after: colon)...])
             guard paths.contains(path) || auditCallers else { continue }
             // New files outside the scope have no old callers to audit. Do not

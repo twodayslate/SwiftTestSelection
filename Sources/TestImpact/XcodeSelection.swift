@@ -89,6 +89,26 @@ public struct XcodeTestGraph: Codable, Sendable {
             generatedSourceBoundaries?.values.contains(where: { !$0.isEmpty }) == true
     }
 
+    /// Older archives index each snapshot by path. Recover the module-qualified
+    /// key only when declarations and captured target membership agree. A shared
+    /// file needs a separate captured snapshot for every other owning module.
+    var comparisonSources: [String: SwiftSourceSnapshot] {
+        var result = sources
+        for (path, file) in sources where file.units.first?.region.path == path {
+            guard let id = file.sourceIdentity(storedAs: path), !id.module.isEmpty else { continue }
+            let key = id.module + ":" + path
+            let owners = targets.filter { $0.sourceFiles.contains(path) }.map { modules[$0.name] }
+            guard sources[key] == nil, owners.contains(id.module), owners.allSatisfy({ owner in
+                guard let owner else { return false }
+                if owner == id.module { return true }
+                guard let other = sources[owner + ":" + path] else { return false }
+                return other.units.allSatisfy { $0.region.path == path && $0.key.hasPrefix(owner + ":") }
+            }) else { continue }
+            result[key] = result.removeValue(forKey: path)
+        }
+        return result
+    }
+
     func hasCompleteSwiftSourceInventory(_ snapshots: [String: SwiftSourceSnapshot], allowUnqualifiedPaths: Bool = false) -> Bool {
         diagnostics.isEmpty && !hasUninspectedSwiftInputs() &&
             targets.allSatisfy { target in

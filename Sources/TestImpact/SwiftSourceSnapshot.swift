@@ -207,9 +207,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// before that path can identify a physical parser input.
     func sourceIdentity(storedAs key: String) -> (module: String, path: String)? {
         if let unit = units.first, key == unit.region.path {
-            let module = unit.key.prefix { $0 != ":" }
-            guard units.allSatisfy({ $0.region.path == key && $0.key.prefix(while: { $0 != ":" }) == module }) else { return nil }
-            return (String(module), key)
+            guard let colon = unit.key.firstIndex(of: ":"), colon != unit.key.startIndex else { return nil }
+            let module = String(unit.key[..<colon])
+            guard units.allSatisfy({ $0.region.path == key && $0.key.hasPrefix(module + ":") }) else { return nil }
+            return (module, key)
         }
         guard let separator = key.firstIndex(of: ":") else { return nil }
         return (String(key[..<separator]), String(key[key.index(after: separator)...]))

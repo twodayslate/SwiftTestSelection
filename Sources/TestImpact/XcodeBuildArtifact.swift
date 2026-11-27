@@ -158,6 +158,8 @@ extension XcodeAnalysis {
         let changes = try GitChanges.readComparison(base: comparison.base, head: comparison.head, at: root)
         let paths = Set(changes.flatMap(\.paths))
         var previous = baseGraph, current = headGraph
+        previous.sources = baseGraph.comparisonSources
+        current.sources = headGraph.comparisonSources
         try previous.refreshLegacyComparisonSyntax(paths: paths, revision: old.revision, root: root)
         try current.refreshLegacyComparisonSyntax(paths: paths, revision: new.revision, root: root)
         var report = XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base)

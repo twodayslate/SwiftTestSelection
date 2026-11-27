@@ -63,6 +63,32 @@ private struct SourceRepository {
     #expect(graph.sources[key]?.parserVersion == 4)
 }
 
+@Test func legacySourceKeysRequireIndependentModuleOwnership() throws {
+    let path = "Shared:Tests.swift"
+    let ui = SwiftSourceSnapshot.parse("func value() {}", path: path, module: "UI")
+    let other = SwiftSourceSnapshot.parse("func value() {}", path: path, module: "Other")
+    var graph = XcodeTestGraph(targets: [
+        .init(name: "UITests", productType: "com.apple.product-type.bundle.ui-testing", sourceFiles: [path]),
+        .init(name: "OtherTests", productType: "com.apple.product-type.bundle.unit-test", sourceFiles: [path])
+    ], tests: [])
+    graph.modules = ["UITests": "UI", "OtherTests": "Other"]
+    graph.sources = [path: ui]
+    #expect(Set(graph.comparisonSources.keys) == [path])
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    try repo.write(path, "func value() {}")
+    let revision = try repo.commit()
+    let read = try XcodeHeadOnlySources.read(current: graph, changes: [], base: revision, root: repo.root, mappingPath: "mapping.json")
+    #expect(read.diagnostics.contains("Invalid source snapshot key: " + path))
+
+    graph.sources["Other:" + path] = ui
+    #expect(graph.comparisonSources[path] != nil)
+    graph.sources["Other:" + path] = other
+    #expect(Set(graph.comparisonSources.keys) == ["UI:" + path, "Other:" + path])
+    graph.sources["UI:" + path] = ui
+    #expect(Set(graph.comparisonSources.keys) == Set(graph.sources.keys))
+}
+
 @Test(arguments: ["otherFile", "getter", "builder"])
 func savedGraphLocationComparisonAcrossParserVersions(edit: String) throws {
     let repo = try SourceRepository()
@@ -118,7 +144,8 @@ func savedGraphLocationComparisonAcrossParserVersions(edit: String) throws {
     }
 }
 
-@Test func savedReplayProjectsUnchangedConditionalCallersOfRemovedOverload() throws {
+@Test(arguments: [false, true])
+func savedReplayProjectsUnchangedConditionalCallersOfRemovedOverload(barePaths: Bool) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
     let caller = """
@@ -159,9 +186,14 @@ func savedGraphLocationComparisonAcrossParserVersions(edit: String) throws {
     let identities: [Set<String>?] = [capturedBlobs, ["unrelated"], nil]
     for blobs in identities {
         graph.sources[key]?.sourceBlobIDs = blobs
-        let saved = try GraphArchive.decode(GraphArchive.encode(graph))
+        var stored = graph
+        if barePaths {
+            for path in ["Suite.swift", "Helpers.swift"] { stored.sources[path] = stored.sources.removeValue(forKey: "UI:" + path) }
+        }
+        let saved = try GraphArchive.decode(GraphArchive.encode(stored))
         let report = try analysis.selectHeadOnly(base: base, head: head, headGraph: saved, selectionScopes: scopes)
         for replay in [report, try #require(report.selectionScopes?.first?.report)] {
+            #expect(!replay.diagnostics.contains { $0.code == "head_only_source_unavailable" })
             let removed = try #require(replay.headOnlyDeclarationChanges?.first { $0.change == "removed" })
             let callers = removed.historicalReferences.filter { $0.sourceKey == key }.flatMap { $0.possibleCallers ?? [] }
             #expect(Set(callers.map { $0.baseRegion.startLine }) == [4, 6])
