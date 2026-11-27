@@ -74,14 +74,20 @@ try:
     scratch=directory/'scratch'; scratch.mkdir()
     env=dict(os.environ, TMPDIR=str(scratch), PATH=str(wrapper)+os.pathsep+os.environ['PATH'], IMPACT_CALLS=str(calls), IMPACT_XCODE=real_xcode)
     common=['--project',source/'ImpactDemo.xcodeproj','--scheme','ImpactDemo','--test-plan','AllTests','--configuration','Debug','--destination',a.destination]
+    def disk_sample(*, required=False):
+        usage = subprocess.run(['du', '-sk', directory], text=True, capture_output=True, check=required)
+        return int(usage.stdout.split()[0]) * 1024 if usage.returncode == 0 else 0
+
     def measured(label, command):
         calls.write_text(''); start=time.monotonic(); peak=0
         log=directory/(label+'.log')
         with log.open('w') as stream:
             proc=subprocess.Popen(list(map(str,['/usr/bin/time','-l',*command])),cwd=source,env=env,stdout=stream,stderr=subprocess.STDOUT)
             while proc.poll() is None:
-                peak=max(peak,int(subprocess.check_output(['du','-sk',directory],text=True).split()[0])*1024)
+                # Xcode can unlink temporary xcresult files while du traverses them.
+                peak=max(peak,disk_sample())
                 time.sleep(1)
+        peak=max(peak,disk_sample(required=True))
         assert proc.returncode==0,(label,log.read_text()[-6000:])
         invocations=list(map(json.loads,calls.read_text().splitlines()))
         rss=re.search(r'(\d+)\s+maximum resident set size',log.read_text())
