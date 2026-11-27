@@ -433,7 +433,7 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
 }
 
 @Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn", "shorthandGetter", "explicitGetter", "subscriptGetter",
-                  "setter", "observer", "closureBinding", "wrappedClosureBinding", "returnedClosure", "implicitlyReturnedClosure", "implicitMethod", "implicitGetter"])
+                  "setter", "observer", "closureBinding", "wrappedClosureBinding", "returnedClosure", "implicitlyReturnedClosure", "implicitMethod", "implicitGetter", "unusedPrivateInitializer"])
 func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -456,7 +456,11 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         "implicitMethod": ("func value() -> Int { BODY }", "Plain().value()", "2"),
         "implicitGetter": ("var value: Int { BODY }", "Plain().value", "2")
     ]
-    if let (declaration, call, statement) = ordinaryBodies[form] {
+    if form == "unusedPrivateInitializer" {
+        support = "private struct Stamp { init(line: Int = #line) {} }"
+        before = "struct Plain { func answer() -> Int {\n    2\n\n} }\nfunc caller() -> Int { Plain().answer() }"
+        after = before.replacingOccurrences(of: "\n    2\n\n", with: "\n\n    2\n")
+    } else if let (declaration, call, statement) = ordinaryBodies[form] {
         support = "import Dispatch"
         let source = "private struct Plain { \(declaration) }\nfunc caller() -> Int { \(call) }"
         before = source.replacingOccurrences(of: " BODY ", with: "\n    \(statement)\n\n")
@@ -520,8 +524,9 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         #expect(caller.invocationNames?.contains("subscript") == true)
         #expect(caller.hasOnlyDirectSourceCalls != true)
     }
+    let ignoresEdit = ordinaryBodies[form] != nil || form == "unusedPrivateInitializer"
     for report in try reports(current) {
-        if ordinaryBodies[form] != nil {
+        if ignoresEdit {
             #expect(report.selectedTests.isEmpty)
             #expect(report.ignoredChanges.contains(path))
         } else {
@@ -531,12 +536,27 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         #expect(report.diagnostics.isEmpty)
     }
     var legacy = current
-    if ordinaryBodies[form] != nil {
+    if form == "unusedPrivateInitializer" {
+        let provider = "UI:Support.swift"
+        legacy.sources[provider]?.parserVersion = 35
+        legacy.sources[provider]?.unreferencedPrivateTypes = nil
+        legacy = try GraphArchive.decode(GraphArchive.encode(legacy))
+        for report in try reports(legacy) { #expect(report.selectedTests.contains(entry)) }
+
+        var differentBlob = legacy
+        differentBlob.sources[provider]?.sourceBlobIDs = ["different"]
+        try differentBlob.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
+        #expect(differentBlob.sources[provider]?.unreferencedPrivateTypes == nil)
+    }
+    if ignoresEdit {
         legacy.sources[key]?.parserVersion = form == "explicitReturn" ? 31 : 32
         for i in legacy.sources[key]!.units.indices {
             legacy.sources[key]!.units[i].builderLocations = ["line": "legacy body"]
         }
         try legacy.refreshLegacyComparisonSyntax(paths: [path], revision: head, root: repo.root)
+        if form == "unusedPrivateInitializer" {
+            #expect(legacy.sources["UI:Support.swift"]?.unreferencedPrivateTypes == ["Stamp"])
+        }
         #expect(legacy.sources[key]?.units.map(\.builderLocations) == current.sources[key]?.units.map(\.builderLocations))
         for report in try reports(legacy) { #expect(report.selectedTests.isEmpty) }
         return
@@ -571,7 +591,7 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
 }
 
 @Test(arguments: ["function", "closure", "nestedClosure", "nestedGetterClosure", "nestedSetterClosure", "nestedBindingClosure",
-                  "attributedSetter", "extensionWitness", "groupedArgument", "builderExpressionClosure", "callableStep", "constructorStep", "conditionalReturn", "witness", "explicitGetWitness", "binary", "implicitBinary", "macro"])
+                  "attributedSetter", "extensionWitness", "groupedArgument", "builderExpressionClosure", "callableStep", "constructorStep", "privateConstructorStep", "conditionalReturn", "witness", "explicitGetWitness", "binary", "implicitBinary", "macro"])
 func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -620,22 +640,29 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
             imported = "import BuilderKit\n"
         }
         helperSource = imported + "@LineBuilder func caller() -> Int {\n    1\n}"
-    case "constructorStep":
+    case "constructorStep", "privateConstructorStep":
         // The String overload enables buildExpression. For integer literals,
         // Swift resolves the same name to an initializer through the type alias.
+        let access = form == "privateConstructorStep" ? "private " : ""
         support = """
-        struct Step {
+        \(access)struct Step {
             let line: Int
             init(_ value: Int, line: Int = #line) { self.line = line }
         }
-        protocol Expressions {}
+        \(access)protocol Expressions {}
         extension Expressions { static func buildExpression(_ text: String) -> Step { Step(0) } }
-        @resultBuilder enum LineBuilder: Expressions {
+        @resultBuilder \(access)enum LineBuilder: Expressions {
             typealias buildExpression = Step
             static func buildBlock(_ step: Step) -> Int { step.line }
         }
         """
-        helperSource = "@LineBuilder func caller() -> Int {\n    1\n}"
+        let caller = "@LineBuilder func caller() -> Int {\n    1\n}"
+        if form == "privateConstructorStep" {
+            helperSource = support + "\n" + caller
+            support = ""
+        } else {
+            helperSource = caller
+        }
     case "callableStep":
         support = """
         struct Step { @_transparent func callAsFunction(_ value: Int, line: Int = #line) -> Int { line } }

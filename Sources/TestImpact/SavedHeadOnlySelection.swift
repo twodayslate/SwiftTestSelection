@@ -91,14 +91,26 @@ extension XcodeTestGraph {
     /// only from the authenticated Git blob.
     mutating func refreshLegacyComparisonSyntax(paths: Set<String>, revision: String, root: URL) throws {
         var cache: XcodeBaseSourceCache?
+        let comparingSwift = paths.contains { $0.hasSuffix(".swift") }
         for (key, var archived) in sources {
             guard let version = archived.parserVersion, version <= SwiftSourceSnapshot.currentParserVersion,
                   version < SwiftSourceSnapshot.currentParserVersion || archived.units.contains(where: { $0.builderLocations == nil }),
                   let blobs = archived.sourceBlobIDs, !blobs.isEmpty,
-                  let id = archived.sourceIdentity(storedAs: key), paths.contains(id.path) else { continue }
+                  let id = archived.sourceIdentity(storedAs: key) else { continue }
+            let touched = paths.contains(id.path)
+            // An unchanged declaration can supply a default to a changed builder
+            // body elsewhere. Revisit only candidate owners missing the v36 proof.
+            if !touched {
+                guard comparingSwift, archived.unreferencedPrivateTypes == nil,
+                      archived.units.contains(where: { unit in
+                          !unit.scope.isEmpty && SourceUnit.indirectLocationDefaultNames.contains { unit.locationDefaultNames?[$0] != nil }
+                      }) else { continue }
+            }
             if cache == nil { cache = try XcodeBaseSourceCache(root: root, base: revision) }
             guard let parsed = try cache?.snapshot(path: id.path, module: id.module),
                   parsed.diagnostics.isEmpty, let parsedBlobs = parsed.sourceBlobIDs, !blobs.isDisjoint(with: parsedBlobs) else { continue }
+            archived.unreferencedPrivateTypes = parsed.unreferencedPrivateTypes
+            if !touched { sources[key] = archived; continue }
             archived.ordinaryManifestNamedSource = parsed.ordinaryManifestNamedSource
             let regions = Dictionary(grouping: parsed.units.indices, by: { parsed.units[$0].region })
             var matched = Set<Int>()

@@ -247,7 +247,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 35
+    static let currentParserVersion = 36
+    /// Top-level private types with no source references or inferred conformance.
+    /// Absent from older archives, which retain potential indirect builder calls.
+    var unreferencedPrivateTypes: Set<String>? = nil
     /// Version 12 completed the registration inventory. Later inline-helper
     /// metadata does not invalidate those registrations in retained graphs.
     var hasSwiftTestingRegistrationMetadata: Bool {
@@ -555,7 +558,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 #endif
             })
         }
-        let builderBodies = ResultBuilderBodySyntax(tree, hasUnresolvedDeclarations: !declarationIssues.isEmpty)
+        let builderBodies = ResultBuilderBodySyntax(tree, identifiers: identifiers, hasUnresolvedDeclarations: !declarationIssues.isEmpty)
+        result.unreferencedPrivateTypes = builderBodies.unreferencedPrivateTypes
         func callerInfo(_ node: Syntax, includeAllTokens: Bool = false) -> (locations: [String: String], names: Set<String>, direct: Bool) {
             var direct = true
             var offsets = Set<Int>()

@@ -382,6 +382,7 @@ extension XcodeAnalysis {
             let normalized = try XcodeGraphCache.normalizedSettings(settings, workspace: workspace, aliases: keepBuild ? retained.map { [$0] } ?? [] : [])
             var identity = context
             identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-5-helper-contract-12-testing-records-33"
+            identity["sourceParserVersion"] = String(SwiftSourceSnapshot.currentParserVersion)
             identity["repository"] = XcodeGraphCache.digest(Data(repository.utf8))
             identity["revision"] = revision
             identity["analyzerExecutable"] = analyzer

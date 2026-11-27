@@ -60,7 +60,10 @@ struct ResultBuilderLocations {
                     }
                     for (name, values) in defaults {
                         if stepNames.contains(name) { observed.formUnion(values) }
-                        if SourceUnit.indirectLocationDefaultNames.contains(name) { indirect.formUnion(values) }
+                        if SourceUnit.indirectLocationDefaultNames.contains(name),
+                           file.unreferencedPrivateTypes?.contains(unit.scope) != true {
+                            indirect.formUnion(values)
+                        }
                     }
                 }
             }
@@ -75,21 +78,31 @@ struct ResultBuilderLocations {
 /// have their own context even when their surrounding expression is transformed.
 struct ResultBuilderBodySyntax {
     private let nonWitnessMembers: Set<SyntaxIdentifier>
+    private(set) var unreferencedPrivateTypes: Set<String> = []
 
-    init(_ file: SourceFileSyntax, hasUnresolvedDeclarations: Bool) {
+    init(_ file: SourceFileSyntax, identifiers: [String: [TokenSyntax]], hasUnresolvedDeclarations: Bool) {
         // An extension (including one emitted by a macro) can add a conformance.
         // Without either, an unadorned file-private nominal with no inheritance
         // cannot acquire a builder through a protocol requirement.
-        guard !hasUnresolvedDeclarations, !file.tokens(viewMode: .sourceAccurate).contains(where: {
+        guard !hasUnresolvedDeclarations else { nonWitnessMembers = []; return }
+        let mayExtend = file.tokens(viewMode: .sourceAccurate).contains(where: {
             $0.tokenKind == .keyword(.extension) || $0.tokenKind == .atSign
-        }) else { nonWitnessMembers = []; return }
-        nonWitnessMembers = Set(file.statements.compactMap { item in
+        })
+        var members = Set<SyntaxIdentifier>()
+        for item in file.statements {
             guard let group = item.item.asProtocol(DeclGroupSyntax.self), group.inheritanceClause == nil,
                   !item.item.is(ProtocolDeclSyntax.self),
                   group.modifiers.contains(where: { [.keyword(.private), .keyword(.fileprivate)].contains($0.name.tokenKind) })
-            else { return nil }
-            return group.memberBlock.members.id
-        })
+            else { continue }
+            if !mayExtend { members.insert(group.memberBlock.members.id) }
+            // A private nominal with no uses in its defining file cannot supply
+            // a builder's callable value or type alias in another file.
+            if group.attributes.isEmpty, let name = item.item.asProtocol(NamedDeclSyntax.self)?.name,
+               let spelling = name.identifier?.name, identifiers[spelling]?.count == 1 {
+                unreferencedPrivateTypes.insert(name.text)
+            }
+        }
+        nonWitnessMembers = members
     }
 
     private func mayInheritBuilder(_ declaration: Syntax) -> Bool {
