@@ -435,7 +435,7 @@ func scopedCallerLocationsSurviveAnImportedOverloadInTheBase(input: String) thro
 @Test(arguments: ["interpolation", "trailingClosure", "keyPathSubscript", "explicitReturn", "shorthandGetter", "explicitGetter", "subscriptGetter",
                   "setter", "observer", "closureBinding", "wrappedClosureBinding", "returnedClosure", "implicitlyReturnedClosure", "implicitMethod", "implicitGetter",
                   "unusedPrivateInitializer", "unusedPrivateStep", "inlinedPrivateInitializer", "nestedPrivateInitializer", "nestedPrivateStep", "nestedImplicitMethod", "unrelatedInlineAttribute", "availableMethod", "escapedCompilerAttribute", "escapedAvailableMethod",
-                  "functionLocal", "closureLocal", "getterLocal", "conformingLocalParent", "conformingPrivateParent"])
+                  "unrelatedExtension", "arrayOfClosures", "nestedClosureArray", "functionLocal", "closureLocal", "getterLocal", "conformingLocalParent", "conformingPrivateParent"])
 func callerLocationsAcrossWhitespaceEdits(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -471,6 +471,9 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         "nestedPrivateStep": "static func buildExpression(_ value: Int, line: Int = #line) -> Int { line }"
     ]
     let plainMemberCases = [
+        "unrelatedExtension": "private struct Plain { func value() -> Int { BODY } }; func caller() -> Int { Plain().value() }",
+        "arrayOfClosures": "func caller() -> Int { let values: [() -> Int] = [{ BODY }]; return values[0]() }",
+        "nestedClosureArray": "func caller() -> Int { let values: [[() -> Int]] = [([{ BODY }])]; return values[0][0]() }",
         "functionLocal": "func caller() -> Int { struct Local { func value() -> Int { BODY } }; return Local().value() }",
         "closureLocal": "func caller() -> Int { let f = { struct Local { struct Inner { var value: Int { BODY } } }; return Local.Inner().value }; return f() }",
         "getterLocal": "struct Container { var value: Int { struct Local { subscript(_ i: Int) -> Int { BODY } }; return Local()[0] } }; func caller() -> Int { Container().value }",
@@ -600,7 +603,7 @@ func callerLocationsAcrossWhitespaceEdits(form: String) throws {
         #expect(differentBlob.sources[provider]?.units.allSatisfy { $0.privateLocationDefaultScope == nil } == true)
     }
     if ignoresEdit {
-        legacy.sources[key]?.parserVersion = plainMemberCases[form] != nil ? 40 : (form == "explicitReturn" ? 31 : 32)
+        legacy.sources[key]?.parserVersion = plainMemberCases[form] != nil ? 41 : (form == "explicitReturn" ? 31 : 32)
         for i in legacy.sources[key]!.units.indices {
             legacy.sources[key]!.units[i].builderLocations = ["line": "legacy body"]
         }
@@ -785,7 +788,7 @@ func objcDefaultsRemainVisibleToDynamicMemberLookup(form: String) throws {
 }
 
 @Test(arguments: ["function", "closure", "nestedClosure", "nestedGetterClosure", "nestedSetterClosure", "nestedBindingClosure",
-                  "attributedSetter", "extensionWitness", "groupedArgument", "builderExpressionClosure", "callableStep", "constructorStep", "privateConstructorStep", "conditionalReturn", "witness", "explicitGetWitness", "localWitness", "nestedLocalWitness", "localAttribute", "binary", "implicitBinary", "macro"])
+                  "attributedSetter", "extensionWitness", "aliasExtensionWitness", "arrayBuilderArgument", "groupedArgument", "builderExpressionClosure", "callableStep", "constructorStep", "privateConstructorStep", "conditionalReturn", "witness", "explicitGetWitness", "localWitness", "nestedLocalWitness", "localAttribute", "binary", "implicitBinary", "macro"])
 func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -885,6 +888,10 @@ func implicitResultBuilderLocationsSelectTheirTest(form: String) throws {
     case "attributedSetter":
         support += "\n@resultBuilder enum SetterBuilder { static func buildExpression(_ x: Int, line: Int = #line) -> Int { line }; static func buildBlock(_ x: Int) { saved = x } }; var saved = 0"
         helperSource = "struct Plain { var value: Int { get { saved } @SetterBuilder set {\n    1\n} } }\nfunc caller() -> Int { var p = Plain(); p.value = 2; return p.value }"
+    case "arrayBuilderArgument":
+        helperSource = "func caller() -> Int { let values: [Int] = [evaluate {\n    1\n}]; return values[0] }"
+    case "aliasExtensionWitness":
+        helperSource = "private struct Reader { var value: Int {\n    1\n} }; private typealias Alias = Reader\nextension Alias: Reading {}\nfunc caller() -> Int { Reader().value }"
     case "extensionWitness":
         helperSource = "private struct Reader { var value: Int {\n    1\n} }\nextension Reader: Reading {}\nfunc caller() -> Int { Reader().value }"
     case "explicitGetWitness":

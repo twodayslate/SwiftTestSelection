@@ -101,12 +101,13 @@ struct ResultBuilderBodySyntax {
     private let mayHaveConformanceOutsideDeclaration: Bool
 
     init(_ file: SourceFileSyntax, declarationIssues: [HelperDeclarationIssue]) {
-        // An extension or macro can attach a conformance outside the declaration.
+        // A conformance-bearing extension or a macro can supply a witness.
+        // Extensions that only add members cannot introduce a conformance.
         // Check attributes from their syntax so escaped compiler names carry
         // the same meaning. Other unresolved source expansions stay opaque.
         mayHaveConformanceOutsideDeclaration = declarationIssues.contains { $0.kind != "unresolved-attribute" } ||
             file.tokens(viewMode: .sourceAccurate).contains {
-                $0.tokenKind == .keyword(.extension) ||
+                ($0.tokenKind == .keyword(.extension) && $0.parent?.as(ExtensionDeclSyntax.self)?.inheritanceClause != nil) ||
                     ($0.tokenKind == .atSign && $0.parent?.as(AttributeSyntax.self)?.isNonBuilderCompilerAttribute != true)
             }
     }
@@ -117,7 +118,9 @@ struct ResultBuilderBodySyntax {
         var foundOwner = false
         while let ancestor = parent {
             if let group = ancestor.asProtocol(DeclGroupSyntax.self) {
-                if group.attributes.maySupplyBuilder { return true }
+                // An extension's access modifier supplies a default for its
+                // members. It does not establish the extended type's visibility.
+                if ancestor.is(ExtensionDeclSyntax.self) || group.attributes.maySupplyBuilder { return true }
                 // Only the member's own type supplies an inherited requirement.
                 // Enclosing types still determine visibility and can carry macros.
                 if !foundOwner {
@@ -148,21 +151,37 @@ struct ResultBuilderBodySyntax {
         // Wrappers and member-attribute macros can supply a different initializer.
         guard closure.signature?.attributes.maySupplyBuilder != true else { return true }
         var expression = Syntax(closure)
-        while let element = expression.parent?.as(LabeledExprSyntax.self),
-              let tuple = element.parent?.parent?.as(TupleExprSyntax.self),
-              tuple.elements.count == 1, element.label == nil, element.trailingComma == nil {
-            expression = Syntax(tuple)
+        var arrayDepth = 0
+        while true {
+            if let element = expression.parent?.as(LabeledExprSyntax.self),
+               let tuple = element.parent?.parent?.as(TupleExprSyntax.self),
+               tuple.elements.count == 1, element.label == nil, element.trailingComma == nil {
+                expression = Syntax(tuple)
+            } else if let element = expression.parent?.as(ArrayElementSyntax.self),
+                      let array = element.parent?.parent?.as(ArrayExprSyntax.self) {
+                arrayDepth += 1
+                expression = Syntax(array)
+            } else { break }
         }
         // A builder can pass this expression to a builder-annotated
         // buildExpression parameter. An ordinary body returns or discards it.
-        if let ordinaryStatements, expression.parent?.as(CodeBlockItemSyntax.self)?.parent?.id == ordinaryStatements {
-            return false
+        if arrayDepth == 0 {
+            if let ordinaryStatements, expression.parent?.as(CodeBlockItemSyntax.self)?.parent?.id == ordinaryStatements {
+                return false
+            }
+            if expression.parent?.is(ReturnStmtSyntax.self) == true ||
+                expression.parent?.as(FunctionCallExprSyntax.self)?.calledExpression.id == expression.id { return false }
         }
-        if expression.parent?.is(ReturnStmtSyntax.self) == true ||
-            expression.parent?.as(FunctionCallExprSyntax.self)?.calledExpression.id == expression.id { return false }
         guard let binding = expression.parent?.as(InitializerClauseSyntax.self)?.parent?.as(PatternBindingSyntax.self),
               let variable = binding.parent?.parent?.as(VariableDeclSyntax.self), !variable.attributes.maySupplyBuilder
         else { return true }
+        // Only bracket types establish the standard array conversion at each
+        // layer. A call or a custom literal context needs its own evidence.
+        var elementType = binding.typeAnnotation?.type
+        for _ in 0..<arrayDepth {
+            guard let array = elementType?.as(ArrayTypeSyntax.self) else { return true }
+            elementType = array.element
+        }
         if variable.parent?.is(MemberBlockItemSyntax.self) == true {
             var parent = variable.parent
             while let ancestor = parent {
