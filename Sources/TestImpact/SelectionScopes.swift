@@ -69,8 +69,14 @@ extension XcodeHeadOnlySelector {
             // An omitted input is eligible for the historical source audit only
             // when the compiler captured its implementation. Manifests and scripts
             // can change the compiler invocation even when written in Swift.
+            let onlyCompiledInputsOmitted = omittedInputs.isSubset(of: compiledSources)
             var source = try XcodeHeadOnlySources.read(current: current, changes: filtered, base: baseRevision, root: root,
-                mappingPath: mappingPath, cache: sourceCache, allowHistoricalCallerProofs: omittedInputs.isSubset(of: compiledSources))
+                mappingPath: mappingPath, cache: sourceCache, allowHistoricalCallerProofs: onlyCompiledInputsOmitted)
+            if !onlyCompiledInputsOmitted {
+                // A binary module or build setting outside the scope can remove
+                // a historical macro while leaving the import spelling unchanged.
+                source.uncertainMacroImports.formUnion(selectedPaths)
+            }
             source.unverifiedScopedProcesses = processesAffectedByOmittedInputs(omittedInputs, in: current)
             measurement(sourceStart.event("scopeSourceSyntax", revision: baseRevision, detail: scope.name, parent: "selectionScopes"))
             let selectionStart = AnalysisMeasurement()

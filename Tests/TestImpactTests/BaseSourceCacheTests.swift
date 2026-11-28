@@ -1492,7 +1492,8 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
     }
 }
 
-@Test func scopedMacroComparisonReadsHistoricalReexportsOutsideTheScope() throws {
+@Test(arguments: [false, true])
+func scopedMacroComparisonReadsHistoricalImportsOutsideTheScope(binaryChanges: Bool) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
     let path = "Sharing.swift", key = "UI:" + path
@@ -1510,14 +1511,21 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
         _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", module, file] + arguments, at: repo.root)
         try FileManager.default.removeItem(at: repo.root.appendingPathComponent(file))
     }
-    let before = [path: code, "Bridge.swift": "@_exported import ActorKit", "Tests.swift": caller]
+    let imports = binaryChanges ? "import ActorKit\n" : ""
+    let before = [path: imports + code, "Bridge.swift": binaryChanges ? "" : "@_exported import ActorKit", "Tests.swift": caller]
     let base = try boundaryGraph(before, tests: [test], root: repo.root, compilerArguments: arguments)
     let map = "mapping.json"
     try JSONEncoder().encode(base.mappings).write(to: repo.root.appendingPathComponent(map))
-    _ = try repo.git(["add", path, "Bridge.swift", "Tests.swift", map])
+    let tracked = [path, "Bridge.swift", "Tests.swift", map] + (binaryChanges ? ["ActorKit.swiftmodule"] : [])
+    _ = try repo.git(["add"] + tracked)
     _ = try repo.git(["commit", "-qm", "base"])
     let revision = try repo.git(["rev-parse", "HEAD"])
-    var head = try boundaryGraph([path: edited, "Bridge.swift": "import ActorKit", "Tests.swift": caller],
+    if binaryChanges {
+        try repo.write("ActorKit.swift", "public struct Empty {}")
+        _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", "ActorKit", "ActorKit.swift"], at: repo.root)
+        try FileManager.default.removeItem(at: repo.root.appendingPathComponent("ActorKit.swift"))
+    }
+    var head = try boundaryGraph([path: imports + edited, "Bridge.swift": binaryChanges ? "" : "import ActorKit", "Tests.swift": caller],
                                  tests: [test], root: repo.root, compilerArguments: arguments)
     let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)
     let primary = repo.root.appendingPathComponent(path).path
@@ -1532,7 +1540,14 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
     #expect(head.sources[key]?.usesUnmodeledMacroPlugin == false)
     let changes = [FileChange(path: path)]
     let old = try XcodeHeadOnlySources.read(current: head, changes: changes, base: revision, root: repo.root, mappingPath: map)
-    let report = XcodeHeadOnlySelector.select(current: head, source: old, changes: changes, baseRevision: revision)
+    _ = try repo.git(["add"] + tracked)
+    _ = try repo.git(["commit", "-qm", "head"])
+    let headRevision = try repo.git(["rev-parse", "HEAD"])
+    let diff = try GitChanges.readComparison(base: revision, head: headRevision, at: repo.root)
+    let scopes = try XcodeHeadOnlySelector.scopedReports(current: head, requests: .init(scopes: [.init(name: "sharing", paths: [path])]),
+        changes: diff, baseRevision: revision, headRevision: headRevision, root: repo.root, mappingPath: map,
+        documentation: [], buildEvidenceFailure: nil)
+    let report = try #require(scopes.first?.report)
     #expect(old.base[key]?.usesUnmodeledMacroPlugin == nil)
     #expect(report.selectedTests == [test])
     #expect(!report.ignoredChanges.contains(path))
