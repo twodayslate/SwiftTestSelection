@@ -98,7 +98,7 @@ func boundaryGraph(_ files: [String: String], tests: [String], root: URL, compil
     return current
 }
 
-@Test(arguments: ["deleted", "removedFromTarget", "unrelated"])
+@Test(arguments: ["deleted", "removedFromTarget", "unrelated", "unchangedUnowned"])
 func sdkHelperScopesAuditBaseOnlySources(scenario: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("review57-deleted-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -107,43 +107,58 @@ func sdkHelperScopesAuditBaseOnlySources(scenario: String) throws {
     let files = ["Waiting.swift": newSDKQuery, "Tests.swift": sdkQueryCallers]
     let current = try boundaryGraph(files, tests: tests, root: root)
     let relevant = "import XCTest\n@MainActor func oldRoute() { XCTAssertTrue(XCUIApplication().buttons[\"toggle\"].checkValue(\"1\")) }"
-    let deleted = scenario == "unrelated" ? "struct Unrelated {}" : relevant
-    let baseTests = sdkQueryCallers.replacingOccurrences(of: "func testUnrelated() { XCTAssertTrue(evaluate { true }) }", with: scenario == "unrelated" ? "func testUnrelated() { XCTAssertTrue(evaluate { true }) }" : "func testUnrelated() { oldRoute() }")
-    for (path, text) in ["Waiting.swift": oldSDKQuery, "Tests.swift": baseTests, "Deleted.swift": deleted] {
+    let hadCaller = scenario == "deleted" || scenario == "removedFromTarget"
+    let historical = hadCaller ? relevant : "struct Unrelated {}"
+    let baseTests = hadCaller ? sdkQueryCallers.replacingOccurrences(of: "XCTAssertTrue(evaluate { true })", with: "oldRoute()") : sdkQueryCallers
+    let sourceList = root.appendingPathComponent("UI.xcfilelist")
+    if scenario == "removedFromTarget" { try Data("Waiting.swift\nTests.swift\nDeleted.swift\n".utf8).write(to: sourceList) }
+    for (path, text) in ["Waiting.swift": oldSDKQuery, "Tests.swift": baseTests, "Deleted.swift": historical] {
         try Data(text.utf8).write(to: root.appendingPathComponent(path))
     }
     try JSONEncoder().encode(current.mappings).write(to: root.appendingPathComponent(".swift-test-selection.json"))
     _ = try CommandRunner.run("git", ["init", "-q"], at: root)
     _ = try CommandRunner.run("git", ["add", "Waiting.swift", "Tests.swift", "Deleted.swift", ".swift-test-selection.json"], at: root)
+    if scenario == "removedFromTarget" { _ = try CommandRunner.run("git", ["add", "UI.xcfilelist"], at: root) }
     _ = try CommandRunner.run("git", ["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qm", "base"], at: root)
     for (path, text) in files { try Data(text.utf8).write(to: root.appendingPathComponent(path)) }
-    if scenario != "removedFromTarget" { try FileManager.default.removeItem(at: root.appendingPathComponent("Deleted.swift")) }
-    let cache = try XcodeBaseSourceCache(root: root, base: "HEAD")
-    let source = try XcodeHeadOnlySources.read(current: current, changes: [.init(path: "Waiting.swift")], base: "HEAD", root: root, mappingPath: ".swift-test-selection.json", cache: cache)
+    switch scenario {
+    case "removedFromTarget": try Data("Waiting.swift\nTests.swift\n".utf8).write(to: sourceList)
+    case "unchangedUnowned": break
+    default: try FileManager.default.removeItem(at: root.appendingPathComponent("Deleted.swift"))
+    }
+    _ = try CommandRunner.run("git", ["-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "commit", "-qam", "head"], at: root)
+    let base = "HEAD^"
+    let changes = try GitChanges.readComparison(base: base, head: "HEAD", at: root)
+
+    let cache = try XcodeBaseSourceCache(root: root, base: base)
+    let source = try XcodeHeadOnlySources.read(current: current, changes: [.init(path: "Waiting.swift")], base: base, root: root, mappingPath: ".swift-test-selection.json", cache: cache)
     #expect(source.unownedBaseSources["Deleted.swift"] != nil)
     let before = cache.counts
     let scopes = try XcodeHeadOnlySelector.scopedReports(current: current,
         requests: .init(scopes: [.init(name: "waiting", paths: ["Waiting.swift"])]),
-        changes: [.init(path: "Waiting.swift"), .init(path: "Tests.swift"), .init(path: "Deleted.swift")],
-        baseRevision: "HEAD", headRevision: "head", root: root, mappingPath: ".swift-test-selection.json",
+        changes: changes,
+        baseRevision: base, headRevision: "HEAD", root: root, mappingPath: ".swift-test-selection.json",
         documentation: [], buildEvidenceFailure: nil, sourceCache: cache)
     let report = try #require(scopes.first?.report)
     #expect(cache.counts.blobReads == before.blobReads)
     #expect(cache.counts.parses == before.parses)
-    let original = try uncachedHeadOnlySources(current: current, changes: [.init(path: "Waiting.swift")], base: "HEAD", root: root, mappingPath: ".swift-test-selection.json")
-    var reference = XcodeHeadOnlySelector.select(current: current, source: original, changes: [.init(path: "Waiting.swift")], baseRevision: "HEAD")
-    // The scoped wrapper labels fallback diagnostics; the uncached selector
-    // has no scope argument. Compare both with the same expected label.
-    for i in reference.diagnostics.indices { reference.diagnostics[i].fallback?.selectionScope = "waiting" }
-    #expect(report.selectedTests == reference.selectedTests)
-    #expect(try diagnosticJSON(report) == diagnosticJSON(reference))
-    if scenario == "unrelated" {
+    let original = try uncachedHeadOnlySources(current: current, changes: [.init(path: "Waiting.swift")], base: base, root: root, mappingPath: ".swift-test-selection.json")
+    let waiting = [FileChange(path: "Waiting.swift")]
+    let reference = XcodeHeadOnlySelector.select(current: current, source: original, changes: waiting, baseRevision: base)
+    let cached = XcodeHeadOnlySelector.select(current: current, source: source, changes: waiting, baseRevision: base)
+    #expect(cached.selectedTests == reference.selectedTests)
+    #expect(try diagnosticJSON(cached) == diagnosticJSON(reference))
+    #expect(reference.selectedTests == (hadCaller ? tests.sorted() : tests.prefix(2).sorted()))
+    if scenario == "unchangedUnowned" {
         #expect(report.selectedTests == tests.prefix(2).sorted())
         #expect(report.diagnostics.isEmpty)
     } else {
+        // The independent scope omits a deletion or a changed compiler source
+        // list. Its head build cannot establish historical macro lookup.
         #expect(report.selectedTests == tests.sorted())
-        #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" && $0.message.contains("Deleted.swift") })
+        #expect(report.diagnostics.contains { $0.code == "attached_macro_inputs" && $0.message.contains("Waiting.swift") })
     }
+    #expect(report.diagnostics.contains { $0.code == "head_only_sdk_helper_boundary" && $0.message.contains("Deleted.swift") } == hadCaller)
 }
 
 @Test(arguments: ["mutation", "transitive", "safe", "recursive", "caller"])

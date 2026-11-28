@@ -1,10 +1,31 @@
 # Consumer precision for #101
 
-## Current replay of the alternate #383 policy
+## Original consumer policies
 
-The retained alternate comparison now selects **365 UI and 1,853 non-UI tests**. The Base plan contains 47 UI tests. The Regression plan adds 318, up from 44 in the earlier 91-test capture. All 274 added IDs come from the Regression plan. The independent comparison reports macro uncertainty in both `NoteConversionUITests.swift` and `App/NoteURLUITestFixture.swift`. The replay used the same Git revisions, selection scopes, retained graph and complete consumer policy. The historical section below records the earlier result.
+Fresh single-head builds at `2175b2a` and independent saved-graph replays produced the following complete policies. Each build consumed all ten captured SIL modules and verified the retained products. Every final test ID matched the earlier original comparison.
 
-## Attached macros and the original consumer comparisons
+| Original comparison | Base UI | Regression UI | Non-UI | Scoped UI with a positive reason | Scoped UI selected only by fallback |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| #380 | 47 | 313 | 1,848 | 1 | 359 |
+| #383 | 47 | 316 | 1,853 | 43 | 320 |
+
+For #383, the fixture file alone now selects its 42 positively identified UI consumers. This removes 321 candidates from that individual query. Each changed UI test file independently selects all 363 UI tests. For #380, each changed UI file independently selects all 360. The complete original policies therefore save zero executions. The remaining proofs concern the deleted helper’s historical callers and the effects of accessibility queries for #380, and renamed XCTest entries and persistent launch state for #383.
+
+On the verified original #380 product, the reply-geometry test and both historical callers of the deleted helper executed and passed on iOS Simulator with zero skips.
+
+The fresh Xcode blank-line fixtures ran through both head-only and two-graph selection. Both modes ignored the ordinary edit inside the returned dictionary and selected zero of nine tests. When a macro observed the blank line, both modes selected all nine, including `UnitTests/ProductionTests/testSharing()`. Retained-product verification passed in all four runs.
+
+[Download the complete primary and scoped IDs, positive and fallback-only sets, final Base and Regression lists, and simulator waiter traces under `sealedMacroDeclarations`](ConsumerPrecision101Recheck.json.gz).
+
+## Macro lookup in the alternate #383 comparison
+
+With a captured inventory of macro declarations, the complete alternate policy selects **91 UI tests and 1,853 non-UI tests**. All 47 Base UI IDs and 44 Regression UI IDs match the earlier 91-test control. This result covers the alternate Git head that retains the historical test names and forwards to them.
+
+At capture time the analyzer invokes the recorded Swift frontend to print private interfaces from the compiled modules and reads the sealed Swift inputs. Saved-graph selection reads the resulting inventory without invoking the compiler. The saved-graph selector can use that evidence for ordinary imports when the full Git comparison also bounds historical lookup. In the two affected targets, the captured modules declare 53 and 49 distinct macro names respectively. Neither inventory contains `MainActor`. Replaying with the token scanner from `e9c050e` reads full identifiers, including escaped and multibyte names. Graphs captured with the earlier scanner use the conservative fallback until recaptured. A compiler test with a binary module that *does* export a macro named `MainActor` retains the generated declaration's consumer. An out-of-scope replacement of that binary also retains the consumer.
+
+The older retained graph lacks this inventory. Replaying it selects 365 UI tests and 1,853 non-UI tests, including 318 Regression UI IDs. The 274 additional IDs enter through the Regression plan. Recapturing reevaluates the same Git revisions, selection scopes and consumer policy with compiler evidence for the two attributes.
+
+## Earlier capture without the compiler macro inventory
 
 Fresh single-head builds with `f3a7f4d` reproduced every primary, regression-support and final execution ID for the original #380 and #383 comparisons. Retained-product verification passed for both. #380 still schedules 360 UI and 1,848 non-UI tests. #383 still schedules 363 UI and 1,853 non-UI tests.
 
@@ -12,7 +33,7 @@ The independent #383 query for `ChainOfCustody/App/NoteURLUITestFixture.swift` b
 
 The fixture's changed method is inside an enum annotated with `@MainActor`. The head compiler index resolves the attribute at line 5, column 2 to the Swift global actor (`s:ScM`). The #380 build resolves it to the same actor on the exact fixture blob present at the #383 base. Its repository tree differs from that base. The saved dependency list also includes the Observation, Previews and SwiftUI plugins. It records their use during compilation without identifying which declaration each expanded. The single-head comparison has no corresponding compiler resolution for the historical attribute. A compiled control with an imported peer macro named `MainActor` changes a separate function's return value after a blank-line edit. A spelling-based exemption would skip its failing caller.
 
-For the fixture-only query to recover its previous precision, the selector needs to establish that the attribute could not bind to a macro in either revision. For the original complete policies, the historical caller, launch and persistent-state boundaries below also remain. [Download the added test IDs, retained graph digests and blank-line controls under `attachedMacroRecheck`](ConsumerPrecision101Recheck.json.gz).
+The earlier fixture-only query lacked evidence that the attribute could not bind to a macro in either revision. For the original complete policies, the historical caller, launch and persistent-state boundaries below also remain. [Download the added test IDs, retained graph digests and blank-line controls under `attachedMacroRecheck`](ConsumerPrecision101Recheck.json.gz).
 
 ## Historical bindings and receipt isolation
 
@@ -24,7 +45,9 @@ A second experiment compared both original #383 scenarios to their historical pr
 
 The compiled #383 UI module contains seven direct calls to the SDK’s default and bundle-identifier application constructors in each revision. Three target SpringBoard. Of the four default handles, one belongs to the launch factory, two check orientation, and one queries the unread menu. Both compiled test methods that use the unread query first call the private launch helper with its default reset. These observations cover those constructor call sites.
 
-For #380 the compiled geometry predicate captures a rectangle by value and an XCUIElement. Its only dynamically dispatched getters are the element’s `exists` and `frame`. The project’s rectangle check calls CoreGraphics for nullity, infinity, width and height. The predicate’s explicit stores target its Boolean result and local stack storage. This accounts for the project geometry calculation. The enclosing XCTest wait still needs a callback lifetime and effect guarantee.
+The original #380 waiting helper also ran on iOS Simulator 26.2 with its five-second timeout. Its immediate-success, polled-success, timeout and interrupted runs invoked the predicate 1, 2, 6 and 3 times. In a fifth run the polled callback slept for six seconds. The wait returned a timeout only after that callback finished, approximately 7.1 seconds after entry. All observed calls ran on the main thread. Across these runs there were zero additional calls during 1.5 seconds of observation after return. An intentionally retained closure did record a call after return in the positive control. The loaded Xcode 27.2 simulator XCTestCore image uses a run-loop timer for the synchronous wait and invalidates the timer during predicate-expectation cleanup. These checks cover the wait on that SDK. Effects in the application responding to accessibility queries still matter to the original policy.
+
+For #380 the compiled geometry predicate captures a rectangle by value and an XCUIElement. Its only dynamically dispatched getters are the element’s `exists` and `frame`. The project’s rectangle check calls CoreGraphics for nullity, infinity, width and height. The predicate’s explicit stores target its Boolean result and local stack storage. This accounts for the project geometry calculation. The simulator traces above cover the observed callback lifetime. Excluding other tests also requires evidence about effects in the app that serves those queries.
 
 The hostless Core report now distinguishes a verified Swift Testing factory with zero argument providers from a parameterized factory. For `CacheRecoveryTests/localCacheCloudRecoveryMarkerMergesAndClearsByRequestID()`, the unresolved effects belong to the suite’s runtime callbacks and test discovery. Its registration requires no generic argument iteration. The boundary remains unproven.
 
@@ -49,7 +72,7 @@ For #383, the two historical entries execute the revised scenarios, and two entr
 
 On iOS Simulator 26.2, four of five focused #380 regressions passed on the first run. `testCopyCommentsFilterAndPostToSelectedDestination()` timed out waiting for the edited text to refresh. That test body is byte-identical in the two products. It passed on clean simulators using both the original product and the alternate product. All six focused #383 tests passed with zero skips, including both historical entries, both new entries, the receipt relaunch and the momentum test.
 
-Those captures selected 308 and 272 fewer UI tests than the respective originals. The current alternate #383 replay above adds back all 274 regression tests. The original comparisons still show zero saved executions, and #101 remains open.
+Those captures selected 308 and 272 fewer UI tests than the respective originals. The older #383 graph adds back 274 regression tests when replayed without compiler macro declarations. The original comparisons still show zero saved executions, and #101 remains open.
 
 [Download the exact identifiers, fallback decisions, build and patch identities, compiler binding checks and focused simulator results](ConsumerPrecision101Controls.json.gz). The new results are under `originalBaseHeadControls`. Its `blankLineControls` entry includes the Xcode fixture overlay, both one-line insertions and the selected test IDs in each analysis mode.
 
