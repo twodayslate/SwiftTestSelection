@@ -31,12 +31,16 @@ struct SwiftTestingUIRunner {
 def verify_binding(graph, identifier):
     target, suite, method = identifier.split('/')
     dependencies = graph['dependencies']
+    module = graph['modules'][target]
     roots = [dependencies['functions'][symbol] for symbol in dependencies['tests'][identifier]]
-    assert any(node['module'] == graph['modules'][target] and node['name'] == suite + '.' + method
-               and any(region['path'] == TEST_FILE for region in node['regions']) for node in roots), identifier
+    entries = [node['id'] for node in roots if node['module'] == module and node['name'] == suite + '.' + method
+               and any(region['path'] == TEST_FILE for region in node['regions'])]
+    assert len(entries) == 1, (identifier, entries)
     if identifier == SWIFT_TEST:
-        factories = [node for node in roots if any(symbol.startswith('$s7Testing4TestV10__function')
-                     for symbol in node.get('compilerReferences', []))]
+        assert entries[0] in dependencies['swiftTestingEntryRoots'][identifier], identifier
+        registered = dependencies['swiftTestingRegisteredFactories'][module]
+        factories = [node for node in roots if node['module'] == module and node['id'] in registered
+                     and any(symbol.startswith('$s7Testing4TestV10__function') for symbol in node.get('compilerReferences', []))]
         assert len(factories) == 1, (identifier, 'expected one bound Swift Testing factory')
 
 
@@ -116,6 +120,7 @@ def main():
         assert report['headRevision'] == graph['buildArtifact']['revision'] == head
         assert report['buildArtifactID'] == verified['buildArtifactID']
         assert report['selectedTests'] == verified['selectedTests']
+        assert report['totalTests'] > 2 and report['selectedTests'] == sorted([SWIFT_TEST, XCTEST]), report['selectedTests']
         coverage = report['uiMappingCoverage']
         assert not any(coverage[key] for key in ['unmappedTests', 'unmatchedSelectors', 'unresolvedBoundaries']), coverage
         filters = {flag.removeprefix('-only-testing:'): flag for flag in verified['onlyTestingArguments']}

@@ -8,9 +8,13 @@ On the original #383 simulator product, the edited converted-row test wrote eigh
 
 A second experiment compared both original #383 scenarios to their historical predecessors, each starting with an empty receipt domain. All four named XCTest cases passed on iOS Simulator 26.2. Across the seven storage families cleared by the app’s reset, each base case left 15 values and each head case left 16. Every value survived a reset-disabled launch in its original app container. Each pair shared ten keys after normalizing the generated reader UUID. The remaining keys differed in the activity and comment-version families. The extra base build served as a runtime control. The selector still built only the head.
 
+The compiled #383 UI module contains seven direct calls to the SDK’s default and bundle-identifier application constructors in each revision. Three target SpringBoard. Of the four default handles, one belongs to the launch factory, two check orientation, and one queries the unread menu. Both compiled test methods that use the unread query first call the private launch helper with its default reset. These observations cover those constructor call sites.
+
 For #380 the compiled geometry predicate captures a rectangle by value and an XCUIElement. Its only dynamically dispatched getters are the element’s `exists` and `frame`. The project’s rectangle check calls CoreGraphics for nullity, infinity, width and height. The predicate’s explicit stores target its Boolean result and local stack storage. This accounts for the project geometry calculation. The enclosing XCTest wait still needs a callback lifetime and effect guarantee.
 
 The hostless Core report now distinguishes a verified Swift Testing factory with zero argument providers from a parameterized factory. For `CacheRecoveryTests/localCacheCloudRecoveryMarkerMergesAndClearsByRequestID()`, the unresolved effects belong to the suite’s runtime callbacks and test discovery. Its registration requires no generic argument iteration. The boundary remains unproven.
+
+In a macOS Swift Testing control, two concurrent cases ran the original suite trait with the consumer’s task-local declaration. Each received a distinct directory and preferences suite. A child task inherited the directory and a detached task saw an empty scope. The trait removed the directories and cleared the preferences after normal completion and after an intentional thrown error. Applying that result to the complete consumer requires checking which tasks access persistence in the actual suite.
 
 [Download the compiler input hashes, call sites, receipt observations and complete policy identifiers](ConsumerPrecision101Controls.json.gz).
 

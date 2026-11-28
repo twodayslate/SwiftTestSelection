@@ -114,7 +114,7 @@ runner behavior. Swift Testing macros/traits remain outside the head-only helper
 isolation proof, and inline XCTest-specific mapping syntax is not extended here;
 JSON mappings can use enumerated IDs. Full 27.3 runner validation remains open.
 
-The mixed-runner integration test edits one Swift Testing UI method and one XCTest UI method in the same fixture. It checks both compiled entries, the Swift Testing factory, the strict mapping and the execution filters from the retained head build. Each filter must execute its named UI method once with zero failures or skips. Run it with Xcode 27.3 or later and a compatible simulator destination.
+The mixed-runner integration test edits one Swift Testing UI method and one XCTest UI method in the same fixture. It requires the selector to choose exactly those two methods from the larger plan. It checks both compiled entries, the Swift Testing entry and factory registration, the strict mapping and the execution filters from the retained head build. Each filter must execute its named UI method once with zero failures or skips. Run it with Xcode 27.3 or later and a compatible simulator destination.
 
 ```sh
 swift build -c release
