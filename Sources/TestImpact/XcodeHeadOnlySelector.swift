@@ -239,9 +239,30 @@ struct XcodeHeadOnlySources {
 /// This does not delegate to the two-graph selector with a synthetic previous.
 enum XcodeHeadOnlySelector {
     static func select(current: XcodeTestGraph, source: XcodeHeadOnlySources, changes: [FileChange],
-                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = [], applyHelperContracts: Bool = true, digestCache: HelperBindingDigestCache? = nil,
+                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = [], digestCache: HelperBindingDigestCache? = nil,
                        measurement: (XcodeAnalysisEvent) -> Void = { _ in }) -> ImpactReport {
-        let digestCache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
+        let cache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
+        func evaluate(applyContracts: Bool, measurement: (XcodeAnalysisEvent) -> Void) -> (report: ImpactReport, hasContracts: Bool) {
+            evaluateSelection(current: current, source: source, changes: changes, baseRevision: baseRevision,
+                documentation: documentation, buildEvidenceFailure: buildEvidenceFailure, excludedTestEntries: excludedTestEntries,
+                applyHelperContracts: applyContracts, digestCache: cache, measurement: measurement)
+        }
+        var result = evaluate(applyContracts: true, measurement: measurement)
+        if result.hasContracts {
+            let previewStart = AnalysisMeasurement()
+            let baseline = evaluate(applyContracts: false, measurement: { _ in }).report.selectedTests
+            measurement(previewStart.event("helperReviewPreview", revision: baseRevision))
+            let selected = result.report.selectedTests
+            result.report.helperContractPreview = .init(withoutDeclarations: baseline, withDeclarations: selected,
+                added: Set(selected).subtracting(baseline).sorted(), removed: Set(baseline).subtracting(selected).sorted())
+        }
+        return result.report
+    }
+
+    private static func evaluateSelection(current: XcodeTestGraph, source: XcodeHeadOnlySources, changes: [FileChange],
+                                          baseRevision: String, documentation: Set<String>, buildEvidenceFailure: String?,
+                                          excludedTestEntries: Set<String>, applyHelperContracts: Bool, digestCache: HelperBindingDigestCache,
+                                          measurement: (XcodeAnalysisEvent) -> Void) -> (report: ImpactReport, hasContracts: Bool) {
         let originalCurrent = current
         let mappingFilePresent = current.mappings != nil
         let inline = InlineUIMappings.resolve(current)
@@ -812,16 +833,6 @@ enum XcodeHeadOnlySelector {
                 toolchain: current.buildArtifact?.toolchain ?? current.dependencies?.toolchain ?? "",
                 buildContext: HelperFormattingContracts.buildContext(current), helperSymbols: helperSymbols)
         }
-        if applyHelperContracts, !newContracts.isEmpty || !newBindings.isEmpty {
-            let previewStart = AnalysisMeasurement()
-            let baseline = select(current: originalCurrent, source: source, changes: changes, baseRevision: baseRevision,
-                documentation: documentation, buildEvidenceFailure: buildEvidenceFailure,
-                excludedTestEntries: excludedTestEntries, applyHelperContracts: false, digestCache: digestCache)
-            measurement(previewStart.event("helperReviewPreview", revision: baseRevision))
-            report.helperContractPreview = .init(withoutDeclarations: baseline.selectedTests, withDeclarations: report.selectedTests,
-                added: Set(report.selectedTests).subtracting(baseline.selectedTests).sorted(),
-                removed: Set(baseline.selectedTests).subtracting(report.selectedTests).sorted())
-        }
-        return report
+        return (report, !newContracts.isEmpty || !newBindings.isEmpty)
     }
 }
