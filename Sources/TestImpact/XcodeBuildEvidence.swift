@@ -378,11 +378,15 @@ struct XcodeBuildEvidence {
     /// Xcode Metal emits one `-MT dependencies` makefile rule. Reject unknown
     /// syntax rather than accidentally treating an unparsed include as unused.
     static func metalDependencies(_ text: String) -> [String]? {
-        let text = text.replacingOccurrences(of: "\\\r\n", with: " ").replacingOccurrences(of: "\\\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text.hasPrefix("dependencies:") else { return nil }
+        let rule = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard rule.hasPrefix("dependencies:") else { return nil }
+        return makefileInputs(rule.dropFirst("dependencies:".count))
+    }
+
+    static func makefileInputs(_ operands: Substring) -> [String]? {
+        let text = operands.replacingOccurrences(of: "\\\r\n", with: " ").replacingOccurrences(of: "\\\n", with: " ")
         var paths: [String] = [], token = "", escaped = false
-        for character in text.dropFirst("dependencies:".count) {
+        for character in text {
             if escaped { token.append(character); escaped = false }
             else if character == "\\" { escaped = true }
             else if character == ":" || character == "$" || character == "#" { return nil }

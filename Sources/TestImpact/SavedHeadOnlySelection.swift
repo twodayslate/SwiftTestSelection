@@ -94,7 +94,7 @@ extension XcodeTestGraph {
         let comparingSwift = paths.contains { $0.hasSuffix(".swift") }
         for (key, var archived) in sources {
             guard let version = archived.parserVersion, version <= SwiftSourceSnapshot.currentParserVersion,
-                  version < SwiftSourceSnapshot.currentParserVersion || archived.units.contains(where: { $0.builderLocations == nil }),
+                  version < SwiftSourceSnapshot.currentParserVersion || archived.attachedAttributeInputs == nil || archived.units.contains(where: { $0.builderLocations == nil }),
                   let blobs = archived.sourceBlobIDs, !blobs.isEmpty,
                   let id = archived.sourceIdentity(storedAs: key) else { continue }
             let touched = paths.contains(id.path)
@@ -110,7 +110,15 @@ extension XcodeTestGraph {
             guard let parsed = try cache?.snapshot(path: id.path, module: id.module),
                   parsed.diagnostics.isEmpty, let parsedBlobs = parsed.sourceBlobIDs, !blobs.isDisjoint(with: parsedBlobs) else { continue }
             let regions = Dictionary(grouping: parsed.units.indices, by: { parsed.units[$0].region })
-            if touched { archived.ordinaryManifestNamedSource = parsed.ordinaryManifestNamedSource }
+            if touched {
+                archived.ordinaryManifestNamedSource = parsed.ordinaryManifestNamedSource
+                // Git authenticates declaration text, but cannot reconstruct which
+                // imported macro implementations participated in the archived build.
+                if archived.attachedAttributeInputs == nil && archived.usesUnmodeledMacroPlugin == nil {
+                    archived.usesUnmodeledMacroPlugin = true
+                }
+                archived.attachedAttributeInputs = parsed.attachedAttributeInputs
+            }
             var matched = Set<Int>()
             var restoredInvocations = true
             var unitMatches = Set<Int>()

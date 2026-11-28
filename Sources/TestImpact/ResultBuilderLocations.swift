@@ -74,7 +74,7 @@ struct ResultBuilderLocations {
     }
 }
 
-private extension AttributeSyntax {
+extension AttributeSyntax {
     // These compiler modifiers cannot name a result builder or expand to an
     // extension. A custom attribute, including a global actor name, needs proof.
     static let nonBuilderAttributes = inlineAttributeNames.union([

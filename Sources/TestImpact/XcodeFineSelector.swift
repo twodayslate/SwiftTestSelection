@@ -70,6 +70,8 @@ public enum XcodeFineSelector {
         // Explicit macro/directive syntax remains executable under either policy.
         let locationPolicy = UIFeatureMappings.SourceLocationPolicy.agreed(head: current.mappings, base: previous?.mappings)
         let touchedPaths = Set(changes.flatMap(\.paths))
+        let macroPaths = AttachedMacroInputs.changedPaths(base: previous?.sources ?? [:], head: current.sources, touching: touchedPaths)
+        if !macroPaths.isEmpty { fallback("attached_macro_inputs", AttachedMacroInputs.reason(macroPaths)) }
         let builders = ResultBuilderLocations(policy: locationPolicy, sources: [current.sources, previous?.sources ?? [:]],
             modules: Set(current.modules.values).intersection(previous.map { Set($0.modules.values) } ?? []),
             incompleteInputs: current.hasUninspectedBuilderInputs || previous?.hasUninspectedBuilderInputs == true, touching: touchedPaths)
@@ -359,7 +361,7 @@ public enum XcodeFineSelector {
                 fallback("generated_input_changed", "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for \(module).")
             }
         }
-        let semanticPaths = legacyConditionalPaths.union(legacyCallerLocationPaths).union(builders.incompletePaths).union(registrations.semanticPaths)
+        let semanticPaths = macroPaths.union(legacyConditionalPaths).union(legacyCallerLocationPaths).union(builders.incompletePaths).union(registrations.semanticPaths)
             .union((oldChanged + newChanged).map { $0.region.path })
         let analyzedPaths = Set((Array(current.sources.keys) + Array(previous?.sources.keys ?? [:].keys)).compactMap { key in
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) }

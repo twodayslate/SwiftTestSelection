@@ -8,10 +8,11 @@ import Foundation
 enum XcodeSourceOwnership {
     static let productType = "compiler-module"
 
+    @discardableResult
     static func recover(log: String, sourceRoot: URL, derived: URL, activeInputs: Set<String>?,
                         targets: inout [XcodeTarget], modules: inout [String: String],
                         listOwners: [URL: Set<String>], unsupportedInputs: inout [String: [String]], classifiedLists: inout Set<URL>, diagnostics: inout [String], evidence: XcodeBuildEvidence? = nil,
-                        generated: inout [String: [GeneratedSourceBoundary]], roleDiagnostics: inout [String: String]) {
+                        generated: inout [String: [GeneratedSourceBoundary]], roleDiagnostics: inout [String: String]) -> [String: [String]] {
         func canonical(_ file: URL) -> URL { file.standardizedFileURL.resolvingSymlinksInPath() }
         let root = canonical(sourceRoot).path + "/", generatedRoot = canonical(derived).path + "/"
         var invocations: [String: [String]] = [:], invalid = Set<String>()
@@ -45,6 +46,7 @@ enum XcodeSourceOwnership {
             } catch { diagnostics.append("Compiler source ownership unavailable for \(module): \(error)") }
         }
         let claimants = Dictionary(grouping: lists.keys, by: { lists[$0]! })
+        var validatedInvocations: [String: [String]] = [:]
         for module in lists.keys.sorted() {
             let list = lists[module]!
             do {
@@ -112,8 +114,10 @@ enum XcodeSourceOwnership {
                     modules[name] = module
                 }
                 classifiedLists.insert(list)
+                validatedInvocations[module] = invocations[module]
             } catch { diagnostics.append("Compiler source ownership unavailable for \(module): \(error)") }
         }
+        return validatedInvocations
     }
 
     /// Retention builds products even after a revision-cache hit. Revalidate the
@@ -125,9 +129,14 @@ enum XcodeSourceOwnership {
         var generated: [String: [GeneratedSourceBoundary]] = [:], roles: [String: String] = [:]
         var unsupported: [String: [String]] = [:], classified = Set<URL>(), diagnostics: [String] = []
         let evidence = try? XcodeBuildEvidence(log: log, root: root, derived: derived, captured: captured)
-        recover(log: log, sourceRoot: root, derived: derived, activeInputs: nil, targets: &targets, modules: &modules,
+        let invocations = recover(log: log, sourceRoot: root, derived: derived, activeInputs: nil, targets: &targets, modules: &modules,
             listOwners: [:], unsupportedInputs: &unsupported, classifiedLists: &classified, diagnostics: &diagnostics,
             evidence: evidence, generated: &generated, roleDiagnostics: &roles)
+        var sources = graph.sources
+        CompilerMacroInputs.annotate(&sources, invocations: invocations, root: root)
+        guard sources.allSatisfy({ $0.value.usesUnmodeledMacroPlugin == graph.sources[$0.key]?.usesUnmodeledMacroPlugin }) else {
+            return false
+        }
         func boundaries(_ values: [String: [GeneratedSourceBoundary]]) -> [String: [GeneratedSourceBoundary]] {
             values.mapValues { $0.sorted { $0.logicalPath < $1.logicalPath } }
         }

@@ -339,6 +339,12 @@ enum XcodeHeadOnlySelector {
         var changed: [SourceUnit] = []
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
         semanticPaths.formUnion(registrations.semanticPaths)
+        let macroPaths = AttachedMacroInputs.changedPaths(base: source.base, head: current.sources,
+            unowned: source.unownedBaseSources, touching: paths)
+        if !macroPaths.isEmpty {
+            semanticPaths.formUnion(macroPaths)
+            fallback("attached_macro_inputs", AttachedMacroInputs.reason(macroPaths))
+        }
         if comparison.locationPolicy != .diagnostic {
             let incomplete = SwiftSourceSnapshot.legacyCallerLocationPaths(in: current.sources, touching: paths)
                 .union(SwiftSourceSnapshot.legacyCallerLocationPaths(in: source.base, touching: paths))

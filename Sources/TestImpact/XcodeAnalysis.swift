@@ -230,7 +230,7 @@ public struct XcodeAnalysis {
                 modules[name] = module
             }
         }
-        XcodeSourceOwnership.recover(log: log, sourceRoot: sourceRoot, derived: derived, activeInputs: activeCompilerInputs,
+        let compilerInvocations = XcodeSourceOwnership.recover(log: log, sourceRoot: sourceRoot, derived: derived, activeInputs: activeCompilerInputs,
             targets: &targets, modules: &modules, listOwners: listOwners, unsupportedInputs: &unsupportedInputs, classifiedLists: &classifiedLists, diagnostics: &diagnostics, evidence: evidence, generated: &generated, roleDiagnostics: &roleDiagnostics)
         measurement("buildEvidence", Date().timeIntervalSince(evidenceStart))
         let sourceJobs = targets.flatMap { target -> [(String, String)] in
@@ -242,6 +242,7 @@ public struct XcodeAnalysis {
             let text = try String(contentsOf: sourceRoot.appendingPathComponent(path), encoding: .utf8)
             return (module + ":" + path, SwiftSourceSnapshot.parse(text, path: path, module: module))
         }) { sources[key] = snapshot }
+        CompilerMacroInputs.annotate(&sources, invocations: compilerInvocations, root: sourceRoot)
         measurement("headSourceReadParse", Date().timeIntervalSince(sourceStart))
         // Preserve active lists that neither settings nor compiler invocations
         // could classify, especially files shared with tests.

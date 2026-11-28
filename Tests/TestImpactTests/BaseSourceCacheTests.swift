@@ -1456,3 +1456,38 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
         #expect(!report.ignoredChanges.contains("Mode.swift"))
     }
 }
+
+@Test func archivedAttachedMacroInputsRequireMatchingSourceBytes() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let path = "Hooks.swift", key = "App:" + path
+    let macro = "@attached(peer) macro Observe() = #externalMacro(module: \"Plugin\", type: \"Observe\")"
+    let body = "@Observe func hook() {\n  work()\n}"
+    let control = "\nfunc ordinary() {\n  work()\n}"
+    func snapshot(_ source: String) -> SwiftSourceSnapshot { .parse(source, path: path, module: "App") }
+    let before = snapshot(macro + "\n" + body + control)
+    let changed = macro + "\n" + body.replacingOccurrences(of: "  work()", with: "\n  work()") + control
+    let head = snapshot(changed)
+    try repo.write(path, changed)
+    let revision = try repo.commit()
+    let ordinary = snapshot(macro + "\n" + body + control.replacingOccurrences(of: "  work()", with: "\n  work()"))
+    #expect(AttachedMacroInputs.changedPaths(base: [key: before], head: [key: ordinary], touching: [path]).isEmpty)
+    let nested = "struct One { @Lib.Observe<Int> func hook() {} }"
+    let oldContext = snapshot(nested), newContext = snapshot(nested.replacingOccurrences(of: "One", with: "Two"))
+    #expect(oldContext.attachedAttributeInputs?["Observe"]?.isEmpty == false)
+    #expect(AttachedMacroInputs.changedPaths(base: [key: oldContext], head: [key: newContext],
+        unowned: ["Macros.swift": snapshot(macro)], touching: [path]) == [path])
+    for authenticated in [true, false] {
+        var graph = XcodeTestGraph(targets: [], tests: [])
+        var previous = head
+        previous.parserVersion = 47
+        previous.attachedAttributeInputs = nil
+        if !authenticated { previous.sourceBlobIDs = ["unrelated"] }
+        graph.sources[key] = previous
+        try graph.refreshLegacyComparisonSyntax(paths: [path], revision: revision, root: repo.root)
+        let restored = try #require(graph.sources[key])
+        #expect((restored.attachedAttributeInputs != nil) == authenticated)
+        if authenticated { #expect(restored.usesUnmodeledMacroPlugin == true) }
+        #expect(AttachedMacroInputs.changedPaths(base: [key: before], head: graph.sources, touching: [path]) == [path])
+    }
+}
