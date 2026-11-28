@@ -7,8 +7,8 @@ import Foundation
 /// Unknown dylibs, image layouts and stripped registration symbols leave
 /// discovery open. A source import list cannot establish these facts.
 enum LinkedTestingRecords {
-    // Version 6 verifies bundle and executable locations after resolving filesystem aliases.
-    static let inventoryVersion = 6
+    // Version 7 verifies absolute simulator diagnostic-library paths at capture time.
+    static let inventoryVersion = 7
 
     struct Assertion: Hashable {
         let thunk: String
@@ -61,12 +61,27 @@ enum LinkedTestingRecords {
         // A test target runs its bundle in its own host process. Repeated plan
         // configurations may load different images for the same target.
         var inspected: [String: [URL: Inventory]] = [:]
+        lazy var runtimeCheckers = installedMainThreadCheckers(at: products)
+        var checkedLibraries: [URL: Bool] = [:]
+        func platformInjection(_ path: Substring) -> Bool {
+            guard !path.split(separator: "/").contains("..") else { return false }
+            if path.hasPrefix("/usr/lib/") || path.hasPrefix("__SIMRUNTIMEROOT__/usr/lib/") { return true }
+            // Xcode can expand the runtime placeholder into a mounted absolute
+            // path. Validate that specific diagnostic library in the installed SDK.
+            guard path.hasPrefix("/"), path.hasSuffix("/usr/lib/libMainThreadChecker.dylib") else { return false }
+            let library = URL(fileURLWithPath: String(path)).resolvingSymlinksInPath()
+            guard runtimeCheckers.contains(library.path) else { return false }
+            if let known = checkedLibraries[library] { return known }
+            let requirement = "anchor apple and identifier \"com.apple.libMainThreadChecker\""
+            let verified = (try? CommandRunner.run("/usr/bin/codesign",
+                ["--verify", "-R=" + requirement, library.path], at: products)) != nil
+            checkedLibraries[library] = verified
+            return verified
+        }
         func processRecords(_ target: [String: Any], name: String) -> Inventory? {
             for key in ["TestingEnvironmentVariables", "EnvironmentVariables"] {
                 if let environment = target[key] as? [String: String], let injection = environment["DYLD_INSERT_LIBRARIES"],
-                   injection.split(separator: ":").contains(where: {
-                       !$0.hasPrefix("/usr/lib/") && !$0.hasPrefix("__SIMRUNTIMEROOT__/usr/lib/")
-                   }) { return nil }
+                   !injection.split(separator: ":").allSatisfy(platformInjection) { return nil }
             }
             // Application startup can load plug-ins before discovery. The host's
             // static load commands cannot establish which registrations will run.
@@ -95,6 +110,23 @@ enum LinkedTestingRecords {
             }
         }
         return recordsByTarget
+    }
+
+    private static func installedMainThreadCheckers(at directory: URL) -> Set<String> {
+        struct RuntimeList: Decodable {
+            struct Runtime: Decodable {
+                let isAvailable: Bool
+                let runtimeRoot: String?
+            }
+            let runtimes: [Runtime]
+        }
+        guard let output = try? CommandRunner.run("xcrun", ["simctl", "list", "runtimes", "-j"], at: directory),
+              let list = try? JSONDecoder().decode(RuntimeList.self, from: output.stdout) else { return [] }
+        return Set(list.runtimes.compactMap { runtime in
+            guard runtime.isAvailable, let root = runtime.runtimeRoot, root.hasPrefix("/") else { return nil }
+            return URL(fileURLWithPath: root).resolvingSymlinksInPath()
+                .appendingPathComponent("usr/lib/libMainThreadChecker.dylib").path
+        })
     }
 
     private static func executableWithoutPrincipalClass(in bundle: URL) -> URL? {

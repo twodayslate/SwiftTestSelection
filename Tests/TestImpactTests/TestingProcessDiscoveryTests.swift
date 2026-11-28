@@ -531,7 +531,7 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     }
 }
 
-@Test func flatBundleChecksDestinationPrincipalClassMetadata() throws {
+@Test func flatBundleChecksDestinationMetadataAndInjectedLibraries() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let bundle = root.appendingPathComponent("Fixture.xctest")
     try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
@@ -539,8 +539,12 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     try Data("int fixture(void) { return 1; }".utf8).write(to: root.appendingPathComponent("Fixture.c"))
     _ = try CommandRunner.run("xcrun", ["clang", "-bundle", "Fixture.c", "-o", "Fixture.xctest/Fixture"], at: root)
     let run = root.appendingPathComponent("Fixture.xctestrun")
-    let plan = ["TestConfigurations": [["TestTargets": [["BlueprintName": "UI", "TestBundlePath": "__TESTROOT__/Fixture.xctest"]]]]]
-    try PropertyListSerialization.data(fromPropertyList: plan, format: .binary, options: 0).write(to: run)
+    func writePlan(injection: String? = nil) throws {
+        var target: [String: Any] = ["BlueprintName": "UI", "TestBundlePath": "__TESTROOT__/Fixture.xctest"]
+        if let injection { target["TestingEnvironmentVariables"] = ["DYLD_INSERT_LIBRARIES": injection] }
+        let plan = ["TestConfigurations": [["TestTargets": [target]]]]
+        try PropertyListSerialization.data(fromPropertyList: plan, format: .binary, options: 0).write(to: run)
+    }
     func writeInfo(_ file: String, principalKey: String? = nil) throws {
         var info = ["CFBundleExecutable": "Fixture", "CFBundlePackageType": "BNDL"]
         if let principalKey { info[principalKey] = "PluginLoader" }
@@ -548,7 +552,16 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
             .write(to: bundle.appendingPathComponent(file))
     }
     try writeInfo("Info.plist")
+    try writePlan(injection: "__SIMRUNTIMEROOT__/usr/lib/libMainThreadChecker.dylib:/usr/lib/libRPAC.dylib")
     #expect(LinkedTestingRecords.capture(testRun: run, products: root)?["UI"]?.records == Set<String>())
+    let unregistered = root.appendingPathComponent("Example.simruntime/Contents/Resources/RuntimeRoot/usr/lib/libMainThreadChecker.dylib")
+    try FileManager.default.createDirectory(at: unregistered.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.copyItem(at: bundle.appendingPathComponent("Fixture"), to: unregistered)
+    for path in [unregistered.path, "/usr/lib/../../custom.dylib", "__SIMRUNTIMEROOT__/usr/lib/../custom.dylib"] {
+        try writePlan(injection: "/usr/lib/libRPAC.dylib:" + path)
+        #expect(LinkedTestingRecords.capture(testRun: run, products: root) == [:])
+    }
+    try writePlan()
     let alias = root.appendingPathComponent("ProductsAlias")
     try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
     #expect(LinkedTestingRecords.capture(testRun: alias.appendingPathComponent(run.lastPathComponent),
