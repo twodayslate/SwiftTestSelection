@@ -7,8 +7,8 @@ import Foundation
 /// Unknown dylibs, image layouts and stripped registration symbols leave
 /// discovery open. A source import list cannot establish these facts.
 enum LinkedTestingRecords {
-    // Version 7 verifies absolute simulator diagnostic-library paths at capture time.
-    static let inventoryVersion = 7
+    // Version 8 checks loader search directories before closing the process inventory.
+    static let inventoryVersion = 8
 
     struct Assertion: Hashable {
         let thunk: String
@@ -52,9 +52,9 @@ enum LinkedTestingRecords {
         let root = run.deletingLastPathComponent()
         let productsPath = products.standardizedFileURL.resolvingSymlinksInPath().path
         func product(_ path: String) -> URL? {
-            let parts = path.split(separator: "/", maxSplits: 1)
-            guard parts.count == 2, !parts[1].split(separator: "/").contains("..") else { return nil }
-            guard parts[0] == "__TESTROOT__" else { return nil }
+            let parts = path.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, parts[0] == "__TESTROOT__", !parts[1].isEmpty,
+                  !parts[1].split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == ".." }) else { return nil }
             let bundle = root.appendingPathComponent(String(parts[1])).standardizedFileURL.resolvingSymlinksInPath()
             return bundle.path.hasPrefix(productsPath + "/") ? bundle : nil
         }
@@ -80,17 +80,31 @@ enum LinkedTestingRecords {
         }
         func processRecords(_ target: [String: Any], name: String) -> Inventory? {
             for key in ["TestingEnvironmentVariables", "EnvironmentVariables"] {
-                if let environment = target[key] as? [String: String], let injection = environment["DYLD_INSERT_LIBRARIES"],
-                   !injection.split(separator: ":").allSatisfy(platformInjection) { return nil }
+                guard let raw = target[key] else { continue }
+                guard let environment = raw as? [String: String] else { return nil }
+                for (variable, value) in environment where variable.hasPrefix("DYLD_") {
+                    switch variable {
+                    case "DYLD_INSERT_LIBRARIES":
+                        guard value.split(separator: ":").allSatisfy(platformInjection) else { return nil }
+                    case "DYLD_FRAMEWORK_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH", "DYLD_FALLBACK_LIBRARY_PATH",
+                         "DYLD_VERSIONED_FRAMEWORK_PATH", "DYLD_VERSIONED_LIBRARY_PATH":
+                        for component in value.components(separatedBy: ":") {
+                            if platformSearchDirectories.contains(component) { continue }
+                            guard let directory = product(component), unshadowedDirectory(directory, productsPath: productsPath) else { return nil }
+                        }
+                    default: return nil
+                    }
+                }
             }
             // Application startup can load plug-ins before discovery. The host's
             // static load commands cannot establish which registrations will run.
             if let path = target["TestHostPath"] as? String, !platformTestAgents.contains(path) { return nil }
-            guard target["IsAppHostedTestBundle"] as? Bool != true, target["UseDestinationArtifacts"] as? Bool != true,
+            guard target["IsAppHostedTestBundle"] as? Bool != true, target["IsXCTRunnerHostedTestBundle"] as? Bool != true,
+                  target["IsUITestBundle"] as? Bool != true, target["UseDestinationArtifacts"] as? Bool != true,
                   let path = target["TestBundlePath"] as? String, let bundle = product(path),
                   let image = executableWithoutPrincipalClass(in: bundle) else { return nil }
             if let cached = inspected[name]?[image] { return cached }
-            guard let symbols = recordsInImage(image, plainCases: plainCases[name] ?? []) else { return nil }
+            guard let symbols = recordsInImage(image, plainCases: plainCases[name] ?? [], productsPath: productsPath) else { return nil }
             inspected[name, default: [:]][image] = symbols
             return symbols
         }
@@ -156,11 +170,39 @@ enum LinkedTestingRecords {
     private static let platformTestAgents = Set(["MacOSX", "iPhoneSimulator", "AppleTVSimulator",
         "WatchSimulator", "XRSimulator"].map { "__PLATFORMS__/\($0).platform/Developer/Library/Xcode/Agents/xctest" })
 
+    private static let platformSearchDirectories = Set(platformTestAgents.flatMap { host in
+        let platform = String(host.dropLast("/Library/Xcode/Agents/xctest".count))
+        return [platform + "/Library/Frameworks", platform + "/usr/lib"]
+    })
+
+    // dyld can replace a transitive system dependency as well as a direct load.
+    // Only empty search paths and products that cannot be loaded by those names
+    // establish that install names still designate platform libraries.
+    private static func unshadowedDirectory(_ directory: URL, productsPath: String) -> Bool {
+        do {
+            // A dangling directory symlink can acquire an external target after
+            // capture without changing the link stored in the retained manifest.
+            var ancestor = directory
+            while ancestor.path != productsPath {
+                guard ancestor.path.hasPrefix(productsPath + "/") else { return false }
+                if (try? FileManager.default.destinationOfSymbolicLink(atPath: ancestor.path)) != nil { return false }
+                ancestor.deleteLastPathComponent()
+            }
+            let entries = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            return entries.allSatisfy {
+                ["app", "xctest", "swiftmodule", "dSYM", "a", "xctestrun"].contains(($0 as NSString).pathExtension) ||
+                    $0 == "PackageFrameworks"
+            }
+        } catch let error as NSError {
+            return error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError
+        }
+    }
+
     private static let testingLibraries = Set(["Testing", "XCTest"].flatMap {
         ["@rpath/\($0).framework/\($0)", "@rpath/\($0).framework/Versions/A/\($0)"]
     } + ["@rpath/libXCTestSwiftSupport.dylib"])
 
-    static func recordsInImage(_ image: URL, plainCases: [XCTestDiscoveryCase] = []) -> Inventory? {
+    static func recordsInImage(_ image: URL, plainCases: [XCTestDiscoveryCase] = [], productsPath: String? = nil) -> Inventory? {
         let directory = image.deletingLastPathComponent()
         // Support the 64-bit little-endian thin image ABI. Do not silently
         // inspect only the host slice of a universal test product.
@@ -175,15 +217,33 @@ enum LinkedTestingRecords {
         for line in lines.dropFirst() {
             guard let end = line.range(of: " (compatibility version ") else { return nil }
             let path = line[..<end.lowerBound].trimmingCharacters(in: .whitespaces)
+            guard !path.split(separator: "/").contains("..") else { return nil }
             guard path.hasPrefix("/System/Library/") || path.hasPrefix("/usr/lib/") ||
                     testingLibraries.contains(path) else { return nil }
         }
 
-        let fields = layout.split(separator: "\n").map { $0.split(whereSeparator: \.isWhitespace) }
+        let linesOfLayout = layout.split(separator: "\n")
+        let fields = linesOfLayout.map { $0.split(whereSeparator: \.isWhitespace) }
         // A bundle initializer or Objective-C +load method can load another
         // image before the platform agent begins Swift Testing discovery.
         var classCount: UInt64 = 0
         for (index, field) in fields.enumerated() {
+            if field == ["cmd", "LC_DYLD_ENVIRONMENT"] { return nil }
+            if field == ["cmd", "LC_RPATH"] {
+                guard index + 2 < fields.count else { return nil }
+                let entry = linesOfLayout[index + 2].drop(while: \.isWhitespace)
+                guard entry.hasPrefix("path "), let end = entry.range(of: " (offset ", options: .backwards) else { return nil }
+                let path = entry.dropFirst(5)[..<end.lowerBound]
+                if path == "/usr/lib/swift" { continue }
+                // The executable is a platform xctest agent. Other executable-
+                // relative paths could escape the agent's installed frameworks.
+                if path == "@executable_path/Frameworks" { continue }
+                guard path.hasPrefix("@loader_path/"), let productsPath,
+                      path == "@loader_path/../Frameworks" || !path.split(separator: "/").contains("..") else { return nil }
+                let resolved = directory.appendingPathComponent(String(path.dropFirst("@loader_path/".count)))
+                    .standardizedFileURL.resolvingSymlinksInPath()
+                guard resolved.path.hasPrefix(productsPath + "/"), unshadowedDirectory(resolved, productsPath: productsPath) else { return nil }
+            }
             if field == ["cmd", "LC_ROUTINES_64"] || field == ["sectname", "__objc_nlclslist"] ||
                 field == ["sectname", "__objc_nlcatlist"] { return nil }
             // A category can replace a framework discovery hook on an existing class.

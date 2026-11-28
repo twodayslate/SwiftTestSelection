@@ -173,12 +173,12 @@ public struct XcodeAnalysis {
         progress("Building Xcode scheme \(configuration.scheme) for \(configuration.destination) (no test bodies)…")
         let build = try CommandRunner.run("xcodebuild", arguments, at: directory)
         let settings = try CommandRunner.run("xcodebuild", arguments + ["-showBuildSettings", "-json"], at: directory).stdout
-        return try analyzeBuild(configuration, sourceRoot: sourceRoot, derived: derived, log: build.text, settingsData: settings)
+        return try analyzeBuild(configuration, sourceRoot: sourceRoot, derived: derived, log: build.text, settingsData: settings, freshIndex: true)
     }
 
     func analyzeBuild(_ configuration: XcodeConfiguration, sourceRoot: URL, derived: URL,
                       log: String, settingsData: Data, xctestrun: URL? = nil, moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil,
-                      activeCompilerInputs: Set<String>? = nil, allowCompilerReplay: Bool = true) throws -> XcodeTestGraph {
+                      activeCompilerInputs: Set<String>? = nil, allowCompilerReplay: Bool = true, freshIndex: Bool = false) throws -> XcodeTestGraph {
         guard FileManager.default.fileExists(atPath: configuration.path.path) else {
             throw ImpactError("Xcode container does not exist: \(configuration.path.path)")
         }
@@ -242,7 +242,7 @@ public struct XcodeAnalysis {
             let text = try String(contentsOf: sourceRoot.appendingPathComponent(path), encoding: .utf8)
             return (module + ":" + path, SwiftSourceSnapshot.parse(text, path: path, module: module))
         }) { sources[key] = snapshot }
-        CompilerMacroInputs.annotate(&sources, invocations: compilerInvocations, root: sourceRoot)
+        CompilerMacroInputs.annotate(&sources, invocations: compilerInvocations, root: sourceRoot, freshDerived: freshIndex ? derived : nil)
         measurement("headSourceReadParse", Date().timeIntervalSince(sourceStart))
         // Preserve active lists that neither settings nor compiler invocations
         // could classify, especially files shared with tests.

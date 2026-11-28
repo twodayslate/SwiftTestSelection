@@ -268,6 +268,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
+    var indexedActor: IndexedActorLocations?
     static let currentParserVersion = 51
     /// Older snapshots can recover this inventory from Git while retaining their original parser version.
     var macroInputVersion: Int? = nil
@@ -446,12 +447,15 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     }
 
     public static func parse(_ text: String, path: String, module: String) -> Self {
-        let tree = Parser.parse(source: text)
+        parse(text, path: path, module: module, tree: Parser.parse(source: text), indexedMainActor: false)
+    }
+
+    static func parse(_ text: String, path: String, module: String, tree: SourceFileSyntax, indexedMainActor: Bool) -> Self {
         let locations = SourceLocationConverter(fileName: path, tree: tree)
         var result = Self(units: [], inheritance: [:], diagnostics: [])
         result.parserVersion = Self.currentParserVersion
         result.macroInputVersion = AttachedMacroInputs.version
-        result.attachedAttributeInputs = text.contains("@") || text.contains("#") ? AttachedMacroInputs.capture(tree, locations: locations) : [:]
+        result.attachedAttributeInputs = text.contains("@") || text.contains("#") ? AttachedMacroInputs.capture(tree, locations: locations, indexedMainActor: indexedMainActor) : [:]
         if result.attachedAttributeInputs?.isEmpty == false && !tree.hasError {
             let imports = tree.tokens(viewMode: .sourceAccurate).compactMap { token -> ImportDeclSyntax? in
                 guard token.tokenKind == .keyword(.import) else { return nil }
@@ -596,7 +600,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 #endif
             })
         }
-        let builderBodies = ResultBuilderBodySyntax(tree, declarationIssues: declarationIssues)
+        let builderBodies = ResultBuilderBodySyntax(tree, declarationIssues: declarationIssues, indexedMainActor: indexedMainActor)
         let privateDefaults = PrivateLocationDefaultSyntax(tree, identifiers: identifiers, declarationIssues: declarationIssues)
         var privateLocationDefaultScope: String?
         func callerInfo(_ node: Syntax, includeAllTokens: Bool = false) -> (locations: [String: String], names: Set<String>, direct: Bool) {
@@ -644,7 +648,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     direct = false
                     names.insert("subscript")
                     offsets.insert(component.leftSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
-                } else if let attribute = node.as(AttributeSyntax.self) {
+                } else if let attribute = node.as(AttributeSyntax.self), !(indexedMainActor && attribute.isBareMainActor) {
                     direct = false
                     names.insert(attribute.attributeName.trimmedDescription)
                     record(attribute.tokens(viewMode: .sourceAccurate))

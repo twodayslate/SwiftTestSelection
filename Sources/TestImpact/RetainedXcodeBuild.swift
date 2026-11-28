@@ -77,7 +77,7 @@ enum RetainedXcodeBuild {
             graph.buildArtifact?.helperBindingInputs = evidence.fingerprint
             if let capture, capture.diagnostics.isEmpty, let headOnlyEvidence, headOnlyEvidence.uncertainty == nil {
                 let modules = Set(graph.sources.compactMap { key, snapshot -> String? in
-                    guard snapshot.usesUnmodeledMacroPlugin == true, snapshot.ordinaryMacroImports != nil,
+                    guard snapshot.usesUnmodeledMacroPlugin == true || snapshot.indexedActor != nil, snapshot.ordinaryMacroImports != nil,
                           let id = snapshot.sourceIdentity(storedAs: key), changedMacroPaths.contains(id.path) else { return nil }
                     return id.module
                 })

@@ -83,6 +83,11 @@ extension AttributeSyntax {
         "testable", "_exported", "usableFromInline"
     ])
 
+    var isBareMainActor: Bool {
+        attributeName.as(IdentifierTypeSyntax.self)?.name.text == "MainActor" &&
+            attributeName.trimmedDescription == "MainActor" && leftParen == nil
+    }
+
     var isNonBuilderCompilerAttribute: Bool {
         guard let type = attributeName.as(IdentifierTypeSyntax.self), type.genericArgumentClause == nil else { return false }
         return Self.nonBuilderAttributes.contains(type.name.identifier?.name ?? type.name.text)
@@ -90,8 +95,11 @@ extension AttributeSyntax {
 }
 
 private extension AttributeListSyntax {
-    var maySupplyBuilder: Bool {
-        contains { $0.as(AttributeSyntax.self)?.isNonBuilderCompilerAttribute != true }
+    func maySupplyBuilder(_ indexedMainActor: Bool) -> Bool {
+        contains { element in
+            guard let attr = element.as(AttributeSyntax.self) else { return true }
+            return !attr.isNonBuilderCompilerAttribute && !(indexedMainActor && attr.isBareMainActor)
+        }
     }
 }
 
@@ -101,7 +109,10 @@ struct ResultBuilderBodySyntax {
     // nil means an alias, expansion or unbound extension may supply a conformance.
     private let conformances: (targets: Set<SyntaxIdentifier>, owners: [SyntaxIdentifier: Syntax])?
 
-    init(_ file: SourceFileSyntax, declarationIssues: [HelperDeclarationIssue]) {
+    private let indexedMainActor: Bool
+
+    init(_ file: SourceFileSyntax, declarationIssues: [HelperDeclarationIssue], indexedMainActor: Bool = false) {
+        self.indexedMainActor = indexedMainActor
         guard declarationIssues.allSatisfy({ $0.kind == "unresolved-attribute" }) else {
             conformances = nil
             return
@@ -118,9 +129,12 @@ struct ResultBuilderBodySyntax {
         var targets = Set<SyntaxIdentifier>()
         var owners: [SyntaxIdentifier: Syntax] = [:]
         for token in file.tokens(viewMode: .sourceAccurate) {
-            if token.tokenKind == .atSign && token.parent?.as(AttributeSyntax.self)?.isNonBuilderCompilerAttribute != true {
-                conformances = nil
-                return
+            if token.tokenKind == .atSign {
+                guard let attr = token.parent?.as(AttributeSyntax.self),
+                      attr.isNonBuilderCompilerAttribute || (indexedMainActor && attr.isBareMainActor) else {
+                    conformances = nil
+                    return
+                }
             }
             guard token.tokenKind == .keyword(.extension),
                   let ext = token.parent?.as(ExtensionDeclSyntax.self) else { continue }
@@ -144,7 +158,7 @@ struct ResultBuilderBodySyntax {
             if let group = ancestor.asProtocol(DeclGroupSyntax.self) {
                 // An extension's access modifier supplies a default for its
                 // members. It does not establish the extended type's visibility.
-                if group.attributes.maySupplyBuilder { return true }
+                if group.attributes.maySupplyBuilder(indexedMainActor) { return true }
                 if ancestor.is(ExtensionDeclSyntax.self) {
                     guard let nominal = conformances?.owners[ancestor.id] else { return true }
                     parent = nominal
@@ -173,13 +187,13 @@ struct ResultBuilderBodySyntax {
     private func getterCanUseBuilder(_ block: AccessorBlockSyntax) -> Bool {
         let owner = block.parent?.as(PatternBindingSyntax.self)?.parent?.parent ?? block.parent
         guard let owner, let declaration = owner.asProtocol(WithAttributesSyntax.self) else { return true }
-        return declaration.attributes.maySupplyBuilder || mayInheritBuilder(owner)
+        return declaration.attributes.maySupplyBuilder(indexedMainActor) || mayInheritBuilder(owner)
     }
 
     private func closureCanUseBuilder(_ closure: ClosureExprSyntax, ordinaryStatements: SyntaxIdentifier?) -> Bool {
         // A plain variable initializer has no builder-annotated parameter.
         // Wrappers and member-attribute macros can supply a different initializer.
-        guard closure.signature?.attributes.maySupplyBuilder != true else { return true }
+        guard closure.signature?.attributes.maySupplyBuilder(indexedMainActor) != true else { return true }
         var expression = Syntax(closure)
         while let element = expression.parent?.as(LabeledExprSyntax.self),
               let tuple = element.parent?.parent?.as(TupleExprSyntax.self),
@@ -206,12 +220,12 @@ struct ResultBuilderBodySyntax {
         if expression.parent?.is(ReturnStmtSyntax.self) == true ||
             expression.parent?.as(FunctionCallExprSyntax.self)?.calledExpression.id == expression.id { return false }
         guard let binding = expression.parent?.as(InitializerClauseSyntax.self)?.parent?.as(PatternBindingSyntax.self),
-              let variable = binding.parent?.parent?.as(VariableDeclSyntax.self), !variable.attributes.maySupplyBuilder
+              let variable = binding.parent?.parent?.as(VariableDeclSyntax.self), !variable.attributes.maySupplyBuilder(indexedMainActor)
         else { return true }
         if variable.parent?.is(MemberBlockItemSyntax.self) == true {
             var parent = variable.parent
             while let ancestor = parent {
-                if let group = ancestor.asProtocol(DeclGroupSyntax.self), group.attributes.maySupplyBuilder { return true }
+                if let group = ancestor.asProtocol(DeclGroupSyntax.self), group.attributes.maySupplyBuilder(indexedMainActor) { return true }
                 parent = ancestor.parent
             }
         }
@@ -228,10 +242,10 @@ struct ResultBuilderBodySyntax {
         }
         guard let block = syntax.as(CodeBlockSyntax.self), let owner = syntax.parent else { return nil }
         if let function = owner.as(FunctionDeclSyntax.self) {
-            return (block.statements, function.attributes.maySupplyBuilder || mayInheritBuilder(owner))
+            return (block.statements, function.attributes.maySupplyBuilder(indexedMainActor) || mayInheritBuilder(owner))
         }
         if let accessor = owner.as(AccessorDeclSyntax.self) {
-            if accessor.attributes.maySupplyBuilder { return (block.statements, true) }
+            if accessor.attributes.maySupplyBuilder(indexedMainActor) { return (block.statements, true) }
             switch accessor.accessorSpecifier.tokenKind {
             case .keyword(.get):
                 let property = owner.parent?.parent?.as(AccessorBlockSyntax.self)

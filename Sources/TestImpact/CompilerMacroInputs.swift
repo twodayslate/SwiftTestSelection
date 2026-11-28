@@ -9,7 +9,7 @@ import MachO
 /// Swift records the plugin binary used by each primary input in its make
 /// dependencies. This also covers macro declarations imported from binary modules.
 enum CompilerMacroInputs {
-    static func annotate(_ sources: inout [String: SwiftSourceSnapshot], invocations: [String: [String]], root: URL) {
+    static func annotate(_ sources: inout [String: SwiftSourceSnapshot], invocations: [String: [String]], root: URL, freshDerived: URL? = nil) {
         let candidates = sources.keys.filter { sources[$0]?.attachedAttributeInputs?.isEmpty == false }
         guard !candidates.isEmpty else { return }
         var byModule: [String: [String: String]] = [:]
@@ -17,13 +17,20 @@ enum CompilerMacroInputs {
             guard let id = sources[key]?.sourceIdentity(storedAs: key) else { continue }
             byModule[id.module, default: [:]][root.appendingPathComponent(id.path).resolvingSymlinksInPath().path] = key
             sources[key]?.usesUnmodeledMacroPlugin = true
+            sources[key]?.indexedActor = nil
         }
         var binaryInputs: [String: Bool] = [:]
+        lazy var activeCompiler = (try? CommandRunner.run("xcrun", ["--find", "swiftc"], at: root))?.text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         for (module, args) in invocations {
             guard let files = byModule[module], let compiler = args.first else { continue }
             guard let i = args.firstIndex(of: "-output-file-map"), i + 1 < args.count,
                   let data = try? Data(contentsOf: URL(fileURLWithPath: args[i + 1])),
                   let outputs = try? JSONDecoder().decode([String: [String: String]].self, from: data) else { continue }
+            let stores = args.indices.compactMap { args[$0] == "-index-store-path" && $0 + 1 < args.count ? args[$0 + 1] : nil }
+            let expectedStore = freshDerived?.appendingPathComponent("Index.noindex/DataStore").resolvingSymlinksInPath()
+            let freshStore = expectedStore != nil && stores.count == 1 && compiler == activeCompiler &&
+                URL(fileURLWithPath: stores[0]).resolvingSymlinksInPath().path == expectedStore?.path ? stores[0] : nil
             let testing = URL(fileURLWithPath: compiler).deletingLastPathComponent().deletingLastPathComponent()
                 .appendingPathComponent("lib/swift/host/plugins/testing/libTestingMacros.dylib").resolvingSymlinksInPath()
             for (path, output) in outputs where !path.isEmpty {
@@ -40,6 +47,11 @@ enum CompilerMacroInputs {
                     return binary && URL(fileURLWithPath: input).resolvingSymlinksInPath() != testing
                 }
                 sources[key]?.usesUnmodeledMacroPlugin = usesPlugin
+                if let store = freshStore, let snapshot = sources[key], snapshot.attachedAttributeInputs?["MainActor"] != nil,
+                   let id = snapshot.sourceIdentity(storedAs: key), let unit = output["index-unit-output-path"] ?? output["object"] {
+                    sources[key]?.indexedActor = IndexedActorLocations.capture(file: URL(fileURLWithPath: path),
+                        path: id.path, module: module, snapshot: snapshot, compiler: URL(fileURLWithPath: compiler), store: store, output: unit)
+                }
             }
         }
     }

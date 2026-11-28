@@ -15,6 +15,8 @@ On the verified original #380 product, the reply-geometry test and both historic
 
 The fresh Xcode blank-line fixtures ran through both head-only and two-graph selection. Both modes ignored the ordinary edit inside the returned dictionary and selected zero of nine tests. When a macro observed the blank line, both modes selected all nine, including `UnitTests/ProductionTests/testSharing()`. Retained-product verification passed in all four runs.
 
+A separate fixture inserts one blank line before an unused `@MainActor` function following an unchanged `@Observable` class. Both fresh selection modes now ignore the edit, down from nine of nine tests. Fresh builds read the Swift compiler index for each primary source. A reference to Swift’s actor at the attribute position allows selection to exclude the attribute from macro, result-builder and caller-location comparisons. Single-head selection requires the full Git change to contain just that file, unchanged expansion inputs elsewhere in the file, and verified module declarations that exclude a historical macro namesake. The compiled control with a project-defined result builder named `MainActor` retains its location evidence.
+
 [Download the complete primary and scoped IDs, positive and fallback-only sets, final Base and Regression lists, and simulator waiter traces under `sealedMacroDeclarations`](ConsumerPrecision101Recheck.json.gz).
 
 ## Macro lookup in the alternate #383 comparison

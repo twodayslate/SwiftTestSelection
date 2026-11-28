@@ -133,8 +133,9 @@ enum XcodeSourceOwnership {
             listOwners: [:], unsupportedInputs: &unsupported, classifiedLists: &classified, diagnostics: &diagnostics,
             evidence: evidence, generated: &generated, roleDiagnostics: &roles)
         var sources = graph.sources
-        CompilerMacroInputs.annotate(&sources, invocations: invocations, root: root)
-        guard sources.allSatisfy({ $0.value.usesUnmodeledMacroPlugin == graph.sources[$0.key]?.usesUnmodeledMacroPlugin }) else {
+        CompilerMacroInputs.annotate(&sources, invocations: invocations, root: root, freshDerived: derived)
+        guard sources.allSatisfy({ $0.value.usesUnmodeledMacroPlugin == graph.sources[$0.key]?.usesUnmodeledMacroPlugin &&
+            $0.value.indexedActor == graph.sources[$0.key]?.indexedActor }) else {
             return false
         }
         func boundaries(_ values: [String: [GeneratedSourceBoundary]]) -> [String: [GeneratedSourceBoundary]] {

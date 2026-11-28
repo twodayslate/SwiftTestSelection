@@ -14,7 +14,7 @@ import CryptoKit
 enum AttachedMacroInputs {
     static let version = 3
 
-    static func capture(_ tree: SourceFileSyntax, locations: SourceLocationConverter) -> [String: [String]] {
+    static func capture(_ tree: SourceFileSyntax, locations: SourceLocationConverter, indexedMainActor: Bool = false) -> [String: [String]] {
         var inputs: [String: [String]] = [:]
         var digests: [SyntaxIdentifier: String] = [:]
         func location(_ position: AbsolutePosition) -> String {
@@ -64,7 +64,7 @@ enum AttachedMacroInputs {
                 continue
             }
             guard token.tokenKind == .atSign, let attribute = token.parent?.as(AttributeSyntax.self),
-                  !attribute.isNonBuilderCompilerAttribute else { continue }
+                  !attribute.isNonBuilderCompilerAttribute, !(indexedMainActor && attribute.isBareMainActor) else { continue }
             let type = attribute.attributeName
             let identifier = type.as(IdentifierTypeSyntax.self)?.name ?? type.as(MemberTypeSyntax.self)?.name
             guard let name = identifier?.identifier?.name else { continue }

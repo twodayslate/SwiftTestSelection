@@ -539,9 +539,11 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     try Data("int fixture(void) { return 1; }".utf8).write(to: root.appendingPathComponent("Fixture.c"))
     _ = try CommandRunner.run("xcrun", ["clang", "-bundle", "Fixture.c", "-o", "Fixture.xctest/Fixture"], at: root)
     let run = root.appendingPathComponent("Fixture.xctestrun")
-    func writePlan(injection: String? = nil) throws {
+    func writePlan(injection: String? = nil, environment: [String: String] = [:], key: String = "TestingEnvironmentVariables") throws {
         var target: [String: Any] = ["BlueprintName": "UI", "TestBundlePath": "__TESTROOT__/Fixture.xctest"]
-        if let injection { target["TestingEnvironmentVariables"] = ["DYLD_INSERT_LIBRARIES": injection] }
+        var settings = environment
+        if let injection { settings["DYLD_INSERT_LIBRARIES"] = injection }
+        target[key] = settings
         let plan = ["TestConfigurations": [["TestTargets": [target]]]]
         try PropertyListSerialization.data(fromPropertyList: plan, format: .binary, options: 0).write(to: run)
     }
@@ -561,6 +563,29 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
         try writePlan(injection: "/usr/lib/libRPAC.dylib:" + path)
         #expect(LinkedTestingRecords.capture(testRun: run, products: root) == [:])
     }
+    let staging = root.appendingPathComponent("Staged")
+    try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+    for key in ["TestingEnvironmentVariables", "EnvironmentVariables"] {
+        for variable in ["DYLD_FRAMEWORK_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH", "DYLD_VERSIONED_LIBRARY_PATH"] {
+            let paths = [variable: "__TESTROOT__/Staged:__PLATFORMS__/MacOSX.platform/Developer/Library/Frameworks"]
+            try writePlan(environment: paths, key: key)
+            #expect(LinkedTestingRecords.capture(testRun: run, products: root)?["UI"] != nil)
+            let shadow = staging.appendingPathComponent(variable.contains("FRAMEWORK") ? "Testing.framework" : "libXCTestSwiftSupport.dylib")
+            try Data().write(to: shadow)
+            #expect(LinkedTestingRecords.capture(testRun: run, products: root) == [:])
+            try FileManager.default.removeItem(at: shadow)
+            try writePlan(environment: [variable: "/external/build"], key: key)
+            #expect(LinkedTestingRecords.capture(testRun: run, products: root) == [:])
+        }
+    }
+    try writePlan(environment: ["DYLD_FRAMEWORK_PATH": "/__TESTROOT__/Staged"])
+    #expect(LinkedTestingRecords.capture(testRun: run, products: root) == [:])
+    let dangling = root.appendingPathComponent("Dangling")
+    try FileManager.default.createSymbolicLink(at: dangling, withDestinationURL: root.deletingLastPathComponent().appendingPathComponent(UUID().uuidString))
+    try writePlan(environment: ["DYLD_FRAMEWORK_PATH": "__TESTROOT__/Dangling/Frameworks"])
+    #expect(LinkedTestingRecords.capture(testRun: run, products: root) == [:])
+    try writePlan(environment: ["DYLD_IMAGE_SUFFIX": "_debug"])
+    #expect(LinkedTestingRecords.capture(testRun: run, products: root) == [:])
     try writePlan()
     let alias = root.appendingPathComponent("ProductsAlias")
     try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)

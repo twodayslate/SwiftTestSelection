@@ -169,7 +169,7 @@ struct XcodeHeadOnlySources {
                 cache.recordHeadSyntaxReuse()
                 continue
             }
-            if let snapshot = try cache.snapshot(path: path, module: module) {
+            if var snapshot = try cache.snapshot(path: path, module: module) {
                 if paths.contains(path), let head = current.sources[key],
                    snapshot.attachedAttributeInputs != head.attachedAttributeInputs {
                     // A head compiler's dependency file cannot describe the Git
@@ -193,6 +193,12 @@ struct XcodeHeadOnlySources {
                         }
                         if stableMacroInputs == true {
                             result.verifiedMacroImports[key] = names
+                            if let actor = head.indexedActor, !names.contains("MainActor"), !result.historicalMacroNames.contains("MainActor"),
+                               try cache.runtimeEvidence(headRevision: artifact.revision).changedPaths == [path],
+                               current.targets.filter({ $0.sourceFiles.contains(path) }).count == 1,
+                               let bytes = try cache.content(path: path), let text = String(data: bytes, encoding: .utf8) {
+                                snapshot.indexedActor = actor.historical(text, path: path, module: module, before: snapshot, after: head)
+                            }
                         }
                     }
                     let oldImports = snapshot.units.filter { $0.kind == "import" }
@@ -239,7 +245,9 @@ enum XcodeHeadOnlySelector {
         let originalCurrent = current
         let mappingFilePresent = current.mappings != nil
         let inline = InlineUIMappings.resolve(current)
-        let current = inline.applying(to: current)
+        var current = inline.applying(to: current)
+        var source = source
+        IndexedActorLocations.compare(base: &source.base, head: &current.sources, paths: Set(changes.flatMap(\.paths)))
         let inventory = Set(current.tests)
         func target(_ test: String) -> String { String(test.prefix { $0 != "/" }) }
         let uiTargets = Set(current.targets.filter(\.isUITest).map(\.name))

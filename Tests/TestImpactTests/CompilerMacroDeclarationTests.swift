@@ -96,3 +96,41 @@ import Testing
         #expect(unsupported.moduleInterfaceCommand() == nil)
     }
 }
+
+@Test func indexedActorSeparatesSDKIsolationFromABuilderWithTheSameName() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let compiler = URL(fileURLWithPath: try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines))
+    let file = root.appendingPathComponent("Feature.swift")
+    let function = "@MainActor private func title() -> String { \"Sharing\" }"
+    let sdk = "import Observation\n@available(macOS 14, *) @Observable final class Model { var title = \"Shared\" }\n"
+    let builder = "@resultBuilder enum MainActor { static func buildBlock(_ value: String, line: Int = #line) -> String { String(line) } }\n"
+    for (prefix, expected) in [(sdk, true), (builder, false)] {
+        let source = prefix + "\n\n" + function
+        let store = root.appendingPathComponent(UUID().uuidString), object = root.appendingPathComponent("Feature.o")
+        try Data(source.utf8).write(to: file)
+        _ = try CommandRunner.run(compiler.path, ["-module-name", "Feature", "-parse-as-library", "-index-store-path", store.path, "-c", file.path, "-o", object.path], at: root)
+        let before = SwiftSourceSnapshot.parse(prefix + "\n" + function, path: "Feature.swift", module: "Feature")
+        var after = SwiftSourceSnapshot.parse(source, path: "Feature.swift", module: "Feature")
+        func read(_ module: String) -> IndexedActorLocations? {
+            IndexedActorLocations.capture(file: file, path: "Feature.swift", module: module, snapshot: after,
+                compiler: compiler, store: store.path, output: object.path)
+        }
+        #expect(read("Wrong") == nil)
+        let proof = read("Feature")
+        #expect((proof != nil) == expected)
+        guard let proof else { continue }
+        var old = before
+        let historical = try #require(proof.historical(prefix + "\n" + function, path: "Feature.swift", module: "Feature", before: before, after: after))
+        historical.apply(to: &old)
+        proof.apply(to: &after)
+        #expect(after.attachedAttributeInputs?["Observable"] == old.attachedAttributeInputs?["Observable"])
+        #expect(after.attachedAttributeInputs?["MainActor"] == nil)
+        let unit = try #require(after.units.first { $0.helperCallableName == "title" })
+        #expect(unit.builderLocations?.isEmpty == true && unit.callerLocations?.isEmpty == true)
+        let movedMacro = "\n" + source
+        #expect(proof.historical(movedMacro, path: "Feature.swift", module: "Feature",
+            before: .parse(movedMacro, path: "Feature.swift", module: "Feature"), after: after) == nil)
+    }
+}

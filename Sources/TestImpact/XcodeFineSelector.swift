@@ -8,8 +8,11 @@ public enum XcodeFineSelector {
         let mappingFilePresent = current.mappings != nil
         let headInline = InlineUIMappings.resolve(current)
         let baseInline = previous.map(InlineUIMappings.resolve)
-        let current = headInline.applying(to: current)
-        let previous = previous.map { baseInline!.applying(to: $0) }
+        var current = headInline.applying(to: current)
+        var previous = previous.map { baseInline!.applying(to: $0) }
+        if previous != nil {
+            IndexedActorLocations.compare(base: &previous!.sources, head: &current.sources, paths: Set(changes.flatMap(\.paths)))
+        }
         let inventory = Set(current.tests)
         let uiTargets = Set(current.targets.filter(\.isUITest).map(\.name))
         let uiTests = inventory.filter { uiTargets.contains(target(of: $0)) }
