@@ -21,6 +21,21 @@ The original UI helpers also use bare `#filePath` and `#line` parameter defaults
 
 [Download the complete primary and scoped IDs, positive and fallback-only sets, final Base and Regression lists, and simulator waiter traces under `sealedMacroDeclarations`](ConsumerPrecision101Recheck.json.gz).
 
+## Test order and persistent receipts in the original #383 comparison
+
+The consumer runs Base and Regression UI tests together and limits parallel execution to two workers by default. Four original methods ran in one filtered invocation on each revision using that limit. Each invocation used a fresh simulator. The UI test files matched their original Git blobs. Both instrumented builds used Xcode 27.2 and iOS Simulator 26.2. [Consumer workflow](https://github.com/twodayslate/ChainOfCustody/blob/4dc75e72f8990452b49a459025c7abe82c593094/.github/workflows/build.yml#L144) · [Worker setting](https://github.com/twodayslate/ChainOfCustody/blob/4dc75e72f8990452b49a459025c7abe82c593094/Scripts/CI/run-tests.sh#L13)
+
+| Revision | First method on the worker | Second method in the same app container | Distinct receipt keys removed by the second method’s startup reset |
+| --- | --- | --- | ---: |
+| Base | `testConverterCommentsCombineSourceResultAndConverter()` | `testParentInspectorAcknowledgesOnlyVisitedBlockActivity()` | 15 |
+| Head | `testConvertedParentNavigationKeepsCommentsUnread()` | `testConverterCommentsCombineSourceResultAndConverter()` | 16 |
+| Base | `testAddBlockButtonShrinksAndExpandsWithScrollAndTap()` | `testCreatesNoteAndAddsBlockInCollectionView()` | 87 |
+| Head | `testAddBlockButtonShrinksAndExpandsWithScrollAndTap()` | `testCreatesNoteAndAddsBlockInCollectionView()` | 142 |
+
+The renamed converted-parent test and the unchanged converter-comments test ran in opposite orders on the two revisions. On the other worker, the unchanged Base-tier collection-view test followed the edited Regression-tier momentum test on both revisions. The first method on each worker removed zero receipt keys. Each subsequent method launched a new app process in the same data container. All eight method executions passed with zero skips. The four instrumented history implementations recorded zero reads before or during reset in all eight processes.
+
+These runs show that tier membership does not isolate persisted state and that the test order can change across the original revisions. They cover four selected methods per revision and the recorded receipt operations. The original complete policy still selects 363 UI tests. The archive contains the ordered methods, source and image hashes, per-process receipt traces, and the fresh consumer policy IDs at `f10d289`. [Download `original383ParallelReceiptAccess` and `callerLocationDefaults`](ConsumerPrecision101Recheck.json.gz).
+
 ## Macro lookup in the alternate #383 comparison
 
 With a captured inventory of macro declarations, the complete alternate policy selects **91 UI tests and 1,853 non-UI tests**. All 47 Base UI IDs and 44 Regression UI IDs match the earlier 91-test control. This result covers the alternate Git head that retains the historical test names and forwards to them.
