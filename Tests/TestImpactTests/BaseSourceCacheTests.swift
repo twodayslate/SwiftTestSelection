@@ -1587,3 +1587,52 @@ func scopedMacroComparisonReadsHistoricalImportsOutsideTheScope(binaryChanges: B
         #expect(AttachedMacroInputs.changedPaths(base: [key: old], head: [key: new], touching: [path]).contains(path) == expected)
     }
 }
+
+@Test(arguments: ["ordinary", "changed-build", "removed-import", "base-symlink", "testable", "changed-inventory"])
+func macroExclusionsRequireBothRevisionInputs(scenario: String) throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let path = "View.swift", key = "UI:" + path, other = "Imports.swift"
+    let modifier = scenario == "testable" ? "@testable " : ""
+    let old = modifier + "import ActorKit\n@MainActor func render() -> String {\n    \"old\"\n}"
+    let new = old.replacingOccurrences(of: "    \"old\"", with: "\n    \"old\"")
+    try repo.write(path, old)
+    try repo.write(other, "import RemovedKit")
+    if scenario == "base-symlink" {
+        try FileManager.default.createSymbolicLink(atPath: repo.root.appendingPathComponent("Alias.swift").path, withDestinationPath: other)
+    }
+    let base = try repo.commit()
+    try repo.write(path, new)
+    var headImports = "import RemovedKit"
+    if scenario == "removed-import" { headImports = "struct Empty {}"; try repo.write(other, headImports) }
+    if scenario == "changed-build" { try repo.write("Package.resolved", "{}") }
+    if scenario == "base-symlink" {
+        try FileManager.default.removeItem(at: repo.root.appendingPathComponent("Alias.swift"))
+        try repo.write("Alias.swift", "struct Alias {}")
+    }
+    let head = try repo.commit()
+    var graph = XcodeTestGraph(targets: [.init(name: "UI", productType: "test", sourceFiles: [path, other])], tests: [])
+    var view = SwiftSourceSnapshot.parse(new, path: path, module: "UI")
+    view.usesUnmodeledMacroPlugin = true
+    graph.sources = [key: view, "UI:" + other: .parse(headImports, path: other, module: "UI")]
+    if scenario == "base-symlink" {
+        graph.targets[0].sourceFiles.insert("Alias.swift")
+        graph.sources["UI:Alias.swift"] = .parse("struct Alias {}", path: "Alias.swift", module: "UI")
+    }
+    var artifact = XcodeBuildArtifact(revision: head, context: [:], toolchain: "compiler", buildLogDigest: "log", buildSettingsDigest: "settings",
+        productsDirectory: "/products", xctestrun: "UI.xctestrun", products: ["UI": "product"])
+    let build = HelperBindingBuildEvidence(sourceInputs: "sources", inputFiles: ["SDK": "digest"], importedModules: ["UI": ["ActorKit", "RemovedKit"]],
+        buildLogDigest: "log", buildSettingsDigest: "settings", productsDigest: try XcodeGraphCache.key(artifact.products))
+    artifact.helperBindingBuild = build
+    artifact.helperBindingInputs = build.fingerprint
+    artifact.headOnlyBuildEvidence = .init(buildLogDigest: "log", buildSettingsDigest: "settings", documentation: [])
+    artifact.macroDeclarations = .init(buildInputs: build.fingerprint, namesByModule: ["UI": ["OtherMacro"]])
+    if scenario == "changed-inventory" { artifact.macroDeclarations?.namesByModule["UI"] = [] }
+    graph.buildArtifact = artifact
+    let source = try XcodeHeadOnlySources.read(current: graph, changes: [.init(path: path)], base: base, root: repo.root, mappingPath: "mapping.json")
+    let verified = scenario == "ordinary"
+    #expect((source.verifiedMacroImports[key] != nil) == verified)
+    let changed = AttachedMacroInputs.changedPaths(base: source.base, head: graph.sources, historicalNames: source.historicalMacroNames,
+        uncertainImports: source.uncertainMacroImports, verifiedImports: source.verifiedMacroImports, touching: [path])
+    #expect(changed.contains(path) != verified)
+}

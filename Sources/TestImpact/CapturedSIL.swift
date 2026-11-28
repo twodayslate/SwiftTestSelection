@@ -9,6 +9,9 @@ struct CapturedSIL: Sendable {
     let modules: [String: [URL]]
     var fingerprints: [String: String]
     let diagnostics: [String]
+    /// Exact frontend executable and SDK/target arguments shared by the sealed jobs.
+    var moduleInterfaceCommands: [String: [String]] = [:]
+    var compiledSourcePaths: Set<String>? = nil
     var frontendPath: String? = nil
     var helperIdentity: String? = nil
     var exportedSources: (root: URL, files: [String: String])? = nil
@@ -38,6 +41,7 @@ struct CapturedSIL: Sendable {
     }
     struct Job: Decodable {
         var status: String
+        var compiler: String?
         var arguments: [String]
         var directory: String
         var sources: [String: String]
@@ -45,6 +49,23 @@ struct CapturedSIL: Sendable {
         var primaryFiles: [String]
         var silFiles: [String]
         var silSHA256: [String: String]
+
+        func moduleInterfaceCommand() -> [String]? {
+            guard let compiler, compiler.hasPrefix("/") else { return nil }
+            let specialImports = ["-testable-import-module", "-import-module", "-package-name", "-module-alias",
+                                  "-disable-access-control", "-enable-private-imports", "-debugger-support", "-disable-availability-checking"]
+            guard !arguments.contains(where: { arg in specialImports.contains { arg == $0 || arg.hasPrefix($0 + "=") } }) else { return nil }
+            let frontend = URL(fileURLWithPath: compiler).deletingLastPathComponent().appendingPathComponent("swift-frontend")
+            var command = [frontend.resolvingSymlinksInPath().path]
+            let required = ["-sdk", "-target"]
+            for flag in required + ["-clang-target", "-target-variant", "-target-sdk-version", "-target-sdk-name", "-target-variant-sdk-version"] {
+                let indices = arguments.indices.filter { arguments[$0] == flag }
+                if indices.isEmpty && !required.contains(flag) { continue }
+                guard indices.count == 1, let i = indices.first, i + 1 < arguments.count, !arguments[i + 1].hasPrefix("-") else { return nil }
+                command += [flag, arguments[i + 1]]
+            }
+            return command
+        }
     }
     static func load(at directory: URL, root: URL, inputs: XcodeBuildInputs,
                      logDigest: String, settingsDigest: String, products: [String: String], toolchain: String, exportedRevision: String? = nil, sourceExportDigest: String? = nil, expectedContext: String? = nil, expectedHelper: String? = nil) throws -> Self {
@@ -90,6 +111,7 @@ struct CapturedSIL: Sendable {
             fingerprints[path] = digest
         }
         var invalid = Set<String>(), diagnostics: [String] = []
+        var printingArguments: [String: [String]] = [:], conflictingArguments = Set<String>()
         for (relative, digest) in seal.manifests.sorted(by: { $0.key < $1.key }) {
             let path = directory.appendingPathComponent(relative).standardizedFileURL.resolvingSymlinksInPath()
             guard path.path.hasPrefix(directory.resolvingSymlinksInPath().path + "/"), try ArtifactFiles.digest(path) == digest else {
@@ -114,6 +136,11 @@ struct CapturedSIL: Sendable {
             let sources = Set(job.sourceFiles.map { absolute($0).path })
             guard sources == Set((seal.inventory[module] ?? []).map(canonical)) else { invalid.insert(module); continue }
             for (source, hash) in job.sources { try record(absolute(source).path, hash) }
+            if let command = job.moduleInterfaceCommand(), printingArguments[module].map({ $0 == command }) != false {
+                printingArguments[module] = command
+            } else {
+                conflictingArguments.insert(module)
+            }
             covered[module, default: []].formUnion((job.primaryFiles.isEmpty ? job.sourceFiles : job.primaryFiles).map { absolute($0).path })
             for name in job.silFiles {
                 guard name == URL(fileURLWithPath: name).lastPathComponent, let hash = job.silSHA256[name] else {
@@ -131,6 +158,8 @@ struct CapturedSIL: Sendable {
             }
         }
         var result = Self(modules: modules, fingerprints: fingerprints, diagnostics: diagnostics, frontendPath: directory.appendingPathComponent("wrapper/bin/swift-frontend").path, helperIdentity: seal.helperIdentity)
+        result.compiledSourcePaths = Set(seal.inventory.values.flatMap { $0.map(canonical) })
+        result.moduleInterfaceCommands = printingArguments.filter { modules[$0.key] != nil && !conflictingArguments.contains($0.key) }
         result.buildSeal = (inputs.derivedData.appendingPathComponent("Build/Products"), products, logDigest, settingsDigest)
         try result.validateFiles()
         return result

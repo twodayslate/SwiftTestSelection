@@ -381,7 +381,7 @@ extension XcodeAnalysis {
             guard !decoded.isEmpty else { throw ImpactError("Cannot cache empty build settings.") }
             let normalized = try XcodeGraphCache.normalizedSettings(settings, workspace: workspace, aliases: keepBuild ? retained.map { [$0] } ?? [] : [])
             var identity = context
-            identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-5-helper-contract-12-testing-records-36"
+            identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-5-helper-contract-12-testing-records-37"
             identity["sourceParserVersion"] = String(SwiftSourceSnapshot.currentParserVersion)
             identity["repository"] = XcodeGraphCache.digest(Data(repository.utf8))
             identity["revision"] = revision
@@ -490,7 +490,7 @@ extension XcodeAnalysis {
                 retainedGraphPath = try timed("retainBuild", revision: revision) {
                     try RetainedXcodeBuild.publish(graph: &result, revision: revision, context: context,
                         toolchain: toolchain, workspace: workspace, settings: settings,
-                        inputIdentity: identity, headOnlyEvidence: headOnlyEvidence)
+                        inputIdentity: identity, headOnlyEvidence: headOnlyEvidence, changedMacroPaths: Set(changes.map(\.path)))
                 }.path
             }
             graphSucceeded = true
@@ -535,7 +535,7 @@ extension XcodeAnalysis {
             retainedGraphPath = try timed("retainBuild", revision: comparison.head!) {
                 try RetainedXcodeBuild.publish(graph: &current, revision: comparison.head!, context: context,
                     toolchain: toolchain, workspace: pendingCapture.workspace, settings: pendingCapture.settings,
-                    inputIdentity: pendingCapture.identity, capture: pendingCapture.capture, headOnlyEvidence: headOnlyEvidence)
+                    inputIdentity: pendingCapture.identity, capture: pendingCapture.capture, headOnlyEvidence: headOnlyEvidence, changedMacroPaths: Set(changes.map(\.path)))
             }.path
         }
         let sourceCache = try headOnly ? XcodeBaseSourceCache(root: root, base: comparison.base) : nil

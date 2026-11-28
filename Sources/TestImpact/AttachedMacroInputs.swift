@@ -100,7 +100,7 @@ enum AttachedMacroInputs {
 
     static func changedPaths(base: [String: SwiftSourceSnapshot], head: [String: SwiftSourceSnapshot],
                              unowned: [String: SwiftSourceSnapshot] = [:], historicalNames: Set<String> = [],
-                             uncertainImports: Set<String> = [], touching paths: Set<String>) -> Set<String> {
+                             uncertainImports: Set<String> = [], verifiedImports: [String: Set<String>] = [:], touching paths: Set<String>) -> Set<String> {
         let names = Set([base, head, unowned].flatMap { sources in
             sources.values.flatMap { file in
                 (file.helperDeclarationIssues ?? []).filter { $0.kind == "macro-declaration" }.map {
@@ -120,11 +120,16 @@ enum AttachedMacroInputs {
                 changed.insert(id.path)
                 continue
             }
-            let opaque = uncertainImports.contains(id.path) || before?.usesUnmodeledMacroPlugin == true || after?.usesUnmodeledMacroPlugin == true
-            if !opaque && names.isEmpty { continue }
+            let usesPlugin = before?.usesUnmodeledMacroPlugin == true || after?.usesUnmodeledMacroPlugin == true
+            let candidates: Set<String>?
+            if uncertainImports.contains(id.path) { candidates = nil }
+            else if let verified = verifiedImports[key] { candidates = names.union(verified) }
+            else { candidates = usesPlugin ? nil : names }
+            if candidates?.isEmpty == true { continue }
             func inputs(_ file: SwiftSourceSnapshot?) -> [String: [String]] {
                 let sites = file?.attachedAttributeInputs ?? [:]
-                return opaque ? sites : sites.filter { names.contains($0.key.hasPrefix("#") ? String($0.key.dropFirst()) : $0.key) }
+                guard let candidates else { return sites }
+                return sites.filter { candidates.contains($0.key.hasPrefix("#") ? String($0.key.dropFirst()) : $0.key) }
             }
             if inputs(before) == inputs(after) { continue }
             changed.insert(id.path)

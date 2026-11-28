@@ -46,6 +46,7 @@ struct XcodeHeadOnlySources {
     var unownedBaseSources: [String: SwiftSourceSnapshot] = [:]
     var historicalMacroNames = Set<String>()
     var uncertainMacroImports = Set<String>()
+    var verifiedMacroImports: [String: Set<String>] = [:]
     // Explicitly supplied base snapshots represent the historical inputs. A scoped
     // Git read may also contain head placeholders until it performs a caller audit.
     var hasAuditedCallerInputs = true
@@ -144,6 +145,7 @@ struct XcodeHeadOnlySources {
             basePaths = try cache.paths()
             if basePaths == nil { result.diagnostics.append("Cannot enumerate base sources at \(base)") }
         }
+        var stableMacroInputs: Bool?
         for key in current.sources.keys.sorted() {
             guard let colon = key.firstIndex(of: ":"), current.sources[key]?.units.first?.region.path != key else {
                 result.diagnostics.append("Invalid source snapshot key: \(key)")
@@ -178,10 +180,25 @@ struct XcodeHeadOnlySources {
                     } else {
                         result.uncertainMacroImports.insert(path)
                     }
+                    if !result.uncertainMacroImports.contains(path), allowHistoricalCallerProofs,
+                       let artifact = current.buildArtifact,
+                       let inventory = artifact.macroDeclarations,
+                       let names = inventory.namesByModule[module],
+                       let oldImports = snapshot.ordinaryMacroImports, let headImports = head.ordinaryMacroImports,
+                       oldImports.isSubset(of: headImports),
+                       Set(artifact.helperBindingBuild?.importedModules[module] ?? []).isSuperset(of: headImports),
+                       !current.hasUnsupportedMacroSources(module: module) {
+                        if stableMacroInputs == nil {
+                            stableMacroInputs = (try? cache.macroBuildInputsUnchanged(current: current, baseMappings: result.mappings)) == true
+                        }
+                        if stableMacroInputs == true {
+                            result.verifiedMacroImports[key] = names
+                        }
+                    }
                     let oldImports = snapshot.units.filter { $0.kind == "import" }
                     let newImports = head.units.filter { $0.kind == "import" }
                     let oldBindings = oldImports.map { $0.comparisonFingerprint(.diagnostic) }
-                    if oldBindings != newImports.map({ $0.comparisonFingerprint(.diagnostic) }) {
+                    if result.verifiedMacroImports[key] == nil, oldBindings != newImports.map({ $0.comparisonFingerprint(.diagnostic) }) {
                         result.uncertainMacroImports.insert(path)
                     }
                 }
@@ -360,7 +377,7 @@ enum XcodeHeadOnlySelector {
         semanticPaths.formUnion(registrations.semanticPaths)
         let macroPaths = AttachedMacroInputs.changedPaths(base: source.base, head: current.sources,
             unowned: source.unownedBaseSources, historicalNames: source.historicalMacroNames,
-            uncertainImports: source.uncertainMacroImports, touching: paths)
+            uncertainImports: source.uncertainMacroImports, verifiedImports: source.verifiedMacroImports, touching: paths)
         if !macroPaths.isEmpty {
             semanticPaths.formUnion(macroPaths)
             fallback("attached_macro_inputs", AttachedMacroInputs.reason(macroPaths))

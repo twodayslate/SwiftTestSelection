@@ -19,6 +19,7 @@ public struct XcodeBuildArtifact: Codable, Sendable {
     public var productsDirectory: String
     public var xctestrun: String
     public var products: [String: String]
+    var macroDeclarations: CompilerMacroDeclarations? = nil
     public var helperBindingBuildFailure: String? = nil
     public var headOnlyBuildEvidence: HeadOnlyBuildEvidence? = nil
     public var helperBindingBuild: HelperBindingBuildEvidence? = nil

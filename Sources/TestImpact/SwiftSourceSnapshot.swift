@@ -268,9 +268,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 50
+    static let currentParserVersion = 51
     /// Older snapshots can recover this inventory from Git while retaining their original parser version.
     var macroInputVersion: Int? = nil
+    /// Ordinary module imports can only look up publicly visible Swift macros.
+    /// Scoped, SPI and testable imports require a wider declaration inventory.
+    var ordinaryMacroImports: Set<String>? = nil
     /// Attached attributes and freestanding macro sites, grouped by spelling.
     var attachedAttributeInputs: [String: [String]]? = nil
     /// Set by the compiler capture. Git-only historical parses have no plugin inventory.
@@ -449,6 +452,15 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         result.parserVersion = Self.currentParserVersion
         result.macroInputVersion = AttachedMacroInputs.version
         result.attachedAttributeInputs = text.contains("@") || text.contains("#") ? AttachedMacroInputs.capture(tree, locations: locations) : [:]
+        if result.attachedAttributeInputs?.isEmpty == false && !tree.hasError {
+            let imports = tree.tokens(viewMode: .sourceAccurate).compactMap { token -> ImportDeclSyntax? in
+                guard token.tokenKind == .keyword(.import) else { return nil }
+                return token.parent?.as(ImportDeclSyntax.self)
+            }
+            if imports.allSatisfy({ $0.attributes.isEmpty && $0.modifiers.isEmpty && $0.importKindSpecifier == nil && $0.path.count == 1 }) {
+                result.ordinaryMacroImports = Set(imports.map { $0.path.trimmedDescription })
+            }
+        }
         result.ordinaryManifestNamedSource = SwiftPackageManifest.isCompiledSourceOnly(path, text: text, tree: tree) ? true : nil
         if !tree.hasError {
             result.xctestDiscoveryCases = tree.statements.compactMap {

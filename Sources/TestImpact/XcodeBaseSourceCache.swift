@@ -35,6 +35,7 @@ final class XcodeBaseSourceCache {
     private let revision: String?
     private var blobs: [String: Evidence<Data>] = [:]
     private var tree: Evidence<Set<String>>?
+    private(set) var allBaseSwiftSourcesRegular = false
     private var syntax: [SyntaxKey: SwiftSourceSnapshot] = [:]
     private var macroDeclarations: Evidence<Set<String>>?
     private var runtimeComparisons: [String: HeadOnlyRuntimeSourceEvidence] = [:]
@@ -93,9 +94,23 @@ final class XcodeBaseSourceCache {
         if let tree { counts.treeHits += 1; return tree.value }
         guard let revision else { tree = .unavailable; return nil }
         counts.treeReads += 1
-        let listing = try CommandRunner.run("git", ["ls-tree", "-r", "--name-only", "-z", revision, "--"], at: root, allowFailure: true)
-        tree = listing.status == 0
-            ? .available(Set(listing.stdout.split(separator: 0).map { String(decoding: $0, as: UTF8.self) })) : .unavailable
+        let listing = try CommandRunner.run("git", ["ls-tree", "-r", "-z", revision, "--"], at: root, allowFailure: true)
+        guard listing.status == 0 else { tree = .unavailable; return nil }
+        var paths = Set<String>(), regular = true
+        for record in listing.stdout.split(separator: 0) {
+            guard let tab = record.firstIndex(of: 9),
+                  let path = String(data: record.suffix(from: tab + 1), encoding: .utf8) else {
+                tree = .unavailable
+                return nil
+            }
+            paths.insert(path)
+            let mode = record.prefix(upTo: tab)
+            if path.hasSuffix(".swift") && !mode.starts(with: "100644 blob ".utf8) && !mode.starts(with: "100755 blob ".utf8) {
+                regular = false
+            }
+        }
+        allBaseSwiftSourcesRegular = regular
+        tree = .available(paths)
         return tree?.value
     }
 

@@ -119,6 +119,7 @@ extension XcodeTestGraph {
                     archived.usesUnmodeledMacroPlugin = true
                 }
                 archived.macroInputVersion = parsed.macroInputVersion
+                archived.ordinaryMacroImports = parsed.ordinaryMacroImports
                 archived.attachedAttributeInputs = parsed.attachedAttributeInputs
             }
             var matched = Set<Int>()
