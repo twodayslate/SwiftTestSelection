@@ -549,6 +549,16 @@ private func linkedRegistrationEvidenceFollowsTheTestProcess(_ edit: ProcessEdit
     }
     try writeInfo("Info.plist")
     #expect(LinkedTestingRecords.capture(testRun: run, products: root)?["UI"]?.records == Set<String>())
+    let alias = root.appendingPathComponent("ProductsAlias")
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
+    #expect(LinkedTestingRecords.capture(testRun: alias.appendingPathComponent(run.lastPathComponent),
+                                         products: alias)?["UI"]?.records == Set<String>())
+    let other = root.appendingPathComponent("OtherProducts")
+    try FileManager.default.createDirectory(at: other, withIntermediateDirectories: false)
+    let otherRun = other.appendingPathComponent(run.lastPathComponent)
+    try FileManager.default.copyItem(at: run, to: otherRun)
+    try FileManager.default.createSymbolicLink(at: other.appendingPathComponent(bundle.lastPathComponent), withDestinationURL: bundle)
+    #expect(LinkedTestingRecords.capture(testRun: otherRun, products: other) == [:])
     for key in ["NSPrincipalClass-iphoneos", "NSPrincipalClass~ipad"] {
         try writeInfo("Info.plist", principalKey: key)
         #expect(LinkedTestingRecords.capture(testRun: run, products: root) == [:])

@@ -7,8 +7,8 @@ import Foundation
 /// Unknown dylibs, image layouts and stripped registration symbols leave
 /// discovery open. A source import list cannot establish these facts.
 enum LinkedTestingRecords {
-    // Version 5 binds XCTest execution evidence to compiler-resolved identities.
-    static let inventoryVersion = 5
+    // Version 6 verifies bundle and executable locations after resolving filesystem aliases.
+    static let inventoryVersion = 6
 
     struct Assertion: Hashable {
         let thunk: String
@@ -50,11 +50,13 @@ enum LinkedTestingRecords {
               let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
               let configurations = plist["TestConfigurations"] as? [[String: Any]], !configurations.isEmpty else { return nil }
         let root = run.deletingLastPathComponent()
+        let productsPath = products.standardizedFileURL.resolvingSymlinksInPath().path
         func product(_ path: String) -> URL? {
             let parts = path.split(separator: "/", maxSplits: 1)
             guard parts.count == 2, !parts[1].split(separator: "/").contains("..") else { return nil }
             guard parts[0] == "__TESTROOT__" else { return nil }
-            return root.appendingPathComponent(String(parts[1]))
+            let bundle = root.appendingPathComponent(String(parts[1])).standardizedFileURL.resolvingSymlinksInPath()
+            return bundle.path.hasPrefix(productsPath + "/") ? bundle : nil
         }
         // A test target runs its bundle in its own host process. Repeated plan
         // configurations may load different images for the same target.
@@ -96,7 +98,8 @@ enum LinkedTestingRecords {
     }
 
     private static func executableWithoutPrincipalClass(in bundle: URL) -> URL? {
-        guard let image = Bundle(url: bundle)?.executableURL else { return nil }
+        // Foundation may return /tmp for a bundle opened through /private/tmp.
+        guard let image = Bundle(url: bundle)?.executableURL?.standardizedFileURL.resolvingSymlinksInPath() else { return nil }
         let directory = image.deletingLastPathComponent()
         let metadataDirectory: URL
         if directory.path == bundle.path {

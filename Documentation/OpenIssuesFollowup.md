@@ -114,12 +114,16 @@ runner behavior. Swift Testing macros/traits remain outside the head-only helper
 isolation proof, and inline XCTest-specific mapping syntax is not extended here;
 JSON mappings can use enumerated IDs. Full 27.3 runner validation remains open.
 
-The mixed-runner integration test edits one Swift Testing UI method and one XCTest UI method in the same fixture. It requires the selector to choose exactly those two methods from the larger plan. It checks both compiled entries, the Swift Testing entry and factory registration, the strict mapping and the execution filters from the retained head build. Each filter must execute its named UI method once with zero failures or skips. Run it with Xcode 27.3 or later and a compatible simulator destination.
+The mixed-runner integration test builds one head containing a Swift Testing UI method and an XCTest UI method in the same file. It compares that head to three Git revisions. Editing both methods must select both, and editing either method alone must select only that method. Each single-edit comparison reuses the retained graph and verifies the same build artifact. The test checks both compiled entries, the Swift Testing factory registration, strict UI mappings and both execution filters. Each filter must execute its named method once with zero failures or skips. Run the mixed UI case with Xcode 27.3 or later and a compatible simulator destination.
 
 ```sh
 swift build -c release
 python3 Scripts/xcode_swift_testing_ui_test.py --destination 'platform=iOS Simulator,id=<UDID>' --output /tmp/swift-testing-ui.json
 ```
+
+The same command accepts three controls on Xcode 27.2. Use `--control xctest-ui` for two methods in one XCTest UI suite, or `--control hostless-swift-testing-unit` for a Swift Testing unit in a platform test process alongside an XCTest UI method. Both controls require exact single-method selection. With `--control swift-testing-unit`, the application hosts the unit bundle. In this control the XCTest-only edit must identify only the UI method as a positive dependency and also retain the unit test with a discovery fallback. The JSON records both lists for each edit.
+
+The hostless control disables code coverage in its test plan. With coverage enabled, LLVM links a startup initializer into the test image and discovery remains open. With coverage disabled, a retained build under `/private/tmp` also exposed a path comparison defect. Foundation reported the executable under `/tmp`, and the selector discarded its factory inventory. The selector now resolves both paths before checking the bundle layout and requires the bundle to be inside the products directory. Rebuild an older graph to capture this evidence.
 
 Switching frameworks does not reveal dependencies across the app/test process
 boundary. There is no measured precision or speed benefit from dropping XCTest;
