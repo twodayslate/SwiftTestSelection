@@ -1,5 +1,15 @@
 # Consumer precision for #101
 
+## Attached macros and the original consumer comparisons
+
+Fresh single-head builds with `f3a7f4d` reproduced every primary, regression-support and final execution ID for the original #380 and #383 comparisons. Retained-product verification passed for both. #380 still schedules 360 UI and 1,848 non-UI tests. #383 still schedules 363 UI and 1,853 non-UI tests.
+
+The independent #383 query for `ChainOfCustody/App/NoteURLUITestFixture.swift` broadened from 42 to 363 UI tests. All 42 earlier selections remain. Both the fresh build and the saved-graph replay added the same 321 UI tests. These IDs were already in the combined regression-support selection. The other individual queries kept their prior test sets.
+
+The fixture's changed method is inside an enum annotated with `@MainActor`. The head compiler index resolves the attribute at line 5, column 2 to the Swift global actor (`s:ScM`). The #380 build resolves it to the same actor on the exact fixture blob present at the #383 base. Its repository tree differs from that base. The saved dependency list also includes the Observation, Previews and SwiftUI plugins. It records their use during compilation without identifying which declaration each expanded. The single-head comparison has no corresponding compiler resolution for the historical attribute. A compiled control with an imported peer macro named `MainActor` changes a separate function's return value after a blank-line edit. A spelling-based exemption would skip its failing caller.
+
+For the fixture-only query to recover its previous precision, the selector needs to establish that the attribute could not bind to a macro in either revision. For the original complete policies, the historical caller, launch and persistent-state boundaries below also remain. [Download the added test IDs, retained graph digests and blank-line controls under `attachedMacroRecheck`](ConsumerPrecision101Recheck.json.gz).
+
 ## Historical bindings and receipt isolation
 
 An independent validation compile used all 46 UI-test Swift sources from each normalized Git base. In #380 the compiler bound three direct invocations of the deleted private query to two tests. One runs inside an XCTest assertion autoclosure. In #383 the old and new helpers each had two direct callers and used the same application factory. The momentum test’s Objective-C entry changed from returning void to returning a Boolean and accepting an error pointer. The production selector uses a single head build. These baseline compilations provide reference answers for checking its historical analysis.

@@ -192,12 +192,15 @@ func attachedPeerCanObserveTriviaInAnUncalledDeclaration(imported: Bool) throws 
     defer { try? FileManager.default.removeItem(at: root) }
     let plugin = try macroPlugin(expansion: "func sharedValue() -> Int { 1 }",
                                  afterBlankLine: "func sharedValue() -> Int { 2 }", root: root)
+    // An imported peer can have the same spelling as the SDK global actor.
+    let macroName = imported ? "MainActor" : "CaptureLine"
+    let access = imported ? "public " : ""
     let declaration = """
     @attached(peer, names: named(sharedValue))
-    macro CaptureLine() = #externalMacro(module: "ReviewMacros", type: "CaptureLine")
+    \(access)macro \(macroName)() = #externalMacro(module: "ReviewMacros", type: "CaptureLine")
     """
     let before = """
-    @CaptureLine private func callbacks() -> [String: () -> String] {
+    @\(macroName) private func callbacks() -> [String: () -> String] {
         return ["title": {
             "Sharing"
         }]
@@ -211,15 +214,14 @@ func attachedPeerCanObserveTriviaInAnUncalledDeclaration(imported: Bool) throws 
     let arguments = ["-load-plugin-executable", plugin, "-I", root.path]
     if imported {
         let source = root.appendingPathComponent("MacroKit.swift")
-        try declaration.replacingOccurrences(of: "macro CaptureLine", with: "public macro CaptureLine")
-            .write(to: source, atomically: true, encoding: .utf8)
+        try declaration.write(to: source, atomically: true, encoding: .utf8)
         _ = try CommandRunner.run(compiler, ["-emit-module", "-module-name", "MacroKit", source.path] + arguments, at: root)
     }
     func capture(_ body: String, expected: Int) throws -> XcodeTestGraph {
         var files = [path: body, "Tests.swift": caller]
         if imported {
             files[path] = "import MacroKit\n" + body
-            files["Ordinary.swift"] = "import MacroKit\n@MainActor func ordinary() {}"
+            files["Ordinary.swift"] = "import MacroKit\n@_Concurrency.MainActor func ordinary() {}"
         } else { files["Macros.swift"] = declaration }
         var graph = try boundaryGraph(files, tests: [test], root: root, compilerArguments: arguments)
         if imported {
