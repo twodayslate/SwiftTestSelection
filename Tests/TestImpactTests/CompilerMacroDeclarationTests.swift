@@ -12,6 +12,19 @@ import Testing
     #expect(CompilerMacroDeclarations.names(in: "@MainActor func update() {}").isEmpty)
 }
 
+@Test func macroNamesRemainWholeAtEveryFormerChunkBoundary() {
+    for padding in 240...260 {
+        let prefix = String(repeating: "a", count: padding)
+        let name = prefix + "🎈suffix"
+        let comment = "/* " + prefix + " /* nested */ */"
+        for declaration in ["macro " + name + "()", "macro `" + name + "`()",
+                            "macro " + comment + " `repeat`()"] {
+            let expected = declaration.contains(comment) ? "repeat" : name
+            #expect(CompilerMacroDeclarations.names(in: declaration) == [expected])
+        }
+    }
+}
+
 @Test func captureFindsBinaryMacrosAndRejectsChangedModuleBytes() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("binary-macro-declarations-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -36,7 +49,8 @@ import Testing
         fingerprints[frontend.path] = try ArtifactFiles.digest(frontend)
         let job = CapturedSIL.Job(status: "complete", compiler: frontend.path, arguments: arguments, directory: root.path,
             sources: [:], sourceFiles: [], primaryFiles: [], silFiles: [], silSHA256: [:])
-        printing[module] = try #require(job.moduleInterfaceCommand())
+        let commandForPrinting: [String] = try #require(job.moduleInterfaceCommand())
+        printing[module] = commandForPrinting
         let map = try URL(fileURLWithPath: operand("-explicit-swift-module-map-file")).resolvingSymlinksInPath()
         fingerprints[map.path] = try ArtifactFiles.digest(map)
         let entries = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: map)) as? [[String: Any]])
@@ -51,7 +65,9 @@ import Testing
     }
     // The producer's dependencies contain only SDK modules. The client imports
     // the compiled producer. Its Swift source is deliberately absent at lookup.
-    try compile("ActorKit", source: #"@attached(peer, names: named(peer)) public macro MainActor() = #externalMacro(module: "ReviewMacros", type: "CaptureLine")"#)
+    let longName = String(repeating: "a", count: 248) + "🎈suffix"
+    let declaration = #"@attached(peer, names: named(peer)) public macro MainActor() = #externalMacro(module: "ReviewMacros", type: "CaptureLine")"#
+    try compile("ActorKit", source: declaration + "\n" + declaration.replacingOccurrences(of: "MainActor()", with: longName + "()"))
     try compile("Client", source: "import ActorKit\npublic struct ClientValue {}")
     try FileManager.default.removeItem(at: root.appendingPathComponent("ActorKit.swift"))
     let build = HelperBindingBuildEvidence(sourceInputs: "fixture", inputFiles: fingerprints, importedModules: imports,
@@ -59,7 +75,8 @@ import Testing
     let sil = CapturedSIL(modules: [:], fingerprints: [:], diagnostics: [], moduleInterfaceCommands: printing, compiledSourcePaths: [])
     let names = try CompilerMacroDeclarations.capture(modules: ["ActorKit", "Client"], sil: sil, build: build)
     #expect(try #require(names.namesByModule["ActorKit"]).contains("MainActor") == false)
-    #expect(try #require(names.namesByModule["Client"]).contains("MainActor"))
+    let clientNames = try #require(names.namesByModule["Client"])
+    #expect(clientNames.isSuperset(of: ["MainActor", longName]))
     try Data("changed".utf8).write(to: root.appendingPathComponent("ActorKit.swiftmodule"))
     let changed = try CompilerMacroDeclarations.capture(modules: ["Client"], sil: sil, build: build)
     #expect(changed.namesByModule["Client"] == nil)

@@ -1588,7 +1588,7 @@ func scopedMacroComparisonReadsHistoricalImportsOutsideTheScope(binaryChanges: B
     }
 }
 
-@Test(arguments: ["ordinary", "changed-build", "removed-import", "base-symlink", "testable", "changed-inventory"])
+@Test(arguments: ["ordinary", "changed-build", "removed-import", "base-symlink", "testable", "changed-inventory", "older-inventory"])
 func macroExclusionsRequireBothRevisionInputs(scenario: String) throws {
     let repo = try SourceRepository()
     defer { try? FileManager.default.removeItem(at: repo.root) }
@@ -1628,6 +1628,7 @@ func macroExclusionsRequireBothRevisionInputs(scenario: String) throws {
     artifact.headOnlyBuildEvidence = .init(buildLogDigest: "log", buildSettingsDigest: "settings", documentation: [])
     artifact.macroDeclarations = .init(buildInputs: build.fingerprint, namesByModule: ["UI": ["OtherMacro"]])
     if scenario == "changed-inventory" { artifact.macroDeclarations?.namesByModule["UI"] = [] }
+    if scenario == "older-inventory" { artifact.macroDeclarations?.version = 1 }
     graph.buildArtifact = artifact
     let source = try XcodeHeadOnlySources.read(current: graph, changes: [.init(path: path)], base: base, root: repo.root, mappingPath: "mapping.json")
     let verified = scenario == "ordinary"

@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import Foundation
-import SwiftParser
-import SwiftSyntax
+@_spi(Testing) import SwiftParser
+@_spi(RawSyntax) import SwiftSyntax
 
 /// Macro names visible through the compiled modules in an explicit import map.
 /// Private/SPI interfaces include declarations from serialized Swift modules.
 /// Source inputs separately cover internal macros in the module being built.
 struct CompilerMacroDeclarations: Codable, Sendable {
-    var version = 1
+    var version = 2
     var buildInputs: String
     var namesByModule: [String: Set<String>]
     private var declarationsDigest: String
@@ -21,7 +21,7 @@ struct CompilerMacroDeclarations: Codable, Sendable {
     }
 
     func matches(_ artifact: XcodeBuildArtifact) -> Bool {
-        guard version == 1, let build = artifact.helperBindingBuild, build.matches(artifact),
+        guard version == 2, let build = artifact.helperBindingBuild, build.matches(artifact),
               buildInputs == artifact.helperBindingInputs, build.fingerprint == buildInputs else { return false }
         return declarationsDigest == HelperBindingContracts.digest(namesByModule)
     }
@@ -39,23 +39,23 @@ struct CompilerMacroDeclarations: Codable, Sendable {
     static func names(in text: String) -> Set<String> {
         guard text.contains("macro") else { return [] }
         let bytes = Data(text.utf8), keyword = Data("macro".utf8)
-        var names = Set<String>(), cursor = bytes.startIndex
-        while let match = bytes.range(of: keyword, in: cursor..<bytes.endIndex) {
-            cursor = match.upperBound
-            let remaining = bytes.distance(from: match.lowerBound, to: bytes.endIndex)
-            var length = min(256, remaining)
-            while true {
-                let fragment = bytes[match.lowerBound..<(match.lowerBound + length)]
-                var tokens = Parser.parse(source: String(decoding: fragment, as: UTF8.self))
-                    .tokens(viewMode: .sourceAccurate).makeIterator()
-                guard tokens.next()?.text == "macro", let name = tokens.next() else { break }
-                if length == remaining || (name.tokenKind != .endOfFile && name.endPositionBeforeTrailingTrivia.utf8Offset < length) {
-                    if let identifier = name.identifier { names.insert(identifier.name) }
-                    break
+        var names = Set<String>()
+        bytes.withUnsafeBytes { raw in
+            let buffer = raw.bindMemory(to: UInt8.self)
+            var cursor = bytes.startIndex
+            while let match = bytes.range(of: keyword, in: cursor..<bytes.endIndex) {
+                cursor = match.upperBound
+                // Lex directly from the complete source buffer. An artificial EOF
+                // inside trivia, a Unicode scalar or a backticked name changes
+                // tokenization and could silently omit a real macro.
+                var tracker = LookaheadTracker()
+                withUnsafeMutablePointer(to: &tracker) { tracker in
+                    var tokens = Lexer.tokenize(buffer, from: match.lowerBound, lookaheadTracker: tracker)
+                    guard tokens.next()?.tokenText.elementsEqual(keyword) == true,
+                          let name = tokens.next(), name.rawTokenKind == .identifier || name.rawTokenKind == .keyword else { return }
+                    let spelling = String(decoding: name.tokenText, as: UTF8.self)
+                    names.insert(spelling.trimmingCharacters(in: CharacterSet(charactersIn: "`")))
                 }
-                // A long name or comment separating the keyword and name crossed
-                // the chunk boundary. Retry with enough bytes to see the whole token.
-                length = min(remaining, length * 2)
             }
         }
         return names
