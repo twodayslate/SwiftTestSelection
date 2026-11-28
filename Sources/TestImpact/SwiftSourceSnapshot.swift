@@ -268,10 +268,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 49
+    static let currentParserVersion = 50
     /// Older snapshots can recover this inventory from Git while retaining their original parser version.
     var macroInputVersion: Int? = nil
-    /// Attached attributes and freestanding declaration sites, grouped by spelling.
+    /// Attached attributes and freestanding macro sites, grouped by spelling.
     var attachedAttributeInputs: [String: [String]]? = nil
     /// Set by the compiler capture. Git-only historical parses have no plugin inventory.
     var usesUnmodeledMacroPlugin: Bool? = nil

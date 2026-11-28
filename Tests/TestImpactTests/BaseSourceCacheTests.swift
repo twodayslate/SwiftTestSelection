@@ -1546,6 +1546,14 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
     let call = macro + "\nfunc helper() {\n    print(1)\n}\n#Emit()"
     let before = source(call), after = source(call.replacingOccurrences(of: "    print", with: "\n    print"))
     #expect(AttachedMacroInputs.changedPaths(base: [key: before], head: [key: after], touching: [path]) == [path])
+    let expression = "@freestanding(expression) macro ReadLine() -> Int = #externalMacro(module: \"Plugin\", type: \"Impl\")"
+    for use in ["return #ReadLine()", "return 2 + #ReadLine()", "return abs(#ReadLine())"] {
+        let function = "\nfunc value() -> Int {\n    " + use + "\n}"
+        let a = source(expression + function)
+        let b = source(expression + function.replacingOccurrences(of: "    return", with: "\n    return"))
+        #expect(a.attachedAttributeInputs?["#ReadLine"]?.count == 1)
+        #expect(AttachedMacroInputs.changedPaths(base: [key: a], head: [key: b], touching: [path]) == [path])
+    }
     // A v48 archive stored an empty attribute inventory for this freestanding site.
     var legacy = after
     legacy.parserVersion = 48

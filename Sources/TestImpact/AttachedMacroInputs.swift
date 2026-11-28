@@ -12,7 +12,7 @@ import CryptoKit
 /// A macro can emit a declaration whose callers have no edge to the source
 /// that supplied the expansion. Preserve the syntax and coordinates it can see.
 enum AttachedMacroInputs {
-    static let version = 2
+    static let version = 3
 
     static func capture(_ tree: SourceFileSyntax, locations: SourceLocationConverter) -> [String: [String]] {
         var inputs: [String: [String]] = [:]
@@ -57,11 +57,10 @@ enum AttachedMacroInputs {
             if token.tokenKind == .pound, let node = token.parent,
                let macro = node.asProtocol(FreestandingMacroExpansionSyntax.self),
                let name = macro.macroName.identifier?.name {
-                // Declaration macros can parse as expression syntax in a code
-                // block or at file scope. Both spellings can emit unlocated peers.
-                if node.parent?.is(CodeBlockItemSyntax.self) == true || node.is(MacroExpansionDeclSyntax.self) {
-                    record("#" + name, input: node, invocation: node)
-                }
+                // A freestanding expansion receives its source and position in
+                // both declaration and expression contexts. An expression macro
+                // can embed that position in a value consumed by another file.
+                record("#" + name, input: node, invocation: node)
                 continue
             }
             guard token.tokenKind == .atSign, let attribute = token.parent?.as(AttributeSyntax.self),
@@ -135,6 +134,6 @@ enum AttachedMacroInputs {
 
     static func reason(_ paths: Set<String>) -> String {
         "Macro expansion inputs changed or could not be compared in " + paths.sorted().joined(separator: ", ") +
-            ". Generated declarations can have consumers outside the source declaration."
+            ". Generated declarations and expression values can have consumers outside the source declaration."
     }
 }
