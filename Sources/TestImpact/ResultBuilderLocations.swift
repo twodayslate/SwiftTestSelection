@@ -186,9 +186,9 @@ struct ResultBuilderBodySyntax {
               tuple.elements.count == 1, element.label == nil, element.trailingComma == nil {
             expression = Syntax(tuple)
         }
-        if let element = expression.parent?.as(ArrayElementSyntax.self), element.parent?.parent?.is(ArrayExprSyntax.self) == true {
-            // The literal supplies a variadic element to ExpressibleByArrayLiteral.
-            // Returning or passing the array cannot attach a builder to that element.
+        if let element = expression.parent, element.is(ArrayElementSyntax.self) || element.is(DictionaryElementSyntax.self) {
+            // Collection literals pass variadic elements (key/value tuples for a dictionary).
+            // Their literal initializer cannot attach a result builder to an element closure.
             // A macro can splice the original closure into a different call.
             var parent = expression.parent
             while let ancestor = parent {
