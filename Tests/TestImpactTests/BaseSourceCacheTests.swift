@@ -1491,3 +1491,76 @@ func ambiguousFunctionsUseBaseCallersOutsideTheScope(headAlternatives: Int) thro
         #expect(AttachedMacroInputs.changedPaths(base: [key: before], head: graph.sources, touching: [path]) == [path])
     }
 }
+
+@Test func scopedMacroComparisonReadsHistoricalReexportsOutsideTheScope() throws {
+    let repo = try SourceRepository()
+    defer { try? FileManager.default.removeItem(at: repo.root) }
+    let path = "Sharing.swift", key = "UI:" + path
+    let test = "UI/Suite/testSharing()"
+    let code = "@MainActor private func callbacks() -> [String: () -> String] {\n    [\"title\": {\n        \"Sharing\"\n    }]\n}"
+    let edited = code.replacingOccurrences(of: "        \"Sharing\"", with: "\n        \"Sharing\"")
+    let caller = "import XCTest\nimport FallbackKit\nfinal class Suite: XCTestCase { func testSharing() { XCTAssertEqual(observedLine(), 3) } }"
+    let plugin = try macroPlugin(expansion: "func observedLine() -> Int { 3 }", afterBlankLine: "func observedLine() -> Int { 4 }", root: repo.root)
+    let arguments = ["-load-plugin-executable", plugin, "-I", repo.root.path]
+    let modules = ["ActorKit": "@attached(peer, names: named(observedLine)) public macro MainActor() = #externalMacro(module: \"ReviewMacros\", type: \"CaptureLine\")",
+                   "FallbackKit": "public func observedLine() -> Int { 99 }"]
+    for (module, source) in modules {
+        let file = module + ".swift"
+        try repo.write(file, source)
+        _ = try CommandRunner.run("xcrun", ["swiftc", "-emit-module", "-module-name", module, file] + arguments, at: repo.root)
+        try FileManager.default.removeItem(at: repo.root.appendingPathComponent(file))
+    }
+    let before = [path: code, "Bridge.swift": "@_exported import ActorKit", "Tests.swift": caller]
+    let base = try boundaryGraph(before, tests: [test], root: repo.root, compilerArguments: arguments)
+    let map = "mapping.json"
+    try JSONEncoder().encode(base.mappings).write(to: repo.root.appendingPathComponent(map))
+    _ = try repo.git(["add", path, "Bridge.swift", "Tests.swift", map])
+    _ = try repo.git(["commit", "-qm", "base"])
+    let revision = try repo.git(["rev-parse", "HEAD"])
+    var head = try boundaryGraph([path: edited, "Bridge.swift": "import ActorKit", "Tests.swift": caller],
+                                 tests: [test], root: repo.root, compilerArguments: arguments)
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: repo.root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let primary = repo.root.appendingPathComponent(path).path
+    let mapURL = repo.root.appendingPathComponent("outputs.json")
+    let output = [primary: ["dependencies": repo.root.appendingPathComponent("Sharing.d").path,
+                            "object": repo.root.appendingPathComponent("Sharing.o").path]]
+    try JSONEncoder().encode(output).write(to: mapURL)
+    let driver = ["-c", "-emit-dependencies", "-module-name", "UI", "-output-file-map", mapURL.path] + arguments +
+        [primary, repo.root.appendingPathComponent("Bridge.swift").path]
+    _ = try CommandRunner.run(compiler, driver, at: repo.root)
+    CompilerMacroInputs.annotate(&head.sources, invocations: ["UI": [compiler] + driver], root: repo.root)
+    #expect(head.sources[key]?.usesUnmodeledMacroPlugin == false)
+    let changes = [FileChange(path: path)]
+    let old = try XcodeHeadOnlySources.read(current: head, changes: changes, base: revision, root: repo.root, mappingPath: map)
+    let report = XcodeHeadOnlySelector.select(current: head, source: old, changes: changes, baseRevision: revision)
+    #expect(old.base[key]?.usesUnmodeledMacroPlugin == nil)
+    #expect(report.selectedTests == [test])
+    #expect(!report.ignoredChanges.contains(path))
+    #expect(report.diagnostics.contains { $0.code == "attached_macro_inputs" })
+}
+
+@Test func macroComparisonPreservesInvocationLocationsAndRedactsLaterSiblings() throws {
+    let path = "Sharing.swift", key = "App:" + path
+    func source(_ text: String) -> SwiftSourceSnapshot { .parse(text, path: path, module: "App") }
+    let macro = "@freestanding(declaration) macro Emit() = #externalMacro(module: \"Plugin\", type: \"Impl\")"
+    let call = macro + "\nfunc helper() {\n    print(1)\n}\n#Emit()"
+    let before = source(call), after = source(call.replacingOccurrences(of: "    print", with: "\n    print"))
+    #expect(AttachedMacroInputs.changedPaths(base: [key: before], head: [key: after], touching: [path]) == [path])
+    // A v48 archive stored an empty attribute inventory for this freestanding site.
+    var legacy = after
+    legacy.parserVersion = 48
+    legacy.macroInputVersion = nil
+    legacy.attachedAttributeInputs = [:]
+    var oldLegacy = legacy
+    oldLegacy.sourceBlobIDs = before.sourceBlobIDs
+    #expect(AttachedMacroInputs.changedPaths(base: [key: oldLegacy], head: [key: legacy], touching: [path]) == [path])
+
+    let declaration = "@attached(peer) macro Capture() = #externalMacro(module: \"Plugin\", type: \"Impl\")"
+    let body = declaration + "\nenum Helpers {\n#if FLAG\n    @Capture static func first() {}\n#endif\n    static func later() {\n        print(1)\n    }\n}"
+    let old = source(body)
+    for (token, replacement, expected) in [("        print", "\n        print", false),
+                                           ("FLAG", "ELSE", true), ("Helpers", "Another", true)] {
+        let new = source(body.replacingOccurrences(of: token, with: replacement))
+        #expect(AttachedMacroInputs.changedPaths(base: [key: old], head: [key: new], touching: [path]).contains(path) == expected)
+    }
+}

@@ -36,10 +36,36 @@ final class XcodeBaseSourceCache {
     private var blobs: [String: Evidence<Data>] = [:]
     private var tree: Evidence<Set<String>>?
     private var syntax: [SyntaxKey: SwiftSourceSnapshot] = [:]
+    private var macroDeclarations: Evidence<Set<String>>?
     private var runtimeComparisons: [String: HeadOnlyRuntimeSourceEvidence] = [:]
     private(set) var counts = Counts()
     var resolvedRevision: String? { revision }
     func recordHeadSyntaxReuse() { counts.headSyntaxReuse += 1 }
+
+    /// Any historical source can re-export a binary macro or declare a macro
+    /// missing from the head inventory. Search the pinned commit independently
+    /// of the requested paths. An unknown owner widens the candidate set.
+    func historicalMacroNames() throws -> Set<String>? {
+        if let macroDeclarations { return macroDeclarations.value }
+        guard let revision else { return nil }
+        let matches = try CommandRunner.run("git", ["grep", "--no-textconv", "--text", "-l", "-z",
+            "-e", "_exported", "-e", "macro", revision, "--", "*.swift"], at: root, allowFailure: true)
+        guard matches.status == 0 || matches.status == 1 else { macroDeclarations = .unavailable; return nil }
+        var names = Set<String>()
+        for record in matches.stdout.split(separator: 0) {
+            let prefix = revision + ":"
+            guard let entry = String(data: record, encoding: .utf8), entry.hasPrefix(prefix),
+                  let data = try content(path: String(entry.dropFirst(prefix.count))),
+                  let source = String(data: data, encoding: .utf8),
+                  let declared = AttachedMacroInputs.historicalDeclarations(source) else {
+                macroDeclarations = .unavailable
+                return nil
+            }
+            names.formUnion(declared)
+        }
+        macroDeclarations = .available(names)
+        return names
+    }
 
     func runtimeEvidence(headRevision: String) throws -> HeadOnlyRuntimeSourceEvidence {
         if let result = runtimeComparisons[headRevision] { return result }

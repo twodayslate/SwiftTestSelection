@@ -94,7 +94,7 @@ extension XcodeTestGraph {
         let comparingSwift = paths.contains { $0.hasSuffix(".swift") }
         for (key, var archived) in sources {
             guard let version = archived.parserVersion, version <= SwiftSourceSnapshot.currentParserVersion,
-                  version < SwiftSourceSnapshot.currentParserVersion || archived.attachedAttributeInputs == nil || archived.units.contains(where: { $0.builderLocations == nil }),
+                  version < SwiftSourceSnapshot.currentParserVersion || archived.macroInputVersion != AttachedMacroInputs.version || archived.attachedAttributeInputs == nil || archived.units.contains(where: { $0.builderLocations == nil }),
                   let blobs = archived.sourceBlobIDs, !blobs.isEmpty,
                   let id = archived.sourceIdentity(storedAs: key) else { continue }
             let touched = paths.contains(id.path)
@@ -114,9 +114,11 @@ extension XcodeTestGraph {
                 archived.ordinaryManifestNamedSource = parsed.ordinaryManifestNamedSource
                 // Git authenticates declaration text, but cannot reconstruct which
                 // imported macro implementations participated in the archived build.
-                if archived.attachedAttributeInputs == nil && archived.usesUnmodeledMacroPlugin == nil {
+                if archived.usesUnmodeledMacroPlugin == nil && (archived.attachedAttributeInputs == nil ||
+                    (archived.macroInputVersion != AttachedMacroInputs.version && parsed.attachedAttributeInputs?.isEmpty == false)) {
                     archived.usesUnmodeledMacroPlugin = true
                 }
+                archived.macroInputVersion = parsed.macroInputVersion
                 archived.attachedAttributeInputs = parsed.attachedAttributeInputs
             }
             var matched = Set<Int>()

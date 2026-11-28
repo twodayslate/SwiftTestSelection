@@ -44,6 +44,8 @@ struct XcodeHeadOnlySources {
     var diagnostics: [String] = []
     /// Git sources absent from the captured head inventory have unknown base ownership.
     var unownedBaseSources: [String: SwiftSourceSnapshot] = [:]
+    var historicalMacroNames = Set<String>()
+    var uncertainMacroImports = Set<String>()
     // Explicitly supplied base snapshots represent the historical inputs. A scoped
     // Git read may also contain head placeholders until it performs a caller audit.
     var hasAuditedCallerInputs = true
@@ -166,6 +168,23 @@ struct XcodeHeadOnlySources {
                 continue
             }
             if let snapshot = try cache.snapshot(path: path, module: module) {
+                if paths.contains(path), let head = current.sources[key],
+                   snapshot.attachedAttributeInputs != head.attachedAttributeInputs {
+                    // A head compiler's dependency file cannot describe the Git
+                    // baseline. Look for historical declarations and re-exports
+                    // even when a separate exporting file is outside this scope.
+                    if let names = try cache.historicalMacroNames() {
+                        result.historicalMacroNames.formUnion(names)
+                    } else {
+                        result.uncertainMacroImports.insert(path)
+                    }
+                    let oldImports = snapshot.units.filter { $0.kind == "import" }
+                    let newImports = head.units.filter { $0.kind == "import" }
+                    let oldBindings = oldImports.map { $0.comparisonFingerprint(.diagnostic) }
+                    if oldBindings != newImports.map({ $0.comparisonFingerprint(.diagnostic) }) {
+                        result.uncertainMacroImports.insert(path)
+                    }
+                }
                 result.base[key] = snapshot
             } else {
                 result.base.removeValue(forKey: key)
@@ -340,7 +359,8 @@ enum XcodeHeadOnlySelector {
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
         semanticPaths.formUnion(registrations.semanticPaths)
         let macroPaths = AttachedMacroInputs.changedPaths(base: source.base, head: current.sources,
-            unowned: source.unownedBaseSources, touching: paths)
+            unowned: source.unownedBaseSources, historicalNames: source.historicalMacroNames,
+            uncertainImports: source.uncertainMacroImports, touching: paths)
         if !macroPaths.isEmpty {
             semanticPaths.formUnion(macroPaths)
             fallback("attached_macro_inputs", AttachedMacroInputs.reason(macroPaths))

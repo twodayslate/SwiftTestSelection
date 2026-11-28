@@ -268,8 +268,10 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 48
-    /// Raw declaration inputs visible to attached macro implementations, grouped by attribute name.
+    static let currentParserVersion = 49
+    /// Older snapshots can recover this inventory from Git while retaining their original parser version.
+    var macroInputVersion: Int? = nil
+    /// Attached attributes and freestanding declaration sites, grouped by spelling.
     var attachedAttributeInputs: [String: [String]]? = nil
     /// Set by the compiler capture. Git-only historical parses have no plugin inventory.
     var usesUnmodeledMacroPlugin: Bool? = nil
@@ -445,7 +447,8 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         let locations = SourceLocationConverter(fileName: path, tree: tree)
         var result = Self(units: [], inheritance: [:], diagnostics: [])
         result.parserVersion = Self.currentParserVersion
-        result.attachedAttributeInputs = text.contains("@") ? AttachedMacroInputs.capture(tree, locations: locations) : [:]
+        result.macroInputVersion = AttachedMacroInputs.version
+        result.attachedAttributeInputs = text.contains("@") || text.contains("#") ? AttachedMacroInputs.capture(tree, locations: locations) : [:]
         result.ordinaryManifestNamedSource = SwiftPackageManifest.isCompiledSourceOnly(path, text: text, tree: tree) ? true : nil
         if !tree.hasError {
             result.xctestDiscoveryCases = tree.statements.compactMap {

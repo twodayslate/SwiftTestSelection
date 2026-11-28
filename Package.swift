@@ -19,6 +19,7 @@ let package = Package(
         .target(name: "TestImpact", dependencies: [
             .product(name: "SwiftParser", package: "swift-syntax"),
             .product(name: "SwiftSyntax", package: "swift-syntax"),
+            .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
             .product(name: "Stencil", package: "Stencil")
         ]),
         .executableTarget(name: "SwiftTestImpactCLI", dependencies: ["TestImpact"]),

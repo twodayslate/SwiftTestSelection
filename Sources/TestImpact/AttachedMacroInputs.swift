@@ -2,19 +2,70 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import Foundation
+import SwiftParser
 import SwiftSyntax
+import SwiftSyntaxMacros
 #if canImport(CryptoKit)
 import CryptoKit
 #endif
 
-/// An attached macro receives the declaration's source text and position. Its
-/// generated peers can have consumers with no edge to the annotated declaration.
+/// A macro can emit a declaration whose callers have no edge to the source
+/// that supplied the expansion. Preserve the syntax and coordinates it can see.
 enum AttachedMacroInputs {
+    static let version = 2
+
     static func capture(_ tree: SourceFileSyntax, locations: SourceLocationConverter) -> [String: [String]] {
         var inputs: [String: [String]] = [:]
-        var declarationDigests: [SyntaxIdentifier: String] = [:]
-        for token in tree.tokens(viewMode: .sourceAccurate) where token.tokenKind == .atSign {
-            guard let attribute = token.parent?.as(AttributeSyntax.self), !attribute.isNonBuilderCompilerAttribute else { continue }
+        var digests: [SyntaxIdentifier: String] = [:]
+        func location(_ position: AbsolutePosition) -> String {
+            let point = locations.location(for: position)
+            return "\(point.offset):\(point.line):\(point.column):\(point.presumedLine):\(point.presumedFile.utf8.count):\(point.presumedFile)"
+        }
+        func record(_ name: String, input: Syntax, invocation: Syntax) {
+            // Swift strips members and bodies from the lexical context it sends
+            // alongside a macro's own syntax. Later siblings cannot move this site.
+            let digest: String
+            if let cached = digests[input.id] {
+                digest = cached
+            } else {
+                var parts = [input.description, location(input.position), location(input.positionAfterSkippingLeadingTrivia)]
+                var ancestor = input.parent
+                while let node = ancestor {
+                    if let context = node.asMacroLexicalContext() {
+                        parts += [context.description, location(node.position), location(node.positionAfterSkippingLeadingTrivia)]
+                    }
+                    if let clause = node.as(IfConfigClauseSyntax.self),
+                       let siblings = clause.parent?.as(IfConfigClauseListSyntax.self) {
+                        for sibling in siblings {
+                            parts.append(sibling.with(\.elements, nil).trimmedDescription)
+                            if sibling.id == clause.id { break }
+                        }
+                    }
+                    ancestor = node.parent
+                }
+                let raw = parts.map { "\($0.utf8.count):" + $0 }.joined()
+                #if canImport(CryptoKit)
+                digest = Data(SHA256.hash(data: Data(raw.utf8))).base64EncodedString()
+                #else
+                digest = raw
+                #endif
+                digests[input.id] = digest
+            }
+            inputs[name, default: []].append(location(invocation.positionAfterSkippingLeadingTrivia) + ":" + digest)
+        }
+        for token in tree.tokens(viewMode: .sourceAccurate) {
+            if token.tokenKind == .pound, let node = token.parent,
+               let macro = node.asProtocol(FreestandingMacroExpansionSyntax.self),
+               let name = macro.macroName.identifier?.name {
+                // Declaration macros can parse as expression syntax in a code
+                // block or at file scope. Both spellings can emit unlocated peers.
+                if node.parent?.is(CodeBlockItemSyntax.self) == true || node.is(MacroExpansionDeclSyntax.self) {
+                    record("#" + name, input: node, invocation: node)
+                }
+                continue
+            }
+            guard token.tokenKind == .atSign, let attribute = token.parent?.as(AttributeSyntax.self),
+                  !attribute.isNonBuilderCompilerAttribute else { continue }
             let type = attribute.attributeName
             let identifier = type.as(IdentifierTypeSyntax.self)?.name ?? type.as(MemberTypeSyntax.self)?.name
             guard let name = identifier?.identifier?.name else { continue }
@@ -27,43 +78,37 @@ enum AttachedMacroInputs {
             }
             guard let declaration = list, declaration.is(DeclSyntax.self) else { continue }
             if declaration.is(MacroDeclSyntax.self), ["attached", "freestanding"].contains(attribute.attributeName.trimmedDescription) { continue }
-            // Nested expansions also receive a lexical context. The outer declaration
-            // covers changes to enclosing names and attributes at the same coordinates.
-            var context = declaration
-            var ancestor = declaration.parent
-            while let node = ancestor {
-                if node.is(DeclSyntax.self) { context = node }
-                ancestor = node.parent
-            }
-            let digest: String
-            if let cached = declarationDigests[context.id] {
-                digest = cached
-            } else {
-                let location = locations.location(for: context.position)
-                let first = locations.location(for: context.positionAfterSkippingLeadingTrivia)
-                let raw = context.description
-                #if canImport(CryptoKit)
-                let content = Data(SHA256.hash(data: Data(raw.utf8))).base64EncodedString()
-                #else
-                let content = raw
-                #endif
-                digest = "\(location.offset):\(location.line):\(location.column):\(first.presumedLine):\(first.presumedFile):\(content)"
-                declarationDigests[context.id] = digest
-            }
-            inputs[name, default: []].append(digest)
+            record(name, input: declaration, invocation: Syntax(attribute))
         }
         return inputs
     }
 
+    /// Re-exports can expose macro names supplied only by a binary module.
+    static func historicalDeclarations(_ source: String) -> Set<String>? {
+        let tree = Parser.parse(source: source)
+        guard !tree.hasError else { return nil }
+        var names = Set<String>()
+        for token in tree.tokens(viewMode: .sourceAccurate) {
+            if token.identifier?.name == "_exported",
+               token.parent?.parent?.is(AttributeSyntax.self) == true { return nil }
+            if let macro = token.parent?.as(MacroDeclSyntax.self), token.id == macro.macroKeyword.id {
+                guard let name = macro.name.identifier?.name else { return nil }
+                names.insert(name)
+            }
+        }
+        return names
+    }
+
     static func changedPaths(base: [String: SwiftSourceSnapshot], head: [String: SwiftSourceSnapshot],
-                             unowned: [String: SwiftSourceSnapshot] = [:], touching paths: Set<String>) -> Set<String> {
+                             unowned: [String: SwiftSourceSnapshot] = [:], historicalNames: Set<String> = [],
+                             uncertainImports: Set<String> = [], touching paths: Set<String>) -> Set<String> {
         let names = Set([base, head, unowned].flatMap { sources in
             sources.values.flatMap { file in
                 (file.helperDeclarationIssues ?? []).filter { $0.kind == "macro-declaration" }.map {
                     $0.spelling.trimmingCharacters(in: CharacterSet(charactersIn: "`"))
                 }
             }
-        })
+        }).union(historicalNames)
         var changed = Set<String>()
         for key in Set(base.keys).union(head.keys) {
             let before = base[key], after = head[key]
@@ -71,25 +116,25 @@ enum AttachedMacroInputs {
             if let old = before?.sourceBlobIDs, let new = after?.sourceBlobIDs, !old.isDisjoint(with: new) { continue }
             // A compiler plugin can implement macros from an imported binary module.
             // Its Swift declaration need not occur in either revision's sources.
-            let opaque = before?.usesUnmodeledMacroPlugin == true || after?.usesUnmodeledMacroPlugin == true ||
-                [before, after].compactMap { $0 }.contains { $0.attachedAttributeInputs == nil }
-            if !opaque && names.isEmpty { continue }
-            func inputs(_ file: SwiftSourceSnapshot?) -> [String: [String]]? {
-                guard let file else { return [:] }
-                if let inputs = file.attachedAttributeInputs { return opaque ? inputs : inputs.filter { names.contains($0.key) } }
-                // Older archives can rule out an application when none of the
-                // macro identifiers occurs anywhere in this source.
-                if opaque { return nil }
-                return file.identifierNames?.isDisjoint(with: names) == true ? [:] : nil
+            let files = [before, after].compactMap { $0 }
+            guard files.allSatisfy({ $0.macroInputVersion == AttachedMacroInputs.version && $0.attachedAttributeInputs != nil }) else {
+                changed.insert(id.path)
+                continue
             }
-            if let old = inputs(before), let new = inputs(after), old == new { continue }
+            let opaque = uncertainImports.contains(id.path) || before?.usesUnmodeledMacroPlugin == true || after?.usesUnmodeledMacroPlugin == true
+            if !opaque && names.isEmpty { continue }
+            func inputs(_ file: SwiftSourceSnapshot?) -> [String: [String]] {
+                let sites = file?.attachedAttributeInputs ?? [:]
+                return opaque ? sites : sites.filter { names.contains($0.key.hasPrefix("#") ? String($0.key.dropFirst()) : $0.key) }
+            }
+            if inputs(before) == inputs(after) { continue }
             changed.insert(id.path)
         }
         return changed
     }
 
     static func reason(_ paths: Set<String>) -> String {
-        "Attached macro inputs changed or could not be compared in " + paths.sorted().joined(separator: ", ") +
-            ". Generated declarations can have consumers outside the annotated declaration."
+        "Macro expansion inputs changed or could not be compared in " + paths.sorted().joined(separator: ", ") +
+            ". Generated declarations can have consumers outside the source declaration."
     }
 }

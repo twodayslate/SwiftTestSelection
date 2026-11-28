@@ -1,5 +1,9 @@
 # Consumer precision for #101
 
+## Current replay of the alternate #383 policy
+
+The retained alternate comparison now selects **365 UI and 1,853 non-UI tests**. The Base plan contains 47 UI tests. The Regression plan adds 318, up from 44 in the earlier 91-test capture. All 274 added IDs come from the Regression plan. The independent comparison reports macro uncertainty in both `NoteConversionUITests.swift` and `App/NoteURLUITestFixture.swift`. The replay used the same Git revisions, selection scopes, retained graph and complete consumer policy. The historical section below records the earlier result.
+
 ## Attached macros and the original consumer comparisons
 
 Fresh single-head builds with `f3a7f4d` reproduced every primary, regression-support and final execution ID for the original #380 and #383 comparisons. Retained-product verification passed for both. #380 still schedules 360 UI and 1,848 non-UI tests. #383 still schedules 363 UI and 1,853 non-UI tests.
@@ -14,7 +18,7 @@ For the fixture-only query to recover its previous precision, the selector needs
 
 An independent validation compile used all 46 UI-test Swift sources from each normalized Git base. In #380 the compiler bound three direct invocations of the deleted private query to two tests. One runs inside an XCTest assertion autoclosure. In #383 the old and new helpers each had two direct callers and used the same application factory. The momentum test’s Objective-C entry changed from returning void to returning a Boolean and accepting an error pointer. The production selector uses a single head build. These baseline compilations provide reference answers for checking its historical analysis.
 
-On the original #383 simulator product, the edited converted-row test wrote eight activity receipts, two comment-version receipts and one note-header receipt. A reset-disabled launch preserved all 11 values in those three receipt families. The subsequent unread-dot relaunch test passed in the same app container and finished with 21 receipt keys, none shared with the first test. Both XCTest entries passed. Eight head-side tests explicitly disable reset, and six of them fall outside the 91-test alternate policy. This run exercises one of those six.
+On the original #383 simulator product, the edited converted-row test wrote eight activity receipts, two comment-version receipts and one note-header receipt. A reset-disabled launch preserved all 11 values in those three receipt families. The subsequent unread-dot relaunch test passed in the same app container and finished with 21 receipt keys, none shared with the first test. Both XCTest entries passed. Eight head-side tests explicitly disable reset, and six of them fell outside the earlier 91-test alternate policy. This run exercises one of those six.
 
 A second experiment compared both original #383 scenarios to their historical predecessors, each starting with an empty receipt domain. All four named XCTest cases passed on iOS Simulator 26.2. Across the seven storage families cleared by the app’s reset, each base case left 15 values and each head case left 16. Every value survived a reset-disabled launch in its original app container. Each pair shared ten keys after normalizing the generated reader UUID. The remaining keys differed in the activity and comment-version families. The extra base build served as a runtime control. The selector still built only the head.
 
@@ -45,7 +49,7 @@ For #383, the two historical entries execute the revised scenarios, and two entr
 
 On iOS Simulator 26.2, four of five focused #380 regressions passed on the first run. `testCopyCommentsFilterAndPostToSelectedDestination()` timed out waiting for the edited text to refresh. That test body is byte-identical in the two products. It passed on clean simulators using both the original product and the alternate product. All six focused #383 tests passed with zero skips, including both historical entries, both new entries, the receipt relaunch and the momentum test.
 
-The alternate policies schedule 308 and 272 fewer UI executions than the respective originals. These are selection counts. The unchanged historical inputs still save zero executions with this analyzer, and #101 remains open.
+Those captures selected 308 and 272 fewer UI tests than the respective originals. The current alternate #383 replay above adds back all 274 regression tests. The original comparisons still show zero saved executions, and #101 remains open.
 
 [Download the exact identifiers, fallback decisions, build and patch identities, compiler binding checks and focused simulator results](ConsumerPrecision101Controls.json.gz). The new results are under `originalBaseHeadControls`. Its `blankLineControls` entry includes the Xcode fixture overlay, both one-line insertions and the selected test IDs in each analysis mode.
 
