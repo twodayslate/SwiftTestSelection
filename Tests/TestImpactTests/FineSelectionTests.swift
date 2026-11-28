@@ -29,6 +29,7 @@ private func model(ui: String = uiSource, app: String = appSource, uiPath: Strin
     let uiSnapshot = SwiftSourceSnapshot.parse(ui, path: uiPath, module: "UI")
     let appSnapshot = SwiftSourceSnapshot.parse(app, path: "App/Features.swift", module: "App")
     var graph = DependencyGraph()
+    graph.compilerImplicitImports = ["UI": [], "App": []]
     for (module, snapshot, source) in [("UI", uiSnapshot, ui), ("App", appSnapshot, app)] {
         let lines = source.components(separatedBy: .newlines)
         for unit in snapshot.units where unit.kind == "function" {
@@ -155,14 +156,57 @@ private func selection(_ current: XcodeTestGraph, _ previous: XcodeTestGraph = m
     #expect(report.selectedTests == ["UI/Sharing/testIndependent()"])
 }
 
-@Test func resourceMovesAreNotAssumedBehaviorPreserving() {
+@Test(arguments: ["Resources/renamed.json", "Renamed.xcodeproj/project.pbxproj"])
+func resourceMovesAreNotAssumedBehaviorPreserving(destination: String) {
     let graph = model()
-    var change = FileChange(path: "Resources/renamed.json")
+    var change = FileChange(path: destination)
     change.isPureMove = true
     change.previousPath = "Resources/original.json"
     let report = XcodeSelector.select(current: graph, previous: graph, changes: [change], baseRevision: "base")
     #expect(report.selectedTests == graph.tests)
     #expect(report.diagnostics.contains { $0.code == "unclassified_change" })
+}
+
+@Test(arguments: ["Nested/Package@swift-6.swift", "Fixtures/UI.txt"])
+func movesIntoCompiledSwiftSourcesRetainTheOriginalBuildInput(origin: String) throws {
+    let head = model()
+    var base = model()
+    var change = FileChange(path: "Tests/UI.swift")
+    change.previousPath = origin
+    change.isPureMove = true
+    // The old path was a build input with no Swift declaration inventory.
+    base.targets[0].sourceFiles.remove(change.path)
+    base.sources.removeValue(forKey: change.path)
+    let graph = try #require(head.dependencies)
+    let package = StaticSelector.select(current: graph, previous: graph, changes: [change], baseRevision: "base")
+    #expect(package.selectedTests == head.tests)
+    #expect(!package.fullRunReasons.isEmpty)
+    let fine = XcodeSelector.select(current: head, previous: base, changes: [change], baseRevision: "base")
+    #expect(fine.diagnostics.contains { $0.code == "unclassified_change" })
+    var targetOnly = head
+    targetOnly.dependencies = nil
+    let targets = XcodeSelector.select(current: targetOnly, previous: base, changes: [change], baseRevision: "base")
+    #expect(!targets.fullRunReasons.isEmpty)
+}
+
+@Test(arguments: ["Sources/UI/Package.swift", "Sources/UI/Package@swift-6.swift"])
+func compiledManifestNamesFollowTheirRoleInBothRevisions(path: String) throws {
+    let edited = uiSource.replacingOccurrences(of: "XCTAssertEqual(1, 1)", with: "XCTAssertEqual(1, 2)")
+    let head = model(ui: edited, uiPath: path)
+    let base = model(uiPath: path)
+    let change = [FileChange(path: path)]
+    let fine = XcodeFineSelector.select(current: head, previous: base, changes: change, baseRevision: "base")
+    #expect(fine.selectedTests == ["UI/Sharing/testIndependent()"])
+    func headOnly(_ old: XcodeTestGraph) -> ImpactReport {
+        XcodeHeadOnlySelector.select(current: head, source: .init(base: old.sources), changes: change, baseRevision: "base")
+    }
+    #expect(!headOnly(base).diagnostics.contains { $0.code == "head_only_build_input" })
+
+    // A file with a second role as a manifest cannot borrow a source-only proof.
+    let manifest = model(ui: "// swift-tools-version: 6.0\n" + uiSource, uiPath: path)
+    #expect(headOnly(manifest).diagnostics.contains { $0.code == "head_only_build_input" })
+    #expect(XcodeFineSelector.select(current: head, previous: manifest, changes: change, baseRevision: "base")
+        .diagnostics.contains { $0.code == "unclassified_change" })
 }
 
 @Test func emptyKnownSuitesDoNotHideTopLevelSwiftTestingMethods() throws {
@@ -403,6 +447,38 @@ func importedSDKHelperWithoutLocationsPreservesUIRuntimePolicy(policy: UIFeature
     let report = selection(current, old, paths: ["App/Features.swift"])
     #expect(report.selectedTests.contains("UI/Notes/testNotes()") == (policy == .conservative))
     #expect(report.diagnostics.contains { $0.code == "unresolved_feature_dependency" } == (policy == .conservative))
+}
+
+@Test(arguments: [false, true])
+func unverifiedCopiesReachMappedUIFeaturesAndTheirDependents(copyInBase: Bool) {
+    let direct = "UI/Sharing/testIndependent()", copied = "UI/Sharing/testOne()"
+    let dependent = "UI/Sharing/testTwo()", transitive = "UI/Sharing/testThree()"
+    let unrelated = "UI/Notes/testNotes()"
+    func fixture(_ app: String, hasCopy: Bool) -> XcodeTestGraph {
+        var snapshot = model(app: app)
+        snapshot.mappings = UIFeatureMappings(features: [
+            .init(name: "direct", symbols: ["App.sharing()"], tests: [direct]),
+            .init(name: "transitive", tests: [transitive], dependsOn: ["dependent"]),
+            .init(name: "dependent", tests: [dependent], dependsOn: ["copied"]),
+            .init(name: "copied", symbols: ["App.notes()"], tests: [copied]),
+            .init(name: "unrelated", symbols: ["App.common()"], tests: [unrelated])
+        ])
+        snapshot.mappings?.runtimeDependencyPolicy = .declared
+        // One revision attributes the emitted copy to the changed function.
+        // The app feature is its only caller across the UI runner's process boundary.
+        let regions = hasCopy ? snapshot.dependencies!.functions["App.sharing()"]!.regions : []
+        snapshot.dependencies!.functions["copy"] = .init(id: "copy", module: "Client", name: "copiedGate()", regions: regions)
+        snapshot.dependencies!.functions["App.notes()"]!.dependencies.insert("copy")
+        return snapshot
+    }
+    let edited = appSource.replacingOccurrences(of: "sharing() -> Int { common() }", with: "sharing() -> Int { 2 }")
+    let report = selection(fixture(edited, hasCopy: !copyInBase), fixture(appSource, hasCopy: copyInBase), paths: ["App/Features.swift"])
+    #expect(report.selectedTests == [direct, copied, dependent, transitive].sorted())
+    let uncertain = Set([copied, dependent, transitive])
+    let diagnostics = report.diagnostics.filter { $0.code == "unverified_source_location" }
+    #expect(Set(diagnostics.flatMap(\.tests)) == uncertain)
+    #expect(diagnostics.allSatisfy { $0.message.contains(copyInBase ? "base" : "head") })
+    #expect(!report.explanations.contains { uncertain.contains($0.test) && $0.kind == "explicitMapping" })
 }
 
 @Test func declaredRuntimePolicyPreservesSharedAndExplicitFeatureDependencies() {

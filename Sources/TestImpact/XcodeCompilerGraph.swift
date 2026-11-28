@@ -6,7 +6,7 @@ import Foundation
 enum XcodeCompilerGraph {
     static func extract(log: String, sourceRoot: URL, directory: URL, derived: URL,
                         progress: (String) -> Void, ownership: [String: Set<String>] = [:],
-                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil, measurement: (String, Double) -> Void = { _, _ in }, allowCompilerReplay: Bool = true) -> DependencyGraph {
+                        workers: Int = 1, cancellation: XcodeExtractionCancellation = .init(), moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil, measurement: (String, Double) -> Void = { _, _ in }, allowCompilerReplay: Bool = true, linkedTestingRecords: [String: LinkedTestingRecords.Inventory]? = nil) -> DependencyGraph {
         var graph = DependencyGraph()
         graph.compilerImplicitImports = [:]
         guard (1...8).contains(workers) else {
@@ -178,7 +178,7 @@ enum XcodeCompilerGraph {
             graph.diagnostics = ["Compiler dependency extraction failed: \(error)"]
             return graph
         }
-        resolveDispatch(&graph, tables: dispatch, externalWitnesses: externalWitnesses, projectModules: Set(jobs.map(\.module)))
+        resolveDispatch(&graph, tables: dispatch, externalWitnesses: externalWitnesses, projectModules: Set(jobs.map(\.module)), compiler: jobs.first?.compiler, linkedTestingRecords: linkedTestingRecords)
 
         return graph
     }
@@ -221,9 +221,35 @@ enum XcodeCompilerGraph {
     }
 
     static func resolveDispatch(_ graph: inout DependencyGraph, tables: [String: Set<String>],
-                                externalWitnesses: [String: Set<String>] = [:], projectModules: Set<String>? = nil) {
+                                externalWitnesses: [String: Set<String>] = [:], projectModules: Set<String>? = nil, compiler: String? = nil,
+                                linkedTestingRecords: [String: LinkedTestingRecords.Inventory]? = nil) {
+        for (key, symbols) in tables where key.hasPrefix(SILModule.testVTablePrefix) {
+            if graph.testVTableEntries == nil { graph.testVTableEntries = [:] }
+            graph.testVTableEntries?[String(key.dropFirst(SILModule.testVTablePrefix.count)), default: []].formUnion(symbols)
+        }
+        let inventory = SwiftTestingDiscoveryRoots.registrationInventory(tables: tables, graph: graph)
+        graph.swiftTestingRegisteredFactories = inventory.factories
+        graph.swiftTestingProcessInventoryVersion = linkedTestingRecords.map { _ in LinkedTestingRecords.inventoryVersion }
+        graph.swiftTestingFactoriesByTarget = linkedTestingRecords?.compactMapValues { image in
+            guard image.assertions.allSatisfy({ $0.verified(in: graph) }) else { return nil }
+            let factories = Set(image.records.compactMap { inventory.byRecord[$0] })
+            return factories.count == image.records.count ? factories : nil
+        }
+        graph.swiftTestingCasesByTarget = linkedTestingRecords?.filter { graph.swiftTestingFactoriesByTarget?[$0.key] != nil }.mapValues(\.cases)
+        SwiftTestingDiscoveryRoots.bindTraitWitnesses(graph: &graph, tables: tables, compiler: compiler)
         let localModules = projectModules ?? Set(graph.functions.values.filter { !$0.regions.isEmpty }.map(\.module))
         for symbol in graph.functions.keys {
+            // String(describing:) can call into the project from inside Swift.
+            // Bind the same SIL witness-table slots as an explicit witness_method.
+            for requirement in graph.functions[symbol]!.swiftTestingFormattingRequirements ?? [] {
+                guard let witnesses = tables[requirement], !witnesses.isEmpty,
+                      witnesses.allSatisfy({ graph.functions[$0] != nil }) else {
+                    graph.functions[symbol]!.swiftTestingFormattingRequirements = nil
+                    continue
+                }
+                graph.functions[symbol]!.dependencies.formUnion(witnesses)
+                graph.functions[symbol]!.resolvedDynamicDeclarations.insert(requirement)
+            }
             for declaration in graph.functions[symbol]!.dynamicDeclarations {
                 if let candidates = tables[declaration], !candidates.isEmpty {
                     graph.functions[symbol]!.dependencies.formUnion(candidates)
@@ -295,54 +321,7 @@ enum XcodeCompilerGraph {
         let declarations = Set(graph.functions.values.flatMap(\.dynamicDeclarations))
         // Imported Objective-C methods have no project Swift vtable slot. A
         // dispatch through the base class must still reach declared overrides.
-        let superclasses = sources.values.reduce(into: [String: [String]]()) { result, file in
-            result.merge(file.superclasses ?? file.inheritance) { Array(Set($0 + $1)) }
-        }
-        let nominalParents = Dictionary(uniqueKeysWithValues: Set(superclasses.values.flatMap { $0 }).compactMap { spelling in
-            SwiftSourceSnapshot.nominalTypeName(spelling).map { (spelling, $0) }
-        })
-        let typeAliases = Set(sources.values.flatMap { $0.typeAliases ?? [] })
-        let nominalTypes = Set(sources.values.flatMap { file in
-            file.units.filter { $0.kind == "type" }.map {
-                String($0.key.prefix { $0 != ":" }) + "." + $0.scope
-            }
-        })
-        func containsAlias(_ name: String) -> Bool {
-            typeAliases.contains(name) || name.indices.contains {
-                name[$0] == "." && typeAliases.contains(String(name[..<$0]))
-            }
-        }
-        func resolveSuperclass(_ parent: String, of owner: String) -> (candidates: [String], complete: Bool) {
-            // Swift resolves an unqualified name from its enclosing scopes
-            // outward. A module-level class must not hide a nested superclass.
-            var scope = owner.split(separator: ".").dropLast()
-            let qualifier = parent.firstIndex(of: ".").map { String(parent[..<$0]) }
-            while !scope.isEmpty {
-                let enclosingType = scope.joined(separator: ".")
-                let prefix = enclosingType + "."
-                let candidate = prefix + parent
-                if containsAlias(candidate) { return ([], false) }
-                if superclasses[candidate] != nil { return ([candidate], true) }
-                // A nearer nominal qualifier shadows outer names even if its
-                // member is inherited and absent from this declaration index.
-                // Keep that ancestry unknown instead of choosing an unrelated
-                // outer class with the same qualified spelling.
-                if let qualifier, nominalTypes.contains(prefix + qualifier) { return ([], false) }
-                // Inherited members of the enclosing class precede outer
-                // lexical scopes too. This includes unqualified nested classes,
-                // aliases, and the first component of a qualified name. Their
-                // absence from the declaration index does not prove absence
-                // from the inherited scope, so do not accept an outer match.
-                if let parents = superclasses[enclosingType], !parents.isEmpty { return ([], false) }
-                scope = scope.dropLast()
-            }
-            if containsAlias(parent) { return ([], false) }
-            if superclasses[parent] != nil { return ([parent], true) }
-            let candidates = superclasses.keys.filter { $0.hasSuffix("." + parent) }
-            // Imports are not resolved by this index. Retain possible imported
-            // classes without treating a same-named class as proof of ancestry.
-            return (candidates, candidates.isEmpty)
-        }
+        let hierarchy = SwiftSuperclassIndex(sources: sources)
         let declarationsByMember = Dictionary(grouping: declarations, by: { $0.split(separator: ".").last.map(String.init) ?? $0 })
         var overrides: [String: Set<String>] = [:]
         var unresolvedOverrideDeclarations = Set<String>()
@@ -358,11 +337,11 @@ enum XcodeCompilerGraph {
                 var complete = true
                 while let type = pending.popLast() {
                     guard visited.insert(type).inserted else { continue }
-                    guard let parents = superclasses[type] else { complete = false; continue }
+                    guard let parents = hierarchy.superclasses[type] else { complete = false; continue }
                     for spelling in parents {
-                        guard let parent = nominalParents[spelling] else { complete = false; continue }
+                        guard let parent = hierarchy.nominalParents[spelling] else { complete = false; continue }
                         names.insert(parent)
-                        let resolution = resolveSuperclass(parent, of: type)
+                        let resolution = hierarchy.resolveSuperclass(parent, of: type)
                         let candidates = resolution.candidates
                         if !resolution.complete { complete = false }
                         for candidate in candidates {
@@ -483,7 +462,7 @@ enum XcodeCompilerGraph {
                 parts = [parts[0], parts.dropFirst().dropLast().joined(separator: "."), parts.last!]
             }
             if parts.last?.contains(":") == true {
-                graph.testDiagnostics[test, default: []].append("Parameterized test arguments may execute outside the test body; compiler evidence for argument generation and traits is required")
+                graph.testDiagnostics[test, default: []].append(SwiftTestingDiscoveryRoots.parameterizedArguments)
             }
             if parts.count == 2, let module = modules[parts[0]], parts[1].hasSuffix(")") {
                 graph.tests[test] = entries[module]?[parts[1]] ?? []

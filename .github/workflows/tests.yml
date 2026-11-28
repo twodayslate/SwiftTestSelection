@@ -19,9 +19,9 @@ jobs:
     name: Unit tests (macOS)
     # PR code, including forks, runs on an ephemeral GitHub-hosted runner.
     runs-on: macos-26
-    # Cold builds plus serial compiler fixtures can exceed 30 minutes on hosted
+    # Cold builds plus serial compiler fixtures can exceed an hour on hosted
     # runners; allow headroom while retaining a bounded job timeout.
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:

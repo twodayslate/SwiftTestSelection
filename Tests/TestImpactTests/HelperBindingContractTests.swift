@@ -50,8 +50,16 @@ import XCTest
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let after = bindingBefore.replacingOccurrences(of: "private func candidate() { XCTAssertTrue(true) }", with: "private func candidate() { XCTAssertTrue(true); XCTAssertFalse(false) }")
     let tests = ["UI/Suite/testConsumer()", "UI/Other/testOther()"]
+    let (current, source, helper) = try reviewedBindingFixture(root: root, tests: tests)
+    let wrapper = try #require(current.sources["App:Screen.swift"])
+    verifyBindingReview(current: current, source: source, wrapper: wrapper, tests: tests)
+    try verifyShadowedBindingReviews(current: current, source: source, helper: helper, tests: tests)
+    verifyInvalidBindingReviews(current: current, source: source, tests: tests)
+}
+
+private func reviewedBindingFixture(root: URL, tests: [String]) throws -> (XcodeTestGraph, XcodeHeadOnlySources, SourceUnit) {
+    let after = bindingBefore.replacingOccurrences(of: "private func candidate() { XCTAssertTrue(true) }", with: "private func candidate() { XCTAssertTrue(true); XCTAssertFalse(false) }")
     var current = try boundaryGraph(["UI.swift": after], tests: tests, root: root)
     bindingArtifact(&current)
     // This unrelated SwiftUI source is not treated as a pure body. Only its
@@ -66,6 +74,11 @@ import XCTest
     current.mappings!.helperBindingContracts = try ["head", "base"].map {
         try bindingContract("App:Screen.swift", revision: $0, helper: helper, current: current, source: source)
     }
+    return (current, source, helper)
+}
+
+private func verifyBindingReview(current: XcodeTestGraph, source: XcodeHeadOnlySources,
+                                 wrapper: SwiftSourceSnapshot, tests: [String]) {
     let cache = HelperBindingDigestCache(current: current)
     let reviewed = XcodeHeadOnlySelector.select(current: current, source: source, changes: [.init(path: "UI.swift")], baseRevision: "base", digestCache: cache)
     let computations = cache.bindingComputations
@@ -90,6 +103,10 @@ import XCTest
     var unownedCopy = source
     unownedCopy.unownedBaseSources["Screen.swift"] = wrapper
     #expect(!HelperBindingEvaluation(contracts: current.mappings!.helperBindingContracts!, current: current, source: unownedCopy).inventoryComplete(wrapper))
+}
+
+private func verifyShadowedBindingReviews(current: XcodeTestGraph, source: XcodeHeadOnlySources,
+                                          helper: SourceUnit, tests: [String]) throws {
     // Even a renewed review cannot certify a source-visible alias as the SDK
     // declaration. Head and historical aliases both retain the fallback.
     for revision in ["head", "base", "unowned"] {
@@ -105,6 +122,9 @@ import XCTest
         #expect(rejected.selectedTests == tests.sorted())
         #expect(rejected.helperBindingDecisions?.allSatisfy { $0.status == "invalid" && $0.failures.contains { $0.contains("shadows reviewed identity") } } == true)
     }
+}
+
+private func verifyInvalidBindingReviews(current: XcodeTestGraph, source: XcodeHeadOnlySources, tests: [String]) {
     for mutation in ["inputs", "build", "base", "binding", "identity", "guarantee", "duplicate", "metadata", "macro", "unowned", "shadow", "reexport", "products", "importMap", "inputRecord"] {
         var changed = current, old = source
         switch mutation {

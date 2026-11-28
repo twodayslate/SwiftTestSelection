@@ -153,7 +153,13 @@ func compiledPrivateXCTestHelpersSelectOnlyProvenConsumers(added: Bool, safety: 
     // precision from the absence of evidence.
     var missing = current
     missing.dependencies!.tests.removeValue(forKey: tests[3])
-    #expect(select(missing).selectedTests.contains(tests[3]))
+    let unresolved = (0..<32).map { "UI/Legacy/testMissing\($0)()" }
+    missing.tests.append(contentsOf: unresolved)
+    let missingReport = try JSONDecoder().decode(ImpactReport.self, from: JSONEncoder().encode(select(missing)))
+    #expect(missingReport.selectedTests == missing.tests.sorted())
+    let blocker = try #require(missingReport.diagnostics.first { $0.code == "head_only_helper_isolation" }?.fallback)
+    #expect(blocker.incompleteTestRoots == (unresolved + [tests[3]]).sorted())
+    #expect(!missingReport.explanations.contains { $0.reason.contains("Incomplete test/lifecycle") && $0.reason.contains(unresolved[0]) })
     var legacy = current
     legacy.sources["UI:UI.swift"]!.identifierNames = nil
     #expect(select(legacy).selectedTests.contains(tests[3]))
@@ -345,12 +351,25 @@ func compiledPrivateHelperChainAndAddedEntry(safety: String) throws {
     entryBase["UI:UI.swift"] = SwiftSourceSnapshot.parse(after.replacingOccurrences(of: newEntry, with: ""), path: "UI.swift", module: "UI")
     #expect(select(current, base: entryBase).selectedTests.isEmpty)
     #expect(select(current, base: entryBase).diagnostics.isEmpty)
-    for fault in ["legacy", "missingRoot", "unknownConsumer", "ancestorState", "baseName", "otherFileName", "nonfinal", "unsupported", "attachmentAPI", "legacyAttachment"] {
+    // Keep the unresolved runtime consumer, and preserve full fallback for
+    // missing roots or a diagnostic that could hide intermediate call paths.
+    var uncertain = current
+    uncertain.dependencies!.testDiagnostics[unrelated] = [SwiftTestingDiscoveryRoots.runtimeEvidence]
+    let partial = select(uncertain, base: entryBase)
+    #expect(partial.selectedTests == [unrelated])
+    #expect(partial.diagnostics.map(\.code) == ["head_only_unresolved_test"])
+    #expect(select(uncertain, base: uncertain.sources).selectedTests.isEmpty)
+    uncertain.dependencies!.testDiagnostics[unrelated] = ["Unknown lifecycle"]
+    #expect(select(uncertain, base: entryBase).selectedTests == tests)
+    for fault in ["legacy", "missingRoot", "unknownConsumer", "ancestorState", "baseName", "otherFileName", "generated", "nonfinal", "unsupported", "attachmentAPI", "legacyAttachment"] {
         var broken = current, old = entryBase
         switch fault {
         case "legacy":
             for i in broken.sources["UI:UI.swift"]!.units.indices { broken.sources["UI:UI.swift"]!.units[i].independentAddedTestEntry = nil }
         case "missingRoot": broken.dependencies!.tests[unrelated] = []
+        case "generated":
+            broken.generatedSourceBoundaries = ["UI": [.init(module: "UI", logicalPath: "Generated.swift", contentDigest: "stable",
+                generatorIdentity: "auxiliary-file", repositoryInputs: "same", hasPhysicalLocations: true)]]
         case "unknownConsumer": broken.dependencies!.functions[graph.tests[unrelated]!.first!]!.dependencies.formUnion(graph.tests[added]!)
         case "ancestorState":
             for id in graph.functions.keys where graph.functions[id]!.name.contains(".openShareSubmenu(") {

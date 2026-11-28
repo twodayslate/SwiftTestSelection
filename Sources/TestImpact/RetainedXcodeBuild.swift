@@ -33,7 +33,7 @@ enum RetainedXcodeBuild {
 
     static func publish(graph: inout XcodeTestGraph, revision: String, context: [String: String], toolchain: String,
                         workspace: URL, settings: Data, inputIdentity: [String: String], capture: CapturedSIL? = nil,
-                        headOnlyEvidence: HeadOnlyBuildEvidence? = nil) throws -> URL {
+                        headOnlyEvidence: HeadOnlyBuildEvidence? = nil, changedMacroPaths: Set<String> = []) throws -> URL {
         let products = workspace.appendingPathComponent("DerivedData/Build/Products")
         let runs = try FileManager.default.contentsOfDirectory(at: products, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "xctestrun" }
@@ -75,6 +75,16 @@ enum RetainedXcodeBuild {
                 sourceInputs: ArtifactFiles.sourceInputs(log: log, directory: source), artifact: graph.buildArtifact!)
             graph.buildArtifact?.helperBindingBuild = evidence
             graph.buildArtifact?.helperBindingInputs = evidence.fingerprint
+            if let capture, capture.diagnostics.isEmpty, let headOnlyEvidence, headOnlyEvidence.uncertainty == nil {
+                let modules = Set(graph.sources.compactMap { key, snapshot -> String? in
+                    guard snapshot.usesUnmodeledMacroPlugin == true || snapshot.indexedActor != nil, snapshot.ordinaryMacroImports != nil,
+                          let id = snapshot.sourceIdentity(storedAs: key), changedMacroPaths.contains(id.path) else { return nil }
+                    return id.module
+                })
+                if !modules.isEmpty {
+                    graph.buildArtifact?.macroDeclarations = try? CompilerMacroDeclarations.capture(modules: modules, sil: capture, build: evidence)
+                }
+            }
         } catch {
             graph.buildArtifact?.helperBindingBuildFailure = String(describing: error)
         }

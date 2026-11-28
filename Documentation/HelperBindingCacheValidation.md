@@ -61,6 +61,7 @@ rg -v '/SwiftTestImpactCLI.build/' \
   .build/arm64-apple-macosx/release/swift-test-impact.product/Objects.LinkFileList \
   > /tmp/helper-binding-objects.rsp
 xcrun swiftc -O -I .build/arm64-apple-macosx/release/Modules \
+  -I .build/arm64-apple-macosx/release/CompilerIndex.build \
   -I .build/checkouts/swift-syntax/Sources/_SwiftSyntaxCShims/include \
   Scripts/HelperBindingDigestBenchmark.swift @/tmp/helper-binding-objects.rsp \
   -o /tmp/helper-binding-benchmark

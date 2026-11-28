@@ -54,6 +54,43 @@ private func labelEdit(_ old: XcodeTestGraph) -> XcodeTestGraph {
     #expect(try GraphArchive.decode(GraphArchive.encode(current)).runtimeInventory?.hosts == current.runtimeInventory?.hosts)
 }
 
+@Test func crossModuleCompilerLocationsPreserveConsumers() {
+    var base = boundaryFixture()
+    let test = "Hosted/Labels/testLabel()"
+    // An emitted body carries a location from App.swift without a call to label.
+    base.dependencies!.functions["hosted"]!.dependencies = []
+    base.dependencies!.functions["hosted"]!.regions.append(.init(path: "App.swift", startLine: 1, endLine: 1))
+    let head = labelEdit(base)
+    func select(_ current: XcodeTestGraph) -> ImpactReport {
+        XcodeFineSelector.select(current: current, previous: base, changes: [.init(path: "App.swift")], baseRevision: "base")
+    }
+    let verified = select(head)
+    #expect(verified.selectedTests == [test])
+    #expect(verified.explanations.contains { $0.test == test && $0.kind == "dependency" && $0.revision == "head" })
+    var legacy = head
+    legacy.sources["Hosted:Hosted.swift"]?.receiverPhysicalLocations = nil
+    let unverified = select(legacy)
+    #expect(unverified.selectedTests == [test])
+    #expect(unverified.diagnostics.contains { $0.code == "unverified_source_location" && $0.tests == [test] })
+    #expect(!unverified.explanations.contains { $0.test == test && $0.kind == "dependency" && $0.revision == "head" })
+}
+
+@Test func enumLayoutFallbackRespectsClosedRuntimeModules() {
+    var base = boundaryFixture()
+    let path = "App.swift"
+    let before = "enum Mode: Int { case first; case second }"
+    let after = "enum Mode: Int { case second; case first }"
+    base.sources["App:App.swift"] = .parse(before, path: path, module: "App")
+    base.dependencies!.functions["shared"]!.uncertainties = []
+    var head = base
+    head.sources["App:App.swift"] = .parse(after, path: path, module: "App")
+    let report = XcodeFineSelector.select(current: head, previous: base, changes: [.init(path: path)], baseRevision: "base")
+    #expect(report.selectedTests == ["Hosted/Labels/testLabel()"])
+    #expect(report.diagnostics.contains { $0.code == "enum_layout_change" })
+    #expect(report.runtimeBoundaryDecisions?.count == 2)
+    #expect(report.runtimeBoundaryDecisions?.allSatisfy { $0.boundedUncertaintyTests == ["Tests/Other/testOther()"] } == true)
+}
+
 @Test(arguments: ["missingBase", "missingInventory", "missingImports", "underdeclared", "unknownModule", "host", "visibleEdge", "incomplete", "unbound", "policyChanged"])
 func invalidBoundaryCannotSuppressFallback(failure: String) {
     var old = boundaryFixture()
@@ -336,6 +373,7 @@ func generatedInputsAreComparedEvenWithoutGitPaths(scenario: String) throws {
     let boundary = GeneratedSourceBoundary(module: "App", logicalPath: "<DerivedData>/Generated.swift", contentDigest: "source", generatorIdentity: "settings", repositoryInputs: "resources")
     old.generatedSourceBoundaries = ["App": [boundary]]
     var current = labelEdit(old)
+    current.generatedSourceBoundaries?["App"]?[0].hasPhysicalLocations = true
     switch scenario {
     case "changed": current.generatedSourceBoundaries?["App"]?[0].contentDigest = "changed"
     case "missingBase": old.generatedSourceBoundaries = nil

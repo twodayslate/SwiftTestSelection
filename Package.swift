@@ -16,9 +16,12 @@ let package = Package(
         .package(url: "https://github.com/stencilproject/Stencil.git", exact: "0.15.1")
     ],
     targets: [
+        .target(name: "CompilerIndex"),
         .target(name: "TestImpact", dependencies: [
+            "CompilerIndex",
             .product(name: "SwiftParser", package: "swift-syntax"),
             .product(name: "SwiftSyntax", package: "swift-syntax"),
+            .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
             .product(name: "Stencil", package: "Stencil")
         ]),
         .executableTarget(name: "SwiftTestImpactCLI", dependencies: ["TestImpact"]),

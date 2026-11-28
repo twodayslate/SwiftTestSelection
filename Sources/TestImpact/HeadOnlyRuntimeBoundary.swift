@@ -15,9 +15,9 @@ struct HeadOnlyRuntimeSourceEvidence {
     let buildInputPaths: Set<String>
     var failure: String? { validationFailure(ignoringDocumentation: []) }
 
-    func validationFailure(ignoringDocumentation documentation: Set<String>) -> String? {
+    func validationFailure(ignoringDocumentation documentation: Set<String>, confirmedSources: Set<String> = []) -> String? {
         if let structuralFailure { return structuralFailure }
-        return buildInputPaths.subtracting(documentation).sorted().first.map {
+        return buildInputPaths.subtracting(documentation).subtracting(confirmedSources).sorted().first.map {
             "Changed build, resource or policy input requires historical evidence: " + $0
         }
     }
@@ -27,7 +27,7 @@ struct HeadOnlyRuntimeSourceEvidence {
         let headRevision = try GitChanges.revision(head, at: root)
         guard head == headRevision else { throw ImpactError("Runtime boundary requires a resolved captured head revision") }
         let changes = try GitChanges.readComparison(base: baseRevision, head: headRevision, at: root)
-        let paths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+        let paths = Set(changes.flatMap(\.paths))
         let listing = try CommandRunner.run("git", ["ls-tree", "-r", "-z", headRevision, "--"], at: root)
         var headPaths = Set<String>(), regularPaths = Set<String>()
         var blobIDs: [String: String] = [:]
@@ -49,7 +49,7 @@ struct HeadOnlyRuntimeSourceEvidence {
             failure = "Moved or unclassified source lacks historical ownership"
         } else { failure = nil }
         return .init(baseRevision: baseRevision, headRevision: headRevision, changedPaths: paths, sourcePaths: headPaths, regularSourcePaths: regularPaths, sourceBlobIDs: blobIDs, structuralFailure: failure,
-            buildInputPaths: paths.filter { !$0.hasSuffix(".swift") || $0 == "Package.swift" })
+            buildInputPaths: paths.filter { !FileChange.isSwiftImplementation($0) })
     }
 }
 
@@ -87,7 +87,9 @@ extension TestRuntimeBoundary {
             unchangedPolicy && path.hasSuffix(".md") && !owned.contains(path) &&
                 current.mappings?.ignoredDocumentation?.contains { UIFeatureMappings.matches(path, pattern: $0) } == true
         }
-        if let failure = evidence.validationFailure(ignoringDocumentation: documentation) { return prefix + failure }
+        let confirmed = current.manifestNamedImplementations(in: current.sources)
+            .intersection(current.manifestNamedImplementations(in: source.base))
+        if let failure = evidence.validationFailure(ignoringDocumentation: documentation, confirmedSources: confirmed) { return prefix + failure }
         guard source.diagnostics.isEmpty, source.unownedBaseSources.isEmpty else {
             return prefix + "missing or unowned historical Swift sources"
         }
@@ -110,8 +112,7 @@ extension TestRuntimeBoundary {
                     ?? "; refresh the missing declaration inventory"
                 return prefix + "historical macro/attribute expansion is not authenticated: " + key + detail
             }
-            if modules.contains(module), !(current.generatedSourceBoundaries?[module]?.isEmpty ?? true) ||
-                !(current.unsupportedSourceInputs?[module]?.isEmpty ?? true) || current.unresolvedProductRoles?[module] != nil {
+            if modules.contains(module), current.hasUninspectedSwiftInputs(in: module) || current.unresolvedProductRoles?[module] != nil {
                 return prefix + "generated inputs or module ownership require historical build evidence: " + module
             }
             let before = Dictionary(grouping: old.units, by: \.key)
@@ -123,7 +124,8 @@ extension TestRuntimeBoundary {
                 guard Set(before.keys) == Set(after.keys), before.allSatisfy({ key, units in
                     let next = after[key]!
                     return units.count == 1 && next.count == 1 &&
-                        units[0].fingerprint == next[0].fingerprint && units[0].callerLocations == next[0].callerLocations
+                        units[0].fingerprint == next[0].fingerprint && units[0].callerLocations == next[0].callerLocations &&
+                        units[0].builderLocations == next[0].builderLocations
                 }), InlineUIMappings.policyPaths([key: old]) == InlineUIMappings.policyPaths([key: snapshot]),
                     HelperFormattingContracts.declarations([key: old], nil) == HelperFormattingContracts.declarations([key: snapshot], nil) else {
                     return prefix + "closed runtime source changed: " + key

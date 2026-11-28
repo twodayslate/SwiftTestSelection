@@ -173,12 +173,12 @@ public struct XcodeAnalysis {
         progress("Building Xcode scheme \(configuration.scheme) for \(configuration.destination) (no test bodies)…")
         let build = try CommandRunner.run("xcodebuild", arguments, at: directory)
         let settings = try CommandRunner.run("xcodebuild", arguments + ["-showBuildSettings", "-json"], at: directory).stdout
-        return try analyzeBuild(configuration, sourceRoot: sourceRoot, derived: derived, log: build.text, settingsData: settings)
+        return try analyzeBuild(configuration, sourceRoot: sourceRoot, derived: derived, log: build.text, settingsData: settings, freshIndex: true)
     }
 
     func analyzeBuild(_ configuration: XcodeConfiguration, sourceRoot: URL, derived: URL,
                       log: String, settingsData: Data, xctestrun: URL? = nil, moduleCache: XcodeModuleCache? = nil, captured: CapturedSIL? = nil,
-                      activeCompilerInputs: Set<String>? = nil, allowCompilerReplay: Bool = true) throws -> XcodeTestGraph {
+                      activeCompilerInputs: Set<String>? = nil, allowCompilerReplay: Bool = true, freshIndex: Bool = false) throws -> XcodeTestGraph {
         guard FileManager.default.fileExists(atPath: configuration.path.path) else {
             throw ImpactError("Xcode container does not exist: \(configuration.path.path)")
         }
@@ -230,7 +230,7 @@ public struct XcodeAnalysis {
                 modules[name] = module
             }
         }
-        XcodeSourceOwnership.recover(log: log, sourceRoot: sourceRoot, derived: derived, activeInputs: activeCompilerInputs,
+        let compilerInvocations = XcodeSourceOwnership.recover(log: log, sourceRoot: sourceRoot, derived: derived, activeInputs: activeCompilerInputs,
             targets: &targets, modules: &modules, listOwners: listOwners, unsupportedInputs: &unsupportedInputs, classifiedLists: &classifiedLists, diagnostics: &diagnostics, evidence: evidence, generated: &generated, roleDiagnostics: &roleDiagnostics)
         measurement("buildEvidence", Date().timeIntervalSince(evidenceStart))
         let sourceJobs = targets.flatMap { target -> [(String, String)] in
@@ -242,6 +242,7 @@ public struct XcodeAnalysis {
             let text = try String(contentsOf: sourceRoot.appendingPathComponent(path), encoding: .utf8)
             return (module + ":" + path, SwiftSourceSnapshot.parse(text, path: path, module: module))
         }) { sources[key] = snapshot }
+        CompilerMacroInputs.annotate(&sources, invocations: compilerInvocations, root: sourceRoot, freshDerived: freshIndex ? derived : nil)
         measurement("headSourceReadParse", Date().timeIntervalSince(sourceStart))
         // Preserve active lists that neither settings nor compiler invocations
         // could classify, especially files shared with tests.
@@ -284,7 +285,14 @@ public struct XcodeAnalysis {
             if let module = modules[target.name] { result[module, default: []].formUnion(target.sourceFiles) }
         }
         let extractionStart = Date()
-        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation, moduleCache: moduleCache, captured: captured, measurement: measurement, allowCompilerReplay: allowCompilerReplay)
+        var plainCases: [String: [XCTestDiscoveryCase]] = [:]
+        for target in targets where target.isTest {
+            guard let module = modules[target.name] else { continue }
+            plainCases[target.name] = target.sourceFiles.flatMap { sources[module + ":" + $0]?.xctestDiscoveryCases ?? [] }
+        }
+        let linkedRecords = sources.values.contains { $0.swiftTestingDeclarations?.tests.isEmpty == false }
+            ? LinkedTestingRecords.capture(testRun: xctestrun, products: derived.appendingPathComponent("Build/Products"), plainCases: plainCases) : nil
+        var dependencies = XcodeCompilerGraph.extract(log: log, sourceRoot: sourceRoot, directory: directory, derived: scratch, progress: progress, ownership: ownership, workers: configuration.extractionWorkers, cancellation: extractionCancellation, moduleCache: moduleCache, captured: captured, measurement: measurement, allowCompilerReplay: allowCompilerReplay, linkedTestingRecords: linkedRecords)
         measurement("extraction", Date().timeIntervalSince(extractionStart))
         progress("Binding compiler dependencies to \(tests.count) enumerated tests…")
         let binding = AnalysisMeasurement()

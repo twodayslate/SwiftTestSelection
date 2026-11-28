@@ -41,6 +41,28 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// A bounded SIL proof of an SDK factory with literal empty traits and no
     /// argument producer: "top-level", "member", or "suite". Nil is unproven.
     public var swiftTestingEmptyFactory: String? = nil
+    /// Nonparameterized SDK test factory whose only traits are compiler-emitted SDK comments.
+    var swiftTestingCommentOnlyFactory: String? = nil
+    var swiftTestingMetadataFactory: String? { swiftTestingEmptyFactory ?? swiftTestingCommentOnlyFactory }
+    /// Capture-free argument providers passed to a verified SDK factory with a recognized traits array.
+    /// Zero also identifies the verified SDK overload that accepts no argument providers.
+    public var swiftTestingDeferredProviderCount: Int? = nil
+    /// Capture-free SDK predicates and their positions in the registration’s traits array.
+    /// Suite factories also require proof that eager evaluation only constructs SDK metadata.
+    var swiftTestingDeferredConditions: SwiftTestingFactoryProof.Conditions? = nil
+    /// Unqualified concrete nominal passed as a literal metatype to the SDK factory.
+    public var swiftTestingFactoryType: String? = nil
+    /// Concrete payloads stored in the traits array passed to a Swift Testing factory.
+    /// Matching trait witnesses are possible runtime edges, never proof that
+    /// the complete set of runtime conformances was captured.
+    public var swiftTestingExistentialTypes: Set<String>? = nil
+    /// Direct callees whose results are stored into the SDK traits array.
+    public var swiftTestingTraitProducers: Set<String>? = nil
+    /// Concrete requirements invoked by every captured string-formatting call.
+    /// Nil leaves discovery conservative for erased calls and older captures.
+    public var swiftTestingFormattingRequirements: Set<String>? = nil
+    /// Factory references that may execute before Swift Testing filters the tests.
+    public var swiftTestingDiscoveryReferences: Set<String>? = nil
     /// Full SIL method reference and formal type for every dynamic call.
     /// Nil means legacy or incomplete evidence; display names lose overloads.
     public var dynamicCallSignatures: Set<String>? = nil
@@ -63,6 +85,12 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// An empty set proves only error propagation, never callback purity or origin.
     /// Nil denotes legacy/missing evidence.
     public var receiverIndirectErrorEffects: Set<String>? = nil
+    /// Every instruction has a modeled discovery effect. Direct calls and ARC
+    /// still require their own evidence. Missing proof includes older captures.
+    var hasModeledDiscoveryInstructions: Bool? = nil
+    /// ARC cleanup can run a project deinitializer without a function reference.
+    /// Nil means the capture predates lifetime evidence.
+    public var mayDestroyValue: Bool? = nil
     public var uncertainties: Set<String>
     public var resolvedDynamicDeclarations: Set<String> = []
     public var dynamicDeclarations: Set<String>
@@ -70,6 +98,10 @@ public struct FunctionNode: Codable, Sendable, Equatable {
     /// Combine evidence rather than choosing one imported implementation. Missing
     /// optional proof stays missing; an empty body never establishes purity.
     mutating func mergeEvidence(_ other: FunctionNode) {
+        if hasModeledDiscoveryInstructions != other.hasModeledDiscoveryInstructions { hasModeledDiscoveryInstructions = nil }
+        if mayDestroyValue != other.mayDestroyValue {
+            mayDestroyValue = mayDestroyValue == true || other.mayDestroyValue == true ? true : nil
+        }
         dependencies.formUnion(other.dependencies)
         uncertainties.formUnion(other.uncertainties)
         dynamicDeclarations.formUnion(other.dynamicDeclarations)
@@ -86,7 +118,15 @@ public struct FunctionNode: Codable, Sendable, Equatable {
             return lhs.union(rhs)
         }
         compilerReferences = union(compilerReferences, other.compilerReferences)
+        swiftTestingExistentialTypes = union(swiftTestingExistentialTypes, other.swiftTestingExistentialTypes)
+        swiftTestingTraitProducers = union(swiftTestingTraitProducers, other.swiftTestingTraitProducers)
+        swiftTestingFormattingRequirements = union(swiftTestingFormattingRequirements, other.swiftTestingFormattingRequirements)
+        swiftTestingDiscoveryReferences = union(swiftTestingDiscoveryReferences, other.swiftTestingDiscoveryReferences)
+        if swiftTestingFactoryType != other.swiftTestingFactoryType { swiftTestingFactoryType = nil }
         if swiftTestingEmptyFactory != other.swiftTestingEmptyFactory { swiftTestingEmptyFactory = nil }
+        if swiftTestingCommentOnlyFactory != other.swiftTestingCommentOnlyFactory { swiftTestingCommentOnlyFactory = nil }
+        if swiftTestingDeferredProviderCount != other.swiftTestingDeferredProviderCount { swiftTestingDeferredProviderCount = nil }
+        if swiftTestingDeferredConditions != other.swiftTestingDeferredConditions { swiftTestingDeferredConditions = nil }
         dynamicCallSignatures = union(dynamicCallSignatures, other.dynamicCallSignatures)
         stateAccesses = union(stateAccesses, other.stateAccesses)
         receiverTypeOrigins = union(receiverTypeOrigins, other.receiverTypeOrigins)
@@ -111,8 +151,8 @@ public struct FunctionNode: Codable, Sendable, Equatable {
         uncertainties.contains {
             // Imported implementations can call project code even without local
             // debug locations. Known ownership does not close that runtime edge.
-            $0.hasPrefix("Imported conformance:") || hasProjectRuntimeContext &&
-            ($0 == "Indirect function invocation" || $0 == "Raw pointer operation" ||
+            $0.hasPrefix("Imported conformance:") || (hasProjectRuntimeContext || SwiftTestingDiscoveryRoots.isDiscoveryRoot(id)) &&
+            ($0 == SwiftTestingDiscoveryRoots.unresolvedEffects || $0 == "Indirect function invocation" || $0 == "Raw pointer operation" ||
              $0 == "Global state access" || $0.hasPrefix("Unresolved project dispatch:"))
         }
     }
@@ -135,11 +175,31 @@ public struct FunctionNode: Codable, Sendable, Equatable {
 public struct DependencyGraph: Codable, Sendable {
     public var schemaVersion = 1
     public var toolchain: String
+    /// SwiftPM compiler inputs whose basenames could otherwise designate manifests.
+    var manifestNamedImplementations: Set<String>? = nil
     public var functions: [String: FunctionNode]
     /// SwiftPM test identifier -> one or more compiler function symbols.
     public var tests: [String: Set<String>]
     public var diagnostics: [String]
     public var testDiagnostics: [String: [String]] = [:]
+    /// Module-qualified XCTest class and method to inherited or overriding vtable implementations.
+    public var testVTableEntries: [String: Set<String>]? = nil
+    /// Entry and fixture roots before Swift Testing adds registration dependencies.
+    /// Only Swift Testing entries participate in discovery rebinding.
+    var swiftTestingEntryRoots: [String: Set<String>]?
+    /// Runtime witnesses keyed by the suite factory that constructs their trait.
+    public var swiftTestingSuiteWitnesses: [String: Set<String>]? = nil
+    /// Complete factory inventories independently reached from compiled test registrations.
+    public var swiftTestingRegisteredFactories: [String: Set<String>]? = nil
+    /// Version of the startup checks used to establish per-target process inventories.
+    var swiftTestingProcessInventoryVersion: Int? = nil
+    /// Factories reached from registrations in a platform-agent bundle, keyed by the
+    /// Xcode target identifier. An absent key has incomplete linkage evidence.
+    public var swiftTestingFactoriesByTarget: [String: Set<String>]? = nil
+    /// XCTest source contracts actually matched to entry points in each verified process.
+    var swiftTestingCasesByTarget: [String: Set<XCTestDiscoveryCase>]? = nil
+    /// Whole-plan evidence recorded by older archives.
+    public var swiftTestingLinkedRecordsVerified: Bool? = nil
     /// Compiler-authenticated class identities from the matching built modules.
     public var compilerClassIdentities: [String: CompilerClassIdentity]? = nil
     /// Imports injected by compiler options, including binary modules absent

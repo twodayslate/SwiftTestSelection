@@ -4,6 +4,26 @@ import Foundation
 import Testing
 @testable import TestImpact
 
+@Test func inlineMappingTraversalPreservesDeclarationOrderAcrossDeepInitializers() throws {
+    let expression = "root" + String(repeating: ".value", count: 150)
+    let source = """
+    class First: XCTestCase { func testFirst() {} }
+    let configuration = \(expression)
+    #if FEATURE
+    class Second: XCTestCase {
+        // swift-test-selection: {"sources":["App.swift"]}
+        func testSecond() {}
+    }
+    #endif
+    """
+    let snapshot = SwiftSourceSnapshot.parse(source, path: "UI.swift", module: "UI")
+    let mappings = try #require(snapshot.inlineMappings)
+    #expect(mappings.diagnostics.isEmpty)
+    #expect(mappings.declarations.map(\.scope) == ["First", "First", "Second", "Second"])
+    #expect(mappings.declarations.map(\.conditional) == [false, false, true, true])
+    #expect(mappings.declarations.last?.directives.first?.normalized == #"{"sources":["App.swift"]}"#)
+}
+
 private func inlineRegressionGraph(_ source: String, value: Int = 1, tests: [String]) -> XcodeTestGraph {
     let ui = SwiftSourceSnapshot.parse(source, path: "UI.swift", module: "UI")
     let app = SwiftSourceSnapshot.parse("func shared() -> Int { \(value) }\nfunc checkout() -> Int { 1 }", path: "App.swift", module: "App")

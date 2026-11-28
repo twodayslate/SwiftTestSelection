@@ -9,6 +9,12 @@ public struct UIFeatureMappings: Codable, Sendable {
     }
     public enum SourceLocationPolicy: String, Codable, Sendable {
         case semantic, diagnosticLineColumn, diagnostic
+
+        static func agreed(head: UIFeatureMappings?, base: UIFeatureMappings?) -> Self {
+            guard let head, let base, let policy = head.sourceLocationPolicy, base.sourceLocationPolicy == policy,
+                  (try? head.validate()) != nil, (try? base.validate()) != nil else { return .semantic }
+            return policy
+        }
     }
     /// Opt in only when the ignored location kinds are diagnostic, never behavior.
     public var sourceLocationPolicy: SourceLocationPolicy? = nil
@@ -118,6 +124,21 @@ public struct UIFeatureMappings: Codable, Sendable {
 
     func selectors(for feature: Feature) -> [String] {
         (feature.tests ?? []) + (feature.fixtures ?? []).flatMap { fixtures?[$0] ?? [] }
+    }
+
+    /// A registration can change a mapped production source without changing a callable body.
+    func registrationSourceMatches(_ changedPaths: Set<String>, targets: [XcodeTarget]) -> [String: [String]] {
+        guard !changedPaths.isEmpty else { return [:] }
+        let paths = changedPaths.filter { path in
+            targets.contains { !$0.isTest && $0.sourceFiles.contains(path) }
+        }.sorted()
+        var matches: [String: [String]] = [:]
+        for feature in features where feature.when == nil {
+            if let path = paths.first(where: { path in
+                feature.sources?.contains { Self.matches(path, pattern: $0) } == true
+            }) { matches[feature.name] = [path] }
+        }
+        return matches
     }
 
     static func matches(_ value: String, pattern: String) -> Bool {

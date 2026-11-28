@@ -4,6 +4,12 @@
 import Foundation
 
 public struct SILModule: Codable, Sendable {
+    // Join a Trait.scopeProvider witness to its concrete associated conformance
+    // after primary-file and module dispatch tables have been merged.
+    static let scopeProviderPrefix = "@testing-scope-provider:"
+    static let scopeConformancePrefix = "@testing-scope-conformance:"
+    static let testingRecordPrefix = "@testing-record:"
+    static let testVTablePrefix = "@xctest-vtable:"
     /// Bodies imported from another module; source locations alone cannot prove
     /// definition ownership when multiple modules compile the same file.
     public var importedSymbols: Set<String>? = nil
@@ -121,7 +127,9 @@ public enum SILParser {
         static let reference = try! NSRegularExpression(pattern: #"^(%[\w]+) = (?:function_ref|dynamic_function_ref|previous_dynamic_function_ref) @([^\s:]+)"#)
         static let method = try! NSRegularExpression(pattern: #"\b(class_method|super_method|witness_method|objc_method|objc_super_method)\b.*#([^\s:]+)"#)
         static let witnessType = try! NSRegularExpression(pattern: #"\bwitness_method \$([\w.]+),"#)
-        static let witnessTable = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+)* ([\w.]+): [\w.]+ module [\w]+ \{"#)
+        static let classTable = try! NSRegularExpression(pattern: #"^sil_vtable(?: \[[^\]]+\])* ([\w.]+) \{"#)
+        static let witnessTable = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+)* ([\w.]+): ([\w.]+) module ([\w]+) \{"#)
+        static let associatedScope = try! NSRegularExpression(pattern: #"^associated_conformance \(TestScopeProvider: TestScoping\): ([\w.]+): TestScoping module ([\w]+)$"#)
         static let externalWitness = try! NSRegularExpression(pattern: #"^sil_witness_table(?: [\w]+| \[[^\]]+\])* ([\w.]+): ([\w.]+) module ([\w]+)$"#)
         static let value = try! NSRegularExpression(pattern: #"^(%[\w]+) ="#)
         static let conversion = try! NSRegularExpression(pattern: #"^(%[\w]+) = (?:thin_to_thick_function|convert_function|convert_escape_to_noescape|copy_value|move_value|begin_borrow|partial_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
@@ -132,6 +140,8 @@ public enum SILParser {
         static let nilSwitch = try! NSRegularExpression(pattern: #"^switch_enum_addr (%[\w]+), case #Optional.some!enumelt: (bb[0-9]+), case #Optional.none!enumelt: bb[0-9]+(?:,|$)"#)
         static let receiverCast = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?(?:unconditional_checked_cast(?:_addr|_value)?|checked_cast(?:_addr|_value)?_br|unchecked_(?:addr|trivial_bit|bitwise)_cast)\b.*? to (.+)"#)
         static let genericApply = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?(?<opcode>apply|try_apply|begin_apply|partial_apply)(?: \[[^\]]*\])* (?<callee>%[\w]+)<"#)
+        static let allocatingCall = try! NSRegularExpression(pattern: #"^(%\d+) = apply (%\d+)\((%\d+)\) : \$@convention\(method\) \(@thick ([\w.]+)\.Type\) -> @owned \4(?:,|\s|$)"#)
+        static let releasedValue = try! NSRegularExpression(pattern: #"^strong_release (%\d+)(?:,|\s|$)"#)
         static let predicateApply = try! NSRegularExpression(pattern: #"^(?:%[\w]+ = )?apply(?: \[[^\]]*\])* %[\w]+\([^\r\n]*\) : \$@(?:noescape @)?callee_guaranteed \(\) -> (?:@out )?Bool$"#)
         static let apply = try! NSRegularExpression(pattern: #"\b(?:apply|try_apply|begin_apply)(?: \[[^\]]*\])* (%[\w]+)"#)
     }
@@ -145,12 +155,36 @@ public enum SILParser {
             self.module = module
             self.root = sourceRoot.standardizedFileURL.resolvingSymlinksInPath().path + "/"
         }
-        var result: SILModule { SILModule(importedSymbols: importedSymbols, sharedSymbols: sharedSymbols, functions: functions, dispatchTargets: tables, externalWitnesses: externalWitnesses) }
+        // Resolve releases after reading the vtables, which follow the function bodies.
+        struct Allocation: Hashable {
+            let type: String
+            let initializer: String
+        }
+        var literalMetatypes: [String: String] = [:]
+        var allocationsReleased: [String: Set<Allocation>] = [:]
+        var tableInitializers = Set<String>()
+        var deallocators: [Allocation: Set<String>] = [:]
+
+        var result: SILModule {
+            var bound = functions
+            for (caller, allocations) in allocationsReleased {
+                for allocation in allocations {
+                    if let ids = deallocators[allocation], ids.count == 1, let id = ids.first {
+                        bound[caller]?.dependencies.insert(id)
+                        bound[caller]?.swiftTestingDiscoveryReferences?.insert(id)
+                    }
+                }
+            }
+            return SILModule(importedSymbols: importedSymbols, sharedSymbols: sharedSymbols, functions: bound,
+                             dispatchTargets: tables, externalWitnesses: externalWitnesses)
+        }
+
 
         var importedSymbols = Set<String>()
         var sharedSymbols = Set<String>()
         var functions: [String: FunctionNode] = [:]
         var tables: [String: Set<String>] = [:]
+        var testingRecord: String?
         var externalWitnesses: [String: Set<String>] = [:]
         var current: FunctionNode?
         var testingFactoryLines: [String]?
@@ -158,12 +192,19 @@ public enum SILParser {
         var pendingLocation: SourceRegion?
         var locations: [String: ClosedRange<Int>] = [:]
         var knownValues = Set<String>()
+        var pendingFormatters = Set<String>()
+        var formattingRequirements = Set<String>()
+        var unknownFormatting = false
         var directReferences: [String: String] = [:]
         var recentInstructions: [String] = []
         var currentBlock = ""
         var nilSomePredecessors: [String: String] = [:]
         var unreachableNilSome = false
+        var classTable: String?
+        var nilActorValues = Set<Substring>()
         var witnessType: String?
+        var scopeConformance: String?
+        var associatedScope: String?
         var genericParameters: Set<String>?
         var metatypeInputs: [String: Set<String>] = [:]
         var headerMetatypeCounts: [String: Int] = [:]
@@ -207,12 +248,41 @@ public enum SILParser {
             let line = raw.trimmingSILWhitespace()
             guard !line.isEmpty else { return }
             if current == nil {
+                if let record = testingRecord {
+                    if line == "}" { testingRecord = nil }
+                    else if let reference = Pattern.groups(Expressions.reference, in: line) {
+                        tables[record, default: []].insert(reference[1])
+                    }
+                    return
+                }
+                if line.hasPrefix("sil_global "), line.contains("__swift5_tests"), line.contains("[section "),
+                   let symbol = Pattern.groups(Expressions.function, in: line)?.first {
+                    // An unsupported initializer leaves an empty record. Its
+                    // module cannot use registrations to waive a missing suite.
+                    let key = SILModule.testingRecordPrefix + module + ":" + symbol
+                    tables[key] = []
+                    if line.hasSuffix("= {") { testingRecord = key }
+                }
                 if line.hasPrefix("sil_witness_table") {
-                    witnessType = Pattern.groups(Expressions.witnessTable, in: line)?.first
+                    classTable = nil
+                    let table = Pattern.groups(Expressions.witnessTable, in: line)
+                    witnessType = table?.first
+                    scopeConformance = table.flatMap { $0[1] == "TestScoping" ? SILModule.scopeConformancePrefix + $0[2] + ":" + $0[0] : nil }
+                    associatedScope = nil
                     if let fields = Pattern.groups(Expressions.externalWitness, in: line) {
                         externalWitnesses[module + ":" + fields[1] + "@witness:" + fields[0], default: []].insert(fields[2])
                     }
-                } else if line.hasPrefix("sil_vtable") || line == "}" { witnessType = nil }
+                } else if witnessType != nil, line.hasPrefix("associated_conformance"),
+                          let provider = Pattern.groups(Expressions.associatedScope, in: line) {
+                    associatedScope = SILModule.scopeConformancePrefix + provider[1] + ":" + provider[0]
+                } else if line.hasPrefix("sil_vtable") {
+                    tableInitializers.removeAll(keepingCapacity: true)
+                    classTable = Pattern.groups(Expressions.classTable, in: line)?.first
+                    witnessType = nil
+                } else if line == "}" {
+                    classTable = nil
+                    witnessType = nil
+                }
                 if line.hasPrefix("// "), !line.hasPrefix("// Isolation:") {
                     let name = String(line.dropFirst(3))
                     pendingName = name.components(separatedBy: ", loc ")[0].components(separatedBy: ", scope ")[0]
@@ -231,10 +301,15 @@ public enum SILParser {
                     current!.dynamicCallSites = []
                     current!.receiverErrorEffects = []
                     current!.receiverIndirectErrorEffects = []
+                    nilActorValues.removeAll(keepingCapacity: true)
+                    current!.hasModeledDiscoveryInstructions = true
+                    current!.mayDestroyValue = false
                     current!.stateAccesses = []
                     current!.receiverTypeOrigins = []
                     current!.receiverGenericCalls = []
+                    literalMetatypes.removeAll(keepingCapacity: true)
                     directReferences = [:]
+                    pendingFormatters = []; formattingRequirements = []; unknownFormatting = false
                     recentInstructions = []; currentBlock = ""; nilSomePredecessors = [:]; unreachableNilSome = false
                     metatypeInputs = [:]; usedMetatypeInputs = []; headerMetatypeCounts = [:]
                     for type in Self.metatypes(line) {
@@ -253,7 +328,30 @@ public enum SILParser {
                 } else if line.containsASCII("#"), let match = Pattern.groups(Expressions.dispatch, in: line) {
                     let key = match[0].components(separatedBy: "!")[0]
                     tables[key, default: []].insert(match[1])
-                    if let witnessType { tables[key + "@witness:" + witnessType, default: []].insert(match[1]) }
+                    if let classTable {
+                        if match[0] == classTable + ".init!allocator" {
+                            tableInitializers.insert(match[1])
+                        } else if match[0] == classTable + ".deinit!deallocator" {
+                            for initializer in tableInitializers {
+                                deallocators[Allocation(type: classTable, initializer: initializer), default: []].insert(match[1])
+                            }
+                        }
+                    }
+                    // Retain the concrete implementation selected for inherited
+                    // XCTest entries, including methods from another module.
+                    if let classTable, let member = key.split(separator: ".").last, member.hasPrefix("test"),
+                       line.contains(" [inherited]") || line.contains(" [override]") {
+                        tables[SILModule.testVTablePrefix + module + "." + classTable + "." + member, default: []].insert(match[1])
+                    }
+                    if let witnessType {
+                        tables[key + "@witness:" + witnessType, default: []].insert(match[1])
+                        if key == "Trait.scopeProvider", let associatedScope {
+                            tables[SILModule.scopeProviderPrefix + match[1], default: []].insert(associatedScope)
+                        }
+                        if key == "TestScoping.provideScope", let scopeConformance {
+                            tables[scopeConformance, default: []].insert(match[1])
+                        }
+                    }
                 }
                 return
             }
@@ -270,9 +368,23 @@ public enum SILParser {
                     current!.receiverTypeOrigins?.remove("input:" + type)
                 }
                 current!.dynamicDeclarationModules = Dictionary(uniqueKeysWithValues: current!.dynamicDeclarations.map { ($0, [module]) })
+                if !unknownFormatting, pendingFormatters.isEmpty, !formattingRequirements.isEmpty, current!.receiverGenericCalls != nil {
+                    current!.swiftTestingFormattingRequirements = formattingRequirements
+                }
                 current!.compilerReferences = current!.dependencies
-                if let testingFactoryLines, current!.dependencies.contains(where: SwiftTestingFactoryProof.isFactory) {
-                    current!.swiftTestingEmptyFactory = SwiftTestingFactoryProof.emptyFactory(testingFactoryLines)
+                if current!.dependencies.contains(where: SwiftTestingFactoryProof.isFactory) {
+                    let evidence = SwiftTestingFactoryProof.analyze(testingFactoryLines ?? [],
+                        modeledInstructions: current!.hasModeledDiscoveryInstructions == true)
+                    if !evidence.verifiedFactoryCall { current!.hasModeledDiscoveryInstructions = nil }
+                    current!.swiftTestingDiscoveryReferences = current!.dependencies.subtracting(evidence.deferredReferences)
+                    current!.swiftTestingExistentialTypes = evidence.traitTypes
+                    current!.swiftTestingTraitProducers = evidence.traitProducers
+                    if evidence.cleanupIsSDKMetadata { current!.mayDestroyValue = false }
+                    current!.swiftTestingCommentOnlyFactory = evidence.commentOnlyFactory
+                    current!.swiftTestingEmptyFactory = evidence.emptyFactory
+                    current!.swiftTestingDeferredProviderCount = evidence.deferredProviderCount
+                    current!.swiftTestingDeferredConditions = evidence.deferredConditions
+                    current!.swiftTestingFactoryType = evidence.nominalType
                 }
                 functions[current!.id] = current!
                 current = nil
@@ -280,6 +392,24 @@ public enum SILParser {
             }
             if let found = location(line) { addLocation(found) }
             if line.hasPrefix("//") { return }
+            if current!.hasModeledDiscoveryInstructions == true,
+               !SwiftTestingDiscoveryEffects.models(line, directReferences: directReferences, nilActors: &nilActorValues) {
+                current!.hasModeledDiscoveryInstructions = nil
+            }
+            if current!.mayDestroyValue == false && SwiftTestingFactoryProof.isCleanup(line) {
+                current!.mayDestroyValue = true
+            }
+            // A literal class metatype, a direct allocating call and a release of
+            // its exact SSA result can identify a deallocator through that vtable.
+            // Indirect, generic and erased releases keep the normal ARC uncertainty.
+            if line.hasPrefix("strong_release "), recentInstructions.count == 2,
+               let release = Pattern.groups(Expressions.releasedValue, in: line),
+               let call = Pattern.groups(Expressions.allocatingCall, in: recentInstructions[1]),
+               release[0] == call[0], literalMetatypes[call[2]] == call[3],
+               recentInstructions[0].containsASCII(" = function_ref "),
+               let ref = Pattern.groups(Expressions.reference, in: recentInstructions[0]), ref[0] == call[1] {
+                allocationsReleased[current!.id, default: []].insert(Allocation(type: call[3], initializer: ref[1]))
+            }
             if testingFactoryLines != nil {
                 if testingFactoryLines!.count < 1024 { testingFactoryLines!.append(line) }
                 else { testingFactoryLines = nil }
@@ -342,6 +472,9 @@ public enum SILParser {
             }
             if line.containsASCII(" = metatype ") {
                 let types = Self.metatypes(line)
+                if types.count == 1, line.containsASCII(" = metatype $@thick "), let value = line.split(separator: " ").first {
+                    literalMetatypes[String(value)] = types[0]
+                }
                 if types.isEmpty { current!.receiverTypeOrigins = nil }
                 else { current!.receiverTypeOrigins?.formUnion(types.map { "literal:" + $0 }) }
             } else if line.containsASCII("value_metatype ") || line.containsASCII("existential_metatype ") {
@@ -351,6 +484,7 @@ public enum SILParser {
                 knownValues.insert(match[0])
                 current!.dependencies.insert(match[1])
                 directReferences[match[0]] = match[1]
+                if SwiftTestingDiscoveryRoots.isStringFormatting(match[1]) { pendingFormatters.insert(match[0]) }
             }
             if line.containsASCII("apply"), let match = Expressions.genericApply.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) {
                 let text = line as NSString
@@ -367,6 +501,15 @@ public enum SILParser {
                         previous = c
                     }
                     if depth == 0 {
+                        if SwiftTestingDiscoveryRoots.isStringFormatting(symbol) {
+                            pendingFormatters.remove(value)
+                            if let requirement = SwiftTestingDiscoveryRoots.formattingRequirement(symbol),
+                               let genericParameters, !arguments.isEmpty, !arguments.contains("τ_"),
+                               arguments != "Self", !genericParameters.contains(String(arguments.prefix { $0 != "." })),
+                               arguments.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." }) {
+                                formattingRequirements.insert(requirement + "@witness:" + arguments)
+                            } else { unknownFormatting = true }
+                        }
                         let proof = unreachableNilSome && symbol == SDKReceiverContracts.objectBridge ? SDKReceiverContracts.unreachableNil : arguments
                         current!.receiverGenericCalls?.insert(symbol + "\t" + proof)
                         if SDKReceiverContracts.errorFormatting.contains(symbol),

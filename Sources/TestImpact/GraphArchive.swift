@@ -24,13 +24,31 @@ public enum GraphArchive {
         var diagnostics: [String]
         var testDiagnostics: [String: [String]]
         var compilerClassIdentities: [String: CompilerClassIdentity]?
+        var manifestNamedImplementations: Set<String>?
         var compilerImplicitImports: [String: Set<String>]?
         var assertionFormattingSites: [String: Set<String>]?
         var captureModules: [String: Set<String>]?
         var dynamicDeclarationModules: [String: [String: Set<String>]]?
+        var modeledDiscoveryBodies: Set<Int>?
         var nominalTypeContexts: [String: String]?
         /// Optional for archives written before factory-effect evidence existed.
+        var testVTableEntries: [String: Set<String>]?
+        var swiftTestingEntryRoots: [String: [Int]]?
+        var swiftTestingProcessInventoryVersion: Int?
+        var swiftTestingFactoriesByTarget: [String: Set<String>]?
+        var swiftTestingCasesByTarget: [String: Set<XCTestDiscoveryCase>]?
+        var swiftTestingLinkedRecordsVerified: Bool?
+        var swiftTestingRegisteredFactories: [String: Set<String>]?
+        var swiftTestingSuiteWitnesses: [String: Set<String>]?
+        var swiftTestingFormattingRequirements: [String: Set<String>]?
+        var swiftTestingDiscoveryReferences: [String: Set<String>]?
+        var swiftTestingTraitProducers: [String: Set<String>]?
+        var swiftTestingExistentialTypes: [String: Set<String>]?
+        var swiftTestingFactoryTypes: [String: String]?
+        var swiftTestingCommentOnlyFactories: [String: String]?
         var swiftTestingEmptyFactories: [String: String]?
+        var swiftTestingDeferredProviderCounts: [String: Int]?
+        var swiftTestingConditionsByFunction: [String: SwiftTestingFactoryProof.Conditions]?
         init(_ graph: DependencyGraph) {
             var table: [String] = [], ids: [String: Int] = [:]
             func intern(_ s: String) -> Int {
@@ -46,24 +64,44 @@ public enum GraphArchive {
                     row.append(values.count); row += values.sorted().map(intern)
                 }
                 let optionalEvidence = [n.compilerReferences, n.dynamicCallSignatures, n.stateAccesses, n.receiverTypeOrigins, n.receiverGenericCalls, n.dynamicCallSites, n.receiverErrorEffects, n.receiverIndirectErrorEffects]
-                if let last = optionalEvidence.lastIndex(where: { $0 != nil }) {
+                let lastEvidence = n.mayDestroyValue == nil ? optionalEvidence.lastIndex(where: { $0 != nil }) : optionalEvidence.indices.last
+                if let last = lastEvidence {
                     for values in optionalEvidence[...last] {
                         if let values { row.append(values.count); row += values.sorted().map(intern) }
                         else { row.append(-1) }
                     }
                 }
+                if let cleanup = n.mayDestroyValue { row.append(cleanup ? 1 : 0) }
                 words.append(UInt64(row.count).littleEndian)
                 words += row.map { UInt64(bitPattern: Int64($0)).littleEndian }
             }
             nodes = words.withUnsafeBytes { Data($0) }
             tests = graph.tests.mapValues { $0.sorted().map(intern) }
+            swiftTestingEntryRoots = graph.swiftTestingEntryRoots?.mapValues { $0.sorted().map(intern) }
             strings = table; toolchain = graph.toolchain; schema = graph.schemaVersion
             diagnostics = graph.diagnostics; testDiagnostics = graph.testDiagnostics
             compilerClassIdentities = graph.compilerClassIdentities
+            manifestNamedImplementations = graph.manifestNamedImplementations
             compilerImplicitImports = graph.compilerImplicitImports
             assertionFormattingSites = graph.functions.compactMapValues(\.assertionFormattingSites)
+            modeledDiscoveryBodies = Set(graph.functions.values.filter { $0.hasModeledDiscoveryInstructions == true }.map { ids[$0.id]! })
             nominalTypeContexts = graph.functions.compactMapValues(\.nominalTypeContext)
+            testVTableEntries = graph.testVTableEntries
+            swiftTestingProcessInventoryVersion = graph.swiftTestingProcessInventoryVersion
+            swiftTestingFactoriesByTarget = graph.swiftTestingFactoriesByTarget
+            swiftTestingCasesByTarget = graph.swiftTestingCasesByTarget
+            swiftTestingLinkedRecordsVerified = graph.swiftTestingLinkedRecordsVerified
+            swiftTestingRegisteredFactories = graph.swiftTestingRegisteredFactories
+            swiftTestingSuiteWitnesses = graph.swiftTestingSuiteWitnesses
+            swiftTestingFormattingRequirements = graph.functions.compactMapValues(\.swiftTestingFormattingRequirements)
+            swiftTestingDiscoveryReferences = graph.functions.compactMapValues(\.swiftTestingDiscoveryReferences)
+            swiftTestingTraitProducers = graph.functions.compactMapValues(\.swiftTestingTraitProducers)
+            swiftTestingExistentialTypes = graph.functions.compactMapValues(\.swiftTestingExistentialTypes)
+            swiftTestingFactoryTypes = graph.functions.compactMapValues(\.swiftTestingFactoryType)
+            swiftTestingCommentOnlyFactories = graph.functions.compactMapValues(\.swiftTestingCommentOnlyFactory)
             swiftTestingEmptyFactories = graph.functions.compactMapValues(\.swiftTestingEmptyFactory)
+            swiftTestingDeferredProviderCounts = graph.functions.compactMapValues(\.swiftTestingDeferredProviderCount)
+            swiftTestingConditionsByFunction = graph.functions.compactMapValues(\.swiftTestingDeferredConditions)
             captureModules = graph.functions.compactMapValues(\.captureModules)
             dynamicDeclarationModules = graph.functions.compactMapValues(\.dynamicDeclarationModules)
         }
@@ -74,7 +112,15 @@ public enum GraphArchive {
             }
             var graph = DependencyGraph(toolchain: toolchain, diagnostics: diagnostics)
             graph.schemaVersion = schema; graph.testDiagnostics = testDiagnostics
+            graph.testVTableEntries = testVTableEntries
+            graph.swiftTestingProcessInventoryVersion = swiftTestingProcessInventoryVersion
+            graph.swiftTestingFactoriesByTarget = swiftTestingFactoriesByTarget
+            graph.swiftTestingCasesByTarget = swiftTestingCasesByTarget
+            graph.swiftTestingLinkedRecordsVerified = swiftTestingLinkedRecordsVerified
+            graph.swiftTestingRegisteredFactories = swiftTestingRegisteredFactories
+            graph.swiftTestingSuiteWitnesses = swiftTestingSuiteWitnesses
             graph.compilerClassIdentities = compilerClassIdentities
+            graph.manifestNamedImplementations = manifestNamedImplementations
             graph.compilerImplicitImports = compilerImplicitImports
             guard nodes.count.isMultiple(of: 8) else { throw ImpactError("Truncated compact graph integers") }
             let words: [Int] = nodes.withUnsafeBytes { bytes in
@@ -135,15 +181,33 @@ public enum GraphArchive {
                     if row[cursor] == -1 { cursor += 1 }
                     else { node.receiverErrorEffects = try values() }
                 }
-                if cursor < row.count { node.receiverIndirectErrorEffects = try values() }
+                if cursor < row.count {
+                    if row[cursor] == -1 { cursor += 1 }
+                    else { node.receiverIndirectErrorEffects = try values() }
+                }
+                if cursor < row.count {
+                    guard row[cursor] == 0 || row[cursor] == 1 else { throw ImpactError("Invalid compact graph lifetime flag") }
+                    node.mayDestroyValue = row[cursor] == 1
+                    cursor += 1
+                }
                 guard cursor == row.count, graph.functions[node.id] == nil else { throw ImpactError("Invalid compact graph node record") }
+                if modeledDiscoveryBodies?.contains(row[0]) == true { node.hasModeledDiscoveryInstructions = true }
                 node.nominalTypeContext = nominalTypeContexts?[node.id]
+                node.swiftTestingFormattingRequirements = swiftTestingFormattingRequirements?[node.id]
+                node.swiftTestingDiscoveryReferences = swiftTestingDiscoveryReferences?[node.id]
+                node.swiftTestingTraitProducers = swiftTestingTraitProducers?[node.id]
+                node.swiftTestingExistentialTypes = swiftTestingExistentialTypes?[node.id]
+                node.swiftTestingFactoryType = swiftTestingFactoryTypes?[node.id]
+                node.swiftTestingCommentOnlyFactory = swiftTestingCommentOnlyFactories?[node.id]
                 node.swiftTestingEmptyFactory = swiftTestingEmptyFactories?[node.id]
+                node.swiftTestingDeferredProviderCount = swiftTestingDeferredProviderCounts?[node.id]
+                node.swiftTestingDeferredConditions = swiftTestingConditionsByFunction?[node.id]
                 node.captureModules = captureModules?[node.id]
                 node.assertionFormattingSites = assertionFormattingSites?[node.id]
                 node.dynamicDeclarationModules = dynamicDeclarationModules?[node.id]
                 graph.functions[node.id] = node
             }
+            graph.swiftTestingEntryRoots = try swiftTestingEntryRoots?.mapValues { try Set($0.map(string)) }
             graph.tests = try tests.mapValues { try Set($0.map(string)) }
             return graph
         }
@@ -163,8 +227,21 @@ public enum GraphArchive {
         let payload = try encoder.encode(envelope)
         return magic + Data(XcodeGraphCache.digest(payload).utf8) + payload
     }
+    private static func upgradeDiscovery(_ snapshot: inout XcodeTestGraph) {
+        guard var graph = snapshot.dependencies, !graph.tests.isEmpty else { return }
+        SwiftTestingDiscoveryRoots.restore(modules: snapshot.modules, sources: snapshot.comparisonGraph.sources, graph: &graph)
+        snapshot.dependencies = graph
+    }
+
     static func decodeValue<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-        guard data.starts(with: magic) else { return try JSONDecoder().decode(type, from: data) }
+        guard data.starts(with: magic) else {
+            if type == XcodeTestGraph.self {
+                var graph = try JSONDecoder().decode(XcodeTestGraph.self, from: data)
+                upgradeDiscovery(&graph)
+                return graph as! T
+            }
+            return try JSONDecoder().decode(type, from: data)
+        }
         guard data.count >= magic.count + 64 else { throw ImpactError("Truncated compact graph") }
         let payload = data.dropFirst(magic.count + 64)
         guard String(decoding: data.dropFirst(magic.count).prefix(64), as: UTF8.self) == XcodeGraphCache.digest(payload) else {
@@ -174,6 +251,7 @@ public enum GraphArchive {
         if type == XcodeTestGraph.self {
             var graph = try JSONDecoder().decode(XcodeTestGraph.self, from: envelope.metadata)
             graph.dependencies = try envelope.graph?.unpack()
+            upgradeDiscovery(&graph)
             return graph as! T
         }
         if type == SILModule.self, let packed = envelope.graph, let dispatch = envelope.dispatch {

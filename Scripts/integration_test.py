@@ -101,4 +101,39 @@ with tempfile.TemporaryDirectory(prefix="swift-impact-integration-") as director
     assert dot.startswith("digraph TestImpact") and "calculateTax" in dot
     print("PASS Graphviz export", flush=True)
 
+    # SwiftPM compiles this file into Shop despite its manifest-like basename.
+    run(["git", "restore", "."], work)
+    (work / "Sources/Shop/NewFile.swift").unlink()
+    named = work / "Sources/Shop/Package.swift"
+    named.write_text("public func unusedNewFunction() -> Int { 42 }\n")
+    for state in ["untracked", "staged", "deleted"]:
+        if state == "staged":
+            run(["git", "add", named], work)
+        if state == "deleted":
+            run(["git", "-c", "user.name=Integration Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "Add unused source"], work)
+            named.unlink()
+        report, _ = select()
+        assert not report["selectedTests"] and not report["fullRunReasons"], (state, report)
+        assert any("unusedNewFunction" in name for name in report["unreferencedChanges"]), report
+    run(["git", "add", "-u"], work)
+    run(["git", "mv", "Sources/Shop/Checkout.swift", "Sources/Shop/Package.swift"], work)
+    template = '\npublic let manifestTemplate = """\n// swift-tools-version: 6.0\nimport PackageDescription\n"""\n'
+    named.write_text("import Dispatch\n" + original + template)
+    run(["git", "add", named], work)
+    run(["git", "-c", "user.name=Integration Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "Rename source"], work)
+    named.write_text("import Dispatch\n" + original.replace("amount / 10", "amount / 5") + template)
+    report, _ = select()
+    assert report["selectedTests"] == expected and not report["fullRunReasons"], report
+    # SwiftPM also accepts a tools-version line embedded in a string in a real
+    # manifest. This source is both compiled by Shop and loadable as a package.
+    dual = template + "\n#if canImport(PackageDescription)\nimport PackageDescription\nlet package = Package(name: \"Nested\")\n#else\n" + original + "#endif\n"
+    named.write_text(dual)
+    assert json.loads(run(["swift", "package", "--package-path", named.parent, "dump-package"], work).stdout)["name"] == "Nested"
+    run(["git", "add", named], work)
+    run(["git", "-c", "user.name=Integration Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "Compile a dual-role manifest"], work)
+    named.write_text(dual.replace("amount / 10", "amount / 5"))
+    report, _ = select()
+    assert len(report["selectedTests"]) == 5 and report["fullRunReasons"], report
+    print("PASS compiled Package.swift: selected only the three callers of the edited function", flush=True)
+
 print("All integration checks passed.", flush=True)

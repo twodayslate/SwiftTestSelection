@@ -31,7 +31,7 @@ extension XcodeAnalysis {
         guard let proof = artifact.headOnlyBuildEvidence, proof.matches(artifact) else {
             throw ImpactError("Saved graph lacks matching head-only build evidence; capture again with --head-only and --retain-build")
         }
-        var current = headGraph
+        var current = headGraph.comparisonGraph
         if let bindingReviews {
             guard current.mappings != nil else { throw ImpactError("Binding reviews require the captured mapping policy") }
             current.mappings!.helperBindingContracts = bindingReviews
@@ -41,6 +41,7 @@ extension XcodeAnalysis {
         let cache = try XcodeBaseSourceCache(root: root, base: comparison.base)
         var events: [XcodeAnalysisEvent] = []
         let sourceStart = AnalysisMeasurement()
+        try current.refreshLegacyComparisonSyntax(paths: Set(changes.map(\.path)), revision: artifact.revision, root: root)
         let source = try XcodeHeadOnlySources.read(current: current, changes: changes, base: comparison.base,
             root: root, mappingPath: options.mappingsPath, cache: cache)
         events.append(sourceStart.event("baseSourceSyntax", revision: comparison.base))
@@ -77,5 +78,101 @@ extension XcodeAnalysis {
         }
         selectionGraphObserver?(current)
         return report
+    }
+}
+
+extension XcodeTestGraph {
+    /// Comparisons need the same syntax representation on both sides. Older
+    /// captures lack conditional membership (before v5) or physical caller
+    /// coordinates (before v11), or missed equivalent @Test spellings (before
+    /// v28), implicit interpolation calls (before v29), or result-builder sites
+    /// (before v30). Before v32 key-path subscripts and calls with only trailing
+    /// closures omitted the location supplying their defaults. Recover source facts
+    /// only from the authenticated Git blob.
+    mutating func refreshLegacyComparisonSyntax(paths: Set<String>, revision: String, root: URL) throws {
+        var cache: XcodeBaseSourceCache?
+        let comparingSwift = paths.contains { $0.hasSuffix(".swift") }
+        for (key, var archived) in sources {
+            guard let version = archived.parserVersion, version <= SwiftSourceSnapshot.currentParserVersion,
+                  version < SwiftSourceSnapshot.currentParserVersion || archived.macroInputVersion != AttachedMacroInputs.version || archived.attachedAttributeInputs == nil || archived.units.contains(where: { $0.builderLocations == nil }),
+                  let blobs = archived.sourceBlobIDs, !blobs.isEmpty,
+                  let id = archived.sourceIdentity(storedAs: key) else { continue }
+            let touched = paths.contains(id.path)
+            // An unchanged declaration can supply a default to a changed builder
+            // body elsewhere. Authenticate the defining file before narrowing its scope.
+            if !touched {
+                guard comparingSwift, version < 38,
+                      archived.units.contains(where: { unit in
+                          !unit.scope.isEmpty && unit.locationDefaultNames?.isEmpty == false
+                      }) else { continue }
+            }
+            if cache == nil { cache = try XcodeBaseSourceCache(root: root, base: revision) }
+            guard let parsed = try cache?.snapshot(path: id.path, module: id.module),
+                  parsed.diagnostics.isEmpty, let parsedBlobs = parsed.sourceBlobIDs, !blobs.isDisjoint(with: parsedBlobs) else { continue }
+            let regions = Dictionary(grouping: parsed.units.indices, by: { parsed.units[$0].region })
+            if touched {
+                archived.ordinaryManifestNamedSource = parsed.ordinaryManifestNamedSource
+                // Git authenticates declaration text, but cannot reconstruct which
+                // imported macro implementations participated in the archived build.
+                if archived.usesUnmodeledMacroPlugin == nil && (archived.attachedAttributeInputs == nil ||
+                    (archived.macroInputVersion != AttachedMacroInputs.version && parsed.attachedAttributeInputs?.isEmpty == false)) {
+                    archived.usesUnmodeledMacroPlugin = true
+                }
+                archived.macroInputVersion = parsed.macroInputVersion
+                archived.ordinaryMacroImports = parsed.ordinaryMacroImports
+                archived.attachedAttributeInputs = parsed.attachedAttributeInputs
+            }
+            var matched = Set<Int>()
+            var restoredInvocations = true
+            var unitMatches = Set<Int>()
+            for index in archived.units.indices {
+                let unit = archived.units[index]
+                let refreshCalls = unit.needsCallerLocationRefresh(version: version, verifiedInterpolation: archived.hasVerifiedInterpolationLocations == true)
+                let matches = regions[unit.region]?.filter { parsed.units[$0].key == unit.key && parsed.units[$0].scope == unit.scope }
+                guard let matches, matches.count == 1, let match = matches.first else {
+                    if refreshCalls { restoredInvocations = false }
+                    continue
+                }
+                let native = parsed.units[match]
+                unitMatches.insert(match)
+                if native.locationDefaultNames == unit.locationDefaultNames, native.locationDefaultKinds == unit.locationDefaultKinds {
+                    archived.units[index].privateLocationDefaultScope = native.privateLocationDefaultScope
+                }
+                guard touched else { continue }
+                archived.units[index].builderLocations = native.builderLocations
+                // Through v45, invocation digests included closing parentheses.
+                // Compare authenticated calls using the same location rules on both sides.
+                if version < 46 {
+                    archived.units[index].callerLocations = native.callerLocations
+                }
+                if version < 11 {
+                    archived.units[index].conditionalBranch = native.conditionalBranch
+                    matched.insert(match)
+                }
+                if refreshCalls {
+                    archived.units[index].swiftTestingArguments = native.swiftTestingArguments
+                    archived.units[index].invocationNames = native.invocationNames
+                    archived.units[index].hasOnlyDirectSourceCalls = native.hasOnlyDirectSourceCalls
+                }
+                if unit.swiftTestingEntryInputs?.bare == true, unit.swiftTestingRegistrationDeclaration == nil {
+                    archived.units[index].swiftTestingRegistrationDeclaration = native.swiftTestingRegistrationDeclaration
+                    archived.units[index].swiftTestingBodyCandidate = native.swiftTestingBodyCandidate
+                }
+            }
+            // A missing or differently grouped consumer could use a scoped
+            // default from outside the archive's recorded lexical boundary.
+            if unitMatches.count != parsed.units.count || unitMatches.count != archived.units.count {
+                for index in archived.units.indices {
+                    archived.units[index].privateLocationDefaultScope = nil
+                    if touched { archived.units[index].builderLocations = nil }
+                }
+            }
+            if !touched { sources[key] = archived; continue }
+            archived.hasVerifiedInvocationLocations = restoredInvocations
+            if version < 5, matched.count == parsed.units.count, matched.count == archived.units.count {
+                archived.hasVerifiedConditionalMembership = true
+            }
+            sources[key] = archived
+        }
     }
 }

@@ -19,6 +19,7 @@ public struct XcodeBuildArtifact: Codable, Sendable {
     public var productsDirectory: String
     public var xctestrun: String
     public var products: [String: String]
+    var macroDeclarations: CompilerMacroDeclarations? = nil
     public var helperBindingBuildFailure: String? = nil
     public var headOnlyBuildEvidence: HeadOnlyBuildEvidence? = nil
     public var helperBindingBuild: HelperBindingBuildEvidence? = nil
@@ -81,7 +82,7 @@ extension XcodeAnalysis {
         try cache?.resetWork()
         defer { if let cache { try? FileManager.default.removeItem(at: cache.work) } }
         var identity = try artifactContext(root: root)
-        identity["schema"] = "existing-build-discovery-1"
+        identity["schema"] = "existing-build-discovery-11"
         identity["revision"] = revision
         identity["sourceRoot"] = root.path
         identity["productsRoot"] = products.path
@@ -156,7 +157,11 @@ extension XcodeAnalysis {
         }
         try validateMappings(in: headGraph, revision: comparison.head!)
         let changes = try GitChanges.readComparison(base: comparison.base, head: comparison.head, at: root)
-        var report = XcodeSelector.select(current: headGraph, previous: baseGraph, changes: changes, baseRevision: comparison.base)
+        let paths = Set(changes.flatMap(\.paths))
+        var previous = baseGraph.comparisonGraph, current = headGraph.comparisonGraph
+        try previous.refreshLegacyComparisonSyntax(paths: paths, revision: old.revision, root: root)
+        try current.refreshLegacyComparisonSyntax(paths: paths, revision: new.revision, root: root)
+        var report = XcodeSelector.select(current: current, previous: previous, changes: changes, baseRevision: comparison.base)
         report.headRevision = comparison.head
         report.buildArtifactID = new.id
         report.comparisonMode = comparison.mode
@@ -165,7 +170,7 @@ extension XcodeAnalysis {
             report.onlyTestingArguments = report.selectedTests.map { "-only-testing:" + $0 }
             report.explanations += report.selectedTests.map { TestExplanation(test: $0, reason: "Full suite explicitly requested", revision: "head", path: [], kind: "fullSuite") }
         }
-        selectionGraphObserver?(headGraph)
+        selectionGraphObserver?(current)
         return report
     }
 

@@ -44,7 +44,18 @@ extension XcodeHeadOnlySelector {
         let digestCache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
         let sourceCache = try sourceCache ?? XcodeBaseSourceCache(root: root, base: baseRevision)
         try sourceCache.validate(root: root, base: baseRevision)
-        let changedPaths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+        let changedPaths = Set(changes.flatMap(\.paths))
+        let namedSources = current.manifestNamedImplementations(in: current.sources).intersection(changedPaths)
+        var confirmed = Set<String>()
+        for path in namedSources {
+            if let base = try sourceCache.content(path: path), let text = String(data: base, encoding: .utf8),
+               SwiftPackageManifest.isCompiledSourceOnly(path, text: text) { confirmed.insert(path) }
+        }
+        confirmed = FileChange.confirmedImplementations(base: confirmed, head: namedSources, changes: changes)
+        let compiledSources = Set(current.targets.flatMap { target -> [String] in
+            guard let module = current.modules[target.name] else { return [] }
+            return target.sourceFiles.filter { FileChange.isSwiftImplementation($0, confirmed: confirmed) && current.sources[module + ":" + $0] != nil }
+        })
         return try requests.scopes.map { scope in
             guard Set(scope.paths).isSubset(of: changedPaths), Set(scope.excludedTestEntries).isSubset(of: Set(current.tests)) else {
                 throw ImpactError("Selection scope contains paths outside the review diff or unknown tests: \(scope.name)")
@@ -53,7 +64,20 @@ extension XcodeHeadOnlySelector {
             let filtered = changes.filter { paths.contains($0.path) || ($0.previousPath.map(paths.contains) ?? false) }
             // Derive evidence independently, sharing only immutable reads/parses.
             let sourceStart = AnalysisMeasurement()
-            let source = try XcodeHeadOnlySources.read(current: current, changes: filtered, base: baseRevision, root: root, mappingPath: mappingPath, cache: sourceCache)
+            let selectedPaths = Set(filtered.flatMap(\.paths))
+            let omittedInputs = changedPaths.subtracting(selectedPaths).subtracting(documentation)
+            // An omitted input is eligible for the historical source audit only
+            // when the compiler captured its implementation. Manifests and scripts
+            // can change the compiler invocation even when written in Swift.
+            let onlyCompiledInputsOmitted = omittedInputs.isSubset(of: compiledSources)
+            var source = try XcodeHeadOnlySources.read(current: current, changes: filtered, base: baseRevision, root: root,
+                mappingPath: mappingPath, cache: sourceCache, allowHistoricalCallerProofs: onlyCompiledInputsOmitted)
+            if !onlyCompiledInputsOmitted {
+                // A binary module or build setting outside the scope can remove
+                // a historical macro while leaving the import spelling unchanged.
+                source.uncertainMacroImports.formUnion(selectedPaths)
+            }
+            source.unverifiedScopedProcesses = processesAffectedByOmittedInputs(omittedInputs, in: current)
             measurement(sourceStart.event("scopeSourceSyntax", revision: baseRevision, detail: scope.name, parent: "selectionScopes"))
             let selectionStart = AnalysisMeasurement()
             var report = select(current: current, source: source, changes: filtered, baseRevision: baseRevision,
@@ -71,22 +95,46 @@ extension XcodeHeadOnlySelector {
         }
     }
 
+    /// A head binary cannot establish what a changed test bundle used to load.
+    /// A production or unowned input may have contributed to any linked image.
+    private static func processesAffectedByOmittedInputs(_ paths: Set<String>, in current: XcodeTestGraph) -> Set<String> {
+        guard !paths.isEmpty, let inventories = current.dependencies?.swiftTestingFactoriesByTarget,
+              !inventories.isEmpty else { return [] }
+        var testInputs = Set<String>(), processes = Set<String>()
+        for target in current.targets {
+            let overlap = paths.intersection(target.sourceFiles)
+            guard !overlap.isEmpty else { continue }
+            guard target.isTest else { return Set(inventories.keys) }
+            testInputs.formUnion(overlap)
+            if inventories[target.name] != nil { processes.insert(target.name) }
+        }
+        return testInputs == paths ? processes : Set(inventories.keys)
+    }
+
     static func independentEntryKeys(current: XcodeTestGraph, excluding entries: Set<String>, index: DependencyIndex? = nil) -> Set<String> {
         guard !entries.isEmpty, let graph = current.dependencies else { return [] }
-        // Missing roots and incomplete lifecycle bindings hide possible callers.
-        // Keep the change roots so normal selection reports that uncertainty;
-        // absence of a path in a partial test inventory cannot prove isolation.
-        guard current.tests.allSatisfy({ test in
-            guard let roots = graph.tests[test], !roots.isEmpty,
-                  graph.testDiagnostics[test]?.isEmpty ?? true else { return false }
-            return roots.allSatisfy { graph.functions[$0] != nil }
-        }) else { return [] }
+        // A bound Swift Testing factory can hide per-test runtime callbacks.
+        // Retain those entries as possible consumers when using an exclusion.
+        // Missing symbols, ambiguous discovery, or unknown lifecycle roots can
+        // obscure intermediate call paths as well and still block exclusions.
+        var uncertain = Set<String>()
+        for test in current.tests {
+            let roots = graph.tests[test] ?? []
+            guard !roots.isEmpty, roots.allSatisfy({ graph.functions[$0] != nil }) else { return [] }
+            let diagnostics = graph.testDiagnostics[test] ?? []
+            guard diagnostics.allSatisfy({ SwiftTestingDiscoveryRoots.runtimeDiagnostics.contains($0) ||
+                ($0 == SwiftTestingDiscoveryRoots.unresolvedEffects && roots.contains(SwiftTestingDiscoveryRoots.sharedDiscoveryID)) }) else { return [] }
+            if !diagnostics.isEmpty { uncertain.insert(test) }
+        }
+        let entries = entries.subtracting(uncertain)
+        guard !entries.isEmpty else { return [] }
         // Restrict expensive ownership/reachability checks to locations of the
         // requested entries, rather than scanning every test body in the graph.
         let regions = Dictionary(grouping: entries.flatMap { graph.tests[$0] ?? [] }
             .flatMap { graph.functions[$0]?.regions ?? [] }, by: \.path)
+        let physicalModules = current.modulesWithPhysicalSourceLocations
         let candidates = current.sources.values.flatMap(\.units).filter { unit in
-            unit.kind == "function" && (regions[unit.region.path] ?? []).contains {
+            unit.kind == "function" && !unit.hasUnverifiedCompilerLocation(in: physicalModules) && (regions[unit.region.path] ?? []).contains {
                 $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine
             }
         }

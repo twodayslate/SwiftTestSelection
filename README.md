@@ -5,10 +5,19 @@ Select Swift tests from a Git diff and a compiler-derived dependency graph. **No
 A Swift package providing a `swift-test-impact` executable and reusable `TestImpact` library. SwiftPM packages use a function dependency graph with XCTest and Swift Testing discovery. Xcode projects/workspaces select individual XCTest and Swift Testing entries through syntax and compiler dependencies, with explicit feature mappings for UI tests. It is experimental static analysis, not a guarantee of the smallest safe test set.
 
 Xcode discovery preserves exact identifiers for top-level, nested, static and
-parameterized Swift Testing entries. Captured test factories contribute argument
-providers and test traits; suite factories are conservatively shared across their
-module's Swift Testing entries. Runtime trait/scoping callbacks and generic
-argument iteration retain fallback; factory references do not prove their effects.
+parameterized Swift Testing entries. Swift Testing constructs traits before filtering
+tests, so selection shares discovery-time dependencies across captured modules.
+Both Xcode selection modes compare registration inputs independently of test-body
+edits, including comments and source locations exposed through `Test.current`.
+Under the default location policy, moving a call inside a discovery helper can
+affect selection even when its callee comes from a precompiled module. Literal
+display names, capture-free argument providers, and SDK `.enabled(if:)` and
+`.disabled(if:)` predicates stay with their entry when source and compiled
+factory evidence establish their scope. Suite-trait and scoping callbacks follow the suite's declaring
+module, including tests added in an extension from another module. Custom traits and
+generic argument iteration retain fallback. A plain test on a top-level value
+type can rule out an unrelated suite's traits when the SDK factory metatypes and
+the compiler's test-method owner agree.
 Switching test frameworks does not reveal cross-process app dependencies.
 See [current support and runner-validation limits](Documentation/OpenIssuesFollowup.md).
 
@@ -438,6 +447,12 @@ dependency edges do not prove the selected declaration or omitted argument slots
 expressions and parenthesized/arithmetic defaults retain their evaluated location;
 `#sourceLocation` adjusts presumed file/line values, and `#column` tracks its own
 expression position.
+
+Result builders can pass a statement's location to an implicit call such as
+`buildExpression(_:line:)`. Both Xcode selectors compare locations inside
+builder bodies, including closures and inferred protocol witnesses. An opaque
+builder implementation retains every location dimension allowed by the policy.
+Saved head-only graphs can recover missing positions from matching Git bytes.
 
 By default, actual location-value changes remain semantic. Choose a policy in
 `.swift-test-selection.json` only when the values it ignores are diagnostic and
@@ -1031,7 +1046,7 @@ A change inside `calculateTax` selects the three tax/checkout tests. Neither gre
 ## How SwiftPM analysis works
 
 1. Build the current package and test targets in `.build/test-impact`, a separate scratch directory.
-2. Read SwiftPM's compiler invocations and replay each root-package Swift target with `-emit-sil -whole-module-optimization -Onone -g`, reusing SDKs, search paths, defines, and plugin arguments.
+2. Read the native SwiftPM build engine’s compiler invocations and replay each root-package Swift target with `-emit-sil -whole-module-optimization -Onone -g`, reusing SDKs, search paths, defines, and plugin arguments.
 3. Parse SIL function references, closure references, debug locations, and dispatch-table relationships. Function values passed as callbacks are retained conservatively, even without an immediate call.
 4. Discover identifiers with `swift test list` and associate them with compiled functions. User-defined setup, teardown, and initialization hooks are included conservatively across their test module.
 5. Export the base Git revision to a temporary directory and repeat the analysis. The user's checkout is never switched or reset. Temporary files are removed afterward.
@@ -1949,8 +1964,9 @@ contract as surviving entries. The primary report still includes new tests;
 exclusion only changes the scoped roots, so a new test can still be selected as a
 consumer of a changed helper. Deletions, renames, ambiguous names, nonfinal classes,
 and macro/attribute uncertainty retain their structural fallbacks.
-Missing test roots or unresolved lifecycle bindings prevent independence from being
-proven, so those entries remain change roots and unresolved tests stay selected.
+Missing compiler roots and unresolved lifecycle bindings prevent exclusions.
+When the only uncertainty belongs to bound Swift Testing factories, a scope may
+exclude a separately executed entry and retain each unresolved runtime consumer.
 Only provide entries your policy already executes. This does not exclude helpers,
 lifecycle methods, resources, or global build/graph uncertainty. Validate scope
 identity and candidates against the primary report, and use `verify-build` before

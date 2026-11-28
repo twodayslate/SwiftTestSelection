@@ -8,8 +8,11 @@ public enum XcodeFineSelector {
         let mappingFilePresent = current.mappings != nil
         let headInline = InlineUIMappings.resolve(current)
         let baseInline = previous.map(InlineUIMappings.resolve)
-        let current = headInline.applying(to: current)
-        let previous = previous.map { baseInline!.applying(to: $0) }
+        var current = headInline.applying(to: current)
+        var previous = previous.map { baseInline!.applying(to: $0) }
+        if previous != nil {
+            IndexedActorLocations.compare(base: &previous!.sources, head: &current.sources, paths: Set(changes.flatMap(\.paths)))
+        }
         let inventory = Set(current.tests)
         let uiTargets = Set(current.targets.filter(\.isUITest).map(\.name))
         let uiTests = inventory.filter { uiTargets.contains(target(of: $0)) }
@@ -68,25 +71,19 @@ public enum XcodeFineSelector {
         }
         // Both revisions must opt into treating source locations as diagnostics.
         // Explicit macro/directive syntax remains executable under either policy.
-        let locationPolicy: UIFeatureMappings.SourceLocationPolicy
-        if let head = current.mappings, let base = previous?.mappings,
-           let policy = head.sourceLocationPolicy, base.sourceLocationPolicy == policy,
-           (try? head.validate()) != nil, (try? base.validate()) != nil {
-            locationPolicy = policy
-        } else {
-            locationPolicy = .semantic
-        }
-        func fingerprint(_ unit: SourceUnit) -> String {
-            switch locationPolicy {
-            case .semantic: return unit.fingerprint
-            case .diagnostic: return unit.syntaxFingerprint ?? unit.fingerprint
-            case .diagnosticLineColumn:
-                guard let files = unit.fileLocationValues else { return unit.fingerprint }
-                return SourceUnit.withLocations(files, syntax: unit.syntaxFingerprint ?? unit.fingerprint)
-            }
-        }
-        let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.units) ?? [], by: \.key)
-        let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.units), by: \.key)
+        let locationPolicy = UIFeatureMappings.SourceLocationPolicy.agreed(head: current.mappings, base: previous?.mappings)
+        let touchedPaths = Set(changes.flatMap(\.paths))
+        let macroPaths = AttachedMacroInputs.changedPaths(base: previous?.sources ?? [:], head: current.sources, touching: touchedPaths)
+        if !macroPaths.isEmpty { fallback("attached_macro_inputs", AttachedMacroInputs.reason(macroPaths)) }
+        let builders = ResultBuilderLocations(policy: locationPolicy, sources: [current.sources, previous?.sources ?? [:]],
+            modules: Set(current.modules.values).intersection(previous.map { Set($0.modules.values) } ?? []),
+            incompleteInputs: current.hasUninspectedBuilderInputs || previous?.hasUninspectedBuilderInputs == true, touching: touchedPaths)
+        // The module, path and source bytes completely determine source positions.
+        // On identical inputs a parser upgrade can change the encoding of those
+        // positions, but cannot change the values observed by the running code.
+        let identicalSourceFiles = previous.map { SwiftSourceSnapshot.identicalPositionInputs($0.sources, current.sources) } ?? []
+        let oldUnits = Dictionary(grouping: previous?.sources.values.flatMap(\.comparisonUnits) ?? [], by: \.key)
+        let newUnits = Dictionary(grouping: current.sources.values.flatMap(\.comparisonUnits), by: \.key)
         let sourceUnits: [SourceUnit] = oldUnits.values.flatMap { $0 } + newUnits.values.flatMap { $0 }
         let missingCallerMetadata = sourceUnits.contains { unit in
             unit.locationDefaultKinds == nil || unit.callerLocations == nil ||
@@ -104,20 +101,99 @@ public enum XcodeFineSelector {
         // and dependency edges can both stay identical while that value changes.
         // Match source invocations as well as compiler edges: transparent helpers
         // and enum constructors can lose their call edges even under -Onone.
-        let callerKinds = locationPolicy == .diagnostic ? [:] : callerLocationKinds(current)
-            .merging(previous.map(callerLocationKinds) ?? [:], uniquingKeysWith: { $0.union($1) })
+        let legacyCallerLocationPaths = locationPolicy == .diagnostic ? [] :
+            SwiftSourceSnapshot.legacyCallerLocationPaths(in: current.sources, touching: touchedPaths)
+                .union(SwiftSourceSnapshot.legacyCallerLocationPaths(in: previous?.sources ?? [:], touching: touchedPaths))
+        if !builders.incompletePaths.isEmpty {
+            fallback("incomplete_caller_locations", "Saved snapshots lack result-builder locations for " + builders.incompletePaths.sorted().joined(separator: ", ") + ". Regenerate both graphs.")
+        }
+        if !legacyCallerLocationPaths.isEmpty {
+            fallback("incomplete_caller_locations", "Saved snapshots lack invocation locations for " + legacyCallerLocationPaths.sorted().joined(separator: ", ") + ". Regenerate both graphs.")
+        }
+        let headEffects = SwiftTestingSourceEffects(current, touching: touchedPaths)
+        let baseEffects = previous.map { SwiftTestingSourceEffects($0, touching: touchedPaths) }
+        let callerKinds = locationPolicy == .diagnostic ? [:] : callerLocationKinds(current, units: newUnits.values.flatMap { $0 }, effects: headEffects)
+            .merging(previous.map { callerLocationKinds($0, units: oldUnits.values.flatMap { $0 }, effects: baseEffects!) } ?? [:], uniquingKeysWith: { $0.union($1) })
         func comparisonFingerprint(_ unit: SourceUnit) -> String {
-            var kinds = callerKinds[unit.key] ?? []
+            let syntax = unit.comparisonFingerprint(locationPolicy)
+            if identicalSourceFiles.contains(unit.qualifiedSourcePath) { return syntax }
+            let fingerprint = syntax + unit.builderFingerprint(builders.kinds[unit])
+            var kinds = callerKinds[.init(unit)] ?? []
             if locationPolicy == .diagnosticLineColumn { kinds.subtract(["line", "column"]) }
-            guard !kinds.isEmpty else { return fingerprint(unit) }
-            return fingerprint(unit) + "@caller[" + kinds.sorted().map { kind in
+            guard !kinds.isEmpty else { return fingerprint }
+            return fingerprint + "@caller[" + kinds.sorted().map { kind in
                 let value = unit.callerLocations.map { $0[kind] ?? "" }
                 return kind + ":" + (value ?? "unknown:" + unit.region.path + ":" + String(unit.region.startLine))
             }.joined(separator: "|") + "]"
         }
+        let legacyConditionalPaths = SwiftSourceSnapshot.legacyConditionalPaths(in: current.sources, touching: touchedPaths)
+            .union(SwiftSourceSnapshot.legacyConditionalPaths(in: previous?.sources ?? [:], touching: touchedPaths))
+        if !legacyConditionalPaths.isEmpty {
+            fallback("incomplete_conditional_metadata", "Saved snapshots lack conditional branch membership for " + legacyConditionalPaths.sorted().joined(separator: ", ") + ". Regenerate both graphs.")
+        }
+        struct Alternative: Hashable {
+            let path: String
+            let branch: String?
+        }
+        var movedPaths: [String: String] = [:]
+        var renameOrigins: [String: String] = [:]
+        for change in changes {
+            guard let before = change.previousPath else { continue }
+            if change.isPureMove {
+                movedPaths[before] = change.path
+            } else if newUnitsByFile[before] == nil && oldUnitsByFile[change.path] == nil {
+                renameOrigins[before] = before
+                renameOrigins[change.path] = before
+            }
+        }
+        // An archive comparison may have no Git rename record, or the move may
+        // include trivia edits. Pair only whole files with the same declarations,
+        // module ownership, and source order. Caller locations still compare below.
+        var displacedPaths = touchedPaths.filter { path in
+            (oldUnitsByFile[path] == nil) != (newUnitsByFile[path] == nil)
+        }
+        for (key, old) in oldUnits where old.count == 1 {
+            guard let new = newUnits[key], new.count == 1 else { continue }
+            let before = old[0].region.path, after = new[0].region.path
+            if before != after && movedPaths[before] != after {
+                displacedPaths.insert(before)
+                displacedPaths.insert(after)
+            }
+        }
+        if let previous, !displacedPaths.isEmpty {
+            let removed = filesBySyntax(previous.sources, paths: displacedPaths.subtracting(movedPaths.keys), renameOrigins: renameOrigins)
+            let added = filesBySyntax(current.sources, paths: displacedPaths.subtracting(movedPaths.values), renameOrigins: renameOrigins)
+            for (syntax, before) in removed where before.count == 1 {
+                if let after = added[syntax], after.count == 1 { movedPaths[before[0]] = after[0] }
+            }
+        }
+        let registrations = SwiftTestingRegistrationComparison(before: oldUnits, after: newUnits,
+            baseSources: previous?.sources ?? [:], base: previous, head: current, moves: movedPaths,
+            touching: touchedPaths, policy: locationPolicy)
+        include(registrations.suiteTests, kind: "dependency", reason: "Swift Testing suite metadata changed", revision: "base/head")
+        if !registrations.uncertainSuiteTests.isEmpty {
+            fallback("unresolved_suite_membership", "Swift Testing suite metadata changed and the test’s nominal suite owner is unverified", tests: registrations.uncertainSuiteTests)
+        }
+        for (headKey, baseKey) in registrations.entryEdits where headKey == baseKey {
+            oldChanged += oldUnits[baseKey] ?? []
+            newChanged += newUnits[headKey] ?? []
+        }
+        let scopedOldSuites = Set(registrations.suiteArgumentEdits.values)
         for key in Set(oldUnits.keys).union(newUnits.keys) {
-            let old = oldUnits[key] ?? [], new = newUnits[key] ?? []
-            if old.map(comparisonFingerprint).sorted() != new.map(comparisonFingerprint).sorted() {
+            let old = scopedOldSuites.contains(key) ? [] : (oldUnits[key] ?? [])
+            let new = registrations.suiteArgumentEdits[key] == nil ? (newUnits[key] ?? []) : []
+            if old.count > 1 || new.count > 1 {
+                let before = Dictionary(grouping: old) { Alternative(path: movedPaths[$0.region.path] ?? $0.region.path, branch: $0.conditionalBranch) }
+                let after = Dictionary(grouping: new) { Alternative(path: $0.region.path, branch: $0.conditionalBranch) }
+                for alternative in Set(before.keys).union(after.keys) {
+                    let lhs = before[alternative] ?? [], rhs = after[alternative] ?? []
+                    if lhs.map(comparisonFingerprint).sorted() != rhs.map(comparisonFingerprint).sorted() {
+                        oldChanged += lhs
+                        newChanged += rhs
+                    }
+                }
+            } else if old.first.map({ movedPaths[$0.region.path] ?? $0.region.path }) != new.first?.region.path ||
+                        old.first.map(comparisonFingerprint) != new.first.map(comparisonFingerprint) {
                 oldChanged += old; newChanged += new
             }
         }
@@ -157,21 +233,39 @@ public enum XcodeFineSelector {
                 if signatures(oldEdges[key]!) != signatures(newEdges[key]!) {
                     for (nodes, units, isOld) in [(oldEdges[key]!, oldUnitsByFile, true), (newEdges[key]!, newUnitsByFile, false)] {
                         let candidates = Set(nodes.flatMap(\.regions).map(\.path)).flatMap { units[$0] ?? [] }
-                        let enclosing = candidates.filter { unit in unit.kind == "function" && nodes.contains { node in node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine } } }
+                        let physicalModules = isOld ? registrations.basePhysicalModules : registrations.headPhysicalModules
+                        guard nodes.allSatisfy({ physicalModules.contains($0.module) }) else {
+                            fallback("unverified_source_location", "Cannot bind changed compiler dependencies for " + key + " to physical source locations in " + (isOld ? "base" : "head"))
+                            continue
+                        }
+                        let enclosing = candidates.filter { unit in
+                            unit.kind == "function" && nodes.contains { unit.containsCompilerLocation(of: $0, physicalModules: physicalModules) }
+                        }
                         if isOld { oldChanged += enclosing } else { newChanged += enclosing }
                     }
                 }
             }
         }
-        oldChanged = Dictionary(grouping: oldChanged, by: { $0.key + $0.region.path }).values.compactMap(\.first)
-        newChanged = Dictionary(grouping: newChanged, by: { $0.key + $0.region.path }).values.compactMap(\.first)
+        // Edge and source comparisons can reach the same declaration. Keep distinct
+        // conditional alternatives in the same file so active SIL regions survive.
+        func distinctDeclarations(_ units: [SourceUnit]) -> [SourceUnit] {
+            var regions: [String: Set<SourceRegion>] = [:]
+            return units.filter { regions[$0.key, default: []].insert($0.region).inserted }
+        }
+        oldChanged = distinctDeclarations(oldChanged)
+        newChanged = distinctDeclarations(newChanged)
         let hasConditions = [current.mappings, previous?.mappings].contains {
             $0?.features.contains { $0.when != nil } == true
         }
         var comparisonContext = UIConditionContext(sides: [], unavailableReason: nil)
         if hasConditions {
-            if let previous { comparisonContext.sides.append(.init(revision: "base", snapshot: previous, changed: oldChanged)) }
-            comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged))
+            // Registration metadata can change even when ordinary source fingerprints match.
+            if let previous {
+                comparisonContext.sides.append(.init(revision: "base", snapshot: previous, changed: oldChanged,
+                    additionalChangedPaths: registrations.baseChangedPaths, incompleteRegistrations: registrations.baseDiscovery.incomplete))
+            }
+            comparisonContext.sides.append(.init(revision: "head", snapshot: current, changed: newChanged,
+                additionalChangedPaths: registrations.headChangedPaths, incompleteRegistrations: registrations.headDiscovery.incomplete))
         }
         if previous == nil { comparisonContext.unavailableReason = "Base compiler evidence unavailable" }
         if missingCallerMetadata && locationPolicy != .diagnostic {
@@ -207,6 +301,8 @@ public enum XcodeFineSelector {
             }
         }
         let knownPaths = Set((current.targets + (previous?.targets ?? [])).flatMap(\.sourceFiles))
+        let confirmed = FileChange.confirmedImplementations(base: previous.map { $0.manifestNamedImplementations(in: $0.sources) } ?? [],
+            head: current.manifestNamedImplementations(in: current.sources), changes: changes)
         let generatedBoundaries = Array(current.generatedSourceBoundaries?.values ?? [:].values).flatMap { $0 } +
             Array(previous?.generatedSourceBoundaries?.values ?? [:].values).flatMap { $0 }
         func ignoredDocumentation(_ path: String) -> Bool {
@@ -223,13 +319,15 @@ public enum XcodeFineSelector {
         // paths for byte-identical moves. Apply the same exemption to the
         // repository fingerprint; generator settings/content still compare.
         let projectReferenceMoves = Set(changes.filter {
-            $0.isPureMove && $0.path.hasSuffix(".pbxproj")
+            $0.isPureMove && $0.previousPath == nil && $0.path.hasSuffix(".pbxproj")
         }.map(\.path))
         func comparable(_ boundaries: [GeneratedSourceBoundary]?, ignoring paths: Set<String>) -> [GeneratedSourceBoundary]? {
             boundaries?.map { boundary in
                 var result = boundary
                 // Explanations are not semantic generator inputs.
                 result.documentationBlockers = nil
+                // Location provenance can be absent in an older capture of the same bytes.
+                result.hasPhysicalLocations = nil
                 if let files = boundary.repositoryInputFiles, let documentation = boundary.documentationInputs,
                    (try? XcodeGraphCache.key(files)) == boundary.repositoryInputs {
                     let filtered = files.filter { !paths.contains($0.key) }
@@ -258,6 +356,7 @@ public enum XcodeFineSelector {
                     return files[path] == nil || documentation.contains(path)
                 }
             })
+            excluded.formUnion(confirmed)
             excluded.formUnion(projectReferenceMoves.filter { path in
                 boundaries.allSatisfy { $0.repositoryInputFiles?[path] != nil }
             })
@@ -265,20 +364,25 @@ public enum XcodeFineSelector {
                 fallback("generated_input_changed", "Generated source content, generator settings or resource/build inputs changed or lack matching evidence for \(module).")
             }
         }
-        let semanticPaths = Set((oldChanged + newChanged).map { $0.region.path })
+        let semanticPaths = macroPaths.union(legacyConditionalPaths).union(legacyCallerLocationPaths).union(builders.incompletePaths).union(registrations.semanticPaths)
+            .union((oldChanged + newChanged).map { $0.region.path })
         let analyzedPaths = Set((Array(current.sources.keys) + Array(previous?.sources.keys ?? [:].keys)).compactMap { key in
             key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) }
         }).union(oldUnits.values.flatMap { $0 }.map { $0.region.path })
             .union(newUnits.values.flatMap { $0 }.map { $0.region.path })
         for change in changes {
-            let paths = [change.path] + (change.previousPath.map { [$0] } ?? [])
+            let paths = change.paths
+            let analyzedImplementation = paths.allSatisfy {
+                FileChange.isSwiftImplementation($0, confirmed: confirmed) && knownPaths.contains($0) && analyzedPaths.contains($0)
+            }
             if paths.allSatisfy(ignoredDocumentation) {
                 ignored.insert(change.path)
-            } else if change.path.hasSuffix(".swift"), knownPaths.contains(change.path), analyzedPaths.contains(change.path), !semanticPaths.contains(change.path), !policyPaths.contains(change.path) {
+            } else if analyzedImplementation,
+                      semanticPaths.isDisjoint(with: paths), !policyPaths.contains(change.path) {
                 ignored.insert(change.path)
-            } else if change.isPureMove && change.path.hasSuffix(".pbxproj") {
+            } else if projectReferenceMoves.contains(change.path) {
                 ignored.insert(change.path)
-            } else if !change.path.hasSuffix(".swift") || !knownPaths.contains(change.path) || !analyzedPaths.contains(change.path) {
+            } else if !analyzedImplementation {
                 let blockers = Set(paths.flatMap { path in
                     generatedBoundaries.flatMap { $0.documentationBlockers?[path] ?? [] }
                 }).sorted()
@@ -289,7 +393,7 @@ public enum XcodeFineSelector {
                 fallback("unclassified_change", "Change lacks a supported semantic source boundary: \(change.path)")
             }
         }
-        let hasSemanticChanges = !oldChanged.isEmpty || !newChanged.isEmpty
+        let hasSemanticChanges = registrations.hasSemanticChanges || !oldChanged.isEmpty || !newChanged.isEmpty
         // A proven test-entry change is invoked by the test runner, not by
         // unrelated tests' opaque SDK calls. Keep explicit callers in the graph,
         // but do not let uncertainty elsewhere expand this into a suite run.
@@ -339,11 +443,37 @@ public enum XcodeFineSelector {
                     fallback("unsupported_source_ownership", "Changed module \(module) also compiles inputs without a repository semantic boundary: " + inputs.joined(separator: ", "))
                 }
             }
+            let discoveryChange = revision == "base" ? registrations.baseDiscovery : registrations.headDiscovery
+            if let uncertainty = discoveryChange.uncertainty(in: snapshot) {
+                fallback("incomplete_testing_registration", uncertainty.message, tests: uncertainty.tests)
+            }
             let index = DependencyIndex(graph)
             var affected = Set<String>()
+            let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
+            affected.formUnion(discoveryChange.roots(in: graph))
+            let unusedInline = revision == "head" ? headEffects.unusedInline : baseEffects?.unusedInline ?? []
+            let hasInlineChange = units.contains { $0.hasInlineBody == true && !unusedInline.contains(.init($0)) }
+            var inlineDiscoveryConsumers = Set<String>()
+            if hasInlineChange, graph.functions[discovery] != nil {
+                inlineDiscoveryConsumers = Set(snapshot.tests.filter { test in
+                    let roots = graph.tests[test] ?? []
+                    return roots.isEmpty || roots.contains(discovery) ||
+                        graph.testDiagnostics[test]?.contains(SwiftTestingDiscoveryRoots.missingEvidence) == true
+                })
+                fallback("swift_testing_inline_origin", "Compiler inlining can erase the origin of a changed body used during Swift Testing discovery", tests: inlineDiscoveryConsumers)
+            }
             var productionUnits: [SourceUnit] = []
             var productionAffected = Set<String>()
+            var enumModules = Set<String>()
+            var unverifiedLocations = Set<String>()
+            var unverifiedCopies = Set<String>()
+            var unverifiedProductionCopies = Set<String>()
+            let physicalModules = revision == "base" ? registrations.basePhysicalModules : registrations.headPhysicalModules
             for unit in units {
+                if (unit.kind == "function" || unit.scope.isEmpty), unit.hasUnverifiedCompilerLocation(in: physicalModules) {
+                    unverifiedLocations.insert("\(unit.region.path):\(unit.region.startLine)")
+                    continue
+                }
                 let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
                 let production = owners.isEmpty || owners.contains { !$0.isTest }
                 let candidates = unit.kind != "function" && !unit.scope.isEmpty
@@ -351,13 +481,21 @@ public enum XcodeFineSelector {
                     : index.byFile[unit.region.path] ?? []
                 let nodes = candidates.compactMap { graph.functions[$0] }.filter { node in
                     guard !node.regions.isEmpty else { return false }
-                    if unit.kind == "function" {
-                        return node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }
-                    }
-                    if !unit.scope.isEmpty {
+                    if unit.kind != "function", !unit.scope.isEmpty {
                         return node.name.contains(unit.scope + ".") && owners.contains { snapshot.modules[$0.name] == node.module }
                     }
-                    return node.regions.contains { $0.path == unit.region.path }
+                    // Imported and inlined bodies can carry this source location
+                    // in another module. Verify the emitting module as well.
+                    guard node.regions.contains(where: { region in
+                        guard region.path == unit.region.path else { return false }
+                        return unit.kind != "function" || (region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine)
+                    }) else { return false }
+                    guard physicalModules.contains(node.module) else {
+                        unverifiedCopies.insert(node.id)
+                        if production { unverifiedProductionCopies.insert(node.id) }
+                        return false
+                    }
+                    return true
                 }
                 let ids = Set(nodes.map(\.id))
                 affected.formUnion(ids)
@@ -377,27 +515,41 @@ public enum XcodeFineSelector {
                     }
                     include(tests, kind: "dependency", reason: "Changed class state, inheritance, or file-level declaration", revision: revision, path: [unit.region.path, unit.scope])
                 }
-                if ids.isEmpty {
+                if unit.kind == "type" && unit.fingerprint.hasPrefix("enumDecl[") {
+                    // Synthesized witnesses and inlined case construction can consume
+                    // layout without a member reference, even when other members bind.
+                    enumModules.insert(String(unit.key.prefix { $0 != ":" }))
+                } else if ids.isEmpty {
                     let tests = Set(snapshot.tests.filter { test in owners.contains { $0.name == target(of: test) } })
                     fallback("unresolved_declaration", "Cannot associate changed declaration with compiled functions: \(unit.region.path):\(unit.region.startLine)", tests: production ? inventory : tests)
                 }
             }
             let affectedPaths = index.paths(to: affected)
+            let uncertainCopies = unverifiedCopies.isEmpty ? nil : index.paths(to: unverifiedCopies)
+            var uncertainDiscoveryTests = Set<String>()
             for test in snapshot.tests where inventory.contains(test) {
                 if hasSemanticChanges {
                     for diagnostic in graph.testDiagnostics[test] ?? [] {
-                        fallback("unresolved_inheritance", diagnostic + " for " + test, tests: [test])
+                        if diagnostic == SwiftTestingDiscoveryRoots.unresolvedEffects { uncertainDiscoveryTests.insert(test) }
+                        else { fallback("unresolved_inheritance", diagnostic + " for " + test, tests: [test]) }
                     }
                 }
+                if let symbol = uncertainCopies?.path(from: graph.tests[test] ?? [])?.last, let node = graph.functions[symbol] {
+                    fallback("unverified_source_location", "Compiled code reachable from \(test) carries an unverified source location in \(revision): \(node.module).\(node.name)", tests: [test])
+                }
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
-                    include([test], kind: "dependency", reason: "Compiled dependency reaches a changed declaration", revision: revision,
+                    let reason = path.last.map(SwiftTestingDiscoveryRoots.isDiscoveryRoot) == true ? "Swift Testing discovery inputs changed before test filtering" : "Compiled dependency reaches a changed declaration"
+                    include([test], kind: "dependency", reason: reason, revision: revision,
                             path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
                 if hasSemanticChanges && (graph.tests[test]?.isEmpty ?? true) {
                     fallback("unresolved_test", "Cannot resolve compiled entry point: \(test)", tests: [test])
                 }
             }
-            if hasSemanticChanges && !testEntriesOnly {
+            if !uncertainDiscoveryTests.isEmpty {
+                fallback("swift_testing_discovery_effects", SwiftTestingDiscoveryRoots.unresolvedEffects, tests: uncertainDiscoveryTests)
+            }
+            if hasSemanticChanges && (!testEntriesOnly || !unverifiedLocations.isEmpty || hasInlineChange) {
                 // Runtime dispatch to known project declarations is represented by
                 // candidate SIL edges. Opaque function values and raw pointers are
                 // not proof of absence; conservatively include their callers.
@@ -433,19 +585,36 @@ public enum XcodeFineSelector {
                     newChanged.allSatisfy { isProduction($0, in: current) || isTestEntry($0, in: current) }
                 let changedModules = Set((oldChanged + newChanged).map { String($0.key.prefix { $0 != ":" }) })
                 var bounded: [String: [String]] = [:]
-                for test in snapshot.tests where inventory.contains(test) {
-                    if declaredUIRuntime && uiTests.contains(test) { continue }
-                    if let path = uncertainPaths.path(from: graph.tests[test] ?? []) {
-                        if changesHaveIsolatedOwnership, let boundary = boundedTargets[target(of: test)],
-                           changedModules.isDisjoint(with: boundary.modules) {
-                            bounded[boundary.target, default: []].append(test)
-                        } else {
-                            let uncertainty = graph.functions[path.last!]!.uncertainties
-                            let missingImplementation = uncertainty.contains { $0.hasPrefix("Imported conformance:") }
-                                ? " Imported conformance ownership is known; its implementation body/runtime effects are unavailable." : ""
-                            fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test); no validated boundary excludes changed modules [\(changedModules.sorted().joined(separator: ", "))]: \(uncertainty.sorted().joined(separator: "; "))" + missingImplementation, tests: [test])
-                        }
+                var layoutConsumers = Set<String>()
+                var locationConsumers = Set<String>()
+                var inlineBodyConsumers = Set<String>()
+                for test in inventory {
+                    let path = declaredUIRuntime && uiTests.contains(test) ? nil : uncertainPaths.path(from: graph.tests[test] ?? [])
+                    let needsInlineFallback = hasInlineChange && !inlineDiscoveryConsumers.contains(test)
+                    guard needsInlineFallback || !enumModules.isEmpty || !unverifiedLocations.isEmpty || path != nil else { continue }
+                    if changesHaveIsolatedOwnership, let boundary = boundedTargets[target(of: test)],
+                       changedModules.isDisjoint(with: boundary.modules) {
+                        bounded[boundary.target, default: []].append(test)
+                        continue
                     }
+                    if !enumModules.isEmpty { layoutConsumers.insert(test) }
+                    if !unverifiedLocations.isEmpty { locationConsumers.insert(test) }
+                    if needsInlineFallback { inlineBodyConsumers.insert(test) }
+                    if let path {
+                        let uncertainty = graph.functions[path.last!]!.uncertainties
+                        let missingImplementation = uncertainty.contains { $0.hasPrefix("Imported conformance:") }
+                            ? " Imported conformance ownership is known; its implementation body/runtime effects are unavailable." : ""
+                        fallback("unresolved_dependency", "Opaque runtime dependency reachable from \(test); no validated boundary excludes changed modules [\(changedModules.sorted().joined(separator: ", "))]: \(uncertainty.sorted().joined(separator: "; "))" + missingImplementation, tests: [test])
+                    }
+                }
+                if !inlineBodyConsumers.isEmpty {
+                    fallback("unverified_inline_callers", "Inlining can erase calls to a changed body in \(revision). The compiler graph cannot identify every caller.", tests: inlineBodyConsumers)
+                }
+                if !locationConsumers.isEmpty {
+                    fallback("unverified_source_location", "Cannot bind changed declarations to physical compiler locations in \(revision): " + unverifiedLocations.sorted().joined(separator: ", "), tests: locationConsumers)
+                }
+                if !layoutConsumers.isEmpty {
+                    fallback("enum_layout_change", "\(revision): Enum declaration or case layout changed in \(enumModules.sorted().joined(separator: ", ")). Compiled member references do not cover every representation or protocol witness consumer.", tests: layoutConsumers)
                 }
                 for (target, tests) in bounded {
                     let boundary = boundedTargets[target]!
@@ -454,16 +623,20 @@ public enum XcodeFineSelector {
                         boundedUncertaintyTests: tests.sorted(), rationale: boundary.rationale))
                 }
             }
-            guard !productionUnits.isEmpty, !uiTests.isEmpty else { continue }
+            guard !uiTests.isEmpty else { continue }
+            let registrationPaths = revision == "base" ? registrations.baseMappingPaths : registrations.headMappingPaths
+            var featurePaths = snapshot.mappings?.registrationSourceMatches(registrationPaths, targets: snapshot.targets) ?? [:]
+            guard !productionUnits.isEmpty || !featurePaths.isEmpty else { continue }
             guard let mappings = snapshot.mappings else {
                 fallback("missing_ui_mappings", "\(revision): production changes have no explicit UI feature mappings.", tests: uiTests)
                 continue
             }
-            var matchedFeatures = Set<String>()
-            var featurePaths: [String: [String]] = [:]
+            var uncertainFeaturePaths: [String: [String]] = [:]
+            lazy var uncertainProductionPaths = unverifiedProductionCopies == unverifiedCopies
+                ? uncertainCopies : index.paths(to: unverifiedProductionCopies)
             var coveredChanges = Set<String>()
             var mappedTests = Set<String>()
-            let opaqueProduction = declaredUIRuntime ? Set<String>() : Set(graph.functions.values.filter(\.hasOpaqueRuntimeDependency).map(\.id))
+            let opaqueProduction = declaredUIRuntime || productionUnits.isEmpty ? Set<String>() : Set(graph.functions.values.filter(\.hasOpaqueRuntimeDependency).map(\.id))
             let opaquePaths = index.paths(to: opaqueProduction)
             let mappingIndex = MappingIndex(mappings, snapshot: snapshot, graph: graph, index: index)
             if revision == "head" { headMappingIndex = mappingIndex }
@@ -483,7 +656,11 @@ public enum XcodeFineSelector {
                     fallback("unresolved_mapping_selector", "\(revision): feature \(feature.name) has no discovered tests for \(selector)", tests: uiTests)
                 }
                 let roots = featureRoots[feature.name]!
-                if !declaredUIRuntime && opaquePaths.path(from: roots) != nil {
+                if feature.when == nil, !unverifiedProductionCopies.isEmpty,
+                   let path = uncertainProductionPaths?.path(from: roots) {
+                    uncertainFeaturePaths[feature.name] = path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 }
+                }
+                if !productionUnits.isEmpty && !declaredUIRuntime && opaquePaths.path(from: roots) != nil {
                     fallback("unresolved_feature_dependency", "\(revision): feature \(feature.name) reaches opaque runtime dependencies.", tests: tests)
                 }
                 if roots.isEmpty && (!(feature.sources ?? []).isEmpty || !(feature.symbols ?? []).isEmpty) {
@@ -496,30 +673,43 @@ public enum XcodeFineSelector {
                     // Source predicates cover its identity from either comparison side.
                     let conditionalSource = conditionSourceCoverage[revision + ":" + feature.name]?.contains(unit.key) == true
                     if directlyMapped || chain != nil || conditionalSource {
-                        featurePaths[feature.name] = (chain ?? []).map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 } + [unit.region.path]
-                        if feature.when == nil { matchedFeatures.insert(feature.name) }
+                        if feature.when == nil {
+                            featurePaths[feature.name] = (chain ?? []).map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 } + [unit.region.path]
+                        }
                         coveredChanges.insert(unit.key)
                     }
                 }
             }
-            var changed = true
-            while changed {
-                changed = false
-                for feature in mappings.features where !matchedFeatures.contains(feature.name) {
-                    if !(Set(feature.dependsOn ?? []).intersection(matchedFeatures)).isEmpty {
-                        matchedFeatures.insert(feature.name); changed = true
-                        featurePaths[feature.name] = (feature.dependsOn ?? []).filter { matchedFeatures.contains($0) }.sorted()
+            // Either kind of evidence can travel through the same declared
+            // feature dependencies. Preserve its kind when explaining the selection.
+            func propagateDependencies(_ paths: inout [String: [String]]) {
+                guard !paths.isEmpty else { return }
+                var count: Int
+                repeat {
+                    count = paths.count
+                    for feature in mappings.features where paths[feature.name] == nil {
+                        let reached = (feature.dependsOn ?? []).filter { paths[$0] != nil }
+                        if !reached.isEmpty { paths[feature.name] = reached.sorted() }
                     }
+                } while paths.count != count
+            }
+            propagateDependencies(&featurePaths)
+            propagateDependencies(&uncertainFeaturePaths)
+            for feature in mappings.features where featurePaths[feature.name] != nil || uncertainFeaturePaths[feature.name] != nil {
+                let tests = mappingIndex.tests[feature.name] ?? []
+                if let path = featurePaths[feature.name] {
+                    let selectors = mappings.selectors(for: feature)
+                    include(tests, kind: "explicitMapping", reason: "Affected UI feature: \(feature.name)", revision: revision, path: [feature.name] + path + selectors)
+                }
+                if let path = uncertainFeaturePaths[feature.name] {
+                    fallback("unverified_source_location", "\(revision): UI feature \(feature.name) reaches an unverified compiler location via " + path.joined(separator: ", "), tests: tests)
+                }
+                if tests.isEmpty {
+                    fallback("unresolved_feature_tests", "\(revision): affected feature \(feature.name) has no test mappings.", tests: uiTests)
                 }
             }
-            for feature in mappings.features where matchedFeatures.contains(feature.name) {
-                let selectors = mappings.selectors(for: feature)
-                let tests = mappingIndex.tests[feature.name] ?? []
-                include(tests, kind: "explicitMapping", reason: "Affected UI feature: \(feature.name)", revision: revision, path: [feature.name] + (featurePaths[feature.name] ?? []) + selectors)
-                if tests.isEmpty { fallback("unresolved_feature_tests", "\(revision): affected feature \(feature.name) has no test mappings.", tests: uiTests) }
-            }
             let missing = uiTests.subtracting(mappedTests)
-            if !missing.isEmpty { fallback("unmapped_ui_tests", "\(revision): UI tests without feature mappings remain conservatively selected.", tests: missing) }
+            if !productionUnits.isEmpty && !missing.isEmpty { fallback("unmapped_ui_tests", "\(revision): UI tests without feature mappings remain conservatively selected.", tests: missing) }
             for unit in productionUnits where !coveredChanges.contains(unit.key) {
                 fallback("unmapped_production_boundary", "\(revision): no UI feature reaches changed production source \(unit.region.path):\(unit.region.startLine)", tests: uiTests)
             }
@@ -580,21 +770,33 @@ public enum XcodeFineSelector {
         return report
     }
 
-    private static func callerLocationKinds(_ snapshot: XcodeTestGraph) -> [String: Set<String>] {
-        let units = snapshot.sources.values.flatMap(\.units)
-        let defaults = units.filter { !($0.locationDefaultKinds?.isEmpty ?? true) }
-        guard !defaults.isEmpty else { return [:] }
-        let allKinds = defaults.reduce(into: Set<String>()) { $0.formUnion($1.locationDefaultKinds ?? []) }
-        var kindsByName: [String: Set<String>] = [:]
-        for unit in defaults {
+    private static func callerLocationKinds(_ snapshot: XcodeTestGraph, units: [SourceUnit], effects: SwiftTestingSourceEffects) -> [SwiftTestingSourceEffects.Declaration: Set<String>] {
+        let defaults = snapshot.sources.values.flatMap { file in
+            file.units.compactMap { unit -> (unit: SourceUnit, owner: LocationDefaultOwner?)? in
+                guard unit.locationDefaultKinds?.isEmpty == false else { return nil }
+                return (unit, unit.privateDefaultOwner)
+            }
+        }
+        let discovery = SwiftTestingDiscoveryRoots.sharedDiscoveryID
+        let inlineBodies = units.filter { $0.hasInlineBody == true }
+        guard !defaults.isEmpty || !inlineBodies.isEmpty || snapshot.dependencies?.functions[discovery] != nil else { return [:] }
+        var allKinds = ScopedLocationKinds()
+        var kindsByName: [String: ScopedLocationKinds] = [:]
+        for (unit, owner) in defaults {
+            allKinds.include(unit.locationDefaultKinds ?? [], owner: owner)
             for (name, kinds) in unit.locationDefaultNames ?? [:] {
-                kindsByName[name, default: []].formUnion(kinds)
+                kindsByName[name, default: .init()].include(kinds, owner: owner)
             }
         }
         // Name matching is deliberately an over-approximation across modules,
         // overloads, receivers and argument slots. A surviving SIL definition is
         // not evidence that all its calls survived mandatory inlining/lowering.
-        var result: [String: Set<String>] = [:]
+        // Private functions in different files may have identical declaration keys.
+        typealias Declaration = SwiftTestingSourceEffects.Declaration
+        var result: [Declaration: Set<String>] = [:]
+        let indirectKinds = SourceUnit.indirectLocationDefaultNames.reduce(into: ScopedLocationKinds()) {
+            if let kinds = kindsByName[$1] { $0.formUnion(kinds) }
+        }
         for unit in units {
             let names = unit.invocationNames ?? []
             guard !names.isEmpty else { continue }
@@ -602,31 +804,64 @@ public enum XcodeFineSelector {
             // callAsFunction. Its edge can disappear through mandatory inlining,
             // so source names cannot rule out an implicit callable-object call.
             // Interpret the stored declaration name here to cover saved graphs too.
-            var kinds = (kindsByName["*"] ?? []).union(kindsByName["callAsFunction"] ?? [])
-            for name in names { kinds.formUnion(name == "*" ? allKinds : kindsByName[name] ?? []) }
-            if !kinds.isEmpty { result[unit.key, default: []].formUnion(kinds) }
+            var kinds = indirectKinds[unit]
+            for name in names {
+                if let matching = name == "*" ? allKinds : kindsByName[name] { kinds.formUnion(matching[unit]) }
+            }
+            if !kinds.isEmpty { result[Declaration(unit), default: []].formUnion(kinds) }
         }
         guard let graph = snapshot.dependencies else {
-            return Dictionary(units.map { ($0.key, allKinds) }, uniquingKeysWith: { $0.union($1) })
+            return Dictionary(units.map { (Declaration($0), allKinds[$0]) }, uniquingKeysWith: { $0.union($1) })
         }
         let byFile = Dictionary(grouping: units, by: { $0.region.path })
-        var symbolsByUnit: [String: Set<String>] = [:]
-        var unitsBySymbol: [String: Set<String>] = [:]
-        for node in graph.functions.values {
+        var symbolsByUnit: [Declaration: Set<String>] = [:]
+        var unitsBySymbol: [String: Set<Declaration>] = [:]
+        // A binary callee can declare a caller-location default absent from
+        // captured source. Include transitive calls made during discovery.
+        var pending = Array(Set(graph.tests.values.filter { $0.contains(discovery) }.flatMap { $0 }).union([discovery]))
+        var discoverySymbols = Set<String>()
+        while let id = pending.popLast() {
+            guard discoverySymbols.insert(id).inserted, let node = graph.functions[id] else { continue }
+            pending.append(contentsOf: node.dependencies)
+        }
+        let physicalModules = snapshot.modulesWithPhysicalSourceLocations
+        for unit in units where unit.hasUnverifiedCompilerLocation(in: physicalModules) {
+            result[Declaration(unit), default: []].formUnion(allKinds[unit])
+            if graph.functions[discovery] != nil, let locations = unit.callerLocations {
+                result[Declaration(unit), default: []].formUnion(locations.keys)
+            }
+        }
+        func index(_ node: FunctionNode) {
+            guard physicalModules.contains(node.module) else { return }
             for region in node.regions {
                 for unit in byFile[region.path] ?? [] where unit.key.hasPrefix(node.module + ":") &&
                     region.startLine >= unit.region.startLine && region.startLine <= unit.region.endLine {
-                    symbolsByUnit[unit.key, default: []].insert(node.id)
-                    unitsBySymbol[node.id, default: []].insert(unit.key)
+                    if discoverySymbols.contains(node.id), !effects.positionIndependent.contains(.init(unit)), let locations = unit.callerLocations, !locations.isEmpty {
+                        result[Declaration(unit), default: []].formUnion(locations.keys)
+                    }
+                    if !defaults.isEmpty {
+                        symbolsByUnit[Declaration(unit), default: []].insert(node.id)
+                        unitsBySymbol[node.id, default: []].insert(Declaration(unit))
+                    }
                 }
             }
         }
+        // Mandatory inlining can erase both the call and its debug origin.
+        // A location-sensitive inline body must still participate in comparison.
+        for unit in inlineBodies {
+            result[Declaration(unit), default: []].formUnion(unit.callerLocations?.keys.map { $0 } ?? [])
+        }
+        if defaults.isEmpty {
+            for id in discoverySymbols { if let node = graph.functions[id] { index(node) } }
+            return result
+        }
+        for node in graph.functions.values { index(node) }
         var defaultSymbols: [String: Set<String>] = [:]
-        var unresolved = Set<String>()
-        for unit in defaults {
+        var unresolved = ScopedLocationKinds()
+        for (unit, owner) in defaults {
             let kinds = unit.locationDefaultKinds ?? []
-            let symbols = symbolsByUnit[unit.key] ?? []
-            if symbols.isEmpty { unresolved.formUnion(kinds) }
+            let symbols = symbolsByUnit[Declaration(unit)] ?? []
+            if symbols.isEmpty { unresolved.include(kinds, owner: owner) }
             for symbol in symbols { defaultSymbols[symbol, default: []].formUnion(kinds) }
         }
         // A missing declaration binding cannot prove absence of callers.
@@ -635,13 +870,35 @@ public enum XcodeFineSelector {
             let kinds = node.dependencies.reduce(into: Set<String>()) { $0.formUnion(defaultSymbols[$1] ?? []) }
             guard !kinds.isEmpty else { continue }
             let callers = unitsBySymbol[node.id] ?? []
-            if callers.isEmpty && sourceModules.contains(node.module) { unresolved.formUnion(kinds) }
+            if callers.isEmpty && sourceModules.contains(node.module) { unresolved.shared.formUnion(kinds) }
             for key in callers { result[key, default: []].formUnion(kinds) }
         }
-        if !unresolved.isEmpty {
-            for unit in units { result[unit.key, default: []].formUnion(unresolved) }
+        for unit in units {
+            let kinds = unresolved[unit]
+            if !kinds.isEmpty { result[Declaration(unit), default: []].formUnion(kinds) }
         }
         return result
+    }
+
+    private static func filesBySyntax(_ sources: [String: SwiftSourceSnapshot], paths: Set<String>, renameOrigins: [String: String]) -> [[String]: [String]] {
+        var signatures: [String: [String]] = [:]
+        // A physical file can belong to multiple modules. Use a stable order
+        // across snapshots and preserve the parser's declaration order within each.
+        for key in sources.keys.sorted() {
+            guard let snapshot = sources[key], let path = snapshot.units.first?.region.path, paths.contains(path) else { continue }
+            // A recorded rename may edit a function body while preserving its
+            // enclosing file scope. Pair it only with its stated origin. The
+            // selector still compares each body and its compiled dependencies.
+            let origin = renameOrigins[path]
+            signatures[path, default: []].append(origin ?? "")
+            for unit in snapshot.units {
+                signatures[path, default: []].append(unit.key)
+                let signature = origin != nil && unit.kind == "function"
+                    ? unit.conditionalBranch ?? "" : unit.comparisonFingerprint(.diagnostic)
+                signatures[path, default: []].append(signature)
+            }
+        }
+        return Dictionary(grouping: signatures.keys, by: { signatures[$0]! })
     }
 
     private static func isProductionOrTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
@@ -659,7 +916,7 @@ public enum XcodeFineSelector {
     static func isTestEntry(_ unit: SourceUnit, in snapshot: XcodeTestGraph) -> Bool {
         guard unit.kind == "function", let graph = snapshot.dependencies else { return false }
         let owners = snapshot.targets.filter { $0.sourceFiles.contains(unit.region.path) }
-        guard !owners.isEmpty, owners.allSatisfy(\.isTest) else { return false }
+        guard !owners.isEmpty, owners.allSatisfy(\.isTest), !unit.hasUnverifiedCompilerLocation(in: snapshot.modulesWithPhysicalSourceLocations) else { return false }
         // Debug information is line based. Two declarations on the same line
         // cannot establish which function changed; retain fallback in that case.
         let overlapping = Set(snapshot.sources.values.flatMap(\.units).filter {
@@ -672,7 +929,7 @@ public enum XcodeFineSelector {
             let name = (unit.scope.isEmpty ? "" : unit.scope + ".") +
                 (method.contains("(") ? method : method + "()")
             return (graph.tests[test] ?? []).contains { id in
-                guard let node = graph.functions[id], node.name == name,
+                guard let node = graph.functions[id], node.name == name || node.name == "static " + name,
                       owners.contains(where: { snapshot.modules[$0.name] == node.module }) else { return false }
                 return node.regions.contains { $0.path == unit.region.path &&
                     $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }

@@ -8,12 +8,78 @@ import SwiftSyntax
 import CryptoKit
 #endif
 
+// Preserve syntax structure, token kinds and literal contents, but not
+// trivia. Location values belong to their expression, not the whole file.
+private func fingerprint(_ node: Syntax) -> String {
+    enum Part { case node(Syntax), separator, end }
+    var pending = [Part.node(node)]
+    var result = ""
+    while let part = pending.popLast() {
+        switch part {
+        case .separator: result += "|"
+        case .end: result += "]"
+        case .node(let node):
+            if let token = node.as(TokenSyntax.self) {
+                result += "\(token.tokenKind):\(token.text.utf8.count):\(token.text)"
+            } else {
+                result += "\(node.kind)["
+                pending.append(.end)
+                for (index, child) in node.children(viewMode: .sourceAccurate).reversed().enumerated() {
+                    if index > 0 { pending.append(.separator) }
+                    pending.append(.node(child))
+                }
+            }
+        }
+    }
+    return result
+}
+
+extension AttributeSyntax {
+    static let inlineAttributeNames: Set<String> = ["inline", "_transparent", "inlinable", "_alwaysEmitIntoClient"]
+
+    var inlineAttributeName: String? {
+        guard let type = attributeName.as(IdentifierTypeSyntax.self), type.genericArgumentClause == nil else { return nil }
+        let name = type.name.identifier?.name ?? type.name.text
+        return Self.inlineAttributeNames.contains(name) ? name : nil
+    }
+
+    var canInlineBody: Bool {
+        guard let name = inlineAttributeName else { return false }
+        if name == "inline", let arguments,
+           let token = arguments.firstToken(viewMode: .sourceAccurate),
+           token.id == arguments.lastToken(viewMode: .sourceAccurate)?.id,
+           token.identifier?.name == "never" { return false }
+        return true
+    }
+
+    // The escaped attribute name uses a different SwiftSyntax argument node.
+    // Derive the four complete subtrees with the same encoder as the archive.
+    static let noInlineFingerprints: [String] = ["inline", "`inline`"].flatMap { name in
+        ["never", "`never`"].map { argument in
+            var parser = Parser("@\(name)(\(argument))")
+            return fingerprint(Syntax(AttributeSyntax.parse(from: &parser)))
+        }
+    }
+
+    private static func archivedHead(_ spelling: String) -> String {
+        let attribute = AttributeSyntax(attributeName: IdentifierTypeSyntax(name: .identifier(spelling)))
+        return fingerprint(Syntax(attribute.atSign)) + "|" + fingerprint(Syntax(attribute.attributeName))
+    }
+
+    static let escapedInlineAttributeHeads = inlineAttributeNames.map { archivedHead("`" + $0 + "`") }
+    static let inlineAttributeHeads = inlineAttributeNames.map(archivedHead) + escapedInlineAttributeHeads
+}
+
 public struct SourceUnit: Codable, Sendable {
     public var key: String
     public var fingerprint: String
     public var kind: String
     public var scope: String
+    /// Outermost proven lexical boundary for all caller defaults in this unit.
+    var privateLocationDefaultScope: String? = nil
     public var region: SourceRegion
+    /// Enclosing conditional clauses, from the outermost directive to this declaration.
+    public var conditionalBranch: String? = nil
     /// Present only when evaluated location literals add meaning beyond syntax.
     /// Older graphs lack this evidence and keep their conservative fingerprint.
     public var syntaxFingerprint: String? = nil
@@ -33,6 +99,24 @@ public struct SourceUnit: Codable, Sendable {
     /// source-location default. Separate dimensions avoid line-only changes
     /// affecting callers of a file-only default.
     public var callerLocations: [String: String]? = nil
+    /// Positions in bodies that Swift can lower through a result builder. The
+    /// transform can attach a caller default to any expression or control-flow
+    /// token without leaving a written call or a surviving SIL reference.
+    var builderLocations: [String: String]? = nil
+
+    var qualifiedSourcePath: String { key.prefix(while: { $0 != ":" }) + ":" + region.path }
+
+    /// A written or compiler-synthesized invocation can select an initializer
+    /// through a type alias or a callable value through callAsFunction.
+    static let indirectLocationDefaultNames: Set<String> = ["*", "callAsFunction"]
+
+    func builderFingerprint(_ kinds: Set<String>) -> String {
+        guard let builderLocations, !builderLocations.isEmpty, !kinds.isEmpty else { return "" }
+        return kinds.sorted().compactMap { kind in
+            builderLocations[kind].map { "@builder[\(kind)=\($0)]" }
+        }.joined()
+    }
+
     /// Syntax proof for a private helper referenced only by direct test/helper calls.
     public var privateTestHelper: PrivateTestHelperSyntax? = nil
     /// Concrete source limitation for an otherwise private test-helper candidate.
@@ -42,6 +126,23 @@ public struct SourceUnit: Codable, Sendable {
     /// Written Testing attributes identify candidates, not authenticated macro
     /// identities. Compiler-generated discovery roots must agree separately.
     public var swiftTestingRole: String? = nil
+    /// Qualified suite name, including actors whose source unit covers the whole declaration.
+    public var swiftTestingSuiteName: String? = nil
+    /// The written discovery attribute has arguments. Nil denotes older evidence.
+    public var swiftTestingHasArguments: Bool? = nil
+    var swiftTestingArguments: [SwiftTestingSourceDeclarations.Arguments]? = nil
+    var swiftTestingMetadata: SwiftTestingSourceDeclarations.Arguments? = nil
+    var swiftTestingSuiteMetadata: SwiftTestingSourceDeclarations.Arguments? = nil
+    var swiftTestingBodyCandidate: Bool? = nil
+    var hasInlineBody: Bool? = nil
+    var fileUnreferencedInlineName: String? = nil
+    /// File visibility and a closed expansion inventory allow a file-local unused-body proof.
+    var fileProvesUnusedInline: Bool? = nil
+    var filePrivateInlineWithTests: Bool? = nil
+    var hasOnlyDirectSourceCalls: Bool? = nil
+    var swiftTestingRegistrationDeclaration: String? = nil
+    var swiftTestingSuiteInputs: SwiftTestingSourceDeclarations.RegistrationInputs? = nil
+    var swiftTestingEntryInputs: SwiftTestingSourceDeclarations.RegistrationInputs? = nil
     public var sdkTestHelper: SDKTestHelperSyntax? = nil
     /// Authenticated direct, bodyless protocol requirement; never an extension implementation.
     public var bodylessProtocolRequirement: String? = nil
@@ -86,6 +187,40 @@ public struct SourceUnit: Codable, Sendable {
     /// Whether this subscript can compete with the SDK identifier getter.
     public var subscriptAcceptsSingleUnlabeledArgument: Bool? = nil
 
+    /// Older archives retain the trivia-free syntax tree even when the caller
+    /// digest omits an invocation. A call without parentheses has its argument
+    /// list immediately followed by the first trailing closure.
+    func needsCallerLocationRefresh(version: Int, verifiedInterpolation: Bool) -> Bool {
+        let syntax = syntaxFingerprint ?? fingerprint
+        return version < 29 && !verifiedInterpolation && syntax.contains("expressionSegment[") ||
+            version < 32 && (syntax.contains("keyPathSubscriptComponent[") || syntax.contains("|labeledExprList[]|closureExpr["))
+    }
+
+    func hasUnverifiedCompilerLocation(in physicalModules: Set<String>) -> Bool {
+        !physicalModules.contains(String(key.prefix { $0 != ":" }))
+    }
+
+    /// Compiler regions report presumed positions. Only a complete module-wide
+    /// check can prove that another input did not redirect a symbol into this body.
+    func containsCompilerLocation(of node: FunctionNode, physicalModules: Set<String>) -> Bool {
+        physicalModules.contains(node.module) && key.hasPrefix(node.module + ":") && node.regions.contains {
+            $0.path == region.path && $0.startLine >= region.startLine && $0.startLine <= region.endLine
+        }
+    }
+
+    func comparisonFingerprint(_ policy: UIFeatureMappings.SourceLocationPolicy) -> String {
+        let body: String
+        switch policy {
+        case .semantic: body = fingerprint
+        case .diagnostic: body = syntaxFingerprint ?? fingerprint
+        case .diagnosticLineColumn:
+            body = fileLocationValues.map { Self.withLocations($0, syntax: syntaxFingerprint ?? fingerprint) } ?? fingerprint
+        }
+        let registration = swiftTestingMetadata.map { Self.withLocations($0.comparison(policy), syntax: body) } ?? body
+        guard let conditionalBranch else { return registration }
+        return "@if[\(conditionalBranch.utf8.count):\(conditionalBranch)]" + registration
+    }
+
     static func withLocations(_ values: [String], syntax: String) -> String {
         values.isEmpty ? syntax : syntax + "@locations[" +
             values.map { "\($0.utf8.count):" + $0 }.joined(separator: "|") + "]"
@@ -93,11 +228,149 @@ public struct SourceUnit: Codable, Sendable {
 }
 
 public struct SwiftSourceSnapshot: Codable, Sendable {
+    /// Empty source files can carry the parser's module in their import inventory.
+    /// For older files without that field, each available declaration must agree.
+    func matchesSourceMembership(path: String, module: String) -> Bool {
+        if let captured = inlineMappings?.module, captured != module { return false }
+        return units.allSatisfy { $0.region.path == path && $0.key.hasPrefix(module + ":") }
+    }
+
+    /// Older graphs stored a bare path. The units must agree on its module
+    /// before that path can identify a physical parser input.
+    func sourceIdentity(storedAs key: String) -> (module: String, path: String)? {
+        if let unit = units.first, key == unit.region.path {
+            guard let colon = unit.key.firstIndex(of: ":"), colon != unit.key.startIndex else { return nil }
+            let module = String(unit.key[..<colon])
+            guard units.allSatisfy({ $0.region.path == key && $0.key.hasPrefix(module + ":") }) else { return nil }
+            return (module, key)
+        }
+        guard let separator = key.firstIndex(of: ":") else { return nil }
+        return (String(key[..<separator]), String(key[key.index(after: separator)...]))
+    }
+
+    static func identicalPositionInputs(_ before: [String: Self], _ after: [String: Self]) -> Set<String> {
+        func identities(_ sources: [String: Self]) -> [String: Set<String>] {
+            var files: [String: Set<String>] = [:]
+            for (key, file) in sources {
+                guard let id = file.sourceIdentity(storedAs: key) else { continue }
+                let name = id.module + ":" + id.path
+                // Ambiguous duplicate records cannot authenticate a comparison.
+                files[name] = files[name] == nil ? file.sourceBlobIDs ?? [] : []
+            }
+            return files
+        }
+        let base = identities(before)
+        return Set(identities(after).compactMap { key, blobs in
+            base[key]?.isDisjoint(with: blobs) == false ? key : nil
+        })
+    }
+
     /// Source-only parser contract for byte-identical historical syntax reuse.
     /// Bump when parsing or supplemental syntax evidence changes; nil archives
     /// must be reparsed from Git rather than substituted for historical syntax.
-    static let currentParserVersion = 4
+    var indexedActor: IndexedActorLocations?
+    static let currentParserVersion = 51
+    /// Older snapshots can recover this inventory from Git while retaining their original parser version.
+    var macroInputVersion: Int? = nil
+    /// Ordinary module imports can only look up publicly visible Swift macros.
+    /// Scoped, SPI and testable imports require a wider declaration inventory.
+    var ordinaryMacroImports: Set<String>? = nil
+    /// Attached attributes and freestanding macro sites, grouped by spelling.
+    var attachedAttributeInputs: [String: [String]]? = nil
+    /// Set by the compiler capture. Git-only historical parses have no plugin inventory.
+    var usesUnmodeledMacroPlugin: Bool? = nil
+    /// Version 12 completed the registration inventory. Later inline-helper
+    /// metadata does not invalidate those registrations in retained graphs.
+    var hasSwiftTestingRegistrationMetadata: Bool {
+        (12...Self.currentParserVersion).contains(parserVersion ?? 0) && swiftTestingDeclarations != nil
+    }
+    var swiftTestingDeclarations: SwiftTestingSourceDeclarations? = nil
+    /// Source evidence for case implementations that can run before Swift Testing discovery.
+    var xctestDiscoveryCases: [XCTestDiscoveryCase]? = nil
+    var ordinaryManifestNamedSource: Bool? = nil
+    var hasVerifiedInterpolationLocations: Bool? = nil
+    var hasVerifiedInvocationLocations: Bool? = nil
     public var parserVersion: Int? = nil
+    /// A legacy capture can recover branch membership from the exact Git blob.
+    var hasVerifiedConditionalMembership: Bool? = nil
+    /// Older parsers retained the directive but omitted its relationship to declarations.
+    var lacksConditionalMembership: Bool {
+        (parserVersion ?? 0) < 5 && hasVerifiedConditionalMembership != true &&
+            units.contains { $0.kind == "configuration" }
+    }
+
+    static func legacyConditionalPaths(in sources: [String: Self], touching paths: Set<String>) -> Set<String> {
+        Set(sources.values.compactMap { snapshot in
+            guard let path = snapshot.units.first?.region.path, paths.contains(path),
+                  snapshot.lacksConditionalMembership else { return nil }
+            return path
+        })
+    }
+
+    static func legacyCallerLocationPaths(in sources: [String: Self], touching paths: Set<String>) -> Set<String> {
+        Set(sources.values.compactMap { file in
+            let version = file.parserVersion ?? 0
+            guard version < 32, file.hasVerifiedInvocationLocations != true,
+                  let path = file.units.first?.region.path, paths.contains(path) else { return nil }
+            let missing = file.units.contains {
+                $0.needsCallerLocationRefresh(version: version, verifiedInterpolation: file.hasVerifiedInterpolationLocations == true)
+            }
+            return missing ? path : nil
+        })
+    }
+
+    /// v11 introduced per-unit flags, v26 recognized escaped attribute names,
+    /// and v27 recognized escaped `never` arguments.
+    var unitsWithInlineEvidence: [SourceUnit] {
+        let version = parserVersion ?? 0
+        let names = AttributeSyntax.inlineAttributeNames
+        guard version < 27, identifierNames?.isDisjoint(with: names) != true else { return units }
+        var result = units
+        for i in result.indices {
+            if version < 11 {
+                result[i].hasInlineBody = true
+                continue
+            }
+            let syntax = result[i].syntaxFingerprint ?? result[i].fingerprint
+            guard result[i].hasInlineBody == true ||
+                (version < 26 && AttributeSyntax.escapedInlineAttributeHeads.contains(where: syntax.contains)) else { continue }
+            // A nested declaration may carry a different inline attribute. Clear
+            // the flag only when complete noinline subtrees account for every
+            // inline attribute in this unit. Unknown archive layouts stay conservative.
+            var remaining = syntax
+            if syntax.contains("never") {
+                for attribute in AttributeSyntax.noInlineFingerprints {
+                    remaining = remaining.replacingOccurrences(of: attribute, with: "")
+                }
+            }
+            result[i].hasInlineBody = remaining != syntax && !AttributeSyntax.inlineAttributeHeads.contains(where: remaining.contains) ? nil : true
+        }
+        return result
+    }
+
+    /// Archives retain units in source order. Fold that order into the enum type
+    /// for comparison, including in saved graphs that predate this selector.
+    var comparisonUnits: [SourceUnit] {
+        var units = unitsWithInlineEvidence
+        var owner: [String: Int] = [:]
+        var cases: [Int: [String]] = [:]
+        for (index, unit) in units.enumerated() {
+            if unit.kind == "type" { owner[unit.scope] = index }
+            guard unit.kind == "declaration", let enumIndex = owner[unit.scope],
+                  unit.helperEnumCaseWithoutDefaults != nil || unit.key.contains(":enumCaseDecl[") else { continue }
+            let signature = unit.comparisonFingerprint(.diagnostic)
+            cases[enumIndex, default: []].append("\(signature.utf8.count):" + signature)
+        }
+        for (index, declarations) in cases {
+            let order = "@enumCases[" + declarations.joined() + "]"
+            let syntax = units[index].syntaxFingerprint ?? units[index].fingerprint
+            units[index].syntaxFingerprint = syntax + order
+            units[index].fingerprint += order
+            units[index].swiftTestingRegistrationDeclaration? += order
+        }
+        return units
+    }
+
     /// Git blob identities of the actual parsed bytes. Archive substitutions,
     /// filters or generated replacements must not authenticate unchanged Git
     /// paths as unchanged parsed content. Nil retains historical parsing.
@@ -174,10 +447,30 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
     }
 
     public static func parse(_ text: String, path: String, module: String) -> Self {
-        let tree = Parser.parse(source: text)
+        parse(text, path: path, module: module, tree: Parser.parse(source: text), indexedMainActor: false)
+    }
+
+    static func parse(_ text: String, path: String, module: String, tree: SourceFileSyntax, indexedMainActor: Bool) -> Self {
         let locations = SourceLocationConverter(fileName: path, tree: tree)
         var result = Self(units: [], inheritance: [:], diagnostics: [])
         result.parserVersion = Self.currentParserVersion
+        result.macroInputVersion = AttachedMacroInputs.version
+        result.attachedAttributeInputs = text.contains("@") || text.contains("#") ? AttachedMacroInputs.capture(tree, locations: locations, indexedMainActor: indexedMainActor) : [:]
+        if result.attachedAttributeInputs?.isEmpty == false && !tree.hasError {
+            let imports = tree.tokens(viewMode: .sourceAccurate).compactMap { token -> ImportDeclSyntax? in
+                guard token.tokenKind == .keyword(.import) else { return nil }
+                return token.parent?.as(ImportDeclSyntax.self)
+            }
+            if imports.allSatisfy({ $0.attributes.isEmpty && $0.modifiers.isEmpty && $0.importKindSpecifier == nil && $0.path.count == 1 }) {
+                result.ordinaryMacroImports = Set(imports.map { $0.path.trimmedDescription })
+            }
+        }
+        result.ordinaryManifestNamedSource = SwiftPackageManifest.isCompiledSourceOnly(path, text: text, tree: tree) ? true : nil
+        if !tree.hasError {
+            result.xctestDiscoveryCases = tree.statements.compactMap {
+                $0.item.as(ClassDeclSyntax.self).flatMap { XCTestDiscoveryCase($0, path: path, module: module) }
+            }
+        }
         #if canImport(CryptoKit)
         let bytes = Data(text.utf8)
         let blob = Data("blob \(bytes.count)\0".utf8) + bytes
@@ -210,6 +503,12 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             return declaration.attributes.contains { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "_exported" }
         }
         let declarationIssues = HelperDeclarationInventory.issues(tree, locations: locations, unsupportedImports: unsupportedCallerImports)
+        let onlyCompilerAttributes = declarationIssues.allSatisfy {
+            $0.kind == "unresolved-attribute" && ["@inline", "@_transparent"].contains($0.spelling)
+        }
+        let hasTestAttribute = declarationIssues.contains {
+            $0.kind == "unresolved-attribute" && ["@Test", "@Testing.Test"].contains($0.spelling)
+        }
         result.helperDeclarationIssues = declarationIssues
         result.helperDeclarationsComplete = declarationIssues.isEmpty
         result.helperWrittenOperators = Set(tree.tokens(viewMode: .sourceAccurate).compactMap { token in
@@ -251,20 +550,16 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         }
         result.classFinality = [:]
         if tree.hasError { result.diagnostics.append("Swift syntax could not be parsed completely: \(path)") }
-        // Preserve syntax structure, token kinds and literal contents, but not
-        // trivia. Location values belong to their expression, not the whole file.
-        func fingerprint(_ node: Syntax) -> String {
-            if let token = node.as(TokenSyntax.self) { return "\(token.tokenKind):\(token.text.utf8.count):\(token.text)" }
-            return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(fingerprint).joined(separator: "|") + "]"
+        func compactFingerprint(_ node: Syntax) -> String {
+            let value = fingerprint(node)
+            #if canImport(CryptoKit)
+            return Data(SHA256.hash(data: Data(value.utf8))).base64EncodedString()
+            #else
+            return value
+            #endif
         }
-        let locationNames: Set<String> = ["line", "column", "file", "fileID", "filePath"]
-        func bareDefault(_ macro: MacroExpansionExprSyntax) -> Bool {
-            macro.parent?.is(InitializerClauseSyntax.self) == true &&
-                (macro.parent?.parent?.is(FunctionParameterSyntax.self) == true ||
-                 macro.parent?.parent?.is(EnumCaseParameterSyntax.self) == true)
-        }
-        func locationValue(_ name: String, at position: AbsolutePosition) -> String {
-            let location = locations.location(for: position)
+        let locationNames = MacroExpansionExprSyntax.callerLocationNames
+        func locationValue(_ name: String, _ location: SourceLocation) -> String {
             switch name {
             case "line": return String(location.presumedLine)
             case "column": return String(location.column)
@@ -283,47 +578,13 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             return "*"
         }
-        func callerInfo(_ node: Syntax) -> (locations: [String: String], names: Set<String>) {
-            var offsets = Set<Int>()
-            var names = Set<String>()
-            func calledName(_ expression: ExprSyntax) -> String {
-                if let reference = expression.as(DeclReferenceExprSyntax.self) { return reference.baseName.identifier?.name ?? reference.baseName.text }
-                if let member = expression.as(MemberAccessExprSyntax.self) { return member.declName.baseName.identifier?.name ?? member.declName.baseName.text }
-                if let generic = expression.as(GenericSpecializationExprSyntax.self) { return calledName(generic.expression) }
-                return "*"
-            }
-            func record(_ tokens: TokenSequence) {
-                offsets.formUnion(tokens.map { $0.positionAfterSkippingLeadingTrivia.utf8Offset })
-            }
-            func visit(_ node: Syntax) {
-                if let call = node.as(FunctionCallExprSyntax.self) {
-                    names.insert(calledName(call.calledExpression))
-                    record(call.calledExpression.tokens(viewMode: .sourceAccurate))
-                    for token in [call.leftParen, call.rightParen].compactMap({ $0 }) {
-                        offsets.insert(token.positionAfterSkippingLeadingTrivia.utf8Offset)
-                    }
-                } else if let call = node.as(SubscriptCallExprSyntax.self) {
-                    names.insert("subscript")
-                    record(call.calledExpression.tokens(viewMode: .sourceAccurate))
-                    offsets.insert(call.leftSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
-                    offsets.insert(call.rightSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
-                } else if let attribute = node.as(AttributeSyntax.self) {
-                    names.insert(attribute.attributeName.trimmedDescription)
-                    record(attribute.tokens(viewMode: .sourceAccurate))
-                } else if let macro = node.as(MacroExpansionExprSyntax.self),
-                          !locationNames.contains(macro.macroName.text) && macro.macroName.text != "function" {
-                    // A source macro can synthesize a call that subsequently inlines.
-                    names.insert("*")
-                    record(macro.tokens(viewMode: .sourceAccurate))
-                }
-                for child in node.children(viewMode: .sourceAccurate) { visit(child) }
-            }
-            visit(node)
-            guard !offsets.isEmpty else { return ([:], names) }
-            let positions = offsets.sorted().map { AbsolutePosition(utf8Offset: $0) }
-            let valuesByKind = Dictionary(uniqueKeysWithValues: locationNames.map { name in
+        func locationDigest(_ offsets: Set<Int>) -> [String: String] {
+            let positions = offsets.sorted().map { locations.location(for: AbsolutePosition(utf8Offset: $0)) }
+            return Dictionary(uniqueKeysWithValues: locationNames.map { name in
                 let values = positions.map {
-                    let value = locationValue(name, at: $0)
+                    var value = locationValue(name, $0)
+                    if name == "line" { value += "|" + String($0.line) }
+                    if name == "filePath" { value += "|" + path }
                     return "\(value.utf8.count):" + value
                 }.joined(separator: "|")
                 #if canImport(CryptoKit)
@@ -333,7 +594,70 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 return (name, values)
                 #endif
             })
-            return (valuesByKind, names)
+        }
+        let builderBodies = ResultBuilderBodySyntax(tree, declarationIssues: declarationIssues, indexedMainActor: indexedMainActor)
+        let privateDefaults = PrivateLocationDefaultSyntax(tree, identifiers: identifiers, declarationIssues: declarationIssues)
+        var privateLocationDefaultScope: String?
+        func callerInfo(_ node: Syntax, includeAllTokens: Bool = false) -> (locations: [String: String], names: Set<String>, direct: Bool) {
+            var direct = true
+            var offsets = Set<Int>()
+            var names = Set<String>()
+            func calledName(_ expression: ExprSyntax) -> String {
+                var expression = expression
+                while let generic = expression.as(GenericSpecializationExprSyntax.self) { expression = generic.expression }
+                if let reference = expression.as(DeclReferenceExprSyntax.self) { return reference.baseName.identifier?.name ?? reference.baseName.text }
+                if let member = expression.as(MemberAccessExprSyntax.self) { return member.declName.baseName.identifier?.name ?? member.declName.baseName.text }
+                return "*"
+            }
+            func record(_ tokens: TokenSequence) {
+                offsets.formUnion(tokens.map { $0.positionAfterSkippingLeadingTrivia.utf8Offset })
+            }
+            if includeAllTokens { record(node.tokens(viewMode: .sourceAccurate)) }
+            var pending = includeAllTokens ? [] : [node]
+            while let node = pending.popLast() {
+                if let call = node.as(FunctionCallExprSyntax.self) {
+                    let name = calledName(call.calledExpression)
+                    if !names.insert(name).inserted || !call.calledExpression.is(DeclReferenceExprSyntax.self) {
+                        direct = false
+                    }
+                    record(call.calledExpression.tokens(viewMode: .sourceAccurate))
+                    // Swift locates a default argument at the start of the argument list.
+                    // For calls written without parentheses this is the first trailing closure.
+                    if let start = call.leftParen ?? call.trailingClosure?.leftBrace {
+                        offsets.insert(start.positionAfterSkippingLeadingTrivia.utf8Offset)
+                    }
+                } else if let segment = node.as(ExpressionSegmentSyntax.self) {
+                    // The compiler synthesizes appendInterpolation at the segment. Its
+                    // caller defaults survive even if mandatory inlining erases the edge.
+                    direct = false
+                    names.insert("appendInterpolation")
+                    record(segment.tokens(viewMode: .sourceAccurate))
+                } else if let call = node.as(SubscriptCallExprSyntax.self) {
+                    direct = false
+                    names.insert("subscript")
+                    record(call.calledExpression.tokens(viewMode: .sourceAccurate))
+                    offsets.insert(call.leftSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
+                    offsets.insert(call.rightSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
+                } else if let component = node.as(KeyPathSubscriptComponentSyntax.self) {
+                    // The key path captures default arguments when constructed.
+                    direct = false
+                    names.insert("subscript")
+                    offsets.insert(component.leftSquare.positionAfterSkippingLeadingTrivia.utf8Offset)
+                } else if let attribute = node.as(AttributeSyntax.self), !(indexedMainActor && attribute.isBareMainActor) {
+                    direct = false
+                    names.insert(attribute.attributeName.trimmedDescription)
+                    record(attribute.tokens(viewMode: .sourceAccurate))
+                } else if let macro = node.as(MacroExpansionExprSyntax.self),
+                          !locationNames.contains(macro.macroName.text) && macro.macroName.text != "function" {
+                    // A source macro can synthesize a call that subsequently inlines.
+                    direct = false
+                    names.insert("*")
+                    record(macro.tokens(viewMode: .sourceAccurate))
+                }
+                pending.append(contentsOf: node.children(viewMode: .sourceAccurate).reversed())
+            }
+            guard !offsets.isEmpty else { return ([:], names, false) }
+            return (locationDigest(offsets), names, direct && !names.isEmpty)
         }
         func locationValues(_ node: Syntax) -> [String] {
             var values: [String] = []
@@ -341,17 +665,21 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 guard let macro = token.parent?.as(MacroExpansionExprSyntax.self) else { continue }
                 // Bare parameter defaults use the caller's location. Parenthesized
                 // or arithmetic defaults use the declaration's location instead.
-                if bareDefault(macro) { continue }
+                if macro.isDirectParameterDefault { continue }
                 let name = macro.macroName.text
                 if locationNames.contains(name) {
-                    values.append(name + ":" + locationValue(name, at: macro.positionAfterSkippingLeadingTrivia))
+                    values.append(name + ":" + locationValue(name, locations.location(for: macro.positionAfterSkippingLeadingTrivia)))
                 }
             }
             return values
         }
         func containsOpaqueResult(_ node: Syntax) -> Bool {
-            node.is(SomeOrAnyTypeSyntax.self) ||
-                node.children(viewMode: .sourceAccurate).contains(where: containsOpaqueResult)
+            var pending = [node]
+            while let type = pending.popLast() {
+                if type.is(SomeOrAnyTypeSyntax.self) { return true }
+                pending.append(contentsOf: type.children(viewMode: .sourceAccurate))
+            }
+            return false
         }
         func singleGetter(_ block: AccessorBlockSyntax?) -> Bool {
             guard let accessors = block?.accessors.as(AccessorDeclListSyntax.self) else { return true }
@@ -400,7 +728,9 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
             return true
         }
-        func add(_ node: Syntax, header: Syntax, kind: String, scope: [String], plainExtension: Bool? = nil) {
+        var discovery = SwiftTestingSourceDeclarations()
+        var branch = ""
+        func add(_ node: Syntax, header: Syntax, kind: String, scope: [String], originalAttributes: AttributeListSyntax? = nil, plainExtension: Bool? = nil) {
             var declaredMembers = Set<String>()
             if scope.isEmpty {
                 if let function = node.as(FunctionDeclSyntax.self) {
@@ -458,7 +788,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             var defaultNames: [String: Set<String>] = [:]
             for token in node.tokens(viewMode: .sourceAccurate) where token.tokenKind == .pound {
                 guard let macro = token.parent?.as(MacroExpansionExprSyntax.self),
-                      bareDefault(macro), locationNames.contains(macro.macroName.text) else { continue }
+                      macro.isDirectParameterDefault, locationNames.contains(macro.macroName.text) else { continue }
                 defaultNames[defaultName(macro), default: []].insert(macro.macroName.text)
             }
             let defaults = Set(defaultNames.values.flatMap { $0 })
@@ -466,7 +796,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             let syntax = fingerprint(node)
             let values = locationValues(node)
             let semantic = SourceUnit.withLocations(values, syntax: syntax)
-            var bodySupported = false
+            var bodySupported = false, testingBodyCandidate = false
             if let function = node.as(FunctionDeclSyntax.self) {
                 // Optional, tuple and generic wrappers can hide an opaque result
                 // whose inferred type changes callers without a surviving call edge.
@@ -479,7 +809,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 // Enclosing attached macros may synthesize other declarations
                 // from this body, outside the body's direct dependency paths.
                 var enclosing = node.parent
-                var enclosingSupported = true
+                var enclosingSupported = true, testingEnclosingSupported = true
                 while let ancestor = enclosing {
                     let list = ancestor.as(ClassDeclSyntax.self)?.attributes
                         ?? ancestor.as(StructDeclSyntax.self)?.attributes
@@ -487,12 +817,20 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                         ?? ancestor.as(ExtensionDeclSyntax.self)?.attributes
                         ?? ancestor.as(ProtocolDeclSyntax.self)?.attributes
                     if let list {
+                        testingEnclosingSupported = testingEnclosingSupported && SwiftTestingSourceDeclarations.supportsEnclosingDeclaration(list)
                         enclosingSupported = enclosingSupported && list.allSatisfy {
                             $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription == "MainActor"
                         }
                     }
                     enclosing = ancestor.parent
                 }
+                testingBodyCandidate = testingEnclosingSupported && !hasOpaqueResult &&
+                    function.attributes.contains { $0.as(AttributeSyntax.self).map { SwiftTestingSourceDeclarations.matches($0, "Test") } == true } &&
+                    function.body?.tokens(viewMode: .sourceAccurate).allSatisfy { token in
+                        guard token.tokenKind == .pound else { return true }
+                        guard let macro = token.parent?.as(MacroExpansionExprSyntax.self) else { return false }
+                        return locationNames.contains(macro.macroName.text) || ["function", "expect", "require"].contains(macro.macroName.text)
+                    } == true
                 bodySupported = enclosingSupported && attributes.count == function.attributes.count && attributes.allSatisfy { $0 == "MainActor" } &&
                     !hasOpaqueResult && !hasMacro
             }
@@ -528,11 +866,100 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 }
             }
             let receiverCalls = SDKReceiverCallSyntax.evidence(in: node, locations: physicalLocations ? locations : nil, path: path)
-            result.units.append(SourceUnit(
+            let testingScope = node.as(ActorDeclSyntax.self).map { scope + [$0.name.text] } ?? scope
+            var registrations: [SwiftTestingSourceDeclarations.Arguments] = []
+            var entryMetadata: SwiftTestingSourceDeclarations.Arguments?
+            var suiteMetadata: SwiftTestingSourceDeclarations.Arguments?
+            let testing = discovery.record(node, scope: testingScope, conditional: !branch.isEmpty, path: path,
+                                          locations: locations, originalAttributes: originalAttributes) { owner, attributes, hasEagerInputs in
+                let syntax = Syntax(attributes)
+                // Preserve conditional membership inside opaque declarations
+                // such as actors, whose members have no individual source unit.
+                var conditions: [String] = []
+                var ancestor = syntax.parent
+                while let current = ancestor {
+                    if let clause = current.as(IfConfigClauseSyntax.self),
+                       let siblings = clause.parent?.as(IfConfigClauseListSyntax.self) {
+                        for sibling in siblings {
+                            conditions.append(fingerprint(Syntax(sibling.with(\.elements, nil))))
+                            if sibling.id == clause.id { break }
+                        }
+                    }
+                    ancestor = current.parent
+                }
+                let context = owner + conditions
+                if hasEagerInputs {
+                    let identity = SourceUnit.withLocations(context, syntax: compactFingerprint(syntax))
+                    registrations.append(.init(identity: identity, locations: locationValues(syntax), calls: callerInfo(syntax).locations))
+                }
+                // Testing exposes the attached declaration's comments and source
+                // bounds through Test.current even when its attribute has no arguments.
+                guard let declaration = syntax.parent else { return }
+                let trivia = declaration.leadingTrivia
+                let firstComment = trivia.firstIndex { piece in
+                    switch piece {
+                    case .lineComment, .docLineComment, .blockComment, .docBlockComment: true
+                    default: false
+                    }
+                }
+                let comments = firstComment.map { Trivia(pieces: trivia[$0...]).description } ?? ""
+                var positions = [declaration.positionAfterSkippingLeadingTrivia, declaration.endPositionBeforeTrailingTrivia]
+                if let name = declaration.asProtocol(NamedDeclSyntax.self)?.name { positions.append(name.positionAfterSkippingLeadingTrivia) }
+                for attribute in attributes.compactMap({ $0.as(AttributeSyntax.self) }) {
+                    positions.append(attribute.atSign.positionAfterSkippingLeadingTrivia)
+                    positions += attribute.attributeName.tokens(viewMode: .sourceAccurate).map(\.positionAfterSkippingLeadingTrivia)
+                }
+                // Testing emits physical bounds even under #sourceLocation.
+                var bounds: [String] = []
+                let dimensions = locationNames.sorted()
+                for position in positions {
+                    bounds.append("line:" + String(locations.location(for: position).line))
+                    bounds.append("filePath:" + path)
+                    for dimension in dimensions {
+                        bounds.append(dimension + ":" + locationValue(dimension, locations.location(for: position)))
+                    }
+                }
+                let metadata = SwiftTestingSourceDeclarations.Arguments(identity: SourceUnit.withLocations(context, syntax: comments),
+                                                                       locations: bounds, calls: [:])
+                if node.is(FunctionDeclSyntax.self) {
+                    entryMetadata = metadata
+                } else if originalAttributes != nil, SwiftTestingSourceDeclarations.hasSuiteOwner(attributes) {
+                    suiteMetadata = metadata
+                } else {
+                    // Suite and opaque nested declarations lack a single entry owner.
+                    registrations.append(metadata)
+                }
+            }
+            func registrationInputs(_ attribute: String) -> SwiftTestingSourceDeclarations.RegistrationInputs? {
+                SwiftTestingSourceDeclarations.registrationInputs(node, attribute: attribute, fingerprint: compactFingerprint) { expression in
+                    .init(identity: compactFingerprint(expression), locations: locationValues(expression),
+                          calls: callerInfo(expression, includeAllTokens: true).locations)
+                }
+            }
+            let entryInputs = node.is(FunctionDeclSyntax.self) ? registrationInputs("Test") : nil
+            var registrationDeclaration: String?
+            if testingBodyCandidate {
+                registrationDeclaration = SwiftTestingSourceDeclarations.registrationDeclaration(node, attribute: "Test", fingerprint: compactFingerprint)
+            } else if suiteMetadata != nil, originalAttributes != nil, kind == "type" || kind == "extension" {
+                // Members of these nominal headers have their own source units.
+                // An enclosing macro could also derive declarations from the edit.
+                var ancestor = originalAttributes?.parent?.parent
+                while let current = ancestor {
+                    if let group = current.asProtocol(DeclGroupSyntax.self),
+                       !SwiftTestingSourceDeclarations.supportsEnclosingDeclaration(group.attributes) { break }
+                    ancestor = current.parent
+                }
+                if ancestor == nil {
+                    registrationDeclaration = SwiftTestingSourceDeclarations.registrationDeclaration(node, attribute: "Suite", fingerprint: compactFingerprint)
+                }
+            }
+            var unit = SourceUnit(
                 key: module + ":" + scope.joined(separator: ".") + ":" + fingerprint(header),
                 fingerprint: semantic,
                 kind: kind, scope: scope.joined(separator: "."),
+                privateLocationDefaultScope: defaults.isEmpty ? nil : privateLocationDefaultScope,
                 region: SourceRegion(path: path, startLine: start, endLine: end),
+                conditionalBranch: branch.isEmpty ? nil : branch,
                 syntaxFingerprint: semantic == syntax ? nil : syntax,
                 headOnlyBodySupported: bodySupported,
                 fileLocationValues: values.filter { !$0.hasPrefix("line:") && !$0.hasPrefix("column:") },
@@ -544,17 +971,11 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 }, privateTestHelperBlocker: node.as(FunctionDeclSyntax.self).flatMap { PrivateTestHelperSyntax.unsupportedEffect($0, locations: locations) },
                 independentAddedTestEntry: node.as(FunctionDeclSyntax.self).flatMap {
                     PrivateTestHelperSyntax.independentAddedEntry($0, references: identifiers[$0.name.identifier?.name ?? $0.name.text] ?? [])
-                }, swiftTestingRole: {
-                    if let function = node.as(FunctionDeclSyntax.self), function.attributes.contains(where: {
-                        ["Test", "Testing.Test"].contains($0.as(AttributeSyntax.self)?.attributeName.trimmedDescription ?? "")
-                    }) { return "test" }
-                    let attributes = node.as(StructDeclSyntax.self)?.attributes ?? node.as(ClassDeclSyntax.self)?.attributes
-                        ?? node.as(EnumDeclSyntax.self)?.attributes ?? node.as(ActorDeclSyntax.self)?.attributes
-                    if attributes?.contains(where: {
-                        ["Suite", "Testing.Suite"].contains($0.as(AttributeSyntax.self)?.attributeName.trimmedDescription ?? "")
-                    }) == true { return "suite" }
-                    return nil
-                }(), sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
+                }, swiftTestingRole: testing.role, swiftTestingSuiteName: testing.suiteName,
+                swiftTestingHasArguments: testing.hasArguments, swiftTestingArguments: registrations.isEmpty ? nil : registrations,
+                swiftTestingMetadata: entryMetadata,
+                swiftTestingRegistrationDeclaration: registrationDeclaration,
+                swiftTestingEntryInputs: entryInputs, sdkTestHelper: node.as(FunctionDeclSyntax.self).flatMap(SDKTestHelperSyntax.prove),
                 bodylessProtocolRequirement: PrivateTestHelperSyntax.bodylessProtocolRequirement(node),
                 plainExtension: plainExtension,
                 helperCallableName: node.as(FunctionDeclSyntax.self).map { $0.name.identifier?.name ?? $0.name.text },
@@ -565,14 +986,6 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 helperBindingUses: HelperBindingUses(in: node),
                 helperDeclaredMembers: declaredMembers,
                 helperRegionEffectsComplete: regionEffectsComplete(node),
-                helperCallerStatementSignatures: node.as(FunctionDeclSyntax.self).flatMap { function in
-                    guard let body = function.body,
-                          !body.tokens(viewMode: .sourceAccurate).contains(where: { token in
-                              guard let declaration = token.parent?.as(DeclSyntax.self) else { return false }
-                              return !declaration.is(VariableDeclSyntax.self)
-                          }) else { return nil }
-                    return body.statements.map { fingerprint(Syntax($0.item)) }
-                },
                 helperInheritedTypes: (node.as(ClassDeclSyntax.self)?.inheritanceClause
                     ?? node.as(StructDeclSyntax.self)?.inheritanceClause
                     ?? node.as(EnumDeclSyntax.self)?.inheritanceClause
@@ -613,15 +1026,71 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                             i == j || parameters[j].defaultValue != nil || parameters[j].ellipsis != nil
                         }
                     }
-                }))
+                })
+            let builderOffsets = builderBodies.locations(in: node)
+            unit.builderLocations = builderOffsets.isEmpty ? [:] : locationDigest(builderOffsets)
+            if suiteMetadata != nil, registrationDeclaration != nil { unit.swiftTestingSuiteInputs = registrationInputs("Suite") }
+            unit.swiftTestingSuiteMetadata = suiteMetadata
+            unit.swiftTestingBodyCandidate = entryInputs?.bare == true && testingBodyCandidate ? true : nil
+            unit.hasInlineBody = node.tokens(viewMode: .sourceAccurate).contains(where: { token in
+                token.tokenKind == .atSign && token.parent?.as(AttributeSyntax.self)?.canInlineBody == true
+            }) ? true : nil
+            if let function = node.as(FunctionDeclSyntax.self), scope.isEmpty, branch.isEmpty,
+               let name = function.name.identifier?.name {
+                if unit.hasInlineBody == true, identifiers[name]?.count == 1,
+                   function.modifiers.allSatisfy({ ["private", "fileprivate", "internal"].contains($0.name.text) }),
+                   function.attributes.allSatisfy({ element in
+                       guard let name = element.as(AttributeSyntax.self)?.inlineAttributeName else { return false }
+                       return name != "_alwaysEmitIntoClient"
+                   }) {
+                    unit.fileUnreferencedInlineName = name
+                    if function.modifiers.contains(where: { ["private", "fileprivate"].contains($0.name.text) }) {
+                        if onlyCompilerAttributes { unit.fileProvesUnusedInline = true }
+                        else if hasTestAttribute { unit.filePrivateInlineWithTests = true }
+                    }
+                }
+                // A separate function-value use could account for a surviving
+                // SIL reference after a different call with the same name inlined.
+                if bodySupported && calls.direct {
+                    var seen = Set<String>()
+                    let unique = function.tokens(viewMode: .sourceAccurate).allSatisfy { token in
+                        guard let name = token.identifier?.name, calls.names.contains(name) else { return true }
+                        return seen.insert(name).inserted
+                    }
+                    unit.hasOnlyDirectSourceCalls = unique ? true : nil
+                }
+            }
+            unit.helperCallerStatementSignatures = node.as(FunctionDeclSyntax.self).flatMap { function in
+                guard let body = function.body,
+                      !body.tokens(viewMode: .sourceAccurate).contains(where: { token in
+                          guard let declaration = token.parent?.as(DeclSyntax.self) else { return false }
+                          return !declaration.is(VariableDeclSyntax.self)
+                      }) else { return nil }
+                return body.statements.map { fingerprint(Syntax($0.item)) }
+            }
+            result.units.append(unit)
         }
         func walk(_ node: Syntax, scope: [String]) {
+            let enclosingDefaultScope = privateLocationDefaultScope
+            if enclosingDefaultScope == nil {
+                privateLocationDefaultScope = privateDefaults?.scope(for: node, in: scope)
+            }
+            defer { privateLocationDefaultScope = enclosingDefaultScope }
             if let item = node.as(CodeBlockItemSyntax.self), !item.item.is(DeclSyntax.self) {
                 add(node, header: node, kind: "topLevel", scope: scope)
             } else if let value = node.as(IfConfigDeclSyntax.self) {
                 let header = Syntax(value.with(\.clauses, IfConfigClauseListSyntax(value.clauses.map { $0.with(\.elements, nil) })))
                 add(header, header: header, kind: "configuration", scope: scope)
-                for child in node.children(viewMode: .sourceAccurate) { walk(child, scope: scope) }
+                let enclosing = branch
+                var clauses = ""
+                for clause in value.clauses {
+                    // An #elseif or #else depends on every preceding condition.
+                    let condition = fingerprint(Syntax(clause.with(\.elements, nil)))
+                    clauses += "\(condition.utf8.count):" + condition
+                    branch = enclosing + "[\(clauses)]"
+                    if let elements = clause.elements { walk(Syntax(elements), scope: scope) }
+                }
+                branch = enclosing
             } else if let value = node.as(ClassDeclSyntax.self) {
                 let names = scope + [value.name.text]
                 let className = (scope + [value.name.identifier?.name ?? value.name.text]).joined(separator: ".")
@@ -630,29 +1099,29 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                     result.helperSafeClasses![module + "." + value.name.text] = parent
                 }
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "type", scope: names)
+                add(header, header: header, kind: "type", scope: names, originalAttributes: value.attributes)
                 result.inheritance[module + "." + names.joined(separator: "."), default: []] += value.inheritanceClause?.inheritedTypes.map { $0.type.trimmedDescription } ?? []
                 result.superclasses![module + "." + names.joined(separator: "."), default: []] += value.inheritanceClause?.inheritedTypes.first.map { [$0.type.trimmedDescription] } ?? []
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(ProtocolDeclSyntax.self) {
                 let names = scope + [value.name.text]
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "type", scope: names)
+                add(header, header: header, kind: "type", scope: names, originalAttributes: value.attributes)
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(StructDeclSyntax.self) {
                 let names = scope + [value.name.text]
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "type", scope: names)
+                add(header, header: header, kind: "type", scope: names, originalAttributes: value.attributes)
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(EnumDeclSyntax.self) {
                 let names = scope + [value.name.text]
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "type", scope: names)
+                add(header, header: header, kind: "type", scope: names, originalAttributes: value.attributes)
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(ExtensionDeclSyntax.self) {
                 let names = [value.extendedType.trimmedDescription]
                 let header = Syntax(value.with(\.memberBlock.members, MemberBlockItemListSyntax([])))
-                add(header, header: header, kind: "extension", scope: names, plainExtension: PrivateTestHelperSyntax.isPlainExtension(value))
+                add(header, header: header, kind: "extension", scope: names, originalAttributes: value.attributes, plainExtension: PrivateTestHelperSyntax.isPlainExtension(value))
                 for member in value.memberBlock.members { walk(Syntax(member.decl), scope: names) }
             } else if let value = node.as(FunctionDeclSyntax.self) {
                 add(node, header: Syntax(value.with(\.body, nil)), kind: "function", scope: scope)
@@ -672,6 +1141,16 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             }
         }
         walk(Syntax(tree), scope: [])
+        result.swiftTestingDeclarations = discovery
         return result
+    }
+}
+
+extension MacroExpansionExprSyntax {
+    static let callerLocationNames: Set<String> = ["line", "column", "file", "fileID", "filePath"]
+
+    var isDirectParameterDefault: Bool {
+        parent?.is(InitializerClauseSyntax.self) == true &&
+            (parent?.parent?.is(FunctionParameterSyntax.self) == true || parent?.parent?.is(EnumCaseParameterSyntax.self) == true)
     }
 }

@@ -381,7 +381,8 @@ extension XcodeAnalysis {
             guard !decoded.isEmpty else { throw ImpactError("Cannot cache empty build settings.") }
             let normalized = try XcodeGraphCache.normalizedSettings(settings, workspace: workspace, aliases: keepBuild ? retained.map { [$0] } ?? [] : [])
             var identity = context
-            identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-5-helper-contract-7"
+            identity["schema"] = "xcode-analysis-cache-1/graph-4-inline-5-helper-contract-12-testing-records-41"
+            identity["sourceParserVersion"] = String(SwiftSourceSnapshot.currentParserVersion)
             identity["repository"] = XcodeGraphCache.digest(Data(repository.utf8))
             identity["revision"] = revision
             identity["analyzerExecutable"] = analyzer
@@ -434,7 +435,9 @@ extension XcodeAnalysis {
                     parentPhase: ["captureConsumption", "compilerReplay", "silParsing"].contains(phase) ? "extraction" : nil))
             }
             var result: XcodeTestGraph
-            if let found, XcodeSourceOwnership.metadataMatches(found, log: buildText, root: source, derived: derived, captured: captured) {
+            // A rebuilt product can load a different image even when its Swift source inventory matches.
+            if let found, found.dependencies?.swiftTestingFactoriesByTarget?.isEmpty != false,
+               XcodeSourceOwnership.metadataMatches(found, log: buildText, root: source, derived: derived, captured: captured) {
                 result = found
             }
             else {
@@ -456,7 +459,7 @@ extension XcodeAnalysis {
                         }
                     } catch { freshInputFailure = "Fresh compiler input inventory unavailable: \(error)" }
                 }
-                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: buildText, settingsData: settings, moduleCache: moduleCache, captured: captured, allowCompilerReplay: moduleCache != nil)
+                result = try measured.analyzeBuild(options, sourceRoot: source, derived: derived, log: buildText, settingsData: settings, moduleCache: moduleCache, captured: captured, allowCompilerReplay: moduleCache != nil, freshIndex: true)
                 try extractionCancellation.check()
                 if let freshInputs {
                     try timed("freshInputRecheck", revision: revision) { try freshInputs.validate(log: buildText, source: source) }
@@ -489,7 +492,7 @@ extension XcodeAnalysis {
                 retainedGraphPath = try timed("retainBuild", revision: revision) {
                     try RetainedXcodeBuild.publish(graph: &result, revision: revision, context: context,
                         toolchain: toolchain, workspace: workspace, settings: settings,
-                        inputIdentity: identity, headOnlyEvidence: headOnlyEvidence)
+                        inputIdentity: identity, headOnlyEvidence: headOnlyEvidence, changedMacroPaths: Set(changes.map(\.path)))
                 }.path
             }
             graphSucceeded = true
@@ -534,7 +537,7 @@ extension XcodeAnalysis {
             retainedGraphPath = try timed("retainBuild", revision: comparison.head!) {
                 try RetainedXcodeBuild.publish(graph: &current, revision: comparison.head!, context: context,
                     toolchain: toolchain, workspace: pendingCapture.workspace, settings: pendingCapture.settings,
-                    inputIdentity: pendingCapture.identity, capture: pendingCapture.capture, headOnlyEvidence: headOnlyEvidence)
+                    inputIdentity: pendingCapture.identity, capture: pendingCapture.capture, headOnlyEvidence: headOnlyEvidence, changedMacroPaths: Set(changes.map(\.path)))
             }.path
         }
         let sourceCache = try headOnly ? XcodeBaseSourceCache(root: root, base: comparison.base) : nil

@@ -62,6 +62,10 @@ func compiledFixtureFileChangesRemainSemantic(kind: String) throws {
     var move = FileChange(path: "Moved.swift")
     move.previousPath = "Original.swift"; move.isPureMove = true
     let changes = declarationMove ? [FileChange(path: "Original.swift"), FileChange(path: "Moved.swift")] : [move]
+    if !declarationMove {
+        let package = StaticSelector.select(current: try #require(head.dependencies), previous: base.dependencies, changes: changes, baseRevision: "base")
+        #expect(package.selectedTests == [test])
+    }
     for (before, after) in [(base, head), (head, base)] {
         let report = XcodeFineSelector.select(current: after, previous: before, changes: changes, baseRevision: "base")
         #expect(report.selectedTests == [test])

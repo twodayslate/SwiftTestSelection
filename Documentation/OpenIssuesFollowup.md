@@ -114,6 +114,17 @@ runner behavior. Swift Testing macros/traits remain outside the head-only helper
 isolation proof, and inline XCTest-specific mapping syntax is not extended here;
 JSON mappings can use enumerated IDs. Full 27.3 runner validation remains open.
 
+The mixed-runner integration test builds one head containing a Swift Testing UI method and an XCTest UI method in the same file. It compares the head with three Git revisions and verifies the same retained build for each. Editing both methods must select both. A single edit must identify exactly the edited method as a positive dependency. When the UI runner leaves discovery open, the XCTest-only edit must also retain the Swift Testing method with a discovery diagnostic. The test verifies both compiled entries, the Swift Testing factory and strict UI mappings. For each single edit it runs the complete verified filter list together and checks every target-qualified test ID in the result bundle, with zero failures or skips. Run the mixed UI case with Xcode 27.3 or later and a compatible simulator destination.
+
+```sh
+swift build -c release
+python3 Scripts/xcode_swift_testing_ui_test.py --destination 'platform=iOS Simulator,id=<UDID>' --output /tmp/swift-testing-ui.json
+```
+
+The same command accepts three controls on Xcode 27.2. Use `--control xctest-ui` for two methods in one XCTest UI suite, or `--control hostless-swift-testing-unit` for a Swift Testing unit in a platform test process alongside an XCTest UI method. Both controls require exact single-method selection. With `--control swift-testing-unit`, the application hosts the unit bundle. In this control the XCTest-only edit must identify only the UI method as a positive dependency and also retain the unit test with a discovery fallback. The JSON records the positive, selected and executed test IDs for each edit.
+
+The hostless control disables code coverage in its test plan. With coverage enabled, LLVM links a startup initializer into the test image and discovery remains open. With coverage disabled, a retained build under `/private/tmp` also exposed a path comparison defect. Foundation reported the executable under `/tmp`, and the selector discarded its factory inventory. The selector now resolves both paths before checking the bundle layout and requires the bundle to be inside the products directory. On iOS Simulator 27.2, Xcode also writes an absolute path for Main Thread Checker in the test environment. The selector checks that this path resolves to the library in an available CoreSimulator runtime and verifies its Apple signature and code identifier. An unrecognized injected library keeps discovery open. Recapture older graphs to use the updated inventory. The selector also inspects loader search directories and bundle run paths. A staged testing framework, a library search directory outside the retained products, or an unsupported loader override keeps discovery open. A fresh hostless simulator build with ordinary Xcode search paths still binds the individual methods.
+
 Switching frameworks does not reveal dependencies across the app/test process
 boundary. There is no measured precision or speed benefit from dropping XCTest;
 keep both frameworks and improve the evidence they share.

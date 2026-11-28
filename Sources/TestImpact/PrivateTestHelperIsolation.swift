@@ -22,6 +22,7 @@ enum PrivateTestHelperIsolation {
         fileprivate var preservedHelperDeclarations: [String: [SourceUnit]] = [:]
         fileprivate var sdkEnvironmentRejections: [String: (ids: Set<String>, reason: String)] = [:]
         fileprivate(set) var receiverOriginBlocker: String?
+        fileprivate(set) var incompleteTestRoots: [String]?
         fileprivate(set) var isolationBlocker: String?
         private(set) var evaluationCount = 0
         fileprivate(set) var sharedStateSymbols = Set<String>()
@@ -123,7 +124,8 @@ enum PrivateTestHelperIsolation {
             return roots.contains { graph.functions[$0] == nil }
         }
         guard missingTests.isEmpty else {
-            traversal.isolationBlocker = "Incomplete test/lifecycle compiler roots: " + missingTests.sorted().joined(separator: ", ")
+            traversal.incompleteTestRoots = missingTests.sorted()
+            traversal.isolationBlocker = "Incomplete test/lifecycle compiler roots for \(missingTests.count) tests"
             return nil
         }
         guard Set(current.modules.values).isDisjoint(with: SDKTestHelperSyntax.trustedCallerModules.union(["CoreGraphics"])),
@@ -805,7 +807,7 @@ enum PrivateTestHelperIsolation {
         let module = String(unit.key.prefix { $0 != ":" })
         let owners = current.targets.filter { $0.sourceFiles.contains(unit.region.path) }
         guard !owners.isEmpty, owners.allSatisfy({ $0.isTest && !$0.hasProductionRole && current.modules[$0.name] == module }),
-              current.unsupportedSourceInputs?[module]?.isEmpty ?? true,
+              !current.hasUninspectedSwiftInputs(in: module),
               current.unresolvedProductRoles?[module] == nil else { return false }
         let headSources = Array(current.sources.values), baseSources = Array(base.values)
         guard (headSources + baseSources).allSatisfy({ $0.helperNamesUnshadowed == true }) else { return false }

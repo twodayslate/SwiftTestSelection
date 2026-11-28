@@ -6,9 +6,9 @@ import Testing
 @testable import TestImpact
 
 /// A native compiler plugin implementing the length-prefixed JSON protocol.
-/// Fixed expansions keep this regression independent of a second SwiftSyntax
+/// Canned expansions keep these regressions independent of a second SwiftSyntax
 /// build, and run inside the compiler's normal plugin sandbox.
-private func macroPlugin(expansion: String, root: URL) throws -> String {
+func macroPlugin(expansion: String, afterBlankLine: String? = nil, root: URL) throws -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = .withoutEscapingSlashes
     func literal(_ response: [String: Any]) throws -> String {
@@ -18,6 +18,7 @@ private func macroPlugin(expansion: String, root: URL) throws -> String {
     let capability = try literal(["getCapabilityResult": ["capability": ["protocolVersion": 7]]])
     let freestanding = try literal(["expandFreestandingMacroResult": ["expandedSource": expansion, "diagnostics": []]])
     let attached = try literal(["expandAttachedMacroResult": ["expandedSources": [expansion], "diagnostics": []]])
+    let edited = try literal(["expandAttachedMacroResult": ["expandedSources": [afterBlankLine ?? expansion], "diagnostics": []]])
     let source = """
     #include <stdint.h>
     #include <stdio.h>
@@ -32,7 +33,7 @@ private func macroPlugin(expansion: String, root: URL) throws -> String {
             const char *response;
             if (strstr(request, "\\\"getCapability\\\"")) response = \(capability);
             else if (strstr(request, "\\\"expandFreestandingMacro\\\"")) response = \(freestanding);
-            else if (strstr(request, "\\\"expandAttachedMacro\\\"")) response = \(attached);
+            else if (strstr(request, "\\\"expandAttachedMacro\\\"")) response = strstr(request, "\\\\n\\\\n") ? \(edited) : \(attached);
             else return 3;
             free(request);
             length = strlen(response);
@@ -182,4 +183,78 @@ func compiledPrivateHelperMacrosRequireCompleteInventories(scenario: String) thr
     #expect(source.helperOperatorDeclarations == [])
     let restored = try JSONDecoder().decode(SwiftSourceSnapshot.self, from: JSONEncoder().encode(source))
     #expect(restored.helperDeclarationsComplete == true)
+}
+
+@Test(arguments: [false, true])
+func attachedPeerCanObserveTriviaInAnUncalledDeclaration(imported: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("peer-layout-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let plugin = try macroPlugin(expansion: "func sharedValue() -> Int { 1 }",
+                                 afterBlankLine: "func sharedValue() -> Int { 2 }", root: root)
+    // An imported peer can have the same spelling as the SDK global actor.
+    let macroName = imported ? "MainActor" : "CaptureLine"
+    let access = imported ? "public " : ""
+    let declaration = """
+    @attached(peer, names: named(sharedValue))
+    \(access)macro \(macroName)() = #externalMacro(module: "ReviewMacros", type: "CaptureLine")
+    """
+    let before = """
+    @\(macroName) private func callbacks() -> [String: () -> String] {
+        return ["title": {
+            "Sharing"
+        }]
+    }
+    """
+    let after = before.replacingOccurrences(of: "        \"Sharing\"", with: "\n        \"Sharing\"")
+    let caller = "import XCTest\nfinal class Suite: XCTestCase { func testSharing() { XCTAssertEqual(sharedValue(), 1) } }"
+    let test = "UI/Suite/testSharing()", path = "Sharing.swift"
+    let compiler = try CommandRunner.run("xcrun", ["--find", "swiftc"], at: root).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let primary = root.appendingPathComponent(path).path
+    let arguments = ["-load-plugin-executable", plugin, "-I", root.path]
+    if imported {
+        let source = root.appendingPathComponent("MacroKit.swift")
+        try declaration.write(to: source, atomically: true, encoding: .utf8)
+        _ = try CommandRunner.run(compiler, ["-emit-module", "-module-name", "MacroKit", source.path] + arguments, at: root)
+    }
+    func capture(_ body: String, expected: Int) throws -> XcodeTestGraph {
+        var files = [path: body, "Tests.swift": caller]
+        if imported {
+            files[path] = "import MacroKit\n" + body
+            files["Ordinary.swift"] = "import MacroKit\n@_Concurrency.MainActor func ordinary() {}"
+        } else { files["Macros.swift"] = declaration }
+        var graph = try boundaryGraph(files, tests: [test], root: root, compilerArguments: arguments)
+        if imported {
+            let map = root.appendingPathComponent("outputs.json")
+            let ordinary = root.appendingPathComponent("Ordinary.swift").path
+            let outputs = Dictionary(uniqueKeysWithValues: [primary, ordinary].map { source in
+                let prefix = URL(fileURLWithPath: source).deletingPathExtension().path
+                return (source, ["object": prefix + ".o", "dependencies": prefix + ".d"])
+            })
+            try JSONEncoder().encode(outputs).write(to: map)
+            let driver = ["-c", "-emit-dependencies", "-module-name", "UI", "-output-file-map", map.path] + arguments + [primary, ordinary]
+            _ = try CommandRunner.run(compiler, driver, at: root)
+            CompilerMacroInputs.annotate(&graph.sources, invocations: ["UI": [compiler] + driver], root: root)
+            #expect(graph.sources["UI:" + path]?.usesUnmodeledMacroPlugin == true)
+            #expect(graph.sources["UI:Ordinary.swift"]?.usesUnmodeledMacroPlugin == false)
+        }
+        let sil = try String(contentsOf: root.appendingPathComponent("UI.sil"), encoding: .utf8)
+        let peer = try #require(sil.components(separatedBy: "// sharedValue()").dropFirst().first?.components(separatedBy: "} // end sil function").first)
+        #expect(peer.split(separator: "\n").contains { $0.contains("integer_literal") && $0.contains(", \(expected), loc") })
+        return try GraphArchive.decode(GraphArchive.encode(graph))
+    }
+    let base = try capture(before, expected: 1), head = try capture(after, expected: 2)
+    let changes = [FileChange(path: path)]
+    let historical = base.sources.mapValues { file in
+        var source = file
+        source.usesUnmodeledMacroPlugin = nil
+        return source
+    }
+    for report in [XcodeFineSelector.select(current: head, previous: base, changes: changes, baseRevision: "base"),
+                   XcodeHeadOnlySelector.select(current: head, source: .init(base: historical, mappings: base.mappings),
+                                                changes: changes, baseRevision: "base")] {
+        #expect(report.selectedTests == [test])
+        #expect(!report.ignoredChanges.contains(path))
+        #expect(report.diagnostics.contains { $0.code == "attached_macro_inputs" })
+    }
 }

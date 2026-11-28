@@ -14,13 +14,16 @@ public struct PackageAnalyzer {
         self.progress = progress
     }
 
+    // The compiler command inventory in description.json comes from SwiftPM's native engine.
+    static let buildSystemArguments = ["--build-system", "native"]
+
     public func analyze() throws -> DependencyGraph {
         let fm = FileManager.default
         guard fm.fileExists(atPath: packagePath.appendingPathComponent("Package.swift").path) else {
             throw ImpactError("No Package.swift at \(packagePath.path). This version analyzes SwiftPM packages.")
         }
         let scratch = packagePath.appendingPathComponent(".build/test-impact")
-        let common = ["--package-path", packagePath.path, "--scratch-path", scratch.path, "-c", "debug"]
+        let common = Self.buildSystemArguments + ["--package-path", packagePath.path, "--scratch-path", scratch.path, "-c", "debug"]
         progress("Building package and tests (test bodies are not executed)…")
         _ = try CommandRunner.run("swift", ["build"] + common + ["--build-tests", "-Xswiftc", "-g"], at: packagePath)
         let binPath = try CommandRunner.run("swift", ["build"] + common + ["--show-bin-path"], at: packagePath).text
@@ -40,8 +43,17 @@ public struct PackageAnalyzer {
         var dispatchTargets: [String: Set<String>] = [:]
         var externalWitnesses: [String: Set<String>] = [:]
         var seenModules = Set<String>()
+        var manifestNamedImplementations = Set<String>()
+        let sourcePrefix = sourceRoot.path + "/"
         for command in build.swiftCommands.values.sorted(by: { $0.moduleName < $1.moduleName }) where modules.contains(command.moduleName) {
             seenModules.insert(command.moduleName)
+            for path in command.sources where SwiftPackageManifest.matches(path) {
+                let url = URL(fileURLWithPath: path, relativeTo: packagePath).standardizedFileURL.resolvingSymlinksInPath()
+                guard url.path.hasPrefix(sourcePrefix), url.deletingLastPathComponent().path != packagePath.path,
+                      let text = try? String(contentsOf: url, encoding: .utf8),
+                      SwiftPackageManifest.isCompiledSourceOnly(path, text: text) else { continue }
+                manifestNamedImplementations.insert(String(url.path.dropFirst(sourcePrefix.count)))
+            }
             progress("Extracting SIL dependencies: \(command.moduleName)…")
             let output = scratch.appendingPathComponent("\(command.moduleName).sil")
             var arguments = Self.silArguments(command.otherArguments)
@@ -63,10 +75,12 @@ public struct PackageAnalyzer {
             }
             for (key, owners) in parsed.externalWitnesses ?? [:] { externalWitnesses[key, default: []].formUnion(owners) }
         }
+        graph.manifestNamedImplementations = manifestNamedImplementations
         for missing in modules.subtracting(seenModules).sorted() {
             graph.diagnostics.append("No compiler invocation was found for target \(missing).")
         }
-        XcodeCompilerGraph.resolveDispatch(&graph, tables: dispatchTargets, externalWitnesses: externalWitnesses)
+        XcodeCompilerGraph.resolveDispatch(&graph, tables: dispatchTargets, externalWitnesses: externalWitnesses,
+            compiler: build.swiftCommands.values.first?.executable)
 
         progress("Discovering test identifiers…")
         let listing = try CommandRunner.run("swift", ["test"] + common + ["list", "--skip-build"], at: packagePath).text

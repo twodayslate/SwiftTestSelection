@@ -17,6 +17,8 @@ public struct GeneratedSourceBoundary: Codable, Sendable, Equatable {
     public var documentationInputs: [String]? = nil
     public var documentationBlockers: [String: [String]]? = nil
     public var sourceLocations: [String]? = nil
+    /// Whether the generated Swift input used physical source coordinates.
+    public var hasPhysicalLocations: Bool? = nil
     public var generatorInputs: [String: String]? = nil
     // Older versions did not validate Metal dependency paths and all overlay
     // argument forms. Recapture them before excluding documentation.
@@ -232,7 +234,8 @@ struct XcodeBuildEvidence {
         return GeneratedSourceBoundary(module: module, logicalPath: normalized(file.path), contentDigest: try ArtifactFiles.digest(file),
             generatorIdentity: identity, repositoryInputs: repositoryInputs,
             repositoryInputFiles: repositoryFiles, documentationInputs: documentation.allowed, documentationBlockers: documentation.blockers,
-            sourceLocations: snapshot.units.flatMap { $0.fileLocationValues ?? [] }.sorted(), generatorInputs: generatorInputs)
+            sourceLocations: snapshot.units.flatMap { $0.fileLocationValues ?? [] }.sorted(),
+            hasPhysicalLocations: snapshot.receiverPhysicalLocations, generatorInputs: generatorInputs)
     }
 
     /// Resolve only Apple's installed Metal toolchain, using the active compiler's
@@ -375,11 +378,15 @@ struct XcodeBuildEvidence {
     /// Xcode Metal emits one `-MT dependencies` makefile rule. Reject unknown
     /// syntax rather than accidentally treating an unparsed include as unused.
     static func metalDependencies(_ text: String) -> [String]? {
-        let text = text.replacingOccurrences(of: "\\\r\n", with: " ").replacingOccurrences(of: "\\\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text.hasPrefix("dependencies:") else { return nil }
+        let rule = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard rule.hasPrefix("dependencies:") else { return nil }
+        return makefileInputs(rule.dropFirst("dependencies:".count))
+    }
+
+    static func makefileInputs(_ operands: Substring) -> [String]? {
+        let text = operands.replacingOccurrences(of: "\\\r\n", with: " ").replacingOccurrences(of: "\\\n", with: " ")
         var paths: [String] = [], token = "", escaped = false
-        for character in text.dropFirst("dependencies:".count) {
+        for character in text {
             if escaped { token.append(character); escaped = false }
             else if character == "\\" { escaped = true }
             else if character == ":" || character == "$" || character == "#" { return nil }
@@ -409,7 +416,7 @@ struct XcodeBuildEvidence {
                 let values = try file.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                 if values.isSymbolicLink == true { throw ImpactError("Generated input validation does not support repository symlinks") }
                 if values.isDirectory == true { try walk(file, prefix: prefix + file.lastPathComponent + "/") }
-                else if file.pathExtension != "swift" || file.lastPathComponent == "Package.swift" {
+                else if !FileChange.isSwiftImplementation(file.lastPathComponent) {
                     result[prefix + file.lastPathComponent] = try ArtifactFiles.digest(file)
                 }
             }

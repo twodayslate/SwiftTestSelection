@@ -67,6 +67,17 @@ try:
     added=commit('Add test')
     git('checkout','-q','--detach',base)
     unit.write_text('// comment only\n'+original); empty=commit('Comment only')
+    git('checkout','-q','--detach',base)
+    actor_mapping = dict(mapping, sourceLocationPolicy='semantic')
+    mapping_path.write_text(json.dumps(actor_mapping))
+    actor_source = ('import Observation\n' + production.read_text() +
+                    '\n@available(iOS 17, macOS 14, *) @Observable final class Model { var title = "Sharing" }\n'
+                    '\n@MainActor private func unusedTitle(file: StaticString = #filePath, line: UInt = #line) -> String { "Unused" }\n')
+    production.write_text(actor_source)
+    actor_base = commit('SDK actor and Observation macro')
+    production.write_text(actor_source.replace('\n@MainActor', '\n\n@MainActor'))
+    actor_head = commit('Insert one blank line before the actor-isolated function')
+    git('checkout','-q','--detach',empty)
     wrapper=directory/'bin'; wrapper.mkdir(); calls=directory/'calls.jsonl'
     real_xcode=subprocess.check_output(['xcrun','--find','xcodebuild'],text=True).strip()
     (wrapper/'xcodebuild').write_text("#!/usr/bin/env python3\nimport json,os,sys\nwith open(os.environ['IMPACT_CALLS'],'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\nos.execv(os.environ['IMPACT_XCODE'],[os.environ['IMPACT_XCODE'],*sys.argv[1:]])\n")
@@ -74,14 +85,20 @@ try:
     scratch=directory/'scratch'; scratch.mkdir()
     env=dict(os.environ, TMPDIR=str(scratch), PATH=str(wrapper)+os.pathsep+os.environ['PATH'], IMPACT_CALLS=str(calls), IMPACT_XCODE=real_xcode)
     common=['--project',source/'ImpactDemo.xcodeproj','--scheme','ImpactDemo','--test-plan','AllTests','--configuration','Debug','--destination',a.destination]
+    def disk_sample(*, required=False):
+        usage = subprocess.run(['du', '-sk', directory], text=True, capture_output=True, check=required)
+        return int(usage.stdout.split()[0]) * 1024 if usage.returncode == 0 else 0
+
     def measured(label, command):
         calls.write_text(''); start=time.monotonic(); peak=0
         log=directory/(label+'.log')
         with log.open('w') as stream:
             proc=subprocess.Popen(list(map(str,['/usr/bin/time','-l',*command])),cwd=source,env=env,stdout=stream,stderr=subprocess.STDOUT)
             while proc.poll() is None:
-                peak=max(peak,int(subprocess.check_output(['du','-sk',directory],text=True).split()[0])*1024)
+                # Xcode can unlink temporary xcresult files while du traverses them.
+                peak=max(peak,disk_sample())
                 time.sleep(1)
+        peak=max(peak,disk_sample(required=True))
         assert proc.returncode==0,(label,log.read_text()[-6000:])
         invocations=list(map(json.loads,calls.read_text().splitlines()))
         rss=re.search(r'(\d+)\s+maximum resident set size',log.read_text())
@@ -138,6 +155,16 @@ try:
     assert len(full[0]['selectedTests'])==full[0]['totalTests']==10
     assert any(d['code']=='head_only_declaration_change' for d in full[0]['diagnostics'])
     none=select('empty',empty); assert none[0]['selectedTests']==[]
+    actor, bundle, report = select('actor-blank-head', actor_head, base_ref=actor_base, expected_base=actor_base)
+    assert actor['selectedTests'] == [] and actor['ignoredChanges'] == ['App/Sharing.swift']
+    dual_bundle, dual_report = directory/'actor-blank-two', directory/'actor-blank-two.json'
+    row, _ = measured('actor-blank-two', [tool, 'select', *common, '--base', actor_base, '--head', actor_head, '--merge-base',
+        '--build-time-sil', ROOT/'Scripts/capture-build.py', '--retain-build', dual_bundle, '--format', 'json', '--output', dual_report])
+    assert row['buildCount'] == 2 and json.loads(dual_report.read_bytes())['ignoredChanges'] == ['App/Sharing.swift']
+    for retained_bundle, saved_report in [(bundle, report), (dual_bundle, dual_report)]:
+        verified = json.loads(subprocess.check_output([tool, 'verify-build', *common, '--report', saved_report,
+            '--head-graph', retained_bundle/'head-graph.json'], cwd=source, env=env))
+        assert verified['selectedTests'] == []
     if a.execute:
         execute('method-execution',one); execute('mixed-execution',two)
         execute('production-execution',prod); execute('full-execution',full); execute('empty-execution',none)

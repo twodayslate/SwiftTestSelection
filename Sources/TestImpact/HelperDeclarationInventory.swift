@@ -69,7 +69,7 @@ enum HelperDeclarationInventory {
                 add(token, kind: "expression-macro", spelling: "#" + macro.macroName.text, effects: expansionEffects + ["hidden expression effects"],
                     evidence: "Authenticate the macro identity and expanded expression/declarations at both revisions; a head compiler location alone does not cover historical expansion effects.")
             } else if let attribute = token.parent?.as(AttributeSyntax.self), token.id == attribute.atSign.id {
-                let name = attribute.attributeName.trimmedDescription
+                let name = attribute.inlineAttributeName ?? attribute.attributeName.trimmedDescription
                 if name == "MainActor" || name == "Swift.MainActor" {
                     guard !unsupportedImports.isEmpty else { continue }
                     add(token, kind: "unresolved-global-actor", spelling: "@" + name, effects: expansionEffects + ["actor isolation"],

@@ -3,6 +3,38 @@
 
 import Foundation
 
+private struct HeadOnlySourceComparison {
+    let locationPolicy: UIFeatureMappings.SourceLocationPolicy
+
+    var builderKinds = ScopedLocationKinds()
+    var positionIndependent = Set<SwiftTestingSourceEffects.Declaration>()
+
+    init(head: UIFeatureMappings?, base: UIFeatureMappings?) {
+        locationPolicy = .agreed(head: head, base: base)
+    }
+
+    func equivalent(_ old: [SourceUnit], _ new: [SourceUnit]) -> Bool {
+        guard old.count == new.count else { return false }
+        if old.count == 1 {
+            return old[0].region.path == new[0].region.path && fingerprint(old[0]) == fingerprint(new[0])
+        }
+        func alternatives(_ units: [SourceUnit]) -> [String: [String]] {
+            Dictionary(grouping: units, by: \.region.path).mapValues { $0.map(fingerprint).sorted() }
+        }
+        return alternatives(old) == alternatives(new)
+    }
+
+    private func fingerprint(_ unit: SourceUnit) -> String {
+        let syntax = unit.comparisonFingerprint(locationPolicy) + unit.builderFingerprint(builderKinds[unit])
+        if positionIndependent.contains(.init(unit)) || locationPolicy == .diagnostic || (locationPolicy == .diagnosticLineColumn && unit.fileLocationValues == nil) { return syntax }
+        // Over-approximate caller defaults without inventing base compiler
+        // edges. This also preserves fixture file identity for moved callers.
+        return syntax + (unit.callerLocations ?? [:]).filter { key, _ in
+            locationPolicy != .diagnosticLineColumn || !["line", "column"].contains(key)
+        }.sorted { $0.key < $1.key }.map { "@\($0.key)=\($0.value)" }.joined()
+    }
+}
+
 /// Source evidence only. No compiler graph, ownership, imports or test inventory
 /// is manufactured for the base. Unchanged files may share the head's syntax
 /// snapshot because Git proves identical bytes, not because imports prove edges.
@@ -12,11 +44,21 @@ struct XcodeHeadOnlySources {
     var diagnostics: [String] = []
     /// Git sources absent from the captured head inventory have unknown base ownership.
     var unownedBaseSources: [String: SwiftSourceSnapshot] = [:]
+    var historicalMacroNames = Set<String>()
+    var uncertainMacroImports = Set<String>()
+    var verifiedMacroImports: [String: Set<String>] = [:]
+    // Explicitly supplied base snapshots represent the historical inputs. A scoped
+    // Git read may also contain head placeholders until it performs a caller audit.
+    var hasAuditedCallerInputs = true
+    var hasUnverifiedBuilderInputs = false
     var mappingPath: String = ".swift-test-selection.json"
+    /// Processes whose historical linkage cannot be inferred across edits outside this scope.
+    var unverifiedScopedProcesses = Set<String>()
     /// Full Git comparison, never the filtered scope. Produced only by read().
     var runtimeBoundaryEvidence: HeadOnlyRuntimeSourceEvidence? = nil
 
-    static func read(current: XcodeTestGraph, changes: [FileChange], base: String, root: URL, mappingPath: String, cache: XcodeBaseSourceCache? = nil) throws -> Self {
+    static func read(current: XcodeTestGraph, changes: [FileChange], base: String, root: URL, mappingPath: String, cache: XcodeBaseSourceCache? = nil,
+                     allowHistoricalCallerProofs: Bool = true) throws -> Self {
         let cache = try cache ?? XcodeBaseSourceCache(root: root, base: base)
         try cache.validate(root: root, base: base)
         var result = Self(base: current.sources)
@@ -28,7 +70,7 @@ struct XcodeHeadOnlySources {
                 try result.mappings?.validate()
             } catch { mappingDiagnostics.append("Invalid base mapping policy: \(error)") }
         }
-        let paths = Set(changes.flatMap { [$0.path] + ($0.previousPath.map { [$0] } ?? []) })
+        let paths = Set(changes.flatMap(\.paths))
         // Internal SDK extensions are visible throughout their test module. A
         // scoped diff cannot substitute head syntax for changed base callers in
         // other files or targets: removed calls/escapes and overloads must remain
@@ -40,7 +82,59 @@ struct XcodeHeadOnlySources {
         })
         let hasBindingContracts = !(current.mappings?.helperBindingContracts?.isEmpty ?? true) || !(result.mappings?.helperBindingContracts?.isEmpty ?? true)
         let hasContracts = hasBindingContracts || !HelperFormattingContracts.declarations(current.sources, current.mappings).isEmpty || !(result.mappings?.helperFormattingContracts?.isEmpty ?? true)
-        let auditCallers = !callerModules.isEmpty || hasContracts || !(current.mappings?.testRuntimeBoundaries?.isEmpty ?? true)
+        var auditCallers = !callerModules.isEmpty || hasContracts || !(current.mappings?.testRuntimeBoundaries?.isEmpty ?? true)
+        if !auditCallers {
+            // The selector groups declarations across all paths in the scope.
+            // A removed, duplicated or moved callable needs actual base callers,
+            // even when another declaration with the same key survives.
+            var before: [String: [SourceUnit]] = [:], after: [String: [SourceUnit]] = [:]
+            var scopedBase: [String: SwiftSourceSnapshot] = [:]
+            let locationPolicy = UIFeatureMappings.SourceLocationPolicy.agreed(head: current.mappings, base: result.mappings)
+            let dimensions = ResultBuilderLocations.dimensions(locationPolicy)
+            var builderMoved = false
+            for (key, head) in current.sources {
+                guard let colon = key.firstIndex(of: ":") else { continue }
+                let path = String(key[key.index(after: colon)...])
+                guard paths.contains(path) else { continue }
+                for unit in head.units where unit.helperCallableName != nil {
+                    after[unit.key, default: []].append(unit)
+                }
+                if let old = try cache.snapshot(path: path, module: String(key[..<colon])) {
+                    scopedBase[key] = old
+                    if !dimensions.isEmpty, !builderMoved {
+                        let prior = Dictionary(grouping: old.units, by: \.key)
+                        builderMoved = head.units.contains { unit in
+                            prior[unit.key]?.contains { before in
+                                before.fingerprint == unit.fingerprint &&
+                                    before.builderFingerprint(dimensions) != unit.builderFingerprint(dimensions)
+                            } == true
+                        }
+                    }
+                    for unit in old.units where unit.helperCallableName != nil {
+                        before[unit.key, default: []].append(unit)
+                    }
+                }
+            }
+            let comparison = HeadOnlySourceComparison(head: current.mappings, base: result.mappings)
+            // Use the same file-local binding requirements as the final proof.
+            // Only candidates found here can justify reading the remaining base files.
+            lazy var eligibleCallers = SwiftTestingSourceEffects.boundCallers(current, touching: paths, historical: scopedBase)
+            // A builder or conformance outside a filtered diff can have disappeared
+            // at head. Inspect historical sources only for a position-only edit
+            // that can actually depend on that historical lookup.
+            auditCallers = (builderMoved && allowHistoricalCallerProofs) || before.contains { key, old in
+                guard let new = after[key], new.count == old.count else { return true }
+                if old.count == 1 {
+                    let a = old[0], b = new[0]
+                    if a.region.path != b.region.path || a.conditionalBranch != b.conditionalBranch { return true }
+                    guard current.dependencies?.functions[SwiftTestingDiscoveryRoots.sharedDiscoveryID] != nil,
+                          !comparison.equivalent(old, new) else { return false }
+                    if allowHistoricalCallerProofs && b.fileUnreferencedInlineName != nil && b.fileProvesUnusedInline != true { return true }
+                    return allowHistoricalCallerProofs && b.hasOnlyDirectSourceCalls == true && a.fingerprint == b.fingerprint && eligibleCallers.contains(.init(b))
+                }
+                return !comparison.equivalent(old, new)
+            }
+        }
         var basePaths: Set<String>?
         if auditCallers {
             // Only caller audits can reuse unchanged head syntax or validate a
@@ -51,8 +145,12 @@ struct XcodeHeadOnlySources {
             basePaths = try cache.paths()
             if basePaths == nil { result.diagnostics.append("Cannot enumerate base sources at \(base)") }
         }
+        var stableMacroInputs: Bool?
         for key in current.sources.keys.sorted() {
-            guard let colon = key.firstIndex(of: ":") else { result.diagnostics.append("Invalid source snapshot key: \(key)"); continue }
+            guard let colon = key.firstIndex(of: ":"), current.sources[key]?.units.first?.region.path != key else {
+                result.diagnostics.append("Invalid source snapshot key: \(key)")
+                continue
+            }
             let module = String(key[..<colon]), path = String(key[key.index(after: colon)...])
             guard paths.contains(path) || auditCallers else { continue }
             // New files outside the scope have no old callers to audit. Do not
@@ -71,7 +169,45 @@ struct XcodeHeadOnlySources {
                 cache.recordHeadSyntaxReuse()
                 continue
             }
-            if let snapshot = try cache.snapshot(path: path, module: module) {
+            if var snapshot = try cache.snapshot(path: path, module: module) {
+                if paths.contains(path), let head = current.sources[key],
+                   snapshot.attachedAttributeInputs != head.attachedAttributeInputs {
+                    // A head compiler's dependency file cannot describe the Git
+                    // baseline. Look for historical declarations and re-exports
+                    // even when a separate exporting file is outside this scope.
+                    if let names = try cache.historicalMacroNames() {
+                        result.historicalMacroNames.formUnion(names)
+                    } else {
+                        result.uncertainMacroImports.insert(path)
+                    }
+                    if !result.uncertainMacroImports.contains(path), allowHistoricalCallerProofs,
+                       let artifact = current.buildArtifact,
+                       let inventory = artifact.macroDeclarations,
+                       let names = inventory.namesByModule[module],
+                       let oldImports = snapshot.ordinaryMacroImports, let headImports = head.ordinaryMacroImports,
+                       oldImports.isSubset(of: headImports),
+                       Set(artifact.helperBindingBuild?.importedModules[module] ?? []).isSuperset(of: headImports),
+                       !current.hasUnsupportedMacroSources(module: module) {
+                        if stableMacroInputs == nil {
+                            stableMacroInputs = (try? cache.macroBuildInputsUnchanged(current: current, baseMappings: result.mappings)) == true
+                        }
+                        if stableMacroInputs == true {
+                            result.verifiedMacroImports[key] = names
+                            if let actor = head.indexedActor, !names.contains("MainActor"), !result.historicalMacroNames.contains("MainActor"),
+                               try cache.runtimeEvidence(headRevision: artifact.revision).changedPaths == [path],
+                               current.targets.filter({ $0.sourceFiles.contains(path) }).count == 1,
+                               let bytes = try cache.content(path: path), let text = String(data: bytes, encoding: .utf8) {
+                                snapshot.indexedActor = actor.historical(text, path: path, module: module, before: snapshot, after: head)
+                            }
+                        }
+                    }
+                    let oldImports = snapshot.units.filter { $0.kind == "import" }
+                    let newImports = head.units.filter { $0.kind == "import" }
+                    let oldBindings = oldImports.map { $0.comparisonFingerprint(.diagnostic) }
+                    if result.verifiedMacroImports[key] == nil, oldBindings != newImports.map({ $0.comparisonFingerprint(.diagnostic) }) {
+                        result.uncertainMacroImports.insert(path)
+                    }
+                }
                 result.base[key] = snapshot
             } else {
                 result.base.removeValue(forKey: key)
@@ -90,6 +226,8 @@ struct XcodeHeadOnlySources {
                 }
             }
         }
+        result.hasAuditedCallerInputs = allowHistoricalCallerProofs && auditCallers && basePaths != nil
+        result.hasUnverifiedBuilderInputs = !allowHistoricalCallerProofs || (auditCallers && basePaths == nil)
         result.diagnostics += mappingDiagnostics
         return result
     }
@@ -101,13 +239,36 @@ struct XcodeHeadOnlySources {
 /// This does not delegate to the two-graph selector with a synthetic previous.
 enum XcodeHeadOnlySelector {
     static func select(current: XcodeTestGraph, source: XcodeHeadOnlySources, changes: [FileChange],
-                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = [], applyHelperContracts: Bool = true, digestCache: HelperBindingDigestCache? = nil,
+                       baseRevision: String, documentation: Set<String> = [], buildEvidenceFailure: String? = nil, excludedTestEntries: Set<String> = [], digestCache: HelperBindingDigestCache? = nil,
                        measurement: (XcodeAnalysisEvent) -> Void = { _ in }) -> ImpactReport {
-        let digestCache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
+        let cache = digestCache?.matching(current) ?? HelperBindingDigestCache(current: current)
+        func evaluate(applyContracts: Bool, measurement: (XcodeAnalysisEvent) -> Void) -> (report: ImpactReport, hasContracts: Bool) {
+            evaluateSelection(current: current, source: source, changes: changes, baseRevision: baseRevision,
+                documentation: documentation, buildEvidenceFailure: buildEvidenceFailure, excludedTestEntries: excludedTestEntries,
+                applyHelperContracts: applyContracts, digestCache: cache, measurement: measurement)
+        }
+        var result = evaluate(applyContracts: true, measurement: measurement)
+        if result.hasContracts {
+            let previewStart = AnalysisMeasurement()
+            let baseline = evaluate(applyContracts: false, measurement: { _ in }).report.selectedTests
+            measurement(previewStart.event("helperReviewPreview", revision: baseRevision))
+            let selected = result.report.selectedTests
+            result.report.helperContractPreview = .init(withoutDeclarations: baseline, withDeclarations: selected,
+                added: Set(selected).subtracting(baseline).sorted(), removed: Set(baseline).subtracting(selected).sorted())
+        }
+        return result.report
+    }
+
+    private static func evaluateSelection(current: XcodeTestGraph, source: XcodeHeadOnlySources, changes: [FileChange],
+                                          baseRevision: String, documentation: Set<String>, buildEvidenceFailure: String?,
+                                          excludedTestEntries: Set<String>, applyHelperContracts: Bool, digestCache: HelperBindingDigestCache,
+                                          measurement: (XcodeAnalysisEvent) -> Void) -> (report: ImpactReport, hasContracts: Bool) {
         let originalCurrent = current
         let mappingFilePresent = current.mappings != nil
         let inline = InlineUIMappings.resolve(current)
-        let current = inline.applying(to: current)
+        var current = inline.applying(to: current)
+        var source = source
+        IndexedActorLocations.compare(base: &source.base, head: &current.sources, paths: Set(changes.flatMap(\.paths)))
         let inventory = Set(current.tests)
         func target(_ test: String) -> String { String(test.prefix { $0 != "/" }) }
         let uiTargets = Set(current.targets.filter(\.isUITest).map(\.name))
@@ -144,12 +305,13 @@ enum XcodeHeadOnlySelector {
             selected.formUnion(tests)
             explanations += tests.sorted().map { TestExplanation(test: $0, reason: reason, revision: "head", path: path, kind: kind) }
         }
-        func fallback(_ code: String, _ reason: String, tests: Set<String>? = nil, path: [String] = []) {
+        func fallback(_ code: String, _ reason: String, tests: Set<String>? = nil, path: [String] = [], incompleteTestRoots: [String]? = nil) {
             let tests = (tests ?? inventory).intersection(inventory)
             guard !tests.isEmpty else { return }
             let boundary = reason.contains("runtime formatting conformances") ? evaluations.last?.encountered.last : nil
             let boundaryPath = boundary.map { [$0.helper, $0.producerSymbol, $0.assertionSymbol, $0.substitutions] } ?? path
-            let detail = SelectionFallback.explain(code: code, message: reason, units: fallbackUnits, path: boundaryPath, allTests: tests == inventory)
+            var detail = SelectionFallback.explain(code: code, message: reason, units: fallbackUnits, path: boundaryPath, allTests: tests == inventory)
+            detail.incompleteTestRoots = incompleteTestRoots
             diagnostics.append(.init(fallback: detail, code: code, message: reason + " " + detail.requiredEvidence, tests: tests.sorted()))
             include(tests, kind: "fallback", reason: reason)
             if tests == inventory { fullReasons.insert(reason) }
@@ -205,35 +367,80 @@ enum XcodeHeadOnlySelector {
                 fallback("head_only_unsupported_condition", "\(revision): \(feature.name): \(result.explanation)", tests: uiTests)
             }
         }
-        let locationPolicy = current.mappings?.sourceLocationPolicy == source.mappings?.sourceLocationPolicy
-            ? current.mappings?.sourceLocationPolicy ?? .semantic : .semantic
-        func fingerprint(_ unit: SourceUnit) -> String {
-            let syntax: String
-            switch locationPolicy {
-            case .semantic: syntax = unit.fingerprint
-            case .diagnostic: return unit.syntaxFingerprint ?? unit.fingerprint
-            case .diagnosticLineColumn:
-                guard let files = unit.fileLocationValues else { return unit.fingerprint }
-                syntax = SourceUnit.withLocations(files, syntax: unit.syntaxFingerprint ?? unit.fingerprint)
-            }
-            // Over-approximate caller defaults without inventing base compiler
-            // edges. This also preserves fixture file identity for moved callers.
-            return syntax + (unit.callerLocations ?? [:]).filter { key, _ in
-                locationPolicy != .diagnosticLineColumn || !["line", "column"].contains(key)
-            }.sorted { $0.key < $1.key }.map { "@\($0.key)=\($0.value)" }.joined()
-        }
+        var comparison = HeadOnlySourceComparison(head: current.mappings, base: source.mappings)
+        lazy var callerIndex = HeadOnlyDeclarationChange.CallerIndex(current)
         let paths = Set(changes.map(\.path)).union((source.base.values.flatMap(\.units) + current.sources.values.flatMap(\.units)).filter { policyHelpers.contains($0.key) }.map { $0.region.path })
-        let old = Dictionary(grouping: source.base.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
-        let new = Dictionary(grouping: current.sources.values.flatMap(\.units).filter { paths.contains($0.region.path) }, by: \.key)
+        let builders = ResultBuilderLocations(policy: comparison.locationPolicy, sources: [current.sources, source.base, source.unownedBaseSources],
+            modules: Set(current.modules.values), incompleteInputs: source.hasUnverifiedBuilderInputs ||
+                current.hasUninspectedBuilderInputs, touching: paths)
+        comparison.builderKinds = builders.kinds
+        let effects = SwiftTestingSourceEffects(current, touching: paths, historical: source.base,
+            unowned: source.unownedBaseSources, hasAuditedCallerInputs: source.hasAuditedCallerInputs)
+        comparison.positionIndependent = effects.positionIndependent
+        func scopedUnits(_ sources: [String: SwiftSourceSnapshot]) -> [String: [SourceUnit]] {
+            let files = sources.values.filter { snapshot in
+                guard let path = snapshot.units.first?.region.path else { return false }
+                return paths.contains(path)
+            }
+            return Dictionary(grouping: files.flatMap(\.comparisonUnits), by: \.key)
+        }
+        let old = scopedUnits(source.base), new = scopedUnits(current.sources)
+        let registrations = SwiftTestingRegistrationComparison(before: old, after: new, baseSources: source.base,
+            head: current, touching: paths, policy: comparison.locationPolicy)
+        include(registrations.suiteTests, kind: "dependency", reason: "Swift Testing suite metadata changed")
+        if !registrations.uncertainSuiteTests.isEmpty {
+            fallback("unresolved_suite_membership", "Swift Testing suite metadata changed and the test’s nominal suite owner is unverified", tests: registrations.uncertainSuiteTests)
+        }
+        let entryEdits = registrations.entryEdits.merging(registrations.registrationEdits) { local, _ in local }
+        if let uncertainty = registrations.headDiscovery.uncertainty(in: current) {
+            fallback("incomplete_testing_registration", uncertainty.message, tests: uncertainty.tests)
+        }
+        let replacedEntryKeys = Set(entryEdits.compactMap { $0.key == $0.value ? nil : $0.value })
         let excludedKeys = independentEntryKeys(current: current, excluding: excludedTestEntries, index: dependencyIndex)
         var isolatedHelpers = Set<String>(), isolatedSDKHelpers = Set<String>()
         var declarationAudits: [HelperDeclarationAudit] = []
         var declarationChanges: [HeadOnlyDeclarationChange] = []
+        var excludedChanges: [SourceUnit] = []
         var changed: [SourceUnit] = []
         var semanticPaths = policyPaths.union(HelperFormattingContracts.changedPolicyPaths(base: source.base, head: current.sources))
+        semanticPaths.formUnion(registrations.semanticPaths)
+        let macroPaths = AttachedMacroInputs.changedPaths(base: source.base, head: current.sources,
+            unowned: source.unownedBaseSources, historicalNames: source.historicalMacroNames,
+            uncertainImports: source.uncertainMacroImports, verifiedImports: source.verifiedMacroImports, touching: paths)
+        if !macroPaths.isEmpty {
+            semanticPaths.formUnion(macroPaths)
+            fallback("attached_macro_inputs", AttachedMacroInputs.reason(macroPaths))
+        }
+        if comparison.locationPolicy != .diagnostic {
+            let incomplete = SwiftSourceSnapshot.legacyCallerLocationPaths(in: current.sources, touching: paths)
+                .union(SwiftSourceSnapshot.legacyCallerLocationPaths(in: source.base, touching: paths))
+            if !incomplete.isEmpty {
+                semanticPaths.formUnion(incomplete)
+                fallback("incomplete_caller_locations", "Saved snapshots lack invocation locations for " + incomplete.sorted().joined(separator: ", ") + ". Recapture the graph.")
+            }
+        }
+        if !builders.incompletePaths.isEmpty {
+            semanticPaths.formUnion(builders.incompletePaths)
+            fallback("incomplete_caller_locations", "Saved snapshots lack result-builder locations for " + builders.incompletePaths.sorted().joined(separator: ", ") + ". Recapture the graph.")
+        }
+        let legacyConditionalPaths = SwiftSourceSnapshot.legacyConditionalPaths(in: current.sources, touching: paths)
+        if !legacyConditionalPaths.isEmpty {
+            semanticPaths.formUnion(legacyConditionalPaths)
+            fallback("head_only_conditional_metadata", "Saved head snapshot lacks conditional branch membership for " + legacyConditionalPaths.sorted().joined(separator: ", ") + ". Recapture the head graph.")
+        }
         for key in Set(old.keys).union(new.keys).sorted() {
-            let before = old[key] ?? [], after = new[key] ?? []
-            guard before.map(fingerprint).sorted() != after.map(fingerprint).sorted() || policyHelpers.contains(key) else { continue }
+            if replacedEntryKeys.contains(key) { continue }
+            let before = old[entryEdits[key] ?? key] ?? [], after = new[key] ?? []
+            // Discovery accounts for the header's compiler effects. An eager production
+            // registration also needs the same UI coverage as other production changes.
+            if registrations.registrationEdits[key] != nil, let suite = after.first, suite.swiftTestingRole == "suite" {
+                if registrations.suiteArgumentEdits[key] == nil,
+                   current.targets.contains(where: { !$0.isTest && $0.sourceFiles.contains(suite.region.path) }) {
+                    changed.append(suite)
+                }
+                continue
+            }
+            guard entryEdits[key] != nil || !comparison.equivalent(before, after) || policyHelpers.contains(key) else { continue }
             // Shared keys (notably imports) can span several source dictionaries.
             // Keep every region, but never let dictionary order label a boundary.
             fallbackUnits = (before + after).sorted {
@@ -245,8 +452,9 @@ enum XcodeHeadOnlySelector {
             evaluation.bindingReview = HelperBindingEvaluation(contracts: applyHelperContracts ? bindings.contracts.filter { $0.helper == key } : [], current: current, source: source, digestCache: digestCache)
             evaluations.append(evaluation)
             semanticPaths.formUnion((before + after).map { $0.region.path })
-            if PrivateTestHelperIsolation.provesExtensionHeaders(before + after, current: current, base: source.base) { continue }
-            if after.count == 1, let unit = after.first, (unit.sdkTestHelper != nil || ["XCUIElement", "XCTest.XCUIElement"].contains(unit.scope)),
+            let movedBetweenBranches = before.count == 1 && after.count == 1 && before[0].conditionalBranch != after[0].conditionalBranch
+            if !movedBetweenBranches, PrivateTestHelperIsolation.provesExtensionHeaders(before + after, current: current, base: source.base) { continue }
+            if !movedBetweenBranches, after.count == 1, let unit = after.first, (unit.sdkTestHelper != nil || ["XCUIElement", "XCTest.XCUIElement"].contains(unit.scope)),
                let graph = current.dependencies, let index = dependencyIndex {
                 if let blocker = SDKTestHelperIsolation.blocker(unit, previous: before.count == 1 ? before.first : nil,
                                                                current: current, base: source.base, graph: graph, index: index, unownedBase: source.unownedBaseSources, formattingReview: evaluation) {
@@ -258,7 +466,7 @@ enum XcodeHeadOnlySelector {
                     continue
                 }
             }
-            if before.count <= 1, after.count == 1, let unit = after.first,
+            if !movedBetweenBranches, before.count <= 1, after.count == 1, let unit = after.first,
                let graph = current.dependencies, let index = dependencyIndex {
                 // An added helper needs an isolation proof because no base
                 // compiler edges exist. A surviving body can still use ordinary
@@ -301,31 +509,41 @@ enum XcodeHeadOnlySelector {
                     fallback("head_only_helper_shared_state", "Shared state in private helper callers or callees cannot be isolated: \(unit.region.path):\(unit.region.startLine)")
                 }
                 if unit.privateTestHelper != nil, !traversal.hasUnprovenCalleeEffects, traversal.sharedStateSymbols.isEmpty {
-                    fallback("head_only_helper_isolation", (traversal.isolationBlocker ?? "Unproven source/compiler caller isolation for " + unit.key) + " at \(unit.region.path):\(unit.region.startLine). No formatting declaration supplies missing historical caller evidence.")
+                    fallback("head_only_helper_isolation", (traversal.isolationBlocker ?? "Unproven source/compiler caller isolation for " + unit.key) + " at \(unit.region.path):\(unit.region.startLine). No formatting declaration supplies missing historical caller evidence.",
+                        incompleteTestRoots: traversal.incompleteTestRoots)
                 }
             }
             // New independent entries are covered only by an explicit separate
             // execution policy, after proving no existing source name is rebound.
             if before.isEmpty, after.count == 1, let unit = after.first, excludedKeys.contains(key),
-               PrivateTestHelperIsolation.provesAddedEntry(unit, current: current, base: source.base) { continue }
+               PrivateTestHelperIsolation.provesAddedEntry(unit, current: current, base: source.base) {
+                excludedChanges.append(unit)
+                continue
+            }
             guard before.count == 1, after.count == 1, let a = before.first, let b = after.first,
-                  a.kind == "function", b.kind == "function", a.region.path == b.region.path else {
-                declarationChanges.append(.describe(key: key, before: before, after: after, source: source))
+                  a.kind == "function", b.kind == "function", a.region.path == b.region.path, !movedBetweenBranches else {
+                declarationChanges.append(.describe(key: key, before: before, after: after, source: source, current: current, index: callerIndex))
                 let affectedPaths = Set(fallbackUnits.map(\.region.path)).sorted()
                 fallback("head_only_declaration_change", "Added, deleted, ambiguous or changed declaration/header has no base compiler edges: \(affectedPaths.isEmpty ? key : affectedPaths.joined(separator: ", "))")
                 continue
             }
-            guard a.headOnlyBodySupported == true && b.headOnlyBodySupported == true else {
+            let unusedInline = effects.unusedInline.contains(.init(b))
+            guard unusedInline || entryEdits[key] != nil || registrations.supportedBodies.contains(key) || (a.headOnlyBodySupported == true && b.headOnlyBodySupported == true) else {
                 fallback("head_only_unsupported_body", "Attributes, macros or opaque result types can change callers outside a surviving body: \(b.region.path):\(b.region.startLine)")
                 continue
             }
             // A separate execution of this entry does not cover effects from
             // structural changes or unsupported bodies outside its call graph.
-            if excludedKeys.contains(key) { continue }
+            if excludedKeys.contains(key) {
+                excludedChanges.append(b)
+                continue
+            }
             changed.append(b)
         }
         fallbackUnits = []
         let owned = Set(current.targets.flatMap(\.sourceFiles))
+        let confirmed = FileChange.confirmedImplementations(base: current.manifestNamedImplementations(in: source.base),
+            head: current.manifestNamedImplementations(in: current.sources), changes: changes)
         func onlyContractMappingChange() -> Bool {
             guard var before = source.mappings, var after = originalCurrent.mappings else { return false }
             before.helperFormattingContracts = nil; after.helperFormattingContracts = nil
@@ -343,7 +561,7 @@ enum XcodeHeadOnlySelector {
                 continue
             } else if change.previousPath != nil {
                 fallback("head_only_move", "Moved source/file identity lacks old compiler ownership: \(change.previousPath!) → \(change.path)")
-            } else if change.path.hasSuffix(".swift"), owned.contains(change.path), analyzed.contains(change.path) {
+            } else if FileChange.isSwiftImplementation(change.path, confirmed: confirmed), owned.contains(change.path), analyzed.contains(change.path) {
                 if !semanticPaths.contains(change.path) { ignored.insert(change.path) }
             } else if change.path.hasSuffix(".md"), documentation.contains(change.path), !owned.contains(change.path),
                       [current.mappings, source.mappings].allSatisfy({ $0?.ignoredDocumentation?.contains { UIFeatureMappings.matches(change.path, pattern: $0) } == true }) {
@@ -364,7 +582,10 @@ enum XcodeHeadOnlySelector {
         if let graph = current.dependencies {
             let index = dependencyIndex!
             if let mappings = current.mappings { mappingIndex = MappingIndex(mappings, snapshot: current, graph: graph, index: index) }
-            var affected = Set<String>(), isolatedSymbols = Set<String>(), sdkSymbols = Set<String>(), production: [SourceUnit] = []
+            var affected = Set<String>(), isolatedSymbols = Set<String>(), sdkSymbols = Set<String>()
+            var production: [SourceUnit] = []
+            affected.formUnion(registrations.headDiscovery.roots(in: graph))
+            var entrySymbols = Set<String>()
             for unit in changed {
                 fallbackUnits = [unit]
                 let module = String(unit.key.prefix { $0 != ":" })
@@ -376,17 +597,26 @@ enum XcodeHeadOnlySelector {
                 if !(current.unsupportedSourceInputs?[module]?.isEmpty ?? true) || current.unresolvedProductRoles?[module] != nil {
                     fallback("head_only_ownership", "Changed module \(module) has unsupported source inputs or an unresolved product role")
                 }
+                if unit.swiftTestingRole == "suite" {
+                    // The shared discovery roots already represent evaluation of this header.
+                    production.append(unit)
+                    continue
+                }
+                guard !unit.hasUnverifiedCompilerLocation(in: registrations.headPhysicalModules) else {
+                    fallback("unverified_source_location", "Cannot bind the changed declaration to physical compiler locations in head: \(unit.region.path):\(unit.region.startLine)")
+                    continue
+                }
                 let overlapping = Set(current.sources.values.flatMap(\.units).filter { $0.kind == "function" && $0.region.intersects(unit.region) }.map(\.key))
                 guard overlapping == [unit.key] else {
                     fallback("head_only_ambiguous_location", "Overlapping declaration locations cannot identify the changed body in \(unit.region.path)")
                     continue
                 }
                 let ids = Set((index.byFile[unit.region.path] ?? []).filter { id in
-                    let node = graph.functions[id]!
-                    return node.module == module && node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }
+                    unit.containsCompilerLocation(of: graph.functions[id]!, physicalModules: registrations.headPhysicalModules)
                 })
                 if ids.isEmpty { fallback("head_only_unresolved_body", "No compiled function for surviving body \(unit.region.path):\(unit.region.startLine)") }
                 affected.formUnion(ids)
+                if entryEdits[unit.key] != nil { entrySymbols.formUnion(ids) }
                 if isolatedHelpers.contains(unit.key) { isolatedSymbols.formUnion(ids) }
                 if isolatedSDKHelpers.contains(unit.key) { sdkSymbols.formUnion(ids) }
                 if owners.contains(where: { !$0.isTest }) { production.append(unit) }
@@ -394,29 +624,55 @@ enum XcodeHeadOnlySelector {
             // Positive compiler paths survive every failed isolation gate. A
             // broad fallback is an additional reason, not a replacement for
             // already observed helper/fixture dependencies.
-            for (key, units) in new where !excludedKeys.contains(key) &&
-                ((old[key] ?? []).map(fingerprint).sorted() != units.map(fingerprint).sorted() || policyHelpers.contains(key)) {
+            let omittedKeys = Set(excludedChanges.map(\.key))
+            for (key, units) in new where !omittedKeys.contains(key) &&
+                (!comparison.equivalent(old[key] ?? [], units) || policyHelpers.contains(key)) {
                 for unit in units where unit.kind == "function" {
-                    let module = String(unit.key.prefix { $0 != ":" })
                     affected.formUnion((index.byFile[unit.region.path] ?? []).filter { id in
-                        let node = graph.functions[id]!
-                        return node.module == module && node.regions.contains { $0.path == unit.region.path && $0.startLine >= unit.region.startLine && $0.startLine <= unit.region.endLine }
+                        unit.containsCompilerLocation(of: graph.functions[id]!, physicalModules: registrations.headPhysicalModules)
                     })
                 }
             }
-            fallbackUnits = changed
+            fallbackUnits = changed + excludedChanges
             let affectedPaths = index.paths(to: affected)
+            var uncertainDiscoveryTests = Set<String>()
             for test in inventory.sorted() {
                 if let path = affectedPaths.path(from: graph.tests[test] ?? []) {
-                    include([test], kind: "dependency", reason: path.last.map(sdkSymbols.contains) == true ? "Head compiler dependencies reach a changed SDK test helper; source/compiler query and caller checks passed; consult helperContractDecisions for any reviewed formatting assumptions" : path.last.map(isolatedSymbols.contains) == true ? "Head compiler dependencies reach a changed body; private helper isolation passed source/compiler checks; consult helperContractDecisions for any reviewed formatting assumptions" : "Head compiler dependencies reach a surviving body with an unchanged declaration header", path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
+                    let reason: String
+                    if path.last.map(SwiftTestingDiscoveryRoots.isDiscoveryRoot) == true {
+                        reason = "Swift Testing discovery inputs changed before test filtering"
+                    } else if path.last.map(entrySymbols.contains) == true {
+                        reason = "Compiled dependency reaches a test whose entry inputs changed"
+                    } else if path.last.map(sdkSymbols.contains) == true {
+                        reason = "Head compiler dependencies reach a changed SDK test helper; source/compiler query and caller checks passed; consult helperContractDecisions for any reviewed formatting assumptions"
+                    } else if path.last.map(isolatedSymbols.contains) == true {
+                        reason = "Head compiler dependencies reach a changed body; private helper isolation passed source/compiler checks; consult helperContractDecisions for any reviewed formatting assumptions"
+                    } else {
+                        reason = "Head compiler dependencies reach a surviving body with an unchanged declaration header"
+                    }
+                    include([test], kind: "dependency", reason: reason, path: path.map { graph.functions[$0].map { $0.module + "." + $0.name } ?? $0 })
                 }
-                if !changed.isEmpty {
+                if !changed.isEmpty || !excludedChanges.isEmpty || registrations.hasSemanticChanges {
                     let roots = graph.tests[test] ?? []
                     if roots.isEmpty || roots.contains(where: { graph.functions[$0] == nil }) {
                         fallback("head_only_unresolved_test", "Missing or incomplete compiled head entry for \(test)", tests: [test])
                     }
-                    for message in graph.testDiagnostics[test] ?? [] { fallback("head_only_unresolved_test", message, tests: [test]) }
+                    for message in graph.testDiagnostics[test] ?? [] {
+                        if message == SwiftTestingDiscoveryRoots.unresolvedEffects { uncertainDiscoveryTests.insert(test) }
+                        else { fallback("head_only_unresolved_test", message, tests: [test]) }
+                    }
                 }
+            }
+            var processes = XCTestDiscoveryCase.historicallyUnverifiedTargets(in: current, base: source.base, touching: paths)
+            if !semanticPaths.isDisjoint(with: paths) { processes.formUnion(source.unverifiedScopedProcesses) }
+            if !processes.isEmpty {
+                let entries = inventory.filter { test in
+                    processes.contains(target(test)) && graph.tests[test]?.contains(SwiftTestingDiscoveryRoots.sharedDiscoveryID) == true
+                }
+                fallback("swift_testing_discovery_effects", "The base test process may have loaded registrations outside the verified head inventory.", tests: entries)
+            }
+            if !uncertainDiscoveryTests.isEmpty {
+                fallback("swift_testing_discovery_effects", SwiftTestingDiscoveryRoots.unresolvedEffects, tests: uncertainDiscoveryTests)
             }
             let entriesOnly = !changed.isEmpty && changed.allSatisfy { isolatedHelpers.contains($0.key) || XcodeFineSelector.isTestEntry($0, in: current) }
             if !changed.isEmpty && !entriesOnly {
@@ -460,9 +716,12 @@ enum XcodeHeadOnlySelector {
                         fallback("head_only_test_host", "App-hosted or unresolved test runtime can execute changed production code outside explicit test roots: \(group.key)", tests: Set(group.value))
                     }
                 }
+            }
+            // Removing an argument can leave only the historical registration input.
+            var featurePaths = current.mappings?.registrationSourceMatches(registrations.semanticPaths, targets: current.targets) ?? [:]
+            if !production.isEmpty || !featurePaths.isEmpty {
                 if let mappings = current.mappings, let mi = mappingIndex {
-                    var matched = Set<String>(), mappedTests = Set<String>(), covered = Set<String>()
-                    var featurePaths: [String: [String]] = [:]
+                    var matched = Set(featurePaths.keys), mappedTests = Set<String>(), covered = Set<String>()
                     for feature in mappings.features {
                         let tests = mi.tests[feature.name] ?? []
                         mappedTests.formUnion(tests)
@@ -490,13 +749,15 @@ enum XcodeHeadOnlySelector {
                     }
                     for feature in mappings.features where matched.contains(feature.name) {
                         let tests = mi.tests[feature.name] ?? []
-                        include(tests, kind: "explicitMapping", reason: "Head dependency or declared feature dependency reaches a surviving changed body", path: [feature.name] + (featurePaths[feature.name] ?? []))
+                        include(tests, kind: "explicitMapping", reason: "Changed production source or dependency affects UI feature " + feature.name, path: [feature.name] + (featurePaths[feature.name] ?? []))
                         if tests.isEmpty { fallback("head_only_unresolved_mapping", "Affected feature \(feature.name) has no tests", tests: uiTests) }
                     }
-                    fallback("head_only_unmapped_ui", "UI tests outside explicit mappings remain selected", tests: uiTests.subtracting(mappedTests))
-                    if !production.allSatisfy({ covered.contains($0.key) }) { fallback("head_only_unmapped_production", "Changed production body has no UI feature boundary", tests: uiTests) }
-                    if mappings.runtimeDependencyPolicy != .declared || source.mappings?.runtimeDependencyPolicy != .declared {
-                        fallback("head_only_ui_runtime", "No unchanged declared cross-process UI dependency contract", tests: uiTests)
+                    if !production.isEmpty {
+                        fallback("head_only_unmapped_ui", "UI tests outside explicit mappings remain selected", tests: uiTests.subtracting(mappedTests))
+                        if !production.allSatisfy({ covered.contains($0.key) }) { fallback("head_only_unmapped_production", "Changed production declaration has no UI feature boundary", tests: uiTests) }
+                        if mappings.runtimeDependencyPolicy != .declared || source.mappings?.runtimeDependencyPolicy != .declared {
+                            fallback("head_only_ui_runtime", "No unchanged declared cross-process UI dependency contract", tests: uiTests)
+                        }
                     }
                 } else { fallback("head_only_missing_mappings", "Production changes need explicit UI dependency mappings", tests: uiTests) }
             }
@@ -572,16 +833,6 @@ enum XcodeHeadOnlySelector {
                 toolchain: current.buildArtifact?.toolchain ?? current.dependencies?.toolchain ?? "",
                 buildContext: HelperFormattingContracts.buildContext(current), helperSymbols: helperSymbols)
         }
-        if applyHelperContracts, !newContracts.isEmpty || !newBindings.isEmpty {
-            let previewStart = AnalysisMeasurement()
-            let baseline = select(current: originalCurrent, source: source, changes: changes, baseRevision: baseRevision,
-                documentation: documentation, buildEvidenceFailure: buildEvidenceFailure,
-                excludedTestEntries: excludedTestEntries, applyHelperContracts: false, digestCache: digestCache)
-            measurement(previewStart.event("helperReviewPreview", revision: baseRevision))
-            report.helperContractPreview = .init(withoutDeclarations: baseline.selectedTests, withDeclarations: report.selectedTests,
-                added: Set(report.selectedTests).subtracting(baseline.selectedTests).sorted(),
-                removed: Set(baseline.selectedTests).subtracting(report.selectedTests).sorted())
-        }
-        return report
+        return (report, !newContracts.isEmpty || !newBindings.isEmpty)
     }
 }

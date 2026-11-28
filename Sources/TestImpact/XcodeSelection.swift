@@ -64,6 +64,127 @@ public struct XcodeTestGraph: Codable, Sendable {
         self.diagnostics = diagnostics
     }
 
+    /// Match the physical compiler input to its parsed bytes. Older captures
+    /// without the source-role evidence keep treating ambiguous names as build inputs.
+    func manifestNamedImplementations(in snapshots: [String: SwiftSourceSnapshot]) -> Set<String> {
+        var paths = Set<String>()
+        for (key, file) in snapshots where file.ordinaryManifestNamedSource == true {
+            let separator = key.firstIndex(of: ":")
+            let path = separator.map { String(key[key.index(after: $0)...]) } ?? key
+            let module = separator.map { String(key[..<$0]) }
+            if targets.contains(where: { $0.sourceFiles.contains(path) && (module == nil || modules[$0.name] == module) }) {
+                paths.insert(path)
+            }
+        }
+        return paths
+    }
+
+    /// Generated boundaries can establish stable bytes and physical locations,
+    /// but contain no inventory of names, calls, macros, or overloads.
+    func hasUninspectedSwiftInputs(in module: String? = nil) -> Bool {
+        if let module {
+            return unsupportedSourceInputs?[module]?.isEmpty == false || generatedSourceBoundaries?[module]?.isEmpty == false
+        }
+        return unsupportedSourceInputs?.values.contains(where: { !$0.isEmpty }) == true ||
+            generatedSourceBoundaries?.values.contains(where: { !$0.isEmpty }) == true
+    }
+
+    /// Resolve path-only archive records before any comparison or discovery lookup.
+    /// A file without declarations can still be identified by its captured target.
+    var comparisonGraph: Self {
+        var normalized = sources
+        var candidates: [String: Set<String>] = [:]
+        var required: [String: (path: String, module: String)] = [:]
+        var unresolved = Set<String>()
+        for (key, file) in sources {
+            guard file.units.isEmpty || file.units.first?.region.path == key else { continue }
+            var options = Set<String>()
+            func consider(path: String, module: String) {
+                let qualified = module + ":" + path
+                required[qualified] = (path, module)
+                if file.matchesSourceMembership(path: path, module: module) { options.insert(qualified) }
+            }
+            for target in targets where target.sourceFiles.contains(key) {
+                if let module = modules[target.name], !module.isEmpty { consider(path: key, module: module) }
+                else { unresolved.insert(key) }
+            }
+            // A colon in a filename can make a raw key identical to another
+            // file's qualified key. Consider both target memberships.
+            if let colon = key.firstIndex(of: ":") {
+                let module = String(key[..<colon]), path = String(key[key.index(after: colon)...])
+                if targets.contains(where: { modules[$0.name] == module && $0.sourceFiles.contains(path) }) {
+                    consider(path: path, module: module)
+                }
+            }
+            candidates[key] = options
+            normalized.removeValue(forKey: key)
+        }
+        // Assign from the original records into a separate dictionary. A legacy
+        // key may need to vacate the very slot another legacy record belongs in.
+        while !candidates.isEmpty {
+            let assignments = candidates.compactMapValues { options -> String? in
+                let available = options.filter { normalized[$0] == nil }
+                return available.count == 1 ? available.first : nil
+            }
+            guard !assignments.isEmpty else { unresolved.formUnion(candidates.keys); break }
+            for (key, destination) in assignments {
+                if normalized[destination] != nil { unresolved.insert(destination) }
+                normalized[destination] = sources[key]
+                candidates.removeValue(forKey: key)
+            }
+        }
+        for (key, id) in required where normalized[key]?.matchesSourceMembership(path: id.path, module: id.module) != true {
+            unresolved.insert(key)
+        }
+        var result = self
+        if unresolved.isEmpty { result.sources = normalized }
+        else {
+            result.diagnostics += unresolved.sorted().map { "Cannot resolve captured source ownership for " + $0 }
+        }
+        return result
+    }
+
+    func hasCompleteSwiftSourceInventory(_ snapshots: [String: SwiftSourceSnapshot], allowUnqualifiedPaths: Bool = false) -> Bool {
+        diagnostics.isEmpty && !hasUninspectedSwiftInputs() &&
+            targets.allSatisfy { target in
+                guard let module = modules[target.name] else { return target.sourceFiles.isEmpty }
+                return target.sourceFiles.filter { $0.hasSuffix(".swift") }.allSatisfy { path in
+                    if snapshots[module + ":" + path] != nil { return true }
+                    guard allowUnqualifiedPaths, let file = snapshots[path], !file.units.isEmpty else { return false }
+                    return file.units.allSatisfy { $0.key.hasPrefix(module + ":") && $0.region.path == path }
+                }
+            }
+    }
+
+    /// A frontend import can make a binary builder visible without any Swift
+    /// import declaration. Only captured modules have inspectable builder steps.
+    var hasUninspectedBuilderInputs: Bool {
+        guard hasCompleteSwiftSourceInventory(sources, allowUnqualifiedPaths: true),
+              let imports = dependencies?.compilerImplicitImports else { return true }
+        let captured = Set(modules.values)
+        return captured.contains { imports[$0]?.isSubset(of: captured) != true }
+    }
+
+    var modulesWithPhysicalSourceLocations: Set<String> {
+        // A SIL location can point into a different input of the same module.
+        // Prove every input uses physical coordinates before matching any root.
+        var physical = Set(modules.values)
+        for target in targets {
+            guard let module = modules[target.name], physical.contains(module) else { continue }
+            if unsupportedSourceInputs?[module]?.isEmpty == false ||
+                generatedSourceBoundaries?[module]?.allSatisfy({ $0.hasPhysicalLocations == true }) == false ||
+                !target.sourceFiles.allSatisfy({ path in
+                    if let source = sources[module + ":" + path] { return source.receiverPhysicalLocations == true }
+                    // Bare-path snapshots must also identify the owning module.
+                    guard let source = sources[path], source.receiverPhysicalLocations == true, !source.units.isEmpty else { return false }
+                    return source.units.allSatisfy { $0.key.hasPrefix(module + ":") && $0.region.path == path }
+                }) {
+                physical.remove(module)
+            }
+        }
+        return physical
+    }
+
     // Changing the required source key makes old synthesized readers reject
     // new policy-bearing graphs, instead of silently dropping directive metadata.
     enum CodingKeys: String, CodingKey {
@@ -145,9 +266,13 @@ public enum XcodeSelector {
         }
         // Ownership in both builds is necessary for removed/moved/shared files.
         let targets = current.targets + (previous?.targets ?? [])
+        let confirmed = FileChange.confirmedImplementations(base: previous.map { $0.manifestNamedImplementations(in: $0.sources) } ?? [],
+            head: current.manifestNamedImplementations(in: current.sources), changes: changes)
         for change in changes {
-            let owners = targets.filter { $0.sourceFiles.contains(change.path) }
-            if !change.path.hasSuffix(".swift") || owners.isEmpty || owners.contains(where: { !$0.isTest }) || change.requiresFallback {
+            let paths = Set(change.paths)
+            let owners = targets.filter { !$0.sourceFiles.isDisjoint(with: paths) }
+            let hasOwners = paths.allSatisfy { path in owners.contains { $0.sourceFiles.contains(path) } }
+            if !paths.allSatisfy({ FileChange.isSwiftImplementation($0, confirmed: confirmed) }) || !hasOwners || owners.contains(where: { !$0.isTest }) || change.requiresFallback {
                 reasons.append("App, resource, build, or unclassified change requires the full Xcode test selection: \(change.path). XCUITest app interactions cross a process boundary.")
                 continue
             }
