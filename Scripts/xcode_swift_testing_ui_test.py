@@ -45,21 +45,24 @@ def verify_binding(graph, identifier, source_path, swift_testing):
         assert len(factories) == 1, (identifier, 'expected one bound Swift Testing factory')
 
 
-def passed_case(bundle, identifier):
+def passed_cases(bundle, selected):
     def result(kind):
         return json.loads(subprocess.check_output(
             ['xcrun', 'xcresulttool', 'get', 'test-results', kind, '--path', bundle]))
     summary = result('summary')
-    assert (summary['passedTests'], summary['failedTests'], summary['skippedTests']) == (1, 0, 0), summary
-    nodes = result('tests')['testNodes']
+    assert (summary['passedTests'], summary['failedTests'], summary['skippedTests']) == (len(selected), 0, 0), summary
+    nodes = [(root, None) for root in result('tests')['testNodes']]
     cases = []
     while nodes:
-        node = nodes.pop()
-        nodes.extend(node.get('children', []))
+        node, target = nodes.pop()
+        if node['nodeType'].lower().endswith('test bundle'):
+            target = node['name']
+        nodes.extend((child, target) for child in node.get('children', []))
         if node['nodeType'] == 'Test Case':
-            cases.append((node['nodeIdentifier'], node['result']))
-    assert cases == [(identifier.split('/', 1)[1], 'Passed')], cases
-    return cases[0][0]
+            assert target and node['result'] == 'Passed', node
+            cases.append(target + '/' + node['nodeIdentifier'])
+    assert sorted(cases) == sorted(selected), (cases, selected)
+    return sorted(cases)
 
 
 def main():
@@ -201,8 +204,9 @@ private func sharingTitle() -> String { "Sharing" }
             positives = {entry['test'] for entry in single['explanations'] if entry['kind'] != 'fallback'}
             assert positives == {identifier}, (identifier, single['explanations'])
             expected = [identifier]
-            if args.control == 'swift-testing-unit' and identifier == XCTEST:
-                # The app-hosted process can load additional registrations before filtering.
+            swift_target = other.split('/', 1)[0]
+            if identifier == XCTEST and args.control != 'xctest-ui' and swift_target not in linked:
+                # Application and UI runner hosts can load registrations before filtering.
                 discovery, = [d['fallback'] for d in single['diagnostics'] if d['code'] == 'swift_testing_discovery_effects']
                 assert discovery['uncertaintyOnlyTests'] == [other] and not discovery['overlappingPositiveTests']
                 expected = sorted([identifier, other])
@@ -213,12 +217,15 @@ private func sharingTitle() -> String { "Sharing" }
             assert filters[identifier] == '-only-testing:' + identifier
             individual[identifier] = dict(base=single_base, selected=expected, positives=sorted(positives), phases=phases)
             verify_binding(graph, identifier, edits[identifier][0], identifier == other and args.control != 'xctest-ui')
-            print('Executing ' + identifier, flush=True)
+            print('Executing ' + ', '.join(expected), flush=True)
             bundle = single_file.with_suffix('.xcresult')
             subprocess.run(['xcodebuild', 'test-without-building', '-xctestrun', verified_single['xctestrun'],
-                            '-destination', args.destination, '-parallel-testing-enabled', 'NO', filters[identifier],
+                            '-destination', args.destination, '-parallel-testing-enabled', 'NO', *verified_single['onlyTestingArguments'],
                             '-resultBundlePath', bundle], cwd=source, check=True)
-            executed[identifier] = passed_case(bundle, identifier)
+            passed = passed_cases(bundle, verified_single['selectedTests'])
+            individual[identifier]['executed'] = passed
+            # Keep the per-method result used by existing report readers.
+            executed[identifier] = identifier.split('/', 1)[1]
         args.output.write_text(json.dumps(dict(toolchain=run('xcodebuild', '-version'),
             buildID=verified['buildArtifactID'], selectedTests=report['selectedTests'], totalTests=report['totalTests'],
             control=args.control, head=head, individual=individual, diagnostics=report['diagnostics'], executed=executed), indent=2) + '\n')
