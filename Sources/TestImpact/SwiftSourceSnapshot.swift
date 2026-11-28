@@ -558,12 +558,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             return value
             #endif
         }
-        let locationNames: Set<String> = ["line", "column", "file", "fileID", "filePath"]
-        func bareDefault(_ macro: MacroExpansionExprSyntax) -> Bool {
-            macro.parent?.is(InitializerClauseSyntax.self) == true &&
-                (macro.parent?.parent?.is(FunctionParameterSyntax.self) == true ||
-                 macro.parent?.parent?.is(EnumCaseParameterSyntax.self) == true)
-        }
+        let locationNames = MacroExpansionExprSyntax.callerLocationNames
         func locationValue(_ name: String, _ location: SourceLocation) -> String {
             switch name {
             case "line": return String(location.presumedLine)
@@ -670,7 +665,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
                 guard let macro = token.parent?.as(MacroExpansionExprSyntax.self) else { continue }
                 // Bare parameter defaults use the caller's location. Parenthesized
                 // or arithmetic defaults use the declaration's location instead.
-                if bareDefault(macro) { continue }
+                if macro.isDirectParameterDefault { continue }
                 let name = macro.macroName.text
                 if locationNames.contains(name) {
                     values.append(name + ":" + locationValue(name, locations.location(for: macro.positionAfterSkippingLeadingTrivia)))
@@ -793,7 +788,7 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
             var defaultNames: [String: Set<String>] = [:]
             for token in node.tokens(viewMode: .sourceAccurate) where token.tokenKind == .pound {
                 guard let macro = token.parent?.as(MacroExpansionExprSyntax.self),
-                      bareDefault(macro), locationNames.contains(macro.macroName.text) else { continue }
+                      macro.isDirectParameterDefault, locationNames.contains(macro.macroName.text) else { continue }
                 defaultNames[defaultName(macro), default: []].insert(macro.macroName.text)
             }
             let defaults = Set(defaultNames.values.flatMap { $0 })
@@ -1148,5 +1143,14 @@ public struct SwiftSourceSnapshot: Codable, Sendable {
         walk(Syntax(tree), scope: [])
         result.swiftTestingDeclarations = discovery
         return result
+    }
+}
+
+extension MacroExpansionExprSyntax {
+    static let callerLocationNames: Set<String> = ["line", "column", "file", "fileID", "filePath"]
+
+    var isDirectParameterDefault: Bool {
+        parent?.is(InitializerClauseSyntax.self) == true &&
+            (parent?.parent?.is(FunctionParameterSyntax.self) == true || parent?.parent?.is(EnumCaseParameterSyntax.self) == true)
     }
 }

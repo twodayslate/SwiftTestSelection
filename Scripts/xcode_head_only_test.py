@@ -72,7 +72,7 @@ try:
     mapping_path.write_text(json.dumps(actor_mapping))
     actor_source = ('import Observation\n' + production.read_text() +
                     '\n@available(iOS 17, macOS 14, *) @Observable final class Model { var title = "Sharing" }\n'
-                    '\n@MainActor private func unusedTitle() -> String { "Unused" }\n')
+                    '\n@MainActor private func unusedTitle(file: StaticString = #filePath, line: UInt = #line) -> String { "Unused" }\n')
     production.write_text(actor_source)
     actor_base = commit('SDK actor and Observation macro')
     production.write_text(actor_source.replace('\n@MainActor', '\n\n@MainActor'))

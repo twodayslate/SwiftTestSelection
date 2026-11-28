@@ -12,7 +12,7 @@ import CryptoKit
 /// A macro can emit a declaration whose callers have no edge to the source
 /// that supplied the expansion. Preserve the syntax and coordinates it can see.
 enum AttachedMacroInputs {
-    static let version = 3
+    static let version = 4
 
     static func capture(_ tree: SourceFileSyntax, locations: SourceLocationConverter, indexedMainActor: Bool = false) -> [String: [String]] {
         var inputs: [String: [String]] = [:]
@@ -57,6 +57,12 @@ enum AttachedMacroInputs {
             if token.tokenKind == .pound, let node = token.parent,
                let macro = node.asProtocol(FreestandingMacroExpansionSyntax.self),
                let name = macro.macroName.identifier?.name {
+                // SwiftSyntax represents caller-location literals as expansions.
+                // In a parameter default the compiler supplies their value at the
+                // call site, which the source snapshot tracks independently.
+                if let expression = node.as(MacroExpansionExprSyntax.self), expression.isDirectParameterDefault,
+                   MacroExpansionExprSyntax.callerLocationNames.contains(expression.macroName.text),
+                   expression.trimmedDescription == "#" + name { continue }
                 // A freestanding expansion receives its source and position in
                 // both declaration and expression contexts. An expression macro
                 // can embed that position in a value consumed by another file.

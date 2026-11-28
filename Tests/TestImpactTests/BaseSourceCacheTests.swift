@@ -1554,6 +1554,24 @@ func scopedMacroComparisonReadsHistoricalImportsOutsideTheScope(binaryChanges: B
     #expect(report.diagnostics.contains { $0.code == "attached_macro_inputs" })
 }
 
+@Test func callerLocationDefaultsDoNotBecomeExpansionSites() throws {
+    let path = "Helpers.swift", key = "App:Helpers.swift"
+    let declaration = "func stamp(file: StaticString = #filePath, line: UInt = #line) {}"
+    let source = "func use() { stamp() }\n" + declaration
+    func snapshot(_ text: String) -> SwiftSourceSnapshot { .parse(text, path: path, module: "App") }
+    let before = snapshot(source), after = snapshot(source.replacingOccurrences(of: declaration, with: "\n" + declaration))
+    let unit = try #require(after.units.first { $0.locationDefaultNames?["stamp"] != nil })
+    #expect(unit.locationDefaultNames?["stamp"] == ["filePath", "line"])
+    #expect(after.attachedAttributeInputs?.isEmpty == true)
+    #expect(AttachedMacroInputs.changedPaths(base: [key: before], head: [key: after], touching: [path]).isEmpty)
+    for (text, site) in [("func direct() -> Int { #line }", "#line"),
+                         ("func caller(value: Int = #PluginLine()) {}", "#PluginLine"),
+                         ("func caller(value: Int = #`line`()) {}", "#line"),
+                         ("func caller(value: Int = #Outer(#line)) {}", "#Outer")] {
+        #expect(snapshot(text).attachedAttributeInputs?[site]?.count == 1)
+    }
+}
+
 @Test func macroComparisonPreservesInvocationLocationsAndRedactsLaterSiblings() throws {
     let path = "Sharing.swift", key = "App:" + path
     func source(_ text: String) -> SwiftSourceSnapshot { .parse(text, path: path, module: "App") }
